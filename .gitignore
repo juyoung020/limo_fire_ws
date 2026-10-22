@@ -42,3 +42,7 @@ train/detect/tools/autocrawler/.venv/
 train/detect/tools/autocrawler/chrome-profile/
 
 train/detect/tools/icrawl/.venv/
+train/detect/teacher/build/
+train/detect/teacher/.venv-ref/
+train/detect/teacher/ref/
+train/detect/teacher/ref_src
