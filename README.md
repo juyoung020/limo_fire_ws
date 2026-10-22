@@ -89,6 +89,7 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 │   ├── external/        남의 코드 (WeGo LIMO Pro, 교수님 Webots 시뮬) — 고치지 않음
 │   └── limo_fire/       우리 패키지
 ├── sim/                 Isaac Sim 4.5 확장·USD, maps/ 실내 맵      [COLCON_IGNORE]
+├── train/               GPU 학습 환경 (맵 변환기, 환경 커널, PPO)   [COLCON_IGNORE]
 ├── firmware/            ESP32 코드
 ├── docs/                아이디어·스펙·부품 문서
 ├── refs/                참고 자료 (papers/ code/ datasheets/)       [COLCON_IGNORE]
@@ -102,7 +103,7 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 
 | 목적 | 시뮬레이터 | 위치 |
 |---|---|---|
-| 강화학습 (탐사·조준) | 직접 만드는 2.5D GPU 환경 — 수천 개 병렬 | (만들 예정) |
+| 강화학습 (탐사·조준) | 직접 만드는 2.5D GPU 환경 — 수천 개 병렬 | `train/` |
 | 실제와 비슷한 검증 (센서·물리) | Isaac Sim 4.5 + WeGo LIMO USD | `sim/wego_LimoIsaacSIM` |
 | (공통) 맵 | AWS 병원·창고·서점·집, ProcTHOR-10K, HouseExpo | `sim/maps` ([목록](sim/maps/README.md)) |
 | Nav2·SLAM·BT 통합 검증 | Webots (교수님 환경, 실제 LIMO 와 같은 토픽·프레임) | `src/external/webots_ros2_limo` |

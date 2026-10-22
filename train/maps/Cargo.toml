@@ -1,0 +1,13 @@
+[package]
+name = "fmap"
+version = "0.1.0"
+edition = "2021"
+description = "실내 맵 데이터셋(HouseExpo·ProcTHOR·덕트호스 생성기)을 GPU 학습 환경용 공통 점유 격자 + 소방 시설 배치로 바꾼다"
+
+[dependencies]
+serde_json = "1"
+flate2 = "1"
+png = "0.17"
+
+[profile.release]
+opt-level = 3
