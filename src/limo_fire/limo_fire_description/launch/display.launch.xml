@@ -1,0 +1,13 @@
+<!-- 로봇 모델만 RViz 에 띄워 확인: ros2 launch limo_fire_description display.launch.xml [gui:=false] -->
+<launch>
+  <arg name="model" default="$(find-pkg-share limo_fire_description)/urdf/limo_fire.urdf.xacro"/>
+  <arg name="gui" default="true"/>
+  <arg name="rviz" default="true"/>
+
+  <node pkg="robot_state_publisher" exec="robot_state_publisher">
+    <param name="robot_description" value="$(command 'xacro $(var model)')" type="str"/>
+  </node>
+  <node pkg="joint_state_publisher_gui" exec="joint_state_publisher_gui" if="$(var gui)"/>
+  <node pkg="joint_state_publisher" exec="joint_state_publisher" unless="$(var gui)"/>
+  <node pkg="rviz2" exec="rviz2" args="-d $(find-pkg-share limo_fire_description)/rviz/display.rviz" if="$(var rviz)"/>
+</launch>

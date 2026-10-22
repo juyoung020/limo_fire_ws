@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<!-- LIMO Pro 기본 몸체: 바퀴 4 개(차동) + 라이다 + IMU + depth 카메라.
+     몸통·바퀴·라이다·IMU 는 WeGo limo_description 의 limo_four_diff.xacro 와 같은 값(매크로도 그것을 씀).
+     카메라는 WeGo 차동 모델에 없어서, 교수님 Webots 환경(webots_ros2_limo robot_launch.py)이 실제 몸통 메시의
+     카메라 자리에 맞춘 값을 쓴다: base_link → camera_link (0.096, 0.015, 0.03).
+     base_link 는 바닥에서 0.145 m (바퀴 중심 -0.10 + 바퀴 반지름 0.045). base_footprint 는 두지 않는다(실물 드라이버에 없음). -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:include filename="$(find limo_description)/urdf/limo_xacro.xacro" />
+
+  <xacro:property name="M_PI" value="3.14159265"/>
+  <xacro:property name="base_x_size" value="0.13" />
+  <xacro:property name="base_y_size" value="0.12" />
+  <xacro:property name="base_z_size" value="0.1" />
+  <xacro:property name="wheelbase" value="0.2"/>
+  <xacro:property name="track" value="0.13"/>
+  <xacro:property name="wheel_vertical_offset" value="-0.10" />
+  <xacro:property name="base_mass" value="2.1557"/>
+  <xacro:property name="wheel_length" value="0.045" />
+  <xacro:property name="wheel_radius" value="0.045" />
+
+  <xacro:macro name="optical_frame" params="parent name">
+    <link name="${name}_optical_frame"/>
+    <joint name="${name}_optical_joint" type="fixed">
+      <origin xyz="0 0 0" rpy="${-M_PI/2} 0 ${-M_PI/2}"/>
+      <parent link="${parent}"/>
+      <child link="${name}_optical_frame"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="limo_pro_base">
+    <link name="base_link">
+      <visual>
+        <origin xyz="0 0 -0.15" rpy="0 0 1.57" />
+        <geometry><mesh filename="file://$(find limo_description)/meshes/limo_base.dae" scale="1 1 1"/></geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry><box size="${base_x_size} ${base_y_size} ${base_z_size}"/></geometry>
+      </collision>
+    </link>
+    <link name="inertial_link">
+      <inertial>
+        <origin xyz="0 0 0" />
+        <mass value="${base_mass}" />
+        <inertia ixx="0.24" ixy="0" ixz="0" iyy="0.96" iyz="0" izz="0.96" />
+      </inertial>
+    </link>
+    <joint name="inertial_joint" type="fixed">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <parent link="base_link" />
+      <child link="inertial_link" />
+    </joint>
+
+    <xacro:limo_laser parent_prefix="base_link" frame_prefix="laser">
+      <origin xyz="0.103 0 -0.034" rpy="0 0 0"/>
+    </xacro:limo_laser>
+    <xacro:limo_imu parent_prefix="base_link" frame_prefix="imu">
+      <origin xyz="0 0 -0.1" rpy="0 0 0"/>
+    </xacro:limo_imu>
+
+    <xacro:limo_wheel parent_prefix="base_link" wheel_prefix="front_left" reflect="1">
+      <origin xyz="${wheelbase/2} ${track/2} ${wheel_vertical_offset}" rpy="0 0 0" />
+    </xacro:limo_wheel>
+    <xacro:limo_wheel parent_prefix="base_link" wheel_prefix="front_right" reflect="-1">
+      <origin xyz="${wheelbase/2} ${-track/2} ${wheel_vertical_offset}" rpy="${M_PI} 0 0" />
+    </xacro:limo_wheel>
+    <xacro:limo_wheel parent_prefix="base_link" wheel_prefix="rear_left" reflect="1">
+      <origin xyz="${-wheelbase/2} ${track/2} ${wheel_vertical_offset}" rpy="0 0 0" />
+    </xacro:limo_wheel>
+    <xacro:limo_wheel parent_prefix="base_link" wheel_prefix="rear_right" reflect="-1">
+      <origin xyz="${-wheelbase/2} ${-track/2} ${wheel_vertical_offset}" rpy="${M_PI} 0 0" />
+    </xacro:limo_wheel>
+
+    <!-- depth 카메라(Orbbec): camera_link 장착 + color·depth 흐름 프레임(Orbbec 드라이버와 같은 이름) + 광학 프레임(z 앞) -->
+    <link name="camera_link"/>
+    <joint name="camera_joint" type="fixed">
+      <origin xyz="0.096 0.015 0.03" rpy="0 0 0"/>
+      <parent link="base_link"/>
+      <child link="camera_link"/>
+    </joint>
+    <link name="camera_color_frame"/>
+    <joint name="camera_color_joint" type="fixed">
+      <origin xyz="0.00015 -0.03 0.00002" rpy="0 0 0"/>
+      <parent link="camera_link"/>
+      <child link="camera_color_frame"/>
+    </joint>
+    <xacro:optical_frame parent="camera_color_frame" name="camera_color"/>
+    <link name="camera_depth_frame"/>
+    <joint name="camera_depth_joint" type="fixed">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <parent link="camera_link"/>
+      <child link="camera_depth_frame"/>
+    </joint>
+    <xacro:optical_frame parent="camera_depth_frame" name="camera_depth"/>
+  </xacro:macro>
+</robot>
