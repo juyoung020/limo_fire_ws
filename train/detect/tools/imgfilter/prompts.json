@@ -33,23 +33,27 @@
       "keep": [
         "a photo of a red fire extinguisher",
         "a photo of a fire extinguisher in a building hallway",
-        "a photo of a fire hose cabinet on a wall"
+        "a photo of several fire extinguishers on the floor",
+        "a photo of people holding fire extinguishers",
+        "a photo of a fire hose cabinet on a wall",
+        "a photo of a white metal fire hydrant box with a red lamp built into a wall"
       ],
       "reject": [
         "a photo of a burning fire",
         "a photo of a firefighter or a fire truck",
-        "a photo of a room without fire safety equipment",
-        "a photo of a person spraying an extinguisher in a training drill"
+        "a photo of an empty room or hallway"
       ]
     },
     "candle": {
       "keep": [
         "a photo of a burning candle with a flame",
         "a photo of lit candles in the dark",
-        "a close-up photo of a candle flame"
+        "a close-up photo of a candle flame",
+        "a photo of a small lit candle on a table in a room"
       ],
       "reject": [
         "a photo of unlit candles without flame",
+        "a photo of LED flameless electric candles",
         "a photo of a large fire or a bonfire",
         "a photo of a crowd holding candles at night"
       ]
@@ -58,13 +62,13 @@
       "keep": [
         "a photo of an indoor staircase in a building",
         "a photo of stairs in a school or office building",
-        "a photo of an emergency stairwell"
+        "a photo of an emergency stairwell",
+        "a photo of a staircase inside a house"
       ],
       "reject": [
         "a photo of outdoor stairs",
         "a photo of a corridor without stairs",
-        "a photo of an escalator",
-        "a photo of a wooden staircase in a luxury house"
+        "a photo of an escalator"
       ]
     }
   }
