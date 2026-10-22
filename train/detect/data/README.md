@@ -12,6 +12,9 @@ YOLO 학습 이미지·라벨·사전학습 가중치. 용량 때문에 git 에 
 | `~/ObjectSAM/data/coco` | **COCO 2017** (이미 있음, 20 GB) | person | 약 64,000 장 | CC BY 4.0 |
 | `weights/yolo26s.pt`, `yolo26n.pt` | **Ultralytics YOLO26** COCO 사전학습 (v8.4.0 릴리스) | 시작점 | 20.4 MB, 5.5 MB | AGPL-3.0 |
 | `raw/autocrawler/` | **Naver 이미지 검색** (`../tools/autocrawler`, AutoCrawler) — 한국 비상구 표지·소화기·소화전함, 촛불, 실내 계단. 라벨 없음 | exit_sign, fire_extinguisher, fire, stairs | 목표 2,000 · 2,000 · 1,500 · 2,000 (거르기 전 클래스당 약 3,000) | 저작권 있음 — 학습용만, 재배포 금지 |
+| `raw/icrawl/` | **Bing·Baidu 이미지 검색** (`../tools/icrawl`, icrawler) — 같은 검색어. 라벨 없음 | 위와 같음 | 촛불 2,836 · 비상구 2,437 · 소화기 3,114 · 계단 2,587 | 저작권 있음 — 학습용만, 재배포 금지 |
+| `clean/<클래스>/` | 위 셋(autocrawler·icrawl·web)을 `../tools/imgfilter`(SigLIP)로 거른 것, 원본 하드링크. 판정은 `clean/<클래스>.tsv` | exit_sign, fire_extinguisher, fire(촛불), stairs | **비상구 3,550 · 소화기 4,742 · 촛불 3,059 · 계단 3,624** (받은 24,917 장 중) | 원본과 같음 |
+| `weights/siglip-so400m-patch14-384/` | Google SigLIP (거르기용) | — | 3.5 GB | Apache-2.0 |
 
 `.pt` 는 파이썬 pickle 이라 파이썬으로 열면 코드가 실행될 수 있다. 가중치 변환기는 zip 안의 텐서 자료만 읽는다(파이썬으로 열지 않음).
 
