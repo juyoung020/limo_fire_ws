@@ -31,7 +31,11 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 │       ├── limo_fire_rl/            RL 정책 Action 서버
 │       └── limo_fire_report/        웹 앱(rosbridge)·음성 안내
 ├── sim/                       Isaac Sim 확장·USD, maps/  [COLCON_IGNORE]
-├── train/                     GPU 학습 환경 (C++/CUDA/Rust, ROS 아님) [COLCON_IGNORE]
+├── train/                     학습 (C++/CUDA/Rust, ROS 아님)  [COLCON_IGNORE]
+│   ├── maps/                  맵 변환기 — 탐사·조준 공용
+│   ├── explore/               탐사 RL: env/ ppo/ viewer/
+│   ├── aim/                   조준 RL
+│   └── detect/                YOLO 탐지: trainer/ tools/ data/(git 제외)
 ├── firmware/                  ESP32 코드
 ├── docs/                      문서
 ├── refs/                      참고 자료                    [COLCON_IGNORE]
