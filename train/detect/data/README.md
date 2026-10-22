@@ -11,6 +11,7 @@ YOLO 학습 이미지·라벨·사전학습 가중치. 용량 때문에 git 에 
 | `raw/lvis/` | **LVIS v1** 라벨(이미지는 COCO, `~/ObjectSAM/data/coco` 에 있음) | fire_extinguisher (+ fire_alarm, door 손잡이 참고) | fire_extinguisher 172 장 · 211 상자 | CC BY 4.0 |
 | `~/ObjectSAM/data/coco` | **COCO 2017** (이미 있음, 20 GB) | person | 약 64,000 장 | CC BY 4.0 |
 | `weights/yolo26s.pt`, `yolo26n.pt` | **Ultralytics YOLO26** COCO 사전학습 (v8.4.0 릴리스) | 시작점 | 20.4 MB, 5.5 MB | AGPL-3.0 |
+| `raw/autocrawler/` | **Naver 이미지 검색** (`../tools/autocrawler`, AutoCrawler) — 한국 비상구 표지·소화기·소화전함, 촛불, 실내 계단. 라벨 없음 | exit_sign, fire_extinguisher, fire, stairs | 목표 2,000 · 2,000 · 1,500 · 2,000 (거르기 전 클래스당 약 3,000) | 저작권 있음 — 학습용만, 재배포 금지 |
 
 `.pt` 는 파이썬 pickle 이라 파이썬으로 열면 코드가 실행될 수 있다. 가중치 변환기는 zip 안의 텐서 자료만 읽는다(파이썬으로 열지 않음).
 

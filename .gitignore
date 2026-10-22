@@ -36,3 +36,7 @@ train/detect/data/*
 # 참고 코드(출처는 refs/README.md)
 refs/code/*/
 train/detect/tools/*/target/
+
+# AutoCrawler 실행 환경
+train/detect/tools/autocrawler/.venv/
+train/detect/tools/autocrawler/chrome-profile/
