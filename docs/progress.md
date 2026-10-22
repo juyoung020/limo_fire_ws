@@ -1,6 +1,6 @@
 # 진행 기록
 
-지금까지 한 일, 왜 그렇게 정했는지, 다음에 할 일. 마지막 갱신 2026-10-23.
+지금까지 한 일, 왜 그렇게 정했는지, 다음에 할 일. 마지막 갱신 2026-10-23(SAM 3 포팅 후).
 
 아이디어는 [idea.md](idea.md), 설계는 [spec.md](spec.md), 부품은 [parts.md](parts.md).
 
@@ -14,7 +14,7 @@
 | 탐사 RL GPU 환경 (CUDA) | 됨 — 관측·PPO 남음 | `train/explore/env` |
 | LIMO Pro 기본 URDF·TF | 됨 — 센서 모듈은 배치 정해지면 | `src/limo_fire/limo_fire_description` |
 | YOLO 데이터 모으기 | 공개 데이터·크롤링 됨, 직접 찍기 남음 | `train/detect/data` |
-| 자동 라벨링 (SAM 3) | 접근 승인 기다리는 중 | `train/detect/data/weights/sam3` |
+| 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 프롬프트 다듬기·전체 라벨 남음 | `train/detect/teacher` |
 | YOLO26s 학습기 (C++/CUDA) | 할 일 | `train/detect/trainer` |
 | ROS 노드 (BT·인식·연기 모드·보고) | 할 일 | `src/limo_fire` |
 | ESP32 모듈 | 부품 오면 | `firmware/` |
@@ -102,7 +102,7 @@ YOLO 는 사진 속 상자(픽셀 위치·크기), 클래스, 확신도만 낸�
 | LVIS v1 (COCO 이미지) | fire_extinguisher | 172 장 | CC BY |
 | COCO 2017 | person | 약 64,000 장 | CC BY |
 | 크롤링 → SigLIP 거르기 (`clean/`) | 비상구·소화기·촛불·계단 | 3,550 · 4,742 · 3,059 · 3,624 | 저작권 있음, 학습용만 |
-| Wikimedia·Openverse (`raw/web`) | 같음 | 클래스당 600–800, 진행 중 | CC (출처 기록) |
+| Wikimedia·Openverse (`raw/web`) | 같음 | 촛불 600 · 비상구 800 · 소화기 800 · 실내 계단 800 | CC (출처 기록) |
 
 - 크롤링: 네이버(AutoCrawler), Bing·Baidu(icrawler), Wikimedia·Openverse(우리 Rust `webcrawl`). 거르기는 `tools/imgfilter`(Rust, SigLIP 제로샷 + 중복 제거)로 24,917 장 중 약 1 만 5 천 장 남김.
 - 네이버·Bing 사진은 저작권이 있어 학습에만 쓰고 공개·재배포하지 않는다. 발표 자료에는 Wikimedia·Openverse 사진을 쓴다.
@@ -116,14 +116,15 @@ YOLO 는 사진 속 상자(픽셀 위치·크기), 클래스, 확신도만 낸�
 4. 클래스마다 몇백 장을 뽑아 X-AnyLabeling 으로 사람이 검수하고, 오류율을 보고 기준을 조정한다.
 5. 이 라벨로 YOLO26s(-seg)를 학습(증류)한다.
 
-- 가중치: `facebook/sam3` 의 `model.safetensors`(pickle 아님). SAM 3.1 은 영상 속도만 개선했고 `.pt` 뿐이라 3 을 쓴다.
-- 2026-10-23 접근 신청함, Meta 검토 대기. 승인되면 자동으로 받도록 걸어 둠.
+- 가중치: `facebook/sam3` 의 `model.safetensors`(pickle 아님, 2026-10-23 승인받아 받음). SAM 3.1 은 영상 속도만 개선했고 `.pt` 뿐이라 3 을 쓴다.
+- C++/CUDA 포팅 완료(`train/detect/teacher`): PyTorch 와 단계별 비교에서 fp32 최종 판정 100 % 같음. 라벨은 fp16 으로 — fp32 와 라벨 단위로 사실상 같고(마스크 IoU 중앙 1.000) 3.7 배 빠르다. 한 장(프롬프트 9 개, 마스크 포함) 0.15 초 → 6 만 장 약 2.5 시간.
+- 원본 시험에서 본 약점: 한국식 초록 피난구 유도등을 "emergency exit sign" 으로 못 잡고, 표지 속 달리는 사람 그림을 사람으로 잡는다 → 프롬프트 다듬기·예시 사진 프롬프트·클래스 간 규칙으로 보완.
 
 ## 7. 다음 할 일
 
 | 순서 | 일 |
 |---|---|
-| 1 | SAM 3 승인 → 구조 분석 → C++/CUDA 포팅·검증 → 전체 자동 라벨 |
+| 1 | 프롬프트 다듬기(표본 사진으로 확인) → 전체 자동 라벨 |
 | 2 | 데이터셋 7 클래스 합치기 도구(Rust) — D-Fire 0=smoke·1=fire 번호 바꾸기 등 |
 | 3 | YOLO26s 학습기: ObjectSAM 학습기를 C3k2·C2PSA·NMS 없는 머리·STAL 로 옮기고, pickle 없이 가중치 변환 |
 | 4 | 학교에서 시험용 사진 찍기 (팀) |
