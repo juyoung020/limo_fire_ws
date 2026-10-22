@@ -1,0 +1,11 @@
+[package]
+name = "yolods"
+version = "0.1.0"
+edition = "2021"
+description = "SAM 3 자동 라벨(JSONL) → YOLO 탐지 데이터셋(7 클래스, 학습·검증·시험 8:1:1)"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1_smol = "1"
