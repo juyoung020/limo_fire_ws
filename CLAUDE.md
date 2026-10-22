@@ -31,6 +31,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 │       ├── limo_fire_rl/            RL 정책 Action 서버
 │       └── limo_fire_report/        웹 앱(rosbridge)·음성 안내
 ├── sim/                       Isaac Sim 확장·USD, maps/  [COLCON_IGNORE]
+├── train/                     GPU 학습 환경 (C++/CUDA/Rust, ROS 아님) [COLCON_IGNORE]
 ├── firmware/                  ESP32 코드
 ├── docs/                      문서
 ├── refs/                      참고 자료                    [COLCON_IGNORE]
