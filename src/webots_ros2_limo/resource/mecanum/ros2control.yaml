@@ -1,0 +1,45 @@
+controller_manager:
+  ros__parameters:
+    # Same rate as the differential-drive setup: see resource/diff/ros2control.yaml.
+    update_rate: 25
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    mecanum_drive_controller:
+      type: mecanum_drive_controller/MecanumDriveController
+
+
+joint_state_broadcaster:
+  ros__parameters:
+    joints: ["front_left_wheel", "front_right_wheel", "rear_left_wheel", "rear_right_wheel"]
+
+mecanum_drive_controller:
+  ros__parameters:
+    # Stop if no /cmd_vel arrives for this long [s].
+    reference_timeout: 0.5
+
+    front_left_wheel_command_joint_name: "front_left_wheel"
+    front_right_wheel_command_joint_name: "front_right_wheel"
+    rear_right_wheel_command_joint_name: "rear_right_wheel"
+    rear_left_wheel_command_joint_name: "rear_left_wheel"
+
+    kinematics:
+      base_frame_offset: { x: 0.0, y: 0.0, theta: 0.0 }
+      wheels_radius: 0.045
+      # lx + ly. Geometrically half the wheelbase (0.1) + half the track
+      # (0.065) = 0.165, but the wheels are 45 mm wide cylinders that touch
+      # the floor outboard of the hinge, so the robot turned at only 0.80 of
+      # the commanded rate (measured against the IMU at 0.5 and 1.0 rad/s).
+      # 0.165 / 0.80 makes /cmd_vel angular.z come out as commanded. It does
+      # not affect /odom, whose heading comes from the IMU.
+      sum_of_robot_center_projection_on_X_Y_axis: 0.206
+
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+
+    # /odom and the odom -> base_link transform come from limo_sensors.py
+    # (wheel encoders + IMU heading), not from this controller.
+    enable_odom_tf: false
+
+    use_stamped_vel: false

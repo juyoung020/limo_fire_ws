@@ -1,0 +1,56 @@
+controller_manager:
+  ros__parameters:
+    # TB3 uses 50 Hz (= its 20 ms basicTimeStep, one update per sim step).
+    # The LIMO scene is heavier, so Webots does not always deliver a fresh
+    # /clock between two consecutive sim steps; at 50 Hz that made
+    # diff_drive_controller stamp two /odom messages with the same sim time,
+    # which aborts cartographer ("data.time > prev->first" in map_by_time.h).
+    # Updating every fourth step (10 ms basicTimeStep) keeps every stamp strictly increasing.
+    update_rate: 25
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    diffdrive_controller:
+      type: diff_drive_controller/DiffDriveController
+
+
+joint_state_broadcaster:
+  ros__parameters:
+    joints: ["front_left_wheel", "front_right_wheel", "rear_left_wheel", "rear_right_wheel"]
+
+diffdrive_controller:
+  ros__parameters:
+    left_wheel_names: ["front_left_wheel", "rear_left_wheel"]
+    right_wheel_names: ["front_right_wheel", "rear_right_wheel"]
+
+    # Effective wheel separation for 4-wheel skid steering (AgileX Gazebo value).
+    wheel_separation: 0.172
+    wheel_radius: 0.045
+    # Same mechanism TB3 uses (it ships 1.112 with the note "The real separation
+    # between wheels is not resulting in a perfect odometry"). A 4-wheel skid
+    # robot slips much more, so the value is larger. Measured in this sim by
+    # commanding in-place rotations and comparing the encoder-derived yaw with
+    # the IMU yaw: odometry over-reported rotation by a factor of 1.665
+    # (81 deg actual vs 134.8 deg reported), so 1.45 * 1.665 = 2.414.
+    #
+    # Since /odom now takes its heading from the IMU (limo_sensors.py) this
+    # only scales the wheel speed difference used for a commanded angular
+    # velocity: with it, 0.5 rad/s on /cmd_vel turns the robot at 0.49 rad/s
+    # and 1.0 rad/s at 0.85 rad/s (the slip grows with speed).
+    wheel_separation_multiplier: 2.414
+
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+
+    # /odom and the odom -> base_link transform come from limo_sensors.py
+    # (wheel encoders + IMU heading), not from this controller; see the notes
+    # there. The controller's own estimate stays on /diffdrive_controller/odom.
+    enable_odom_tf: false
+
+    use_stamped_vel: false
+
+    linear:
+      x:
+        has_velocity_limits: true
+        max_velocity: 0.5

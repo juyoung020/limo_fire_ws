@@ -85,12 +85,29 @@ AgileX LIMO Pro(라이다, depth 카메라, IMU) 위에 ESP32로 제어하는 �
 
 ```
 limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
-├── src/                 ROS 2 패키지 (WeGo LIMO Pro 패키지 포함)
+├── src/                 ROS 2 패키지 (WeGo LIMO Pro 패키지, Webots 시뮬 포함)
 ├── sim/                 Isaac Sim 4.5 확장·USD                     [COLCON_IGNORE]
 ├── firmware/            ESP32 코드
 ├── docs/                아이디어·스펙·부품 문서
 ├── refs/                참고 자료 (papers/ code/ datasheets/)       [COLCON_IGNORE]
-└── archive/             안 쓰는 것                                  [COLCON_IGNORE]
+├── archive/             안 쓰는 것                                  [COLCON_IGNORE]
+└── env.sh               워크스페이스 환경 (conda 빼고 ROS 2 + install)
+```
+
+## 시뮬레이션
+
+시뮬레이터 셋을 목적별로 나눠 쓴다.
+
+| 목적 | 시뮬레이터 | 위치 |
+|---|---|---|
+| 강화학습 (탐사·조준) | 직접 만드는 2.5D GPU 환경 — 수천 개 병렬 | (만들 예정) |
+| 실제와 비슷한 검증 (센서·물리) | Isaac Sim 4.5 + WeGo LIMO USD | `sim/wego_LimoIsaacSIM` |
+| Nav2·SLAM·BT 통합 검증 | Webots (교수님 환경, 실제 LIMO 와 같은 토픽·프레임) | `src/webots_ros2_limo` |
+
+```bash
+source ~/limo_fire_ws/env.sh
+ros2 launch webots_ros2_limo robot_launch.py            # Webots + LIMO
+ros2 launch webots_ros2_limo nav2_launch.py             # 다른 터미널: Nav2
 ```
 
 ## 시작하기
@@ -98,9 +115,9 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 ```bash
 git clone https://github.com/juyoung020/limo_fire_ws.git ~/limo_fire_ws
 cd ~/limo_fire_ws
-source /opt/ros/humble/setup.bash
-colcon build                       # conda는 PATH에서 뺀 셸에서
-source install/setup.bash
+source env.sh                      # conda 빼고 ROS 2 Humble
+colcon build --packages-select webots_ros2_limo   # 지금 쓰는 것만. 전체 빌드는 astra_camera 등 의존성 필요
+source env.sh
 ```
 
 Isaac Sim USD(`WegoLimoUSD.zip`, 약 65MB)는 용량 때문에 저장소에 없다. [WeGo 가이드](https://goofy-pleasure-a84.notion.site/Limo-Isaac-Sim-1ff09b2ac4bf8086bdf5e94521f74946)에서 받아 푼다.
@@ -114,6 +131,7 @@ unzip WegoLimoUSD.zip -d sim/wego_LimoIsaacSIM/USD/
 | 폴더 | 출처 | 커밋 |
 |---|---|---|
 | `src/wego_limo_pro` | [WeGo-Robotics/limo_pro](https://github.com/WeGo-Robotics/limo_pro) | `7ef355c` |
+| `src/webots_ros2_limo` | [inmo-jang/webots_ros2_limo](https://github.com/inmo-jang/webots_ros2_limo) (교수님) | `68d4fc0` |
 | `sim/wego_LimoIsaacSIM` | [WeGo-Robotics/LimoIsaacSIM](https://github.com/WeGo-Robotics/LimoIsaacSIM) (`sim` 브랜치) | `158da2b` |
 
 ## 일정
