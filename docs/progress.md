@@ -14,7 +14,7 @@
 | 탐사 RL GPU 환경 (CUDA) | 됨 — 관측·PPO 남음 | `train/explore/env` |
 | LIMO Pro 기본 URDF·TF | 됨 — 센서 모듈은 배치 정해지면 | `src/limo_fire/limo_fire_description` |
 | YOLO 데이터 모으기 | 공개 데이터·크롤링 됨, 직접 찍기 남음 | `train/detect/data` |
-| 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 프롬프트 다듬기·전체 라벨 남음 | `train/detect/teacher` |
+| 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 6.8 만 장 라벨, YOLO 데이터셋(8:1:1) 만듦 | `train/detect/teacher`, `tools/yolods` |
 | YOLO26s 학습기 (C++/CUDA) | 할 일 | `train/detect/trainer` |
 | ROS 노드 (BT·인식·연기 모드·보고) | 할 일 | `src/limo_fire` |
 | ESP32 모듈 | 부품 오면 | `firmware/` |
@@ -124,7 +124,7 @@ YOLO 는 사진 속 상자(픽셀 위치·크기), 클래스, 확신도만 낸�
 
 | 순서 | 일 |
 |---|---|
-| 1 | 프롬프트 다듬기(표본 사진으로 확인) → 전체 자동 라벨 |
+| 1 | ~~프롬프트 다듬기 → 전체 자동 라벨~~ 됨: 학습 54,585 · 검증 6,703 · 시험 6,820 장, 상자 약 26 만 개 |
 | 2 | 데이터셋 7 클래스 합치기 도구(Rust) — D-Fire 0=smoke·1=fire 번호 바꾸기 등 |
 | 3 | YOLO26s 학습기: ObjectSAM 학습기를 C3k2·C2PSA·NMS 없는 머리·STAL 로 옮기고, pickle 없이 가중치 변환 |
 | 4 | 학교에서 시험용 사진 찍기 (팀) |
