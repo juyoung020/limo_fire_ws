@@ -20,3 +20,6 @@ __pycache__/
 
 # 백업 번들
 *.bundle
+
+# HouseExpo (SUNCG 유래 — 재배포 안 함, sim/maps/README.md 참고)
+sim/maps/houseexpo/
