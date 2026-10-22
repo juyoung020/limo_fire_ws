@@ -1,9 +1,9 @@
 {
   "classes": [
-    {"id": 0, "name": "fire", "prompts": ["fire", "flame"]},
+    {"id": 0, "name": "fire", "prompts": ["fire", "candle flame"]},
     {"id": 1, "name": "smoke", "prompts": ["smoke"]},
     {"id": 2, "name": "fire_extinguisher", "prompts": ["fire extinguisher"]},
-    {"id": 3, "name": "exit_sign", "prompts": ["emergency exit sign", "green exit sign"]},
+    {"id": 3, "name": "exit_sign", "prompts": ["emergency exit sign", "green emergency exit light with running man"]},
     {"id": 4, "name": "person", "prompts": ["person"]},
     {"id": 5, "name": "door", "prompts": ["door"]},
     {"id": 6, "name": "stairs", "prompts": ["stairs"]}
