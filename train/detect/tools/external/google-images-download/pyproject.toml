@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "google_images_download"
+version = "3.0.1"
+description = "Python Script to download hundreds of images from 'Google Images'. It is a ready-to-run code!"
+readme = "README.rst"
+authors = [{name = "Hardik Vasa", email = "hnvasa@gmail.com"}]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+keywords = ["google", "images", "download", "save", "filter", "color", "image-search", "image-dataset", "image-scrapper", "image-gallery", "terminal", "command-line"]
+requires-python = ">=3.7"
+dependencies = [
+    "selenium>=4.0.0",
+    "webdriver-manager>=3.8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/hardikvasa/google-images-download"
+Documentation = "https://google-images-download.readthedocs.io"
+Repository = "https://github.com/hardikvasa/google-images-download"
+Issues = "https://github.com/hardikvasa/google-images-download/issues"
+
+[project.scripts]
+googleimagesdownload = "google_images_download.google_images_download:main"
+
+[tool.setuptools]
+packages = ["google_images_download"]

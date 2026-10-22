@@ -1,0 +1,38 @@
+# OSX
+.DS_Store
+
+# vscode config
+.vscode/
+icrawler/.vscode/
+
+# docs
+docs/_build
+
+# Image folder
+images
+
+# Python cache folder
+__pycache__
+
+# Compiled python modules.
+*.pyc
+
+# Python egg metadata, regenerated from source files by setuptools.
+*.egg-info
+*.egg
+
+# Setuptools distribution folder.
+dist/
+build/
+
+# Requirements
+requirements.in
+
+# Readme of markdown version
+README.md
+
+# Local test scripts
+icrawler/utils/test_proxy.py
+
+# version
+icrawler/version.py
