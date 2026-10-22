@@ -2,6 +2,7 @@
 
 | 폴더 | 출처 | 커밋 | 라이선스 | 지원 |
 |---|---|---|---|---|
+| `AutoCrawler` | [YoongiKim/AutoCrawler](https://github.com/YoongiKim/AutoCrawler) (별 1,696, 2026-08 갱신) | `9d61d18` | Apache-2.0 | **Google, Naver** (Selenium) — 한국어 검색어에 맞음 |
 | `icrawler` | [hellock/icrawler](https://github.com/hellock/icrawler) | `f2a326d` | MIT | Google, Bing, Baidu, Flickr(API 키) |
 | `bing_image_downloader` | [gurugaurav/bing_image_downloader](https://github.com/gurugaurav/bing_image_downloader) | `d49b98a` | MIT | Bing |
 | `google-images-download` | [hardikvasa/google-images-download](https://github.com/hardikvasa/google-images-download) | `9057dad` | MIT (setup.py) | Google |
