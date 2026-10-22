@@ -23,3 +23,7 @@ __pycache__/
 
 # HouseExpo (SUNCG 유래 — 재배포 안 함, sim/maps/README.md 참고)
 sim/maps/houseexpo/
+
+# train 빌드·생성물
+train/maps/target/
+train/maps/out/
