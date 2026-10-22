@@ -1,0 +1,27 @@
+/detect_line:
+  ros__parameters:
+    # what kind of debug image you want to get?
+    # if you set 0 : you will get roi,
+    # if you set 1 : you will get mask of lane,
+    # if you set 2 : you will get the moment of lane
+    debug_image_num: 2
+
+    # the floor and celling of lane color in hls
+    lane_h_h: 60
+    lane_h_l: 0
+    lane_l_h: 220
+    lane_l_l: 90
+    lane_s_h: 255
+    lane_s_l: 100
+
+    # set the reference distance of the lane
+    # higher number the closer to lane
+    reference_distance: 230
+
+    # Region of intererst in detecting lane
+    roi_x_h: 320
+    roi_x_l: 0
+    roi_y_h: 400
+    roi_y_l: 350
+    use_sim_time: false
+

@@ -1,0 +1,7 @@
+/limo_control:
+  ros__parameters:
+    default_speed: 0.2
+    p_gain: 0.0065
+    slow_down_ratio: 0.6
+    use_sim_time: false
+

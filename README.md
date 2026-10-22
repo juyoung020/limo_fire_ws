@@ -85,10 +85,9 @@ AgileX LIMO Pro(라이다, depth 카메라, IMU) 위에 ESP32로 제어하는 �
 
 ```
 limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
-├── src/                 ROS 2 패키지 (WeGo LIMO Pro 패키지는 받아서 넣음)
+├── src/                 ROS 2 패키지 (WeGo LIMO Pro 패키지 포함)
 ├── sim/                 Isaac Sim 4.5 확장·USD                     [COLCON_IGNORE]
 ├── firmware/            ESP32 코드
-├── tools/               fetch_third_party.sh
 ├── docs/                아이디어·스펙·부품 문서
 ├── refs/                참고 자료 (papers/ code/ datasheets/)       [COLCON_IGNORE]
 └── archive/             안 쓰는 것                                  [COLCON_IGNORE]
@@ -99,14 +98,23 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 ```bash
 git clone https://github.com/juyoung020/limo_fire_ws.git ~/limo_fire_ws
 cd ~/limo_fire_ws
-./tools/fetch_third_party.sh       # WeGo LIMO Pro 패키지 + Isaac Sim 확장 클론, USD 받는 법 안내
 source /opt/ros/humble/setup.bash
 colcon build                       # conda는 PATH에서 뺀 셸에서
 source install/setup.bash
 ```
 
-외부 저장소(`src/wego_limo_pro`, `sim/wego_LimoIsaacSIM`), USD 파일, 빌드 결과물은 저장소에 올리지 않는다.
-출처: [WeGo-Robotics/limo_pro](https://github.com/WeGo-Robotics/limo_pro), [WeGo-Robotics/LimoIsaacSIM](https://github.com/WeGo-Robotics/LimoIsaacSIM).
+Isaac Sim USD(`WegoLimoUSD.zip`, 약 65MB)는 용량 때문에 저장소에 없다. [WeGo 가이드](https://goofy-pleasure-a84.notion.site/Limo-Isaac-Sim-1ff09b2ac4bf8086bdf5e94521f74946)에서 받아 푼다.
+
+```bash
+unzip WegoLimoUSD.zip -d sim/wego_LimoIsaacSIM/USD/
+```
+
+### 포함한 외부 코드
+
+| 폴더 | 출처 | 커밋 |
+|---|---|---|
+| `src/wego_limo_pro` | [WeGo-Robotics/limo_pro](https://github.com/WeGo-Robotics/limo_pro) | `7ef355c` |
+| `sim/wego_LimoIsaacSIM` | [WeGo-Robotics/LimoIsaacSIM](https://github.com/WeGo-Robotics/LimoIsaacSIM) (`sim` 브랜치) | `158da2b` |
 
 ## 일정
 
