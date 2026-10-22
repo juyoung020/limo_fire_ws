@@ -1,0 +1,13 @@
+/move_to_pose:
+  ros__parameters:
+    Kp_alpha: 1.7 # gain for heading to goal
+    Kp_beta: 1.0 # gain for yaw differance between base_link and goal link control
+    Kp_rho: 0.2 # gain for distance control
+    
+    max_angular: 1.0 # set the max angular velocity [rad/s]
+    max_linear: 0.6 # set the max linear velocity [m/s]
+    
+    xy_tolerance: 0.05 # set the xy goal tolerance [m]
+    yaw_tolerance: 0.15 # set the yaw goal tolerance [rad]
+    
+    use_sim_time: false
