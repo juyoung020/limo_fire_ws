@@ -1,0 +1,27 @@
+{
+  "_설명": "클래스마다 Commons 분류(이름, 하위 분류 깊이)·Commons 검색어·Openverse 검색어·최대 장수. 이미지는 라벨 없이 모으고 라벨은 따로 단다",
+  "exit_sign": {
+    "commons_categories": [["Green exit signs", 2], ["Exit signs", 3], ["Emergency exit signs", 3]],
+    "commons_search": ["emergency exit sign", "비상구", "피난구 유도등", "exit sign running man"],
+    "openverse": ["emergency exit sign", "green exit sign", "비상구"],
+    "max": 800
+  },
+  "fire_extinguisher": {
+    "commons_categories": [["Fire extinguishers in South Korea", 1], ["Fire extinguishers", 3], ["Fire hose cabinets", 2]],
+    "commons_search": ["fire extinguisher", "소화기", "소화전"],
+    "openverse": ["fire extinguisher", "소화기", "fire hose cabinet"],
+    "max": 800
+  },
+  "candle": {
+    "commons_categories": [["Lit candles", 2]],
+    "commons_search": ["candle flame", "촛불"],
+    "openverse": ["candle flame", "lit candle", "촛불"],
+    "max": 600
+  },
+  "stairs_indoor": {
+    "commons_categories": [["Stairwells", 3]],
+    "commons_search": ["stairwell interior", "school staircase", "계단"],
+    "openverse": ["indoor staircase", "stairwell", "school stairs"],
+    "max": 800
+  }
+}

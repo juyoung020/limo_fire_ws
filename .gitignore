@@ -35,3 +35,4 @@ train/detect/data/*
 
 # 참고 코드(출처는 refs/README.md)
 refs/code/*/
+train/detect/tools/*/target/
