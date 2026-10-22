@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!-- 화재 대응 LIMO Pro. 지금은 기본 몸체만. 열화상·레이더·초음파·노즐(팬·틸트)은 배치가 정해지면 모듈 xacro 로 더한다. -->
+<robot name="limo_fire" xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:include filename="$(find limo_fire_description)/urdf/limo_pro_base.xacro"/>
+  <xacro:limo_pro_base/>
+</robot>
