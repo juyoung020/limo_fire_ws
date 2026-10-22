@@ -1,0 +1,23 @@
+# colcon
+build/
+install/
+log/
+
+# 외부 저장소 (tools/fetch_third_party.sh 로 받음)
+src/wego_limo_pro/
+sim/wego_LimoIsaacSIM/
+
+# 아카이브: 교수님 Webots 시뮬 클론과 빌드 결과물
+archive/limo_ws_webots_prof/
+
+# 큰 파일
+*.usd
+*.usdz
+*.zip
+
+__pycache__/
+*.pyc
+.vscode/
+
+# 백업 번들
+*.bundle
