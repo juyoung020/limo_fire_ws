@@ -1,0 +1,19 @@
+[package]
+name = "imgfilter"
+version = "0.1.0"
+edition = "2021"
+description = "크롤링한 학습 이미지에서 못 쓸 것(깨짐·작음·중복·엉뚱한 사진·그림)을 걸러 data/clean/ 에 하드링크로 모은다"
+
+[dependencies]
+anyhow = "1"
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+image = "0.25"
+serde_json = "1"
+walkdir = "2"
+rayon = "1"
+
+[features]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]

@@ -40,3 +40,5 @@ train/detect/tools/*/target/
 # AutoCrawler 실행 환경
 train/detect/tools/autocrawler/.venv/
 train/detect/tools/autocrawler/chrome-profile/
+
+train/detect/tools/icrawl/.venv/

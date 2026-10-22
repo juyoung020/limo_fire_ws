@@ -1,0 +1,71 @@
+{
+  "_설명": "클래스마다 받을 사진(keep)·버릴 사진(reject) 설명. SigLIP 이 모든 설명 중 확률을 나눠 갖고, keep 쪽 합이 keep_min 이상이면 남긴다. sources 는 data/raw/ 아래 수집 폴더(그 안의 <클래스>/)",
+  "sources": ["autocrawler", "icrawl", "web"],
+  "keep_min": 0.5,
+  "dup_cos": 0.97,
+  "min_side": 200,
+  "max_aspect": 3.0,
+  "common_reject": [
+    "a cartoon illustration or clip art",
+    "a vector icon or pictogram on a plain background",
+    "a screenshot of text, a document or a web page",
+    "a technical drawing with dimensions or a floor plan",
+    "a poster or infographic with text and illustrations",
+    "a video screenshot with large overlaid captions",
+    "a 3D rendering"
+  ],
+  "classes": {
+    "exit_sign": {
+      "keep": [
+        "a photo of a green emergency exit sign with a running man",
+        "a photo of an illuminated green exit sign above a door",
+        "a photo of an exit sign on a wall in a building corridor",
+        "a product photo of a green emergency exit light with a running man"
+      ],
+      "reject": [
+        "a photo of a red EXIT sign with text only",
+        "a product photo of a blank or unrelated sign",
+        "a photo of a building interior without any sign",
+        "a photo of a street or outdoor scene"
+      ]
+    },
+    "fire_extinguisher": {
+      "keep": [
+        "a photo of a red fire extinguisher",
+        "a photo of a fire extinguisher in a building hallway",
+        "a photo of a fire hose cabinet on a wall"
+      ],
+      "reject": [
+        "a photo of a burning fire",
+        "a photo of a firefighter or a fire truck",
+        "a photo of a room without fire safety equipment",
+        "a photo of a person spraying an extinguisher in a training drill"
+      ]
+    },
+    "candle": {
+      "keep": [
+        "a photo of a burning candle with a flame",
+        "a photo of lit candles in the dark",
+        "a close-up photo of a candle flame"
+      ],
+      "reject": [
+        "a photo of unlit candles without flame",
+        "a photo of a large fire or a bonfire",
+        "a photo of a crowd holding candles at night"
+      ]
+    },
+    "stairs": {
+      "keep": [
+        "a photo of an indoor staircase in a building",
+        "a photo of stairs in a school or office building",
+        "a photo of an emergency stairwell"
+      ],
+      "reject": [
+        "a photo of outdoor stairs",
+        "a photo of a corridor without stairs",
+        "a photo of an escalator",
+        "a photo of a wooden staircase in a luxury house"
+      ]
+    }
+  }
+}
