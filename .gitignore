@@ -27,3 +27,4 @@ sim/maps/houseexpo/
 # train 빌드·생성물
 train/maps/target/
 train/maps/out/
+train/env/build/
