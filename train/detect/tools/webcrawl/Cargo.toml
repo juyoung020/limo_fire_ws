@@ -1,0 +1,10 @@
+[package]
+name = "webcrawl"
+version = "0.1.0"
+edition = "2021"
+description = "라이선스가 붙은 공개 이미지(Wikimedia Commons, Openverse)를 클래스별로 모은다. 이미지마다 라이선스·작성자·출처를 manifest.jsonl 에 남긴다"
+
+[dependencies]
+ureq = { version = "2", features = ["json"] }
+serde_json = "1"
+sha1_smol = "1"

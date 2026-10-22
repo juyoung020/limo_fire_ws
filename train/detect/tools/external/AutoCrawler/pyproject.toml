@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autocrawler"
+version = "2.0.0"
+description = "Google & Naver multiprocess image crawler (high quality, fast, customizable)"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "selenium>=4.20",
+    "webdriver-manager>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/YoongiKim/AutoCrawler"
+
+[project.scripts]
+autocrawler = "autocrawler.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
