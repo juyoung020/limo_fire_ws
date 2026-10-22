@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.22)
+# 화재 대응 LIMO GPU 환경. sm_120(RTX 5070 Ti). CPU 참조판과 비트까지 같으려고 fmad 를 끄고 나눗셈·제곱근을 정확하게 한다.
+project(limo_fire_env LANGUAGES CXX CUDA)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+set(CMAKE_CUDA_ARCHITECTURES 120)
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -ffp-contract=off")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 --fmad=false -prec-div=true -prec-sqrt=true -ftz=false")
+find_package(CUDAToolkit REQUIRED)
+
+add_library(fenv STATIC src/fenv_kernel.cu src/fenv_ref.cpp src/fmap_host.cpp)
+target_include_directories(fenv PUBLIC include)
+target_link_libraries(fenv PUBLIC CUDA::cudart)
+
+add_executable(fenv_verify tools/fenv_verify.cu)
+target_link_libraries(fenv_verify fenv)
+add_executable(fenv_bench tools/fenv_bench.cu)
+target_link_libraries(fenv_bench fenv)
