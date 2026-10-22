@@ -1,0 +1,44 @@
+<?xml version="1.0" ?>
+<robot name="LIMO">
+    <webots>
+        <!-- Turn off the driver's automatic /LIMO/<device> topics: the plugin below
+             publishes the real robot's topics instead. -->
+        <device reference="laser"><ros><enabled>false</enabled></ros></device>
+        <device reference="rgb_camera"><ros><enabled>false</enabled></ros></device>
+        <device reference="depth_camera"><ros><enabled>false</enabled></ros></device>
+        <device reference="ir_camera"><ros><enabled>false</enabled></ros></device>
+        <device reference="imu compass"><ros><enabled>false</enabled></ros></device>
+
+        <!-- /scan, /imu and all /camera/* topics, published with the same names, types,
+             frames, rates and QoS as the real LIMO (see webots_ros2_limo/limo_sensors.py). -->
+        <plugin type="webots_ros2_limo.limo_sensors.LimoSensors" />
+
+        <plugin type="webots_ros2_control::Ros2Control" />
+    </webots>
+
+    <ros2_control name="WebotsControl" type="system">
+        <hardware>
+            <plugin>webots_ros2_control::Ros2ControlSystem</plugin>
+        </hardware>
+        <joint name="front_left_wheel">
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+            <command_interface name="velocity"/>
+        </joint>
+        <joint name="front_right_wheel">
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+            <command_interface name="velocity"/>
+        </joint>
+        <joint name="rear_left_wheel">
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+            <command_interface name="velocity"/>
+        </joint>
+        <joint name="rear_right_wheel">
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+            <command_interface name="velocity"/>
+        </joint>
+    </ros2_control>
+</robot>

@@ -1,0 +1,25 @@
+# colcon
+build/
+install/
+log/
+
+# Isaac Sim USD (WeGo 가이드에서 직접 받음, README 참고)
+sim/wego_LimoIsaacSIM/USD/WegoLimo/
+
+# 아카이브: 교수님 Webots 시뮬 클론과 빌드 결과물
+archive/limo_ws_webots_prof/
+
+# 큰 파일
+*.usd
+*.usdz
+*.zip
+
+__pycache__/
+*.pyc
+.vscode/
+
+# 백업 번들
+*.bundle
+
+# HouseExpo (SUNCG 유래 — 재배포 안 함, sim/maps/README.md 참고)
+sim/maps/houseexpo/
