@@ -4,10 +4,12 @@ GPU 학습 환경(C++/CUDA/Rust). ROS 패키지가 아니라 빌드에서 빠진
 
 | 폴더 | 내용 | 상태 |
 |---|---|---|
-| `maps/` | 맵 변환기 `fmap` (Rust): HouseExpo·ProcTHOR·덕트호스 생성기 → 공통 점유 격자 `.fmap` + 소화기·비상구·화재 감지기 배치 | 됨 |
-| `env/` | LIMO GPU 환경 커널(CUDA): 차동 구동 + 목표점 추종기, 라이다 248 빔 DDA, 덮음 보상, 판마다 불 무작위 생성. CPU 참조판과 비트 동일 | 됨(관측 만들기는 PPO 와 함께) |
-| `ppo/` | PPO 학습기 (object-memory-robot `training/RL` 에서 옮김) | 할 일 |
-| `viewer/` | 학습 뷰어 trainview (Rust) | 할 일 |
+| `maps/` | 맵 변환기 `fmap` (Rust): HouseExpo·ProcTHOR·덕트호스 생성기 → 공통 점유 격자 `.fmap` + 소화기·비상구·화재 감지기 배치. 탐사·조준 공용 | 됨 |
+| `explore/env/` | 탐사 RL — LIMO GPU 환경 커널(CUDA): 차동 구동 + 목표점 추종기, 라이다 248 빔 DDA, 덮음 보상, 판마다 불 무작위 생성. CPU 참조판과 비트 동일 | 됨(관측 만들기는 PPO 와 함께) |
+| `explore/ppo/` | 탐사 RL — PPO 학습기 (object-memory-robot `training/RL` 에서 옮김) | 할 일 |
+| `explore/viewer/` | 탐사 RL — 학습 뷰어 trainview (Rust) | 할 일 |
+| `aim/` | 조준 RL | 나중 |
+| `detect/` | YOLO 탐지(불·연기·소화기·비상구·사람·문), C++/CUDA 학습기 | 할 일 |
 
 ## 맵 만들기
 
@@ -32,13 +34,13 @@ M=../../sim/maps
 
 로봇 중심이 벽에서 0.15 m 이상 떨어진 빈 칸의 가장 큰 연결 영역만 도달 영역(FREE)으로 남긴다. 광선은 바깥(0)과 벽(2)에서 모두 막힌다.
 
-## 환경 (`env/`)
+## 탐사 환경 (`explore/env/`)
 
 ```bash
-cd train/env && cmake -S . -B build && cmake --build build -j
-./build/fenv_verify ../maps/out 300 512 400            # GPU == CPU 비트 동일이어야 통과
-./build/fenv_verify ../maps/out 300 512 400 --negative # 일부러 어긋나게 해서 잡히는지(음성 대조)
-./build/fenv_bench  ../maps/out 1000 16384 200         # 처리량
+cd train/explore/env && cmake -S . -B build && cmake --build build -j
+./build/fenv_verify ../../maps/out 300 512 400            # GPU == CPU 비트 동일이어야 통과
+./build/fenv_verify ../../maps/out 300 512 400 --negative # 일부러 어긋나게 해서 잡히는지(음성 대조)
+./build/fenv_bench  ../../maps/out 1000 16384 200         # 처리량
 ```
 
 | 항목 | 값 (`include/fenv.h` 의 `K`) |
