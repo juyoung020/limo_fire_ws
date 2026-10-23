@@ -7,7 +7,7 @@ Ultralytics `yolo detect train model=yolo26s.pt`(8.4.170) 과 같은 규칙을 P
 | 파일 | 내용 |
 |---|---|
 | `src/net.cpp, net.h` | YOLO26s 신경망(C3k2·C3k·SPPF·C2PSA·PSABlock·Detect end2end, reg_max 1). 연산마다 정방향·역방향, PyTorch state_dict 이름 그대로 |
-| `src/conv.cpp` | cuDNN 합성곱(NHWC fp16), 알고리즘은 시작 때 재서 고름 |
+| `src/conv.cpp` | cuDNN 합성곱(NHWC fp16): legacy·backend(frontend) 실행 계획을 시작 때 재서 고름 |
 | `src/kern.cu` | BatchNorm(학습 통계)+SiLU, depthwise 3×3(cuDNN 이 느려 직접), concat·slice·업샘플·maxpool·편향 |
 | `src/attn.cu` | PSA 어텐션(cuBLAS 묶음 GEMM + softmax) |
 | `src/loss.cu` | E2E 손실: one2many(topk 10) + one2one(topk 7, topk2 1), STAL 배정, CIoU(4 방향 이중수로 미분) + L1 + BCE |
@@ -50,7 +50,10 @@ cmake -S . -B build && cmake --build build -j
 | BN·concat·더하기·업샘플 커널 16 B 벡터화 | 306 |
 | 입력 3 → 8 채널 덧대기(첫 합성곱 텐서코어), 가중치 변환 한 커널, Muon 정규화 병렬, 반복·옵티마이저 CUDA 그래프 | 327 |
 | BN 통계 2 단계 합산(블록별 부분합 → 병렬 합, 같은 주소 atomic 없앰) | 340~346 |
-| concat 복사 없앰: 합성곱이 읽지 않는 concat 입력(40 개 중 38 개)은 버퍼 안 자기 자리에 바로 씀 | **359~370** (데이터 기다림 1 % 미만) |
+| concat 복사 없앰: 합성곱이 읽지 않는 concat 입력(40 개 중 38 개)은 버퍼 안 자기 자리에 바로 씀 | 359~370 |
+| cuDNN backend 엔진(frontend v1.31): 합성곱마다 legacy 와 backend 실행 계획을 다 재서 빠른 쪽, backend 결과는 legacy 와 비교해 맞는 것만. 입력 기울기는 그 버퍼에 처음 쓰는 연산만(backend 는 더하기가 없음) | **393** |
+
+합성곱 + BN 통계 융합(conv_fprop + genstats)은 RTX 5070 Ti(sm_120)에 엔진이 없어 못 함(cuDNN 9.27, "No valid engine configs"). backend FFT 엔진은 재는 중에 버퍼 밖에 써서 뺐다.
 
 한 epoch(5.5 만 장) 약 2 분 30 초. 이제 반복 시간(약 87 ms)의 대부분은 합성곱(cuDNN)과 BN 자체. cuDNN 은 채널 간격이 있는 입력을 받지 않아 합성곱 입력은 꽉 찬 버퍼로 둔다. 남은 여지: cuDNN backend 엔진·합성곱+BN 통계 융합.
 

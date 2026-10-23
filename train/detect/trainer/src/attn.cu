@@ -135,6 +135,7 @@ class OpAttn : public Op {
             Cq, kActCuda, 1.f, ptr[8], Cq, kActCuda, bt);
   }
   std::string desc() const override { return "attention"; }
+  std::vector<Tensor*> grad_writes() const override { return {qkv, qkv}; }  // 둘 이상 = 더하기
 };
 }  // namespace
 

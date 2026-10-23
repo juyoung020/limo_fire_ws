@@ -68,6 +68,9 @@ class Op {
   virtual void fwd(bool train) = 0;
   virtual void bwd() = 0;
   virtual std::string desc() const = 0;
+  // 역방향에서 기울기를 쓰는(더하는) 텐서들 — 처음 쓰는 연산 찾기용
+  virtual std::vector<Tensor*> grad_writes() const = 0;
+  bool dgrad_first = false;  // 합성곱: 입력 기울기를 처음 쓰는 연산인지(Net::finalize 가 정함)
   float ms_f = 0, ms_b = 0;
 };
 

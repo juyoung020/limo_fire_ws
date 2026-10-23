@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
 #include "kern.cuh"
 
 // ================= 파라미터 =================
@@ -164,6 +165,10 @@ class OpConvBN : public Op {
     conv.wgrad(in->x, dz, net->params.dw16 + P(pw).woff, net->ws, net->ws_bytes, 0.f);
   }
   std::string desc() const override { return "conv_bn " + pre; }
+  std::vector<Tensor*> grad_writes() const override {
+    if (!detach && in->g) return {in};
+    return {};
+  }
 };
 
 class OpConvBias : public Op {
@@ -192,6 +197,10 @@ class OpConvBias : public Op {
     conv.wgrad(in->x, out->g, P.dw16 + P.list[pw].woff, net->ws, net->ws_bytes, 0.f);
   }
   std::string desc() const override { return "conv_bias " + pre; }
+  std::vector<Tensor*> grad_writes() const override {
+    if (!detach && in->g) return {in};
+    return {};
+  }
 };
 
 class OpCat : public Op {
@@ -216,6 +225,12 @@ class OpCat : public Op {
     }
   }
   std::string desc() const override { return "cat"; }
+  std::vector<Tensor*> grad_writes() const override {
+    std::vector<Tensor*> v;
+    for (auto* t : ins)
+      if (t->parent != out && t->g) v.push_back(t);
+    return v;
+  }
 };
 class OpSlice : public Op {
  public:
@@ -228,6 +243,7 @@ class OpSlice : public Op {
     if (in->g) kern::copy_ch(out->g, out->ld, 0, in->g, in->ld, c0, out->C, out->M(), true, s);
   }
   std::string desc() const override { return "slice"; }
+  std::vector<Tensor*> grad_writes() const override { return {in}; }
 };
 class OpAdd : public Op {
  public:
@@ -240,6 +256,7 @@ class OpAdd : public Op {
     if (b->g) kern::acc(out->g, out->ld, b->g, b->ld, out->M(), out->C, s);
   }
   std::string desc() const override { return "add"; }
+  std::vector<Tensor*> grad_writes() const override { return {a, b}; }
 };
 class OpUp : public Op {
  public:
@@ -251,6 +268,7 @@ class OpUp : public Op {
     if (in->g) kern::up2_bwd(out->g, out->ld, in->g, in->ld, in->N, in->H, in->W, in->C, s);
   }
   std::string desc() const override { return "up2"; }
+  std::vector<Tensor*> grad_writes() const override { return {in}; }
 };
 class OpPool : public Op {
  public:
@@ -264,6 +282,7 @@ class OpPool : public Op {
     if (in->g) kern::maxpool_bwd(out->g, out->ld, arg, in->g, in->ld, in->N, in->H, in->W, in->C, k, s);
   }
   std::string desc() const override { return "maxpool"; }
+  std::vector<Tensor*> grad_writes() const override { return {in}; }
 };
 
 // ================= 쌓기 =================
@@ -496,6 +515,18 @@ void Net::finalize() {
     maxz = std::max(maxz, t->n());
     maxC = std::max<int64_t>(maxC, t->C);
   }
+  // 역방향 순서로 돌며 각 기울기 버퍼(놓인 텐서는 그 부모 단위)에 처음 쓰는 연산을 찾는다
+  {
+    std::map<Tensor*, bool> written;
+    for (auto it = ops_.rbegin(); it != ops_.rend(); ++it) {
+      auto w = (*it)->grad_writes();
+      if (w.size() == 1) {
+        Tensor* base = w[0]->parent ? w[0]->parent : w[0];
+        (*it)->dgrad_first = !written[base] && !w[0]->parent;
+      }
+      for (auto* t : w) written[t->parent ? t->parent : t] = true;
+    }
+  }
   dz_ = dalloc<act_t>(maxz);
   dwtmp_ = dalloc<float>(9 * maxC);
   acc_ = dalloc<double>(4 * maxC);
@@ -514,14 +545,26 @@ void Net::finalize() {
     if (auto* c = dynamic_cast<OpConvBN*>(op.get()))
       ws_bytes = std::max(ws_bytes, c->conv.tune(c->in->x, params.w16 + params.list[c->pw].woff, c->z,
                                                  c->in->g ? c->in->g : dz_, params.dw16 + params.list[c->pw].woff,
-                                                 dz_, tmp_ws, lim, !c->detach && c->in->g));
+                                                 dz_, tmp_ws, lim, !c->detach && c->in->g, c->dgrad_first));
     else if (auto* b = dynamic_cast<OpConvBias*>(op.get()))
       ws_bytes = std::max(ws_bytes, b->conv.tune(b->in->x, params.w16 + params.list[b->pw].woff, b->out->x,
                                                  b->in->g ? b->in->g : dz_, params.dw16 + params.list[b->pw].woff,
-                                                 b->out->g, tmp_ws, lim, !b->detach && b->in->g));
+                                                 b->out->g, tmp_ws, lim, !b->detach && b->in->g, b->dgrad_first));
   }
   CK(cudaFree(tmp_ws));
   ws = ws_bytes ? dalloc<char>(ws_bytes) : nullptr;
+  {
+    int nbe[3] = {0, 0, 0}, nconv = 0;
+    for (auto& op : ops_) {
+      ConvOp* c = nullptr;
+      if (auto* a = dynamic_cast<OpConvBN*>(op.get()); a && !a->dw) c = &a->conv;
+      if (auto* b = dynamic_cast<OpConvBias*>(op.get())) c = &b->conv;
+      if (!c) continue;
+      ++nconv;
+      for (int i = 0; i < 3; ++i) nbe[i] += c->use_be[i];
+    }
+    std::printf("합성곱 %d 개 중 backend 엔진: 정방향 %d, 입력 기울기 %d, 가중치 기울기 %d\n", nconv, nbe[0], nbe[1], nbe[2]);
+  }
 }
 
 void Net::zero_act_grads() { CK(cudaMemsetAsync(grad_arena_, 0, grad_arena_n_ * sizeof(act_t), s_)); }
