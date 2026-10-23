@@ -161,3 +161,21 @@ fire 는 작은 촛불·과노출 불꽃을 전구로 헷갈려 쓰지 않음.
 - 결과 라벨 `data/labels/sam3_clean.jsonl` → `data/yolo_clean` → `data/cache/clean_*_640.ycache`
 - 이전 모델(정리 전 라벨로 학습)을 정리된 시험 라벨로 재면 mAP50-95 0.625 (exit_sign 0.708, door 0.568) — 재학습 비교 기준
 - 재학습: 정리된 라벨 + `--close-mosaic 0` (이전 학습에서 Mosaic 끈 마지막 10 epoch 에 검증이 떨어졌음), `data/runs/y26s_clean`
+
+### 재학습 결과 (정리된 라벨, `--close-mosaic 0`)
+
+최고는 80 epoch(검증 0.6456). 끝 무렵 다시 0.640 까지 내려감 — Mosaic 를 끄지 않아도 같아서, 앞 학습의 끝 무렵 하락도 Mosaic 탓은 아닌 듯.
+best: `train/detect/data/runs/y26s_clean/best.safetensors` (지금 쓸 모델).
+
+정리된 시험 라벨, AP50-95:
+
+| 클래스 | 이전 모델 | 새 모델 |
+|---|---|---|
+| fire | 0.614 | 0.611 |
+| smoke | 0.603 | 0.601 |
+| fire_extinguisher | 0.768 | 0.766 |
+| exit_sign | 0.708 | **0.818** |
+| person | 0.522 | 0.523 |
+| door | 0.568 | **0.657** |
+| stairs | 0.592 | 0.599 |
+| **전체** | 0.625 | **0.654** (AP50 0.751 → 0.784) |
