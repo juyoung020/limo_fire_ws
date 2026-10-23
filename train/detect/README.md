@@ -4,7 +4,7 @@
 
 | 폴더 | 내용 | 상태 |
 |---|---|---|
-| `trainer/` | C++/CUDA 학습기. ObjectSAM(`~/ObjectSAM/src`, YOLOv8s-seg 1 클래스, 4,253 줄)을 바탕으로 **YOLO26s**(COCO 사전학습, 2026-01) 구조로 옮기고, 클래스 7 개·상자만 학습하게 바꾼다 | 할 일 |
+| `trainer/` | YOLO26s C++/CUDA 학습기 — Ultralytics 와 정합성 확인, 299 장/초 — [trainer/README.md](trainer/README.md) | 됨, 100 epoch 학습 중 |
 | `teacher/` | 자동 라벨러: SAM 3(텍스트 프롬프트 검출·분할)를 C++/CUDA 로 옮긴 것. fp16 6.7 장/초, PyTorch 와 정합성 확인 — [teacher/README.md](teacher/README.md) | 됨 |
 | `tools/` | 크롤러·거르기(imgfilter), `yolods`: SAM 3 라벨 → YOLO 데이터셋(규칙: 클래스별 문턱·NMS·표지 속 사람 그림 제거, 8:1:1) | 됨 |
 | `data/` | 이미지·라벨·사전학습 가중치 (git 제외). 받은 것과 라이선스는 [data/README.md](data/README.md) | 공개 데이터 받음, 직접 찍을 것 남음 |
