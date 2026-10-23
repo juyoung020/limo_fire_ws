@@ -46,3 +46,5 @@ train/detect/teacher/build/
 train/detect/teacher/.venv-ref/
 train/detect/teacher/ref/
 train/detect/teacher/ref_src
+train/detect/trainer/build/
+train/detect/trainer/ref/
