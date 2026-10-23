@@ -15,15 +15,24 @@ int Params::add(const std::string& name, PKind k, std::vector<int64_t> shape) {
   for (auto s : shape) p.n *= s;
   p.off = total;
   total += p.n;
-  if (k == P_CONV) {
-    p.woff = wtotal;
-    wtotal += p.n;
-  }
+
   idx[name] = (int)list.size();
   list.push_back(p);
   return idx[name];
 }
 void Params::allocate() {
+  std::vector<ConvTab> t;
+  wtotal = 0;
+  for (auto& p : list)
+    if (p.kind == P_CONV) {
+      int Cg = (int)p.shape[1], RS = (int)(p.shape[2] * p.shape[3]), Cp = p.cpad ? p.cpad : Cg;
+      p.woff = wtotal;
+      wtotal += int64_t(p.shape[0]) * RS * Cp;
+      t.push_back({p.off, p.woff, (int)p.shape[0], Cg, RS, Cp});
+    }
+  ntab = (int)t.size();
+  tab = dalloc<ConvTab>(ntab);
+  CK(cudaMemcpy(tab, t.data(), sizeof(ConvTab) * ntab, cudaMemcpyHostToDevice));
   vals = dalloc<float>(total);
   grads = dalloc<float>(total);
   w16 = dalloc<act_t>(wtotal);
@@ -67,42 +76,33 @@ void Params::save(const std::string& path, bool with_grads) const {
 }
 
 namespace {
-// PyTorch [K, Cg, R, S] (float) → KRSC (act_t), 거꾸로(기울기)
-__global__ void to_krsc_k(const float* w, act_t* o, int K, int Cg, int RS) {
-  int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
-  int64_t n = int64_t(K) * Cg * RS;
-  if (i >= n) return;
-  int c = int(i % Cg);
-  int64_t t = i / Cg;
-  int rs = int(t % RS);
-  int k = int(t / RS);
-  o[i] = from_f<act_t>(w[(int64_t(k) * Cg + c) * RS + rs]);
+// 모든 합성곱 가중치를 한 번에: 블록 y = 표 번호, 블록 x·스레드 = 그 가중치 안 원소(KRSC 기준)
+__global__ void to_krsc_k(const Params::ConvTab* tab, const float* vals, act_t* w16) {
+  Params::ConvTab t = tab[blockIdx.y];
+  int64_t n = int64_t(t.K) * t.RS * t.Cp;
+  for (int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; i < n; i += (int64_t)gridDim.x * blockDim.x) {
+    int c = int(i % t.Cp);
+    int64_t q = i / t.Cp;
+    int rs = int(q % t.RS), k = int(q / t.RS);
+    w16[t.woff + i] = c < t.Cg ? from_f<act_t>(vals[t.off + (int64_t(k) * t.Cg + c) * t.RS + rs]) : from_f<act_t>(0.f);
+  }
 }
-__global__ void from_krsc_k(const act_t* d, float* g, int K, int Cg, int RS, bool accum) {
-  int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
-  int64_t n = int64_t(K) * Cg * RS;
-  if (i >= n) return;
-  int c = int(i % Cg);
-  int64_t t = i / Cg;
-  int rs = int(t % RS);
-  int k = int(t / RS);
-  float v = to_f(d[i]);
-  float* p = g + (int64_t(k) * Cg + c) * RS + rs;
-  *p = accum ? *p + v : v;
+__global__ void from_krsc_k(const Params::ConvTab* tab, const act_t* dw16, float* grads, bool accum) {
+  Params::ConvTab t = tab[blockIdx.y];
+  int64_t n = int64_t(t.K) * t.RS * t.Cp;
+  for (int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; i < n; i += (int64_t)gridDim.x * blockDim.x) {
+    int c = int(i % t.Cp);
+    if (c >= t.Cg) continue;
+    int64_t q = i / t.Cp;
+    int rs = int(q % t.RS), k = int(q / t.RS);
+    float v = to_f(dw16[t.woff + i]);
+    float* p = grads + t.off + (int64_t(k) * t.Cg + c) * t.RS + rs;
+    *p = accum ? *p + v : v;
+  }
 }
 }  // namespace
-void Params::sync_w16(cudaStream_t s) {
-  for (auto& p : list)
-    if (p.kind == P_CONV)
-      to_krsc_k<<<cdiv(p.n, 256), 256, 0, s>>>(vals + p.off, w16 + p.woff, (int)p.shape[0], (int)p.shape[1],
-                                                 (int)(p.shape[2] * p.shape[3]));
-}
-void Params::gather_dw(cudaStream_t s, bool accum) {
-  for (auto& p : list)
-    if (p.kind == P_CONV)
-      from_krsc_k<<<cdiv(p.n, 256), 256, 0, s>>>(dw16 + p.woff, grads + p.off, (int)p.shape[0], (int)p.shape[1],
-                                                   (int)(p.shape[2] * p.shape[3]), accum);
-}
+void Params::sync_w16(cudaStream_t s) { to_krsc_k<<<dim3(64, ntab), 256, 0, s>>>(tab, vals, w16); }
+void Params::gather_dw(cudaStream_t s, bool accum) { from_krsc_k<<<dim3(64, ntab), 256, 0, s>>>(tab, dw16, grads, accum); }
 
 // ================= 연산 =================
 class OpConvBN : public Op {
@@ -121,7 +121,9 @@ class OpConvBN : public Op {
     ConvGeom g{i->N, i->H, i->W, i->C, o->C, k, k, s, k / 2, groups};
     conv.init(net->dnn_, g);
     int K = o->C;
-    pw = net->params.add(name + ".conv.weight", P_CONV, {K, i->C / groups, k, k});
+    bool first = (i == net->in_);  // 입력은 3 채널을 8 로 덧대 둔다(텐서코어 경로)
+    pw = net->params.add(name + ".conv.weight", P_CONV, {K, first ? 3 : i->C / groups, k, k});
+    if (first) net->params.list[pw].cpad = i->C;
     pg = net->params.add(name + ".bn.weight", P_BN_W, {K});
     pb = net->params.add(name + ".bn.bias", P_BN_B, {K});
     prm = net->params.add(name + ".bn.running_mean", P_RUN_MEAN, {K});
@@ -415,7 +417,7 @@ void Net::build(const NetCfg& c, cudnnHandle_t dnn, cublasHandle_t blas, cudaStr
   s_ = s;
   int B = cfg.batch, S = cfg.imgsz;
   YT_ASSERT(S % 32 == 0, "imgsz 는 32 의 배수");
-  in_ = tensor(B, S, S, 3, false);
+  in_ = tensor(B, S, S, 8, false);  // RGB + 0 다섯(첫 합성곱 텐서코어용)
   Tensor* x0 = conv_bn("model.0", in_, 32, 3, 2, 1);
   Tensor* x1 = conv_bn("model.1", x0, 64, 3, 2, 1);
   Tensor* x2 = c3k2("model.2", x1, 128, 1, false, 0.25f, false);
@@ -460,7 +462,7 @@ void Net::finalize() {
   dwtmp_ = dalloc<float>(9 * maxC);
   acc_ = dalloc<double>(4 * maxC);
   // 합성곱 알고리즘 재기(작업 공간 상한 256 MB)
-  size_t lim = 256u << 20;
+  size_t lim = 1024u << 20;
   void* tmp_ws = nullptr;
   CK(cudaMalloc(&tmp_ws, lim));
   ws_bytes = 0;
@@ -486,4 +488,44 @@ void Net::forward(bool train) {
 }
 void Net::backward() {
   for (auto it = ops_.rbegin(); it != ops_.rend(); ++it) (*it)->bwd();
+}
+
+namespace {
+std::vector<cudaEvent_t> g_ev;
+void ensure_ev(size_t n) {
+  while (g_ev.size() < n) {
+    cudaEvent_t e;
+    CK(cudaEventCreate(&e));
+    g_ev.push_back(e);
+  }
+}
+}  // namespace
+void Net::forward_timed(bool train) {
+  ensure_ev(ops_.size() + 1);
+  CK(cudaEventRecord(g_ev[0], s_));
+  for (size_t i = 0; i < ops_.size(); ++i) {
+    ops_[i]->fwd(train);
+    CK(cudaEventRecord(g_ev[i + 1], s_));
+  }
+  CK(cudaEventSynchronize(g_ev[ops_.size()]));
+  for (size_t i = 0; i < ops_.size(); ++i) {
+    float ms;
+    CK(cudaEventElapsedTime(&ms, g_ev[i], g_ev[i + 1]));
+    ops_[i]->ms_f += ms;
+  }
+}
+void Net::backward_timed() {
+  ensure_ev(ops_.size() + 1);
+  size_t n = ops_.size();
+  CK(cudaEventRecord(g_ev[0], s_));
+  for (size_t k = 0; k < n; ++k) {
+    ops_[n - 1 - k]->bwd();
+    CK(cudaEventRecord(g_ev[k + 1], s_));
+  }
+  CK(cudaEventSynchronize(g_ev[n]));
+  for (size_t k = 0; k < n; ++k) {
+    float ms;
+    CK(cudaEventElapsedTime(&ms, g_ev[k], g_ev[k + 1]));
+    ops_[n - 1 - k]->ms_b += ms;
+  }
 }

@@ -57,12 +57,13 @@ __device__ inline void hsv2rgb(int h8, int s8, int v8, float* out) {
   out[1] = fminf(fmaxf(rintf(g * 255.f), 0.f), 255.f);
   out[2] = fminf(fmaxf(rintf(b * 255.f), 0.f), 255.f);
 }
-__global__ void augment_k(const uint8_t* img, const SampleParam* sps, int B, int S, act_t* out) {
+__global__ void augment_k(const uint8_t* img, const SampleParam* sps, int B, int S, int C, act_t* out) {
   int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
   if (i >= int64_t(B) * S * S) return;
   int x = int(i % S), y = int((i / S) % S), b = int(i / (int64_t(S) * S));
   const SampleParam& p = sps[b];
-  act_t* o = out + i * 3;
+  act_t* o = out + i * C;
+  for (int c = 3; c < C; ++c) o[c] = from_f<act_t>(0.f);
   if (p.ntile == 0) {
     o[0] = o[1] = o[2] = from_f<act_t>(114.f / 255.f);
     return;
@@ -94,7 +95,7 @@ __global__ void augment_k(const uint8_t* img, const SampleParam* sps, int B, int
 }
 }  // namespace
 
-void augment_batch(const uint8_t* img, const SampleParam* sp, int B, int S, act_t* out, cudaStream_t s) {
+void augment_batch(const uint8_t* img, const SampleParam* sp, int B, int S, int C, act_t* out, cudaStream_t s) {
   int64_t n = int64_t(B) * S * S;
-  augment_k<<<cdiv(n, 256), 256, 0, s>>>(img, sp, B, S, out);
+  augment_k<<<cdiv(n, 256), 256, 0, s>>>(img, sp, B, S, C, out);
 }

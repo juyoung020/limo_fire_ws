@@ -227,6 +227,10 @@ int main(int argc, char** argv) {
   cublasHandle_t blas;
   CBL(cublasCreate(&blas));
   CBL(cublasSetStream(blas, s));
+  {  // 그래프 잡기 중에 cuBLAS 가 메모리를 잡지 않도록
+    void* bws = dalloc<char>(64u << 20);
+    CBL(cublasSetWorkspace(blas, bws, 64u << 20));
+  }
 
   Cache tc, vc;
   YT_ASSERT(tc.open(a.train), "학습 캐시 %s", a.train.c_str());
@@ -290,12 +294,30 @@ int main(int argc, char** argv) {
       hd[br].dbox[l] = net.head_box(br, l)->g;
       hd[br].dcls[l] = net.head_cls(br, l)->g;
     }
-  float* items_acc = dalloc<float>(8);
+  float* lw = dalloc<float>(2);  // 가지 가중치(o2m, o2o) — 그래프가 장치에서 읽는다
+  float* lw_h = nullptr;
+  CK(cudaMallocHost(&lw_h, 8));
+  // 반복 하나(기울기 지우기 → 정방향 → 손실 → 역방향 → 가중치 기울기 모으기)를 CUDA 그래프로. 정답 버퍼가 두 벌이라
+  // 그래프도 두 개(정답 주소마다).
+  std::map<const void*, cudaGraphExec_t> graphs;
+  bool use_graph = true;
+  auto iteration = [&](const GtDev& gt) {
+    net.zero_act_grads();
+    net.forward(true);
+    loss.run(0, hd[0], gt, lw, opt.scale(), s);
+    loss.run(1, hd[1], gt, lw + 1, opt.scale(), s);
+    net.backward();
+    net.params.gather_dw(s, true);
+  };
   int64_t last_opt = int64_t(ck.epoch) * nb - 1;
   CK(cudaMemsetAsync(net.params.grads, 0, net.params.total * 4, s));
   for (int epoch = ck.epoch; epoch < a.epochs; ++epoch) {
     float o2m = (float)(std::max(1.0 - (double)epoch / std::max(a.epochs - 1, 1), 0.0) * (0.8 - 0.1) + 0.1),
           o2o = std::max(1.f - o2m, 0.f);
+    CK(cudaStreamSynchronize(s));
+    lw_h[0] = o2m;
+    lw_h[1] = o2o;
+    CK(cudaMemcpyAsync(lw, lw_h, 8, cudaMemcpyHostToDevice, s));
     auto t0 = std::chrono::steady_clock::now();
     double sum[3] = {0, 0, 0};
     int nsum = 0;
@@ -307,12 +329,22 @@ int main(int argc, char** argv) {
       int* gcl;
       tl.next(net.input()->x, &gn, &gbx, &gcl, nullptr, s);
       GtDev gt{gn, gbx, gcl};
-      net.zero_act_grads();
-      net.forward(true);
-      loss.run(0, hd[0], gt, o2m, opt.scale(), s);
-      loss.run(1, hd[1], gt, o2o, opt.scale(), s);
-      net.backward();
-      net.params.gather_dw(s, true);
+      if (!use_graph || ni == int64_t(ck.epoch) * nb) {
+        iteration(gt);  // 처음 한 번은 그대로(지연 초기화가 끝나도록)
+      } else {
+        auto it = graphs.find(gn);
+        if (it == graphs.end()) {
+          cudaGraph_t g;
+          CK(cudaStreamBeginCapture(s, cudaStreamCaptureModeThreadLocal));
+          iteration(gt);
+          CK(cudaStreamEndCapture(s, &g));
+          cudaGraphExec_t ge;
+          CK(cudaGraphInstantiate(&ge, g, 0));
+          CK(cudaGraphDestroy(g));
+          it = graphs.emplace(gn, ge).first;
+        }
+        CK(cudaGraphLaunch(it->second, s));
+      }
       if (ni - last_opt >= opt.accumulate(ni)) {
         opt.step(ni, epoch);
         last_opt = ni;

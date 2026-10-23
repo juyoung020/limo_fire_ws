@@ -13,6 +13,7 @@ int main(int argc, char** argv) {
   ac.batch = B;
   ac.augment = argc > 4 ? std::stoi(argv[4]) != 0 : true;
   ac.epochs = 100;
+  ac.in_c = 3;
   Loader L;
   L.open(&c, ac, 4, 2);
   cudaStream_t s;

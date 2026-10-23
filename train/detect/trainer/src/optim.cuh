@@ -32,6 +32,7 @@ struct MatInfo {  // Muon 행렬 하나
 };
 
 struct OptDev {  // 장치 상태
+  float lr, mom;  // 이번 스텝 값(호스트가 스텝 전에 넣는다 — 그래프가 그대로 쓴다)
   float scale;
   int good;
   int found_inf;
@@ -74,8 +75,15 @@ class Optimizer {
   struct NsGroup {
     int rows = 0, cols = 0, n = 0;
     MatInfo* mats = nullptr;
+    float* norm2 = nullptr;  // 행렬별 ‖X‖² (Newton–Schulz 정규화)
     __nv_bfloat16 *X = nullptr, *A = nullptr, *B = nullptr, *T = nullptr;
   };
   std::vector<NsGroup> ns_;
   void newton_schulz(NsGroup& g);
+  void device_step();       // 장치 일만(그래프로 잡는다)
+  OptDev* hyp_host_ = nullptr;  // 고정 메모리 고리(16 칸): lr·mom 올려 보내기
+  int hyp_i_ = 0;
+  cudaGraphExec_t graph_ = nullptr;
+public:
+  bool use_graph = true;
 };

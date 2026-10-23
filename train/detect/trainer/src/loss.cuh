@@ -38,7 +38,7 @@ class E2ELoss {
   void init(const LossCfg& c);
   // 가지 br(0 = one2many, 1 = one2one) 하나: 손실 항목(이득 곱함, 배치 곱 전)을 items + 3·br 에 쓰고, 기울기
   // (∂(weight·B·Σ항목)/∂출력 · scale) 를 dbox·dcls 에 쓴다. scale: 장치 float 하나(loss scale), null 이면 1.
-  void run(int br, const HeadDev& h, const GtDev& gt, float weight, const float* scale, cudaStream_t s);
+  void run(int br, const HeadDev& h, const GtDev& gt, const float* weight, const float* scale, cudaStream_t s);
   // items: 장치 float [8] = o2m box, cls, l1, o2o box, cls, l1, 양성 수(o2o), Σ목표(o2o)
   float* items() const { return items_; }
   LossCfg cfg;

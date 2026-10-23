@@ -52,4 +52,18 @@ void f32_to_act(const float* x, act_t* y, int64_t n, cudaStream_t s);
 void act_to_f32(const act_t* x, float* y, int64_t n, bool accum, cudaStream_t s);
 void scale_act(act_t* x, float a, int64_t n, cudaStream_t s);
 
+// 벡터판(bnv.cu) — 채널 수가 V(16 B) 의 배수일 때 위 함수들이 고른다
+bool vec_ok(int C);
+void bn_reduce_vec(bool bwd, const act_t* z, const act_t* dy, int64_t M, int C, const float* mean, const float* istd,
+                   const float* g, const float* b, int act, double* acc, cudaStream_t s);
+void bn_apply_vec(const act_t* z, int64_t M, int C, const float* mean, const float* istd, const float* g,
+                  const float* b, int act, act_t* y, cudaStream_t s);
+void bn_dz_vec(const act_t* z, const act_t* dy, int64_t M, int C, const float* mean, const float* istd, const float* g,
+               const float* b, int act, const float* coef, act_t* dz, cudaStream_t s);
+void copy_ch_vec(const act_t* src, int sC, int s0, act_t* dst, int dC, int d0, int n, int64_t M, bool accum,
+                 cudaStream_t s);
+void add_vec(const act_t* a, const act_t* b, act_t* y, int64_t n, cudaStream_t s);
+void up2_vec(const act_t* x, act_t* y, int N, int H, int W, int C, cudaStream_t s);
+void up2_bwd_vec(const act_t* dy, act_t* dx, int N, int H, int W, int C, cudaStream_t s);
+
 }  // namespace kern

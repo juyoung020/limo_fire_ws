@@ -314,7 +314,7 @@ void Loader::next(act_t* input, int** gt_n, float4** gt_box, int** gt_cls, int* 
   CK(cudaEventRecord(ev_copied_[c], copy_));
   if (idx_host) std::memcpy(idx_host, sl.idx, sizeof(int) * B);
   CK(cudaStreamWaitEvent(compute, ev_copied_[c], 0));
-  augment_batch(d_img_[c], d_sp_[c], B, cfg.S, input, compute);
+  augment_batch(d_img_[c], d_sp_[c], B, cfg.S, cfg.in_c, input, compute);
   *gt_n = d_n_[c];
   *gt_box = d_box_[c];
   *gt_cls = d_cls_[c];

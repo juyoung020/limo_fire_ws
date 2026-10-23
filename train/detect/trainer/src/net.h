@@ -28,6 +28,7 @@ struct Param {
   std::vector<int64_t> shape;  // PyTorch 모양
   int64_t off = 0, n = 0;      // vals/grads 안 위치
   int64_t woff = -1;           // P_CONV: w16/dw16 안 위치(KRSC)
+  int cpad = 0;                // P_CONV: 입력 채널을 이만큼으로 덧대 저장(첫 층 3 → 8), 0 이면 그대로
 };
 struct Params {
   std::vector<Param> list;
@@ -37,6 +38,12 @@ struct Params {
   act_t* w16 = nullptr;    // 합성곱 가중치 act_t (KRSC)
   act_t* dw16 = nullptr;
   int64_t total = 0, wtotal = 0;
+  struct ConvTab {
+    int64_t off, woff;
+    int K, Cg, RS, Cp;  // Cp: 저장 채널 수(입력 덧대기, 0 이면 Cg)
+  };
+  ConvTab* tab = nullptr;  // 장치
+  int ntab = 0;
   int add(const std::string& name, PKind k, std::vector<int64_t> shape);
   void allocate();
   float* v(const std::string& n) { return vals + list[idx.at(n)].off; }
@@ -72,6 +79,9 @@ class Net {
   void build(const NetCfg& cfg, cudnnHandle_t dnn, cublasHandle_t blas, cudaStream_t s);
   void forward(bool train);  // 입력: input()->x (NHWC, 0..1)
   void backward();           // 머리 출력 기울기(head_*()->g) → 파라미터 기울기(grads, 더하기)
+  // 연산별 시간 재기(이벤트, 느림 — 분석용). 결과는 ops()[i]->ms_f / ms_b 에 더해진다
+  void forward_timed(bool train);
+  void backward_timed();
   void zero_act_grads();
   Tensor* input() { return in_; }
   // 머리 출력: br 0 = one2many, 1 = one2one; lvl 0..2 (P3·P4·P5). box [B,H,W,4] (ltrb, 격자 단위), cls [B,H,W,nc]

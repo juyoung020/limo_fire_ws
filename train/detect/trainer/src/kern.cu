@@ -2,6 +2,7 @@
 #include <cfloat>
 
 #include "kern.cuh"
+#include "vec.cuh"
 
 namespace kern {
 namespace {
@@ -147,7 +148,10 @@ inline dim3 rows_grid(int64_t M, int C, int tx) {
 
 void bn_stats(const act_t* z, int64_t M, int C, double* acc, float* mean, float* istd, float* run_mean,
               float* run_var, float momentum, float eps, cudaStream_t s) {
-  chan_reduce2(M, C, StatF{z, C}, acc, s);
+  if (vec_ok(C))
+    bn_reduce_vec(false, z, nullptr, M, C, nullptr, nullptr, nullptr, nullptr, 0, acc, s);
+  else
+    chan_reduce2(M, C, StatF{z, C}, acc, s);
   bn_final_k<<<cdiv(C, 128), 128, 0, s>>>(acc, M, C, mean, istd, run_mean, run_var, momentum, eps);
 }
 void bn_eval_stats(int C, const float* rm, const float* rv, float eps, float* mean, float* istd, cudaStream_t s) {
@@ -155,15 +159,20 @@ void bn_eval_stats(int C, const float* rm, const float* rv, float eps, float* me
 }
 void bn_apply(const act_t* z, int64_t M, int C, const float* mean, const float* istd, const float* gamma,
               const float* beta, int act, act_t* y, cudaStream_t s) {
+  if (vec_ok(C)) return bn_apply_vec(z, M, C, mean, istd, gamma, beta, act, y, s);
   int tx = std::min(C, 128);
   bn_apply2_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, (int)M, C, mean, istd, gamma, beta, act, y);
 }
 void bn_backward(const act_t* z, const act_t* dy, int64_t M, int C, const float* mean, const float* istd,
                  const float* gamma, const float* beta, int act, double* acc, act_t* dz, float* dgamma, float* dbeta,
                  cudaStream_t s) {
-  chan_reduce2(M, C, BwdF{z, dy, mean, istd, gamma, beta, C, act}, acc, s);
+  if (vec_ok(C))
+    bn_reduce_vec(true, z, dy, M, C, mean, istd, gamma, beta, act, acc, s);
+  else
+    chan_reduce2(M, C, BwdF{z, dy, mean, istd, gamma, beta, C, act}, acc, s);
   float* coef = reinterpret_cast<float*>(acc + 2 * C);  // acc 뒤쪽 공간(3C float)
   bn_param_grad_k<<<cdiv(C, 128), 128, 0, s>>>(acc, M, C, gamma, istd, dgamma, dbeta, coef);
+  if (vec_ok(C)) return bn_dz_vec(z, dy, M, C, mean, istd, gamma, beta, act, coef, dz, s);
   int tx = std::min(C, 128);
   bn_dz_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, dy, (int)M, C, mean, istd, gamma, beta, act, coef, dz);
 }
@@ -299,14 +308,22 @@ __global__ void scale_k(act_t* x, float a, int64_t n) {
 
 void copy_ch(const act_t* src, int sC, int s0, act_t* dst, int dC, int d0, int n, int64_t M, bool accum,
              cudaStream_t s) {
+  if (vec_ok(sC) && vec_ok(dC) && vec_ok(s0) && vec_ok(d0) && vec_ok(n))
+    return copy_ch_vec(src, sC, s0, dst, dC, d0, n, M, accum, s);
   copy_ch_k<<<nb(M * n), TPB, 0, s>>>(src, sC, s0, dst, dC, d0, n, M, accum);
 }
-void add(const act_t* a, const act_t* b, act_t* y, int64_t n, cudaStream_t s) { add_k<<<nb(n), TPB, 0, s>>>(a, b, y, n); }
-void acc(const act_t* x, act_t* y, int64_t n, cudaStream_t s) { acc_k<<<nb(n), TPB, 0, s>>>(x, y, n); }
+void add(const act_t* a, const act_t* b, act_t* y, int64_t n, cudaStream_t s) {
+  if (n % V == 0) return add_vec(a, b, y, n, s);
+  add_k<<<nb(n), TPB, 0, s>>>(a, b, y, n); }
+void acc(const act_t* x, act_t* y, int64_t n, cudaStream_t s) {
+  if (n % V == 0) return add_vec(x, y, y, n, s);
+  acc_k<<<nb(n), TPB, 0, s>>>(x, y, n); }
 void up2(const act_t* x, act_t* y, int N, int H, int W, int C, cudaStream_t s) {
+  if (vec_ok(C)) return up2_vec(x, y, N, H, W, C, s);
   up2_k<<<nb(int64_t(N) * 4 * H * W * C), TPB, 0, s>>>(x, y, N, H, W, C);
 }
 void up2_bwd(const act_t* dy, act_t* dx, int N, int H, int W, int C, cudaStream_t s) {
+  if (vec_ok(C)) return up2_bwd_vec(dy, dx, N, H, W, C, s);
   up2_bwd_k<<<nb(int64_t(N) * H * W * C), TPB, 0, s>>>(dy, dx, N, H, W, C);
 }
 void maxpool(const act_t* x, act_t* y, uint8_t* arg, int N, int H, int W, int C, int k, cudaStream_t s) {

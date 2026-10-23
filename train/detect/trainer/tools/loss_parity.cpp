@@ -53,7 +53,9 @@ int main(int argc, char** argv) {
       h[br].dbox[l] = dalloc<float>(tb.numel());
       h[br].dcls[l] = dalloc<float>(tc.numel());
     }
-    loss.run(br, h[br], gt, w[br], nullptr, 0);
+    float* wd = dalloc<float>(1);
+    CK(cudaMemcpy(wd, &w[br], 4, cudaMemcpyHostToDevice));
+    loss.run(br, h[br], gt, wd, nullptr, 0);
   }
   CK(cudaDeviceSynchronize());
   float it[8];

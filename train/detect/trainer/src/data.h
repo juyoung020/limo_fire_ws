@@ -19,6 +19,7 @@ struct AugCfg {
   float hsv_h = 0.015f, hsv_s = 0.7f, hsv_v = 0.4f;
   bool augment = true;  // false: 검증(가운데 맞춘 letterbox, 증강 없음)
   int epochs = 1, close_mosaic = 10;  // 마지막 close_mosaic epoch 은 Mosaic 끔
+  int in_c = 8;                      // 출력 채널(RGB + 0 덧대기)
   uint64_t seed = 0;
 };
 
@@ -84,4 +85,4 @@ class Loader {
 };
 
 // GPU 증강(augment.cu)
-void augment_batch(const uint8_t* img, const SampleParam* sp, int B, int S, act_t* out, cudaStream_t s);
+void augment_batch(const uint8_t* img, const SampleParam* sp, int B, int S, int C, act_t* out, cudaStream_t s);

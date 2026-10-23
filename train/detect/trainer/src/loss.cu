@@ -293,7 +293,8 @@ __global__ void target_k(HeadDev h, Lv L, GtDev gt, int B, int G, int A, int nc,
 
 // ---- 6: 손실과 기울기 ----
 struct Gains {
-  float box, cls, l1, mult;  // mult = 배치 · 가지 가중치
+  float box, cls, l1, mult;  // mult = 배치 (가지 가중치는 장치에서 따로)
+  const float* weight;
 };
 __global__ void loss_k(HeadDev h, Lv L, GtDev gt, int B, int G, int A, int nc, int imgsz, Gains gn, const float* scale,
                        const float4* pbox, const int* agt, const float* tsc, double* sums) {
@@ -304,7 +305,7 @@ __global__ void loss_k(HeadDev h, Lv L, GtDev gt, int B, int G, int A, int nc, i
     anchor_of(L, a, l, ix, iy);
     float tss = fmaxf((float)sums[0], 1.f);
     float sc = scale ? *scale : 1.f;
-    float k = gn.mult * sc / tss;
+    float k = gn.mult * (gn.weight ? *gn.weight : 1.f) * sc / tss;
     int g = agt[i], lab = g >= 0 ? gt.cls[b * G + g] : -1;
     float t = tsc[i];
     int64_t cell = (int64_t(b) * L.h[l] + iy) * L.w[l] + ix;
@@ -403,7 +404,7 @@ void E2ELoss::init(const LossCfg& c) {
   CK(cudaMemset(items_, 0, 8 * 4));
 }
 
-void E2ELoss::run(int br, const HeadDev& h, const GtDev& gt, float weight, const float* scale, cudaStream_t s) {
+void E2ELoss::run(int br, const HeadDev& h, const GtDev& gt, const float* weight, const float* scale, cudaStream_t s) {
   Lv L;
   L.off[0] = 0;
   for (int l = 0; l < 3; ++l) {
@@ -428,7 +429,7 @@ void E2ELoss::run(int br, const HeadDev& h, const GtDev& gt, float weight, const
   CK(cudaMemsetAsync(sums_, 0, 8 * 4, s));
   pos_max_k<<<cdiv(BA, 256), 256, 0, s>>>(h, L, gt, B, G, A, nc, pbox_, agt_, galign_, govl_);
   target_k<<<cdiv(BA, 256), 256, 0, s>>>(h, L, gt, B, G, A, nc, pbox_, agt_, galign_, govl_, tsc_, sums_);
-  Gains gn{cfg.box_gain, cfg.cls_gain, cfg.l1_gain, (float)B * weight};
+  Gains gn{cfg.box_gain, cfg.cls_gain, cfg.l1_gain, (float)B, weight};
   loss_k<<<cdiv(BA, 256), 256, 0, s>>>(h, L, gt, B, G, A, nc, cfg.imgsz, gn, scale, pbox_, agt_, tsc_, sums_);
   items_k<<<1, 256, 0, s>>>(sums_, gn, items_, br, agt_, BA);
 }

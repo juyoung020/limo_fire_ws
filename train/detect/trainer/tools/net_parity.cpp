@@ -49,7 +49,13 @@ int main(int argc, char** argv) {
               dev_total() / 1e9);
   for (auto& k : skipped) std::printf("  %s\n", k.c_str());
   net.params.sync_w16(s);
-  CK(cudaMemcpy(net.input()->x, R.get("input").f32(), net.input()->n() * 4, cudaMemcpyHostToDevice));
+  {  // 기준 입력 3 채널 → 8 채널(0 덧대기)
+    const float* x = R.get("input").f32();
+    std::vector<float> h(net.input()->n(), 0.f);
+    for (int64_t i = 0; i < net.input()->M(); ++i)
+      for (int c = 0; c < 3; ++c) h[i * 8 + c] = x[i * 3 + c];
+    CK(cudaMemcpy(net.input()->x, h.data(), h.size() * 4, cudaMemcpyHostToDevice));
+  }
   net.forward(true);
   CK(cudaStreamSynchronize(s));
   for (int i : {2, 4, 6, 9, 10, 13, 16, 19, 22}) {
