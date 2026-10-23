@@ -7,9 +7,11 @@
 #include "kern.cuh"
 #include "net.h"
 
-static std::vector<float> d2h(const act_t* p, size_t n) {
+static std::vector<float> d2h(const Tensor* x) {  // 행 간격(ld) 고려
+  size_t n = x->n();
   std::vector<act_t> t(n);
-  CK(cudaMemcpy(t.data(), p, n * sizeof(act_t), cudaMemcpyDeviceToHost));
+  CK(cudaMemcpy2D(t.data(), x->C * sizeof(act_t), x->x, x->ld * sizeof(act_t), x->C * sizeof(act_t), x->M(),
+                  cudaMemcpyDeviceToHost));
   std::vector<float> h(n);
   for (size_t i = 0; i < n; ++i) h[i] = to_f(t[i]);
   return h;
@@ -60,15 +62,15 @@ int main(int argc, char** argv) {
   CK(cudaStreamSynchronize(s));
   for (int i : {2, 4, 6, 9, 10, 13, 16, 19, 22}) {
     Tensor* t = net.named.at("x" + std::to_string(i));
-    cmp("x" + std::to_string(i), d2h(t->x, t->n()).data(), R.get("out.x" + std::to_string(i)).f32(), t->n());
+    cmp("x" + std::to_string(i), d2h(t).data(), R.get("out.x" + std::to_string(i)).f32(), t->n());
   }
   for (int br = 0; br < 2; ++br)
     for (int l = 0; l < 3; ++l) {
       std::string k = std::to_string(br) + std::to_string(l);
       Tensor* b = net.head_box(br, l);
       Tensor* c = net.head_cls(br, l);
-      cmp("box" + k, d2h(b->x, b->n()).data(), R.get("out.box" + k).f32(), b->n());
-      cmp("cls" + k, d2h(c->x, c->n()).data(), R.get("out.cls" + k).f32(), c->n());
+      cmp("box" + k, d2h(b).data(), R.get("out.box" + k).f32(), b->n());
+      cmp("cls" + k, d2h(c).data(), R.get("out.cls" + k).f32(), c->n());
     }
   // BN running 통계(정방향 한 번 뒤)
   std::vector<float> vals(net.params.total);

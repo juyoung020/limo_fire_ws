@@ -66,22 +66,27 @@ class OpAttn : public Op {
     P = dalloc<act_t>(nn);
     dS = dalloc<act_t>(nn);
     for (auto& p : ptr) p = dalloc<void*>(B * nh);
+  }
+  // 활성값 주소는 Net::finalize 뒤에 정해지므로 처음 정방향 때 만든다
+  bool xptr_ready = false;
+  void make_xptr() {
     std::vector<void*> h[11];
     int qs = 2 * kd + hd;
     for (int b = 0; b < B; ++b)
       for (int hh = 0; hh < nh; ++hh) {
-        act_t* qb = q->x + int64_t(b) * N * Cq + hh * qs;
+        act_t* qb = qkv->x + int64_t(b) * N * Cq + hh * qs;
         h[0].push_back(qb);
         h[1].push_back(qb + kd);
         h[2].push_back(qb + 2 * kd);
         int64_t so = (int64_t(b) * nh + hh) * N * N;
         h[3].push_back(S + so);
         h[4].push_back(P + so);
-        h[5].push_back(out->x + int64_t(b) * N * C + hh * hd);
+        h[5].push_back(o->x + int64_t(b) * N * C + hh * hd);
         h[10].push_back(dS + so);
       }
     for (int k : {0, 1, 2, 3, 4, 5, 10})
       CK(cudaMemcpy(ptr[k], h[k].data(), sizeof(void*) * B * nh, cudaMemcpyHostToDevice));
+    xptr_ready = true;
   }
   // 기울기 주소는 Net::finalize 뒤에 정해지므로 처음 역방향 때 만든다
   bool gptr_ready = false;
@@ -100,6 +105,7 @@ class OpAttn : public Op {
     gptr_ready = true;
   }
   void fwd(bool) override {
+    if (!xptr_ready) make_xptr();
     int bt = B * nh;
     gemm_rm(blas, false, true, N, N, kd, scale, (const void* const*)ptr[0], Cq, kActCuda, (const void* const*)ptr[1],
             Cq, kActCuda, 0.f, ptr[3], N, CUDA_R_32F, bt);

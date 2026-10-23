@@ -148,12 +148,13 @@ class OpConvBN : public Op {
       kern::bn_stats(z, out->M(), C, net->acc_, mean, istd, V(prm), V(prv), net->cfg.bn_momentum, net->cfg.bn_eps, s);
     else
       kern::bn_eval_stats(C, V(prm), V(prv), net->cfg.bn_eps, mean, istd, s);
-    kern::bn_apply(z, out->M(), C, mean, istd, V(pg), V(pb), act, out->x, s);
+    kern::bn_apply(z, out->M(), C, mean, istd, V(pg), V(pb), act, out->x, out->ld, s);
   }
   void bwd() override {
     auto s = net->s_;
     act_t* dz = net->dz_;
-    kern::bn_backward(z, out->g, out->M(), out->C, mean, istd, V(pg), V(pb), act, net->acc_, dz, G(pg), G(pb), s);
+    kern::bn_backward(z, out->g, out->ld, out->M(), out->C, mean, istd, V(pg), V(pb), act, net->acc_, dz, G(pg), G(pb),
+                      s);
     if (dw) {
       if (!detach && in->g) kern::dw3_dgrad(dz, net->params.w16 + P(pw).woff, in->g, in->N, in->H, in->W, in->C, s);
       kern::dw3_wgrad(in->x, dz, net->params.dw16 + P(pw).woff, net->dwtmp_, in->N, in->H, in->W, in->C, s);
@@ -199,17 +200,18 @@ class OpCat : public Op {
   Tensor* out;
   cudaStream_t s;
   OpCat(std::vector<Tensor*> i, Tensor* o, cudaStream_t st) : ins(i), out(o), s(st) {}
+  // concat 버퍼 안에 직접 놓인 입력(parent == out)은 복사하지 않는다
   void fwd(bool) override {
     int c0 = 0;
     for (auto* t : ins) {
-      kern::copy_ch(t->x, t->C, 0, out->x, out->C, c0, t->C, out->M(), false, s);
+      if (t->parent != out) kern::copy_ch(t->x, t->ld, 0, out->x, out->ld, c0, t->C, out->M(), false, s);
       c0 += t->C;
     }
   }
   void bwd() override {
     int c0 = 0;
     for (auto* t : ins) {
-      if (t->g) kern::copy_ch(out->g, out->C, c0, t->g, t->C, 0, t->C, out->M(), true, s);
+      if (t->parent != out && t->g) kern::copy_ch(out->g, out->ld, c0, t->g, t->ld, 0, t->C, out->M(), true, s);
       c0 += t->C;
     }
   }
@@ -221,9 +223,9 @@ class OpSlice : public Op {
   int c0;
   cudaStream_t s;
   OpSlice(Tensor* i, Tensor* o, int c, cudaStream_t st) : in(i), out(o), c0(c), s(st) {}
-  void fwd(bool) override { kern::copy_ch(in->x, in->C, c0, out->x, out->C, 0, out->C, out->M(), false, s); }
+  void fwd(bool) override { kern::copy_ch(in->x, in->ld, c0, out->x, out->ld, 0, out->C, out->M(), false, s); }
   void bwd() override {
-    if (in->g) kern::copy_ch(out->g, out->C, 0, in->g, in->C, c0, out->C, out->M(), true, s);
+    if (in->g) kern::copy_ch(out->g, out->ld, 0, in->g, in->ld, c0, out->C, out->M(), true, s);
   }
   std::string desc() const override { return "slice"; }
 };
@@ -232,10 +234,10 @@ class OpAdd : public Op {
   Tensor *a, *b, *out;
   cudaStream_t s;
   OpAdd(Tensor* x, Tensor* y, Tensor* o, cudaStream_t st) : a(x), b(y), out(o), s(st) {}
-  void fwd(bool) override { kern::add(a->x, b->x, out->x, out->n(), s); }
+  void fwd(bool) override { kern::add(a->x, a->ld, b->x, b->ld, out->x, out->ld, out->M(), out->C, s); }
   void bwd() override {
-    if (a->g) kern::acc(out->g, a->g, out->n(), s);
-    if (b->g) kern::acc(out->g, b->g, out->n(), s);
+    if (a->g) kern::acc(out->g, out->ld, a->g, a->ld, out->M(), out->C, s);
+    if (b->g) kern::acc(out->g, out->ld, b->g, b->ld, out->M(), out->C, s);
   }
   std::string desc() const override { return "add"; }
 };
@@ -244,9 +246,9 @@ class OpUp : public Op {
   Tensor *in, *out;
   cudaStream_t s;
   OpUp(Tensor* i, Tensor* o, cudaStream_t st) : in(i), out(o), s(st) {}
-  void fwd(bool) override { kern::up2(in->x, out->x, in->N, in->H, in->W, in->C, s); }
+  void fwd(bool) override { kern::up2(in->x, in->ld, out->x, out->ld, in->N, in->H, in->W, in->C, s); }
   void bwd() override {
-    if (in->g) kern::up2_bwd(out->g, in->g, in->N, in->H, in->W, in->C, s);
+    if (in->g) kern::up2_bwd(out->g, out->ld, in->g, in->ld, in->N, in->H, in->W, in->C, s);
   }
   std::string desc() const override { return "up2"; }
 };
@@ -257,9 +259,9 @@ class OpPool : public Op {
   uint8_t* arg;
   cudaStream_t s;
   OpPool(Tensor* i, Tensor* o, int kk, cudaStream_t st) : in(i), out(o), k(kk), s(st) { arg = dalloc<uint8_t>(o->n()); }
-  void fwd(bool) override { kern::maxpool(in->x, out->x, arg, in->N, in->H, in->W, in->C, k, s); }
+  void fwd(bool) override { kern::maxpool(in->x, in->ld, out->x, out->ld, arg, in->N, in->H, in->W, in->C, k, s); }
   void bwd() override {
-    if (in->g) kern::maxpool_bwd(out->g, arg, in->g, in->N, in->H, in->W, in->C, k, s);
+    if (in->g) kern::maxpool_bwd(out->g, out->ld, arg, in->g, in->ld, in->N, in->H, in->W, in->C, k, s);
   }
   std::string desc() const override { return "maxpool"; }
 };
@@ -271,23 +273,23 @@ Tensor* Net::tensor(int N, int H, int W, int C, bool grad) {
   t->H = H;
   t->W = W;
   t->C = C;
-  t->x = dalloc<act_t>(t->n());
-  if (grad) {
-    t->g = reinterpret_cast<act_t*>(grad_arena_n_ + 1);  // 자리 표시(finalize 에서 진짜 주소로)
-    grad_arena_n_ += (t->n() + 127) / 128 * 128;
-  }
+  t->ld = C;
+  t->grad = grad;
   tensors_.push_back(std::move(t));
   return tensors_.back().get();
 }
 Tensor* Net::conv_bn(const std::string& name, Tensor* in, int K, int k, int s, int act, int groups, bool detach) {
   int H = (in->H + 2 * (k / 2) - k) / s + 1, W = (in->W + 2 * (k / 2) - k) / s + 1;
   Tensor* o = tensor(in->N, H, W, K);
+  in->packed = true;
   ops_.push_back(std::make_unique<OpConvBN>(this, name, in, o, k, s, act, groups, detach));
   named[name] = o;
   return o;
 }
 Tensor* Net::conv_bias(const std::string& name, Tensor* in, int K, bool detach) {
   Tensor* o = tensor(in->N, in->H, in->W, K);
+  in->packed = true;
+  o->packed = true;  // cuDNN 이 꽉 찬 출력에 쓴다
   ops_.push_back(std::make_unique<OpConvBias>(this, name, in, o, detach));
   named[name] = o;
   return o;
@@ -363,6 +365,7 @@ Tensor* Net::psa(const std::string& n, Tensor* x) {
   Tensor* qkv = conv_bn(n + ".attn.qkv", x, c + 2 * nh * kd, 1, 1, 0);
   Tensor* o = tensor(x->N, x->H, x->W, c);
   Tensor* vf = tensor(x->N, x->H, x->W, c);
+  qkv->packed = o->packed = vf->packed = true;  // 어텐션 GEMM 은 꽉 찬 버퍼
   ops_.push_back(make_attn_op(qkv, o, vf, nh, kd, hd, blas_, s_));
   Tensor* pe = conv_bn(n + ".attn.pe", vf, c, 3, 1, 0, c);
   Tensor* a = conv_bn(n + ".attn.proj", add(o, pe), c, 1, 1, 0);
@@ -449,10 +452,45 @@ void Net::build(const NetCfg& c, cudnnHandle_t dnn, cublasHandle_t blas, cudaStr
 
 void Net::finalize() {
   params.allocate();
-  // 기울기 한 덩어리
-  grad_arena_ = dalloc<act_t>(grad_arena_n_);
+  // 1) concat 입력 중 합성곱이 읽지 않는 것은 concat 버퍼 안 자기 자리에 바로 쓴다(복사 없음)
+  int placed = 0, copied = 0;
+  for (auto& op : ops_)
+    if (auto* c = dynamic_cast<OpCat*>(op.get())) {
+      int c0 = 0;
+      for (auto* t : c->ins) {
+        if (!t->packed && !t->parent && t != in_) {
+          t->parent = c->out;
+          t->choff = c0;
+          ++placed;
+        } else {
+          ++copied;
+        }
+        c0 += t->C;
+      }
+    }
+  // 2) 메모리: 놓이지 않은 텐서만 잡는다(기울기는 한 덩어리)
+  int64_t gn = 0;
   for (auto& t : tensors_)
-    if (t->g) t->g = grad_arena_ + (reinterpret_cast<int64_t>(t->g) - 1);
+    if (!t->parent && t->grad) gn += (t->n() + 127) / 128 * 128;
+  grad_arena_n_ = gn;
+  grad_arena_ = dalloc<act_t>(gn);
+  int64_t go = 0;
+  for (auto& t : tensors_)
+    if (!t->parent) {
+      t->x = dalloc<act_t>(t->n());
+      t->ld = t->C;
+      if (t->grad) {
+        t->g = grad_arena_ + go;
+        go += (t->n() + 127) / 128 * 128;
+      }
+    }
+  for (auto& t : tensors_)
+    if (t->parent) {
+      t->x = t->parent->x + t->choff;
+      t->g = t->parent->g ? t->parent->g + t->choff : nullptr;
+      t->ld = t->parent->ld;
+    }
+  std::printf("concat: 바로 놓음 %d, 복사 %d\n", placed, copied);
   int64_t maxz = 0, maxC = 0;
   for (auto& t : tensors_) {
     maxz = std::max(maxz, t->n());
@@ -463,6 +501,11 @@ void Net::finalize() {
   acc_ = dalloc<double>(4 * maxC);
   // 합성곱 알고리즘 재기(작업 공간 상한 256 MB)
   size_t lim = 1024u << 20;
+  {  // 남은 메모리가 적으면(다른 학습이 돌 때) 작업 공간 상한을 줄인다
+    size_t fr, tot;
+    CK(cudaMemGetInfo(&fr, &tot));
+    lim = std::min(lim, fr / 3);
+  }
   void* tmp_ws = nullptr;
   CK(cudaMalloc(&tmp_ws, lim));
   ws_bytes = 0;

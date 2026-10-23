@@ -14,8 +14,13 @@
 
 struct Tensor {
   int N = 0, H = 0, W = 0, C = 0;
-  act_t* x = nullptr;
+  int ld = 0;          // 행(픽셀) 간격: C 이거나, concat 버퍼 안 자리면 그 버퍼의 채널 수
+  act_t* x = nullptr;  // Net::finalize 에서 정해진다
   act_t* g = nullptr;
+  bool grad = true;
+  bool packed = false;        // 합성곱·어텐션 입력으로 쓰임 → 꽉 찬 버퍼여야 함
+  Tensor* parent = nullptr;   // concat 버퍼 안에 놓였으면 그 버퍼
+  int choff = 0;
   int64_t M() const { return int64_t(N) * H * W; }
   int64_t n() const { return M() * C; }
 };

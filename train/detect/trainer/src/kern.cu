@@ -93,10 +93,10 @@ __global__ void bn_apply_k(const act_t* z, int64_t n, int C, const float* mean, 
 struct BwdF {
   const act_t *z, *dy;
   const float *mean, *istd, *g, *b;
-  int C, act;
+  int C, act, ldy;
   __device__ float2 operator()(int64_t r, int c) const {
     float xh = (to_f(z[r * C + c]) - mean[c]) * istd[c];
-    float d = to_f(dy[r * C + c]);
+    float d = to_f(dy[r * ldy + c]);
     if (act) d *= dsilu(xh * g[c] + b[c]);
     return make_float2(d, d * xh);
   }
@@ -113,7 +113,7 @@ __global__ void bn_param_grad_k(const double* acc, int64_t M, int C, const float
   coef[2 * C + c] = (float)(acc[C + c] / (double)M);
 }
 // 행 하나 = 블록 y, 채널 = 스레드(32 비트 첨자)
-__global__ void bn_dz_k(const act_t* z, const act_t* dy, int M, int C, const float* mean, const float* istd,
+__global__ void bn_dz_k(const act_t* z, const act_t* dy, int lddy, int M, int C, const float* mean, const float* istd,
                         const float* g, const float* b, int act, const float* coef, act_t* dz) {
   int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (c >= C) return;
@@ -121,21 +121,20 @@ __global__ void bn_dz_k(const act_t* z, const act_t* dy, int M, int C, const flo
   for (int r = blockIdx.y; r < M; r += gridDim.y) {
     int i = r * C + c;
     float xh = (to_f(z[i]) - mu) * is;
-    float d = to_f(dy[i]);
+    float d = to_f(dy[r * lddy + c]);
     if (act) d *= dsilu(xh * gg + bb);
     dz[i] = from_f<act_t>(k0 * (d - sg - xh * sgx));
   }
 }
 __global__ void bn_apply2_k(const act_t* z, int M, int C, const float* mean, const float* istd, const float* g,
-                            const float* b, int act, act_t* y) {
+                            const float* b, int act, act_t* y, int ldy) {
   int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (c >= C) return;
   float k = istd[c] * g[c], o = b[c] - mean[c] * k;
   for (int r = blockIdx.y; r < M; r += gridDim.y) {
-    int i = r * C + c;
-    float v = to_f(z[i]) * k + o;
+    float v = to_f(z[r * C + c]) * k + o;
     if (act) v = silu(v);
-    y[i] = from_f<act_t>(v);
+    y[r * ldy + c] = from_f<act_t>(v);
   }
 }
 inline dim3 rows_grid(int64_t M, int C, int tx) {
@@ -149,7 +148,7 @@ inline dim3 rows_grid(int64_t M, int C, int tx) {
 void bn_stats(const act_t* z, int64_t M, int C, double* acc, float* mean, float* istd, float* run_mean,
               float* run_var, float momentum, float eps, cudaStream_t s) {
   if (vec_ok(C))
-    bn_reduce_vec(false, z, nullptr, M, C, nullptr, nullptr, nullptr, nullptr, 0, acc, s);
+    bn_reduce_vec(false, z, nullptr, C, M, C, nullptr, nullptr, nullptr, nullptr, 0, acc, s);
   else
     chan_reduce2(M, C, StatF{z, C}, acc, s);
   bn_final_k<<<cdiv(C, 128), 128, 0, s>>>(acc, M, C, mean, istd, run_mean, run_var, momentum, eps);
@@ -158,23 +157,24 @@ void bn_eval_stats(int C, const float* rm, const float* rv, float eps, float* me
   bn_eval_k<<<cdiv(C, 128), 128, 0, s>>>(C, rm, rv, eps, mean, istd);
 }
 void bn_apply(const act_t* z, int64_t M, int C, const float* mean, const float* istd, const float* gamma,
-              const float* beta, int act, act_t* y, cudaStream_t s) {
-  if (vec_ok(C)) return bn_apply_vec(z, M, C, mean, istd, gamma, beta, act, y, s);
+              const float* beta, int act, act_t* y, int ldy, cudaStream_t s) {
+  if (vec_ok(C) && vec_ok(ldy)) return bn_apply_vec(z, M, C, mean, istd, gamma, beta, act, y, ldy, s);
   int tx = std::min(C, 128);
-  bn_apply2_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, (int)M, C, mean, istd, gamma, beta, act, y);
+  bn_apply2_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, (int)M, C, mean, istd, gamma, beta, act, y, ldy);
 }
-void bn_backward(const act_t* z, const act_t* dy, int64_t M, int C, const float* mean, const float* istd,
+void bn_backward(const act_t* z, const act_t* dy, int lddy, int64_t M, int C, const float* mean, const float* istd,
                  const float* gamma, const float* beta, int act, double* acc, act_t* dz, float* dgamma, float* dbeta,
                  cudaStream_t s) {
-  if (vec_ok(C))
-    bn_reduce_vec(true, z, dy, M, C, mean, istd, gamma, beta, act, acc, s);
+  bool v = vec_ok(C) && vec_ok(lddy);
+  if (v)
+    bn_reduce_vec(true, z, dy, lddy, M, C, mean, istd, gamma, beta, act, acc, s);
   else
-    chan_reduce2(M, C, BwdF{z, dy, mean, istd, gamma, beta, C, act}, acc, s);
+    chan_reduce2(M, C, BwdF{z, dy, mean, istd, gamma, beta, C, act, lddy}, acc, s);
   float* coef = reinterpret_cast<float*>(acc + 2 * C);  // acc 뒤쪽 공간(3C float)
   bn_param_grad_k<<<cdiv(C, 128), 128, 0, s>>>(acc, M, C, gamma, istd, dgamma, dbeta, coef);
-  if (vec_ok(C)) return bn_dz_vec(z, dy, M, C, mean, istd, gamma, beta, act, coef, dz, s);
+  if (v) return bn_dz_vec(z, dy, lddy, M, C, mean, istd, gamma, beta, act, coef, dz, s);
   int tx = std::min(C, 128);
-  bn_dz_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, dy, (int)M, C, mean, istd, gamma, beta, act, coef, dz);
+  bn_dz_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, dy, lddy, (int)M, C, mean, istd, gamma, beta, act, coef, dz);
 }
 
 // ---- 모양 ----
@@ -189,15 +189,13 @@ __global__ void copy_ch_k(const act_t* src, int sC, int s0, act_t* dst, int dC, 
   act_t* p = dst + r * dC + d0 + c;
   *p = accum ? from_f<act_t>(to_f(*p) + to_f(v)) : v;
 }
-__global__ void add_k(const act_t* a, const act_t* b, act_t* y, int64_t n) {
+__global__ void add_k(const act_t* a, int lda, const act_t* b, int ldb, act_t* y, int ldy, int M, int C) {
   int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
-  if (i < n) y[i] = from_f<act_t>(to_f(a[i]) + to_f(b[i]));
+  if (i >= (int64_t)M * C) return;
+  int r = int(i / C), c = int(i % C);
+  y[(int64_t)r * ldy + c] = from_f<act_t>(to_f(a[(int64_t)r * lda + c]) + to_f(b[(int64_t)r * ldb + c]));
 }
-__global__ void acc_k(const act_t* x, act_t* y, int64_t n) {
-  int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
-  if (i < n) y[i] = from_f<act_t>(to_f(y[i]) + to_f(x[i]));
-}
-__global__ void up2_k(const act_t* x, act_t* y, int N, int H, int W, int C) {
+__global__ void up2_k(const act_t* x, int ldx, act_t* y, int ldy, int N, int H, int W, int C) {
   int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
   int64_t n = int64_t(N) * 4 * H * W * C;
   if (i >= n) return;
@@ -207,9 +205,9 @@ __global__ void up2_k(const act_t* x, act_t* y, int N, int H, int W, int C) {
   t /= 2 * W;
   int oy = int(t % (2 * H));
   int b = int(t / (2 * H));
-  y[i] = x[((int64_t(b) * H + oy / 2) * W + ox / 2) * C + c];
+  y[((int64_t(b) * 2 * H + oy) * 2 * W + ox) * ldy + c] = x[((int64_t(b) * H + oy / 2) * W + ox / 2) * ldx + c];
 }
-__global__ void up2_bwd_k(const act_t* dy, act_t* dx, int N, int H, int W, int C) {
+__global__ void up2_bwd_k(const act_t* dy, int lddy, act_t* dx, int lddx, int N, int H, int W, int C) {
   int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
   int64_t n = int64_t(N) * H * W * C;
   if (i >= n) return;
@@ -222,10 +220,12 @@ __global__ void up2_bwd_k(const act_t* dy, act_t* dx, int N, int H, int W, int C
   float s = 0.f;
   for (int dy2 = 0; dy2 < 2; ++dy2)
     for (int dx2 = 0; dx2 < 2; ++dx2)
-      s += to_f(dy[((int64_t(b) * 2 * H + 2 * y + dy2) * 2 * W + 2 * x + dx2) * C + c]);
-  dx[i] = from_f<act_t>(to_f(dx[i]) + s);
+      s += to_f(dy[((int64_t(b) * 2 * H + 2 * y + dy2) * 2 * W + 2 * x + dx2) * lddy + c]);
+  act_t* p = dx + ((int64_t(b) * H + y) * W + x) * lddx + c;
+  *p = from_f<act_t>(to_f(*p) + s);
 }
-__global__ void maxpool_k(const act_t* x, act_t* y, uint8_t* arg, int N, int H, int W, int C, int k) {
+__global__ void maxpool_k(const act_t* x, int ldx, act_t* y, int ldy, uint8_t* arg, int N, int H, int W, int C,
+                          int k) {
   int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
   int64_t n = int64_t(N) * H * W * C;
   if (i >= n) return;
@@ -244,17 +244,18 @@ __global__ void maxpool_k(const act_t* x, act_t* y, uint8_t* arg, int N, int H, 
     for (int v = 0; v < k; ++v) {
       int sx = xx + v - p;
       if (sx < 0 || sx >= W) continue;
-      float val = to_f(x[((int64_t(b) * H + sy) * W + sx) * C + c]);
+      float val = to_f(x[((int64_t(b) * H + sy) * W + sx) * ldx + c]);
       if (val > best) {  // 처음 만난 최댓값(PyTorch 와 같음)
         best = val;
         bi = u * k + v;
       }
     }
   }
-  y[i] = from_f<act_t>(best);
+  y[(i / C) * ldy + c] = from_f<act_t>(best);
   arg[i] = (uint8_t)bi;
 }
-__global__ void maxpool_bwd_k(const act_t* dy, const uint8_t* arg, act_t* dx, int N, int H, int W, int C, int k) {
+__global__ void maxpool_bwd_k(const act_t* dy, int lddy, const uint8_t* arg, act_t* dx, int lddx, int N, int H, int W,
+                              int C, int k) {
   // 입력 칸마다 자기를 고른 출력들을 모은다(경합 없음)
   int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
   int64_t n = int64_t(N) * H * W * C;
@@ -273,11 +274,12 @@ __global__ void maxpool_bwd_k(const act_t* dy, const uint8_t* arg, act_t* dx, in
     for (int v = 0; v < k; ++v) {
       int ox = xx - v + p;
       if (ox < 0 || ox >= W) continue;
-      int64_t o = ((int64_t(b) * H + oy) * W + ox) * C + c;
-      if (arg[o] == u * k + v) s += to_f(dy[o]);
+      int64_t o = (int64_t(b) * H + oy) * W + ox;
+      if (arg[o * C + c] == u * k + v) s += to_f(dy[o * lddy + c]);
     }
   }
-  dx[i] = from_f<act_t>(to_f(dx[i]) + s);
+  act_t* q = dx + (i / C) * lddx + c;
+  *q = from_f<act_t>(to_f(*q) + s);
 }
 __global__ void add_bias_k(act_t* y, int64_t n, int C, const float* b) {
   int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
@@ -312,25 +314,28 @@ void copy_ch(const act_t* src, int sC, int s0, act_t* dst, int dC, int d0, int n
     return copy_ch_vec(src, sC, s0, dst, dC, d0, n, M, accum, s);
   copy_ch_k<<<nb(M * n), TPB, 0, s>>>(src, sC, s0, dst, dC, d0, n, M, accum);
 }
-void add(const act_t* a, const act_t* b, act_t* y, int64_t n, cudaStream_t s) {
-  if (n % V == 0) return add_vec(a, b, y, n, s);
-  add_k<<<nb(n), TPB, 0, s>>>(a, b, y, n); }
-void acc(const act_t* x, act_t* y, int64_t n, cudaStream_t s) {
-  if (n % V == 0) return add_vec(x, y, y, n, s);
-  acc_k<<<nb(n), TPB, 0, s>>>(x, y, n); }
-void up2(const act_t* x, act_t* y, int N, int H, int W, int C, cudaStream_t s) {
-  if (vec_ok(C)) return up2_vec(x, y, N, H, W, C, s);
-  up2_k<<<nb(int64_t(N) * 4 * H * W * C), TPB, 0, s>>>(x, y, N, H, W, C);
+void add(const act_t* a, int lda, const act_t* b, int ldb, act_t* y, int ldy, int64_t M, int C, cudaStream_t s) {
+  if (vec_ok(C) && vec_ok(lda) && vec_ok(ldb) && vec_ok(ldy)) return add_vec(a, lda, b, ldb, y, ldy, M, C, s);
+  add_k<<<nb(M * C), TPB, 0, s>>>(a, lda, b, ldb, y, ldy, (int)M, C);
 }
-void up2_bwd(const act_t* dy, act_t* dx, int N, int H, int W, int C, cudaStream_t s) {
-  if (vec_ok(C)) return up2_bwd_vec(dy, dx, N, H, W, C, s);
-  up2_bwd_k<<<nb(int64_t(N) * H * W * C), TPB, 0, s>>>(dy, dx, N, H, W, C);
+void acc(const act_t* x, int ldx, act_t* y, int ldy, int64_t M, int C, cudaStream_t s) {
+  add(x, ldx, y, ldy, y, ldy, M, C, s);
 }
-void maxpool(const act_t* x, act_t* y, uint8_t* arg, int N, int H, int W, int C, int k, cudaStream_t s) {
-  maxpool_k<<<nb(int64_t(N) * H * W * C), TPB, 0, s>>>(x, y, arg, N, H, W, C, k);
+void up2(const act_t* x, int ldx, act_t* y, int ldy, int N, int H, int W, int C, cudaStream_t s) {
+  if (vec_ok(C) && vec_ok(ldx) && vec_ok(ldy)) return up2_vec(x, ldx, y, ldy, N, H, W, C, s);
+  up2_k<<<nb(int64_t(N) * 4 * H * W * C), TPB, 0, s>>>(x, ldx, y, ldy, N, H, W, C);
 }
-void maxpool_bwd(const act_t* dy, const uint8_t* arg, act_t* dx, int N, int H, int W, int C, int k, cudaStream_t s) {
-  maxpool_bwd_k<<<nb(int64_t(N) * H * W * C), TPB, 0, s>>>(dy, arg, dx, N, H, W, C, k);
+void up2_bwd(const act_t* dy, int lddy, act_t* dx, int lddx, int N, int H, int W, int C, cudaStream_t s) {
+  if (vec_ok(C) && vec_ok(lddy) && vec_ok(lddx)) return up2_bwd_vec(dy, lddy, dx, lddx, N, H, W, C, s);
+  up2_bwd_k<<<nb(int64_t(N) * H * W * C), TPB, 0, s>>>(dy, lddy, dx, lddx, N, H, W, C);
+}
+void maxpool(const act_t* x, int ldx, act_t* y, int ldy, uint8_t* arg, int N, int H, int W, int C, int k,
+             cudaStream_t s) {
+  maxpool_k<<<nb(int64_t(N) * H * W * C), TPB, 0, s>>>(x, ldx, y, ldy, arg, N, H, W, C, k);
+}
+void maxpool_bwd(const act_t* dy, int lddy, const uint8_t* arg, act_t* dx, int lddx, int N, int H, int W, int C, int k,
+                 cudaStream_t s) {
+  maxpool_bwd_k<<<nb(int64_t(N) * H * W * C), TPB, 0, s>>>(dy, lddy, arg, dx, lddx, N, H, W, C, k);
 }
 void add_bias(act_t* y, int64_t M, int C, const float* b, cudaStream_t s) {
   add_bias_k<<<nb(M * C), TPB, 0, s>>>(y, M * C, C, b);
