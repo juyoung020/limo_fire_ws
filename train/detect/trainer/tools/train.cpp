@@ -3,6 +3,7 @@
 // 사용: train --train <train.ycache> --val <val.ycache> --weights <yolo26s.safetensors> --out <폴더>
 //             [--epochs 100] [--batch 32] [--imgsz 640] [--workers 16] [--close-mosaic 10] [--seed 0]
 //             [--max-iters N(속도 재기)] [--resume]
+//       train --eval --val <split.ycache> --weights <best.safetensors>   (평가만: 클래스별 AP·정답 수)
 // 결과: <out>/last.safetensors·best.safetensors(EMA 가중치, PyTorch 이름), <out>/state.bin(이어 하기), <out>/log.tsv
 #include <chrono>
 #include <cmath>
@@ -28,7 +29,7 @@ struct Args {
   std::string train, val, weights, out = "runs/train";
   int epochs = 100, batch = 32, imgsz = 640, workers = 16, close_mosaic = 10, max_iters = -1, val_every = 1, stop_epochs = -1;
   uint64_t seed = 0;
-  bool resume = false;
+  bool resume = false, eval = false;
 };
 static Args parse(int argc, char** argv) {
   Args a;
@@ -48,6 +49,7 @@ static Args parse(int argc, char** argv) {
     else if (k == "--max-iters") a.max_iters = std::stoi(v());
     else if (k == "--val-every") a.val_every = std::stoi(v());
     else if (k == "--resume") a.resume = true;
+    else if (k == "--eval") a.eval = true;
     else if (k == "--stop-epochs") a.stop_epochs = std::stoi(v());
     else {
       std::fprintf(stderr, "모르는 인자 %s\n", k.c_str());
@@ -107,7 +109,7 @@ static void init_params(Net& net, const std::string& weights, int nc, uint64_t s
         const auto& src = W.get(pre + t);
         const auto& p = P.p(pre + t);
         int64_t row = p.n / p.shape[0];
-        if (src.numel() / src.shape[0] != row) continue;
+        if (src.numel() / src.shape[0] != row || src.shape[0] == p.shape[0]) continue;  // 우리 학습 결과면 그대로
         std::memcpy(&h[p.off + kOurPerson * row], src.f32() + kCocoPerson * row, row * 4);
         ++remapped;
       }
@@ -217,7 +219,7 @@ static MapEval::Result validate(Net& net, Optimizer& opt, Loader& vl, int64_t nb
 
 int main(int argc, char** argv) {
   Args a = parse(argc, argv);
-  fs::create_directories(a.out);
+  if (!a.eval) fs::create_directories(a.out);
   const int nc = 7;
   cudaStream_t s;
   CK(cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
@@ -233,6 +235,7 @@ int main(int argc, char** argv) {
   }
 
   Cache tc, vc;
+  if (a.eval) a.train = a.val;  // 평가만: 학습 캐시는 쓰지 않음
   YT_ASSERT(tc.open(a.train), "학습 캐시 %s", a.train.c_str());
   YT_ASSERT(vc.open(a.val), "검증 캐시 %s", a.val.c_str());
   std::printf("학습 %d 장, 검증 %d 장\n", tc.n(), vc.n());
@@ -277,6 +280,14 @@ int main(int argc, char** argv) {
   opt.init(oc, &net, blas, s);
   std::printf("장치 메모리 %.2f GB, epoch 당 %lld 반복, 누적 %d\n", dev_total() / 1e9, (long long)nb, opt.accumulate(nb * 10));
 
+  if (a.eval) {  // 불러온 가중치를 그대로(EMA 자리에 두고) 검증
+    CK(cudaMemcpy(opt.ema(), net.params.vals, net.params.total * 4, cudaMemcpyDeviceToDevice));
+    MapEval::Result r = validate(net, opt, vl, nbv, vc, nc, s);
+    std::printf("%-18s %8s %8s %8s\n", "클래스", "정답 수", "AP50", "AP50-95");
+    for (int c = 0; c < nc; ++c) std::printf("%-18s %8d %8.4f %8.4f\n", kNames[c], (int)r.ngt[c], r.ap50[c], r.ap[c]);
+    std::printf("%-18s %8s %8.4f %8.4f\n", "전체", "", r.map50, r.map);
+    return 0;
+  }
   Ckpt ck{0, -1.0};
   if (a.resume) {
     YT_ASSERT(load_state(a.out + "/state.bin", net, opt, ck), "이어 할 상태가 없음: %s/state.bin", a.out.c_str());
