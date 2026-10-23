@@ -1,0 +1,11 @@
+[package]
+name = "ptconv"
+version = "0.1.0"
+edition = "2021"
+description = "PyTorch .pt(zip + pickle)에서 텐서만 읽어 safetensors 로 바꾼다 — 파이썬 없음, pickle 은 자료 구조만 해석(코드 실행 없음)"
+
+[dependencies]
+anyhow = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+safetensors = "0.4"
+half = "2"
