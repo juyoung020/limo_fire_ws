@@ -17,7 +17,7 @@ void bn_eval_stats(int C, const float* run_mean, const float* run_var, float eps
 // y = act(γ·(z − μ)·istd + β). act: 0 없음, 1 SiLU
 void bn_apply(const act_t* z, int64_t M, int C, const float* mean, const float* istd, const float* gamma,
               const float* beta, int act, act_t* y, cudaStream_t s);
-// 역방향: dy → dz(덮어쓰기), dγ·dβ(+=, float). acc: double [2C]
+// 역방향: dy → dz(덮어쓰기), dγ·dβ(+=, float). acc: double [4C] (뒤쪽은 채널 계수 자리)
 void bn_backward(const act_t* z, const act_t* dy, int64_t M, int C, const float* mean, const float* istd,
                  const float* gamma, const float* beta, int act, double* acc, act_t* dz, float* dgamma, float* dbeta,
                  cudaStream_t s);
@@ -36,6 +36,13 @@ void up2_bwd(const act_t* dy, act_t* dx, int N, int H, int W, int C, cudaStream_
 // maxpool k×k stride 1 pad k/2 (PyTorch 와 같이 -inf 덧대기). arg: 창 안 최댓값 위치(u8)
 void maxpool(const act_t* x, act_t* y, uint8_t* arg, int N, int H, int W, int C, int k, cudaStream_t s);
 void maxpool_bwd(const act_t* dy, const uint8_t* arg, act_t* dx, int N, int H, int W, int C, int k, cudaStream_t s);
+
+// ---- depthwise 3×3 (stride 1, pad 1), NHWC, 가중치 [C, 3, 3] (act_t) ----
+void dw3_fwd(const act_t* x, const act_t* w, act_t* y, int N, int H, int W, int C, cudaStream_t s);
+// dx (+=)
+void dw3_dgrad(const act_t* dy, const act_t* w, act_t* dx, int N, int H, int W, int C, cudaStream_t s);
+// dw (덮어쓰기, act_t [C·9]). tmp: float [9C]
+void dw3_wgrad(const act_t* x, const act_t* dy, act_t* dw, float* tmp, int N, int H, int W, int C, cudaStream_t s);
 
 // ---- 편향·형 ----
 void add_bias(act_t* y, int64_t M, int C, const float* b, cudaStream_t s);

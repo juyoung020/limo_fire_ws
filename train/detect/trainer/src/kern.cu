@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cfloat>
 
 #include "kern.cuh"
@@ -99,22 +100,48 @@ struct BwdF {
     return make_float2(d, d * xh);
   }
 };
-__global__ void bn_dz_k(const act_t* z, const act_t* dy, int64_t n, int64_t M, int C, const float* mean,
-                        const float* istd, const float* g, const float* b, int act, const double* acc, act_t* dz) {
-  int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
-  if (i >= n) return;
-  int c = int(i % C);
-  float xh = (to_f(z[i]) - mean[c]) * istd[c];
-  float d = to_f(dy[i]);
-  if (act) d *= dsilu(xh * g[c] + b[c]);
-  float sg = (float)(acc[c] / M), sgx = (float)(acc[C + c] / M);
-  dz[i] = from_f<act_t>(g[c] * istd[c] * (d - sg - xh * sgx));
-}
-__global__ void bn_param_grad_k(const double* acc, int C, float* dg, float* db) {
+// 채널 계수: k0 = γ·istd, sg = Σg/M, sgx = Σg·x̂/M  → coef [3C]
+__global__ void bn_param_grad_k(const double* acc, int64_t M, int C, const float* gamma, const float* istd, float* dg,
+                                float* db, float* coef) {
   int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (c >= C) return;
   db[c] += (float)acc[c];
   dg[c] += (float)acc[C + c];
+  coef[c] = gamma[c] * istd[c];
+  coef[C + c] = (float)(acc[c] / (double)M);
+  coef[2 * C + c] = (float)(acc[C + c] / (double)M);
+}
+// 행 하나 = 블록 y, 채널 = 스레드(32 비트 첨자)
+__global__ void bn_dz_k(const act_t* z, const act_t* dy, int M, int C, const float* mean, const float* istd,
+                        const float* g, const float* b, int act, const float* coef, act_t* dz) {
+  int c = blockIdx.x * blockDim.x + threadIdx.x;
+  if (c >= C) return;
+  float mu = mean[c], is = istd[c], gg = g[c], bb = b[c], k0 = coef[c], sg = coef[C + c], sgx = coef[2 * C + c];
+  for (int r = blockIdx.y; r < M; r += gridDim.y) {
+    int i = r * C + c;
+    float xh = (to_f(z[i]) - mu) * is;
+    float d = to_f(dy[i]);
+    if (act) d *= dsilu(xh * gg + bb);
+    dz[i] = from_f<act_t>(k0 * (d - sg - xh * sgx));
+  }
+}
+__global__ void bn_apply2_k(const act_t* z, int M, int C, const float* mean, const float* istd, const float* g,
+                            const float* b, int act, act_t* y) {
+  int c = blockIdx.x * blockDim.x + threadIdx.x;
+  if (c >= C) return;
+  float k = istd[c] * g[c], o = b[c] - mean[c] * k;
+  for (int r = blockIdx.y; r < M; r += gridDim.y) {
+    int i = r * C + c;
+    float v = to_f(z[i]) * k + o;
+    if (act) v = silu(v);
+    y[i] = from_f<act_t>(v);
+  }
+}
+inline dim3 rows_grid(int64_t M, int C, int tx) {
+  int gx = cdiv(C, tx);
+  int64_t gy = std::min<int64_t>(M, std::max<int64_t>(1, 65535));
+  gy = std::min<int64_t>(gy, std::max<int64_t>(1, (int64_t)2048 * 32 / gx));
+  return dim3(gx, (unsigned)gy);
 }
 }  // namespace
 
@@ -128,16 +155,17 @@ void bn_eval_stats(int C, const float* rm, const float* rv, float eps, float* me
 }
 void bn_apply(const act_t* z, int64_t M, int C, const float* mean, const float* istd, const float* gamma,
               const float* beta, int act, act_t* y, cudaStream_t s) {
-  int64_t n = M * C;
-  bn_apply_k<<<nb(n), TPB, 0, s>>>(z, n, C, mean, istd, gamma, beta, act, y);
+  int tx = std::min(C, 128);
+  bn_apply2_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, (int)M, C, mean, istd, gamma, beta, act, y);
 }
 void bn_backward(const act_t* z, const act_t* dy, int64_t M, int C, const float* mean, const float* istd,
                  const float* gamma, const float* beta, int act, double* acc, act_t* dz, float* dgamma, float* dbeta,
                  cudaStream_t s) {
   chan_reduce2(M, C, BwdF{z, dy, mean, istd, gamma, beta, C, act}, acc, s);
-  bn_param_grad_k<<<cdiv(C, 128), 128, 0, s>>>(acc, C, dgamma, dbeta);
-  int64_t n = M * C;
-  bn_dz_k<<<nb(n), TPB, 0, s>>>(z, dy, n, M, C, mean, istd, gamma, beta, act, acc, dz);
+  float* coef = reinterpret_cast<float*>(acc + 2 * C);  // acc 뒤쪽 공간(3C float)
+  bn_param_grad_k<<<cdiv(C, 128), 128, 0, s>>>(acc, M, C, gamma, istd, dgamma, dbeta, coef);
+  int tx = std::min(C, 128);
+  bn_dz_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, dy, (int)M, C, mean, istd, gamma, beta, act, coef, dz);
 }
 
 // ---- 모양 ----
@@ -294,6 +322,79 @@ void bias_grad(const act_t* dy, int64_t M, int C, double* acc, float* db, cudaSt
   chan_reduce2(M, C, SumF{dy, C}, acc, s);
   bias_final_k<<<cdiv(C, 128), 128, 0, s>>>(acc, C, db);
 }
+// ---- depthwise 3×3 ----
+namespace {
+// 블록: 채널 32 × 행 8. 스레드 하나가 (픽셀, 채널) 하나
+__global__ void dw3_k(const act_t* x, const act_t* w, act_t* y, int N, int H, int W, int C, int flip, int accum) {
+  int c = blockIdx.x * 32 + threadIdx.x;
+  if (c >= C) return;
+  float k[9];
+  for (int j = 0; j < 9; ++j) k[j] = to_f(w[c * 9 + (flip ? 8 - j : j)]);
+  int P = N * H * W;
+  for (int p = blockIdx.y * 8 + threadIdx.y; p < P; p += gridDim.y * 8) {
+    int xx = p % W, t = p / W, yy = t % H, n = t / H;
+    float s = 0.f;
+    for (int ky = 0; ky < 3; ++ky) {
+      int sy = yy + ky - 1;
+      if (sy < 0 || sy >= H) continue;
+      for (int kx = 0; kx < 3; ++kx) {
+        int sx = xx + kx - 1;
+        if (sx < 0 || sx >= W) continue;
+        s += to_f(x[((n * H + sy) * W + sx) * C + c]) * k[ky * 3 + kx];
+      }
+    }
+    act_t* o = y + int64_t(p) * C + c;
+    *o = from_f<act_t>(accum ? to_f(*o) + s : s);
+  }
+}
+__global__ void dw3_wgrad_k(const act_t* x, const act_t* dy, float* tmp, int N, int H, int W, int C) {
+  int c = blockIdx.x * 32 + threadIdx.x;
+  float a[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+  int P = N * H * W;
+  if (c < C)
+    for (int p = blockIdx.y * 8 + threadIdx.y; p < P; p += gridDim.y * 8) {
+      int xx = p % W, t = p / W, yy = t % H, n = t / H;
+      float g = to_f(dy[int64_t(p) * C + c]);
+      if (g == 0.f) continue;
+      for (int ky = 0; ky < 3; ++ky) {
+        int sy = yy + ky - 1;
+        if (sy < 0 || sy >= H) continue;
+        for (int kx = 0; kx < 3; ++kx) {
+          int sx = xx + kx - 1;
+          if (sx < 0 || sx >= W) continue;
+          a[ky * 3 + kx] += g * to_f(x[((n * H + sy) * W + sx) * C + c]);
+        }
+      }
+    }
+  __shared__ float sh[8][9][33];
+  for (int j = 0; j < 9; ++j) sh[threadIdx.y][j][threadIdx.x] = a[j];
+  __syncthreads();
+  if (threadIdx.y == 0 && c < C)
+    for (int j = 0; j < 9; ++j) {
+      float v = 0.f;
+      for (int r = 0; r < 8; ++r) v += sh[r][j][threadIdx.x];
+      atomicAdd(&tmp[c * 9 + j], v);
+    }
+}
+__global__ void f2a_plain_k(const float* x, act_t* y, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) y[i] = from_f<act_t>(x[i]);
+}
+inline dim3 dw_grid(int P, int C) { return dim3(cdiv(C, 32), (unsigned)std::min(cdiv(P, 8), std::max(1, 4096 / cdiv(C, 32)))); }
+}  // namespace
+void dw3_fwd(const act_t* x, const act_t* w, act_t* y, int N, int H, int W, int C, cudaStream_t s) {
+  dw3_k<<<dw_grid(N * H * W, C), dim3(32, 8), 0, s>>>(x, w, y, N, H, W, C, 0, 0);
+}
+void dw3_dgrad(const act_t* dy, const act_t* w, act_t* dx, int N, int H, int W, int C, cudaStream_t s) {
+  // stride 1 · pad 1 이면 입력 기울기 = 뒤집은 커널로 합성곱
+  dw3_k<<<dw_grid(N * H * W, C), dim3(32, 8), 0, s>>>(dy, w, dx, N, H, W, C, 1, 1);
+}
+void dw3_wgrad(const act_t* x, const act_t* dy, act_t* dw, float* tmp, int N, int H, int W, int C, cudaStream_t s) {
+  CK(cudaMemsetAsync(tmp, 0, sizeof(float) * 9 * C, s));
+  dw3_wgrad_k<<<dw_grid(N * H * W, C), dim3(32, 8), 0, s>>>(x, dy, tmp, N, H, W, C);
+  f2a_plain_k<<<cdiv(9 * C, 256), 256, 0, s>>>(tmp, dw, 9 * C);
+}
+
 void f32_to_act(const float* x, act_t* y, int64_t n, cudaStream_t s) { f2a_k<<<nb(n), TPB, 0, s>>>(x, y, n); }
 void act_to_f32(const act_t* x, float* y, int64_t n, bool accum, cudaStream_t s) {
   a2f_k<<<nb(n), TPB, 0, s>>>(x, y, n, accum);

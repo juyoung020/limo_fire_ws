@@ -127,15 +127,20 @@ class OpConvBN : public Op {
     prm = net->params.add(name + ".bn.running_mean", P_RUN_MEAN, {K});
     prv = net->params.add(name + ".bn.running_var", P_RUN_VAR, {K});
     z = dalloc<act_t>(o->n());
+    dw = groups == i->C && groups == K && k == 3 && s == 1;
     mean = dalloc<float>(K);
     istd = dalloc<float>(K);
   }
   const Param& P(int i) const { return net->params.list[i]; }
   float* V(int i) const { return net->params.vals + P(i).off; }
   float* G(int i) const { return net->params.grads + P(i).off; }
+  bool dw = false;  // depthwise 3×3: 직접 짠 커널(cuDNN NHWC half 가 느림)
   void fwd(bool train) override {
     auto s = net->s_;
-    conv.fwd(in->x, net->params.w16 + P(pw).woff, z, net->ws, net->ws_bytes);
+    if (dw)
+      kern::dw3_fwd(in->x, net->params.w16 + P(pw).woff, z, in->N, in->H, in->W, in->C, s);
+    else
+      conv.fwd(in->x, net->params.w16 + P(pw).woff, z, net->ws, net->ws_bytes);
     int C = out->C;
     if (train && net->train_bn)
       kern::bn_stats(z, out->M(), C, net->acc_, mean, istd, V(prm), V(prv), net->cfg.bn_momentum, net->cfg.bn_eps, s);
@@ -147,6 +152,11 @@ class OpConvBN : public Op {
     auto s = net->s_;
     act_t* dz = net->dz_;
     kern::bn_backward(z, out->g, out->M(), out->C, mean, istd, V(pg), V(pb), act, net->acc_, dz, G(pg), G(pb), s);
+    if (dw) {
+      if (!detach && in->g) kern::dw3_dgrad(dz, net->params.w16 + P(pw).woff, in->g, in->N, in->H, in->W, in->C, s);
+      kern::dw3_wgrad(in->x, dz, net->params.dw16 + P(pw).woff, net->dwtmp_, in->N, in->H, in->W, in->C, s);
+      return;
+    }
     if (!detach && in->g) conv.dgrad(dz, net->params.w16 + P(pw).woff, in->g, net->ws, net->ws_bytes, 1.f);
     conv.wgrad(in->x, dz, net->params.dw16 + P(pw).woff, net->ws, net->ws_bytes, 0.f);
   }
@@ -447,13 +457,15 @@ void Net::finalize() {
     maxC = std::max<int64_t>(maxC, t->C);
   }
   dz_ = dalloc<act_t>(maxz);
-  acc_ = dalloc<double>(2 * maxC);
+  dwtmp_ = dalloc<float>(9 * maxC);
+  acc_ = dalloc<double>(4 * maxC);
   // 합성곱 알고리즘 재기(작업 공간 상한 256 MB)
   size_t lim = 256u << 20;
   void* tmp_ws = nullptr;
   CK(cudaMalloc(&tmp_ws, lim));
   ws_bytes = 0;
   for (auto& op : ops_) {
+    if (auto* c = dynamic_cast<OpConvBN*>(op.get()); c && c->dw) continue;
     if (auto* c = dynamic_cast<OpConvBN*>(op.get()))
       ws_bytes = std::max(ws_bytes, c->conv.tune(c->in->x, params.w16 + params.list[c->pw].woff, c->z,
                                                  c->in->g ? c->in->g : dz_, params.dw16 + params.list[c->pw].woff,

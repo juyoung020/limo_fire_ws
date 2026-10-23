@@ -116,6 +116,7 @@ class Net {
   Tensor* hcls_[2][3] = {};
   double* acc_ = nullptr;  // 채널 합 작업 공간
   act_t* dz_ = nullptr;    // BN 역방향 출력(합성곱 기울기 입력) 공용 버퍼
+  float* dwtmp_ = nullptr; // depthwise 가중치 기울기 누적
   act_t* grad_arena_ = nullptr;
   int64_t grad_arena_n_ = 0;
   friend class OpConvBN;
