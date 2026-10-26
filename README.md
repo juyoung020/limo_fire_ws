@@ -10,6 +10,7 @@
 <a href="https://plausible-hallway-e4f.notion.site/3eb454b08de28190b2e8e321a33a9371">팀 노션</a> &nbsp;·&nbsp;
 <a href="docs/idea.md">아이디어</a> &nbsp;·&nbsp;
 <a href="docs/spec.md">스펙·구현 방향</a> &nbsp;·&nbsp;
+<a href="docs/hardware.md">하드웨어 스펙</a> &nbsp;·&nbsp;
 <a href="docs/parts.md">부품 목록</a> &nbsp;·&nbsp;
 <a href="docs/progress.md">진행 기록</a> &nbsp;·&nbsp;
 <a href="docs/backlog.md">프로덕트 백로그</a>
