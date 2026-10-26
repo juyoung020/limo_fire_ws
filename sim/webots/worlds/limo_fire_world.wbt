@@ -241,7 +241,7 @@ BunchOfSunFlowers {
 # ---------------- limo_fire: YOLO 7 클래스 물체 (위치·크기 정답은 ../objects.yaml) ----------------
 # fire: 바닥 불 + 촛불 + 작은 불
 FireBillboard {
-  translation 8.6 -1.6 0
+  translation 8.0 -2.3 0
   name "fire_floor"
   texture "flame_bonfire"
   width 0.7
@@ -264,7 +264,7 @@ FireBillboard {
 }
 # smoke: 바닥 불 위
 FireBillboard {
-  translation 8.6 -1.6 0.35
+  translation 8.0 -2.3 0.35
   name "smoke_floor"
   texture "smoke"
   width 1.1

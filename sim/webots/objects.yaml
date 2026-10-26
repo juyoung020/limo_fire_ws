@@ -4,10 +4,10 @@
 world: worlds/limo_fire_world.wbt
 robot_start: {x: 6.36, y: 0.0, yaw: 0.0}
 objects:
-  - {name: fire_floor,             cls: 0, center: [8.60, -1.60, 0.20],  size: [0.70, 0.70, 0.40], yaw: 0.0}
+  - {name: fire_floor,             cls: 0, center: [8.00, -2.30, 0.20],  size: [0.70, 0.70, 0.40], yaw: 0.0}
   - {name: fire_candle,            cls: 0, center: [7.45, -0.65, 0.655], size: [0.06, 0.06, 0.07], yaw: 0.0, note: "촛불 불꽃만. 초는 z 0.50~0.62"}
   - {name: fire_small,             cls: 0, center: [7.00, 3.60, 0.20],  size: [0.30, 0.30, 0.40], yaw: 0.0}
-  - {name: smoke_floor,            cls: 1, center: [8.60, -1.60, 0.85], size: [1.10, 1.10, 1.00], yaw: 0.0}
+  - {name: smoke_floor,            cls: 1, center: [8.00, -2.30, 0.85], size: [1.10, 1.10, 1.00], yaw: 0.0}
   - {name: extinguisher_east,      cls: 2, center: [9.85, 2.00, 0.42],  size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
   - {name: extinguisher_west,      cls: 2, center: [5.30, 0.60, 0.42],  size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
   - {name: extinguisher_southwest, cls: 2, center: [5.30, -4.75, 0.42], size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
