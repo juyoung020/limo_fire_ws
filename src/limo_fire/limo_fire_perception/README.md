@@ -44,3 +44,25 @@ PY
 
 - trtexec FP16 GPU 시간 중앙값 10.4 ms (Webots 와 같이 돌 때), 노드 전체(전처리 포함) 약 34 ms
 - 시뮬 방에서 제자리 회전: 계단 84 % · 소화기 88 % · 문 84 % · 유도등 86 % 검출. 반쯤 잘린 사람, 작은 불(사진 판)은 못 잡음
+
+## 지도에 물체 올리기 (`object_mapper`)
+
+탐지 상자 + 컬러에 정렬된 깊이 영상 + TF(`map ← camera_color_optical_frame`) → 물체의 지도 좌표 → `/object_mapper/markers` (MarkerArray, 클래스별 색 기둥 + 이름).
+상자 가운데 50 % 깊이의 하위 30 % 값을 거리로 쓰고(얇은 소화기 뒤 벽 무시), 같은 클래스가 0.8 m 안이면 같은 물체로 합치며, 5 번 이상 본 것만 올린다. 값은 `config/yolo_fire.yaml`.
+`map` 프레임이 있어야 하므로 SLAM(Cartographer) 또는 AMCL 과 같이 돌린다.
+
+```bash
+# Webots (slam:=true 로 켠 뒤)
+ros2 launch limo_fire_perception yolo.launch.xml use_sim_time:=true viewer:=false rviz:=true
+```
+
+### 확인 (2026-10-27, Webots 방 한 바퀴 + 웨이포인트 4 곳에서 제자리 회전)
+
+| 정답 물체 | 지도 위치 오차 |
+|---|---|
+| 불(바닥) · 불(작은 것) | 0.06 · 0.09 m |
+| 소화기 동 · 서 · 남서 | 0.06 · 0.19 · 0.41 m |
+| 문 | 0.31 m |
+| 계단 | 0.61 m (계단 원점이 한쪽 끝이라 가운데와 차이) |
+
+틀린 3 개는 위치가 아니라 YOLO 클래스 오류: 사람(person_1) → 소화기, 탁자 → 계단, 불 근처 → 유도등. 사람 2 명·벽 높이 유도등 2 개·촛불·연기는 못 잡음.

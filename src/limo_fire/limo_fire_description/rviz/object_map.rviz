@@ -1,0 +1,113 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Reference Frame: map
+      Cell Size: 1
+      Plane Cell Count: 20
+      Color: 160; 160; 164
+      Alpha: 0.3
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Value: /map
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+        Depth: 5
+      Color Scheme: map
+      Alpha: 0.8
+      Draw Behind: true
+      Value: true
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Value: /scan
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Points
+      Size (Pixels): 3
+      Color Transformer: FlatColor
+      Color: 255; 40; 40
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+        Depth: 5
+      Visual Enabled: true
+      Collision Enabled: false
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Objects
+      Enabled: true
+      Topic:
+        Value: /object_mapper/markers
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+        Depth: 5
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Name: YOLO
+      Enabled: true
+      Topic:
+        Value: /yolo_detector/image
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Normalize Range: true
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/Measure
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 70
+      X: 1.2
+      Y: 0
+      Angle: 1.5708
+      Target Frame: <Fixed Frame>
+      Value: TopDownOrtho (rviz_default_plugins)
+    Saved: ~
+Window Geometry:
+  Width: 1600
+  Height: 950
+  X: 100
+  Y: 50
+  Displays:
+    collapsed: false
+  Views:
+    collapsed: true

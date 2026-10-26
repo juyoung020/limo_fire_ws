@@ -10,6 +10,11 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(message_filters REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc dnn)
 find_package(CUDAToolkit REQUIRED)
 
@@ -29,7 +34,12 @@ add_executable(yolo_detector src/yolo_detector_node.cpp)
 target_link_libraries(yolo_detector trt_yolo)
 ament_target_dependencies(yolo_detector rclcpp sensor_msgs vision_msgs)
 
-install(TARGETS trt_yolo yolo_detector
+# 탐지 상자 + 깊이 → 지도 위 물체 위치 (TensorRT·OpenCV 안 씀)
+add_executable(object_mapper src/object_mapper_node.cpp)
+ament_target_dependencies(object_mapper rclcpp sensor_msgs vision_msgs visualization_msgs geometry_msgs
+  message_filters tf2_ros tf2_geometry_msgs)
+
+install(TARGETS trt_yolo yolo_detector object_mapper
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 

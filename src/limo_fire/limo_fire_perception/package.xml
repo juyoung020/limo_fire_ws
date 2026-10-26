@@ -12,9 +12,16 @@
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>vision_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>message_filters</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
   <depend>libopencv-dev</depend>
 
   <exec_depend>rqt_image_view</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>limo_fire_description</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
