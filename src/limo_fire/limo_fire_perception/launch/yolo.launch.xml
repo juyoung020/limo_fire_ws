@@ -1,5 +1,5 @@
 <!-- 카메라 영상에서 YOLO 탐지 (실물·Webots 공용). 결과: /yolo_detector/detections, 상자 그린 영상: /yolo_detector/image
-     ros2 launch limo_fire_perception yolo.launch.xml [config:=yolo_fire.yaml | yolo11n_coco.yaml] [viewer:=true] -->
+     ros2 launch limo_fire_perception yolo.launch.xml [viewer:=true] -->
 <launch>
   <arg name="config" default="yolo_fire.yaml"/>
   <arg name="viewer" default="true" description="rqt_image_view 로 탐지 영상 보기"/>
