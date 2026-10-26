@@ -1,0 +1,65 @@
+#VRML_SIM R2025a utf8
+# 사진으로 만든 불·연기. 같은 그림 두 장을 십자로 세워 어느 쪽에서 봐도 보인다. 바닥(z=0)에 선다.
+# 충돌·물리 없음. texture: flame_bonfire(바닥 불) · flame_single(불꽃 하나) · smoke(연기). 텍스처는 ../textures/ (출처는 README)
+# template language: javascript
+
+PROTO FireBillboard [
+  field SFVec3f    translation       0 0 0
+  field SFRotation rotation          0 0 1 0
+  field SFString   name              "fire"
+  field SFString{"flame_bonfire", "flame_single", "smoke"}
+                   texture           "flame_bonfire"
+  field SFFloat    width             0.7     # 판 폭(m)
+  field SFFloat    height            0.4     # 판 높이(m)
+  field SFFloat    emissiveIntensity 1.5     # 불은 스스로 빛나게. 연기는 0
+  field SFFloat    lightIntensity    0.0     # 0 보다 크면 주황 점광원(불빛)
+]
+{
+  %<
+    const w = fields.width.value / 2;
+    const h = fields.height.value;
+    const url = '../textures/' + fields.texture.value + '.png';
+    const glow = fields.emissiveIntensity.value;
+  >%
+  Solid {
+    translation IS translation
+    rotation IS rotation
+    name IS name
+    children [
+      Shape {
+        castShadows FALSE
+        appearance PBRAppearance {
+          baseColorMap ImageTexture { url [ "%<= url >%" ] }
+          %< if (glow > 0) { >%
+          emissiveColor 1 1 1
+          emissiveColorMap ImageTexture { url [ "%<= url >%" ] }
+          emissiveIntensity %<= glow >%
+          %< } >%
+          roughness 1
+          metalness 0
+        }
+        geometry IndexedFaceSet {
+          solid FALSE
+          coord Coordinate {
+            point [
+              %<= -w >% 0 0, %<= w >% 0 0, %<= w >% 0 %<= h >%, %<= -w >% 0 %<= h >%
+              0 %<= -w >% 0, 0 %<= w >% 0, 0 %<= w >% %<= h >%, 0 %<= -w >% %<= h >%
+            ]
+          }
+          texCoord TextureCoordinate { point [ 0 0, 1 0, 1 1, 0 1 ] }
+          coordIndex [ 0 1 2 3 -1, 4 5 6 7 -1 ]
+          texCoordIndex [ 0 1 2 3 -1, 0 1 2 3 -1 ]
+        }
+      }
+      %< if (fields.lightIntensity.value > 0) { >%
+      PointLight {
+        location 0 0 %<= h * 0.5 >%
+        color 1 0.55 0.2
+        intensity %<= fields.lightIntensity.value >%
+        radius 4
+        castShadows FALSE
+      }
+      %< } >%
+    ]
+  }
+}
