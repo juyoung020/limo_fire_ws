@@ -1,0 +1,45 @@
+#VRML_SIM R2025a utf8
+# 피난구 유도등: 얇은 상자 + 앞면에 ISO 7010 E001(초록 바탕, 문으로 달려 나가는 사람) 그림, 스스로 빛난다.
+# 앞면은 로컬 +x 를 본다 — 벽에 붙일 때 rotation 으로 방에 향하게. translation 은 판 가운데
+# template language: javascript
+
+PROTO ExitSign [
+  field SFVec3f    translation 0 0 2.1
+  field SFRotation rotation    0 0 1 0
+  field SFString   name        "exit sign"
+  field SFFloat    width       0.36    # 판 폭(m)
+  field SFFloat    height      0.18    # 판 높이(m)
+  field SFFloat    depth       0.04    # 두께(m)
+]
+{
+  %< const w = fields.width.value / 2; const h = fields.height.value / 2; const d = fields.depth.value / 2 + 0.001; >%
+  Solid {
+    translation IS translation
+    rotation IS rotation
+    name IS name
+    children [
+      Shape {
+        appearance PBRAppearance { baseColor 0.85 0.85 0.85 roughness 0.5 metalness 0 }
+        geometry Box { size %<= fields.depth.value >% %<= fields.width.value + 0.02 >% %<= fields.height.value + 0.02 >% }
+      }
+      Shape {
+        castShadows FALSE
+        appearance PBRAppearance {
+          baseColorMap ImageTexture { url [ "../textures/exit_sign_e001.png" ] }
+          emissiveColor 1 1 1
+          emissiveColorMap ImageTexture { url [ "../textures/exit_sign_e001.png" ] }
+          emissiveIntensity 1
+          roughness 1
+          metalness 0
+        }
+        geometry IndexedFaceSet {
+          coord Coordinate { point [ %<= d >% %<= -w >% %<= -h >%, %<= d >% %<= w >% %<= -h >%, %<= d >% %<= w >% %<= h >%, %<= d >% %<= -w >% %<= h >% ] }
+          texCoord TextureCoordinate { point [ 0 0, 1 0, 1 1, 0 1 ] }
+          coordIndex [ 0 1 2 3 -1 ]
+          texCoordIndex [ 0 1 2 3 -1 ]
+        }
+      }
+    ]
+    boundingObject Box { size %<= fields.depth.value >% %<= fields.width.value + 0.02 >% %<= fields.height.value + 0.02 >% }
+  }
+}
