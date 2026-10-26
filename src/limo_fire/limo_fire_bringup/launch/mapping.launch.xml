@@ -1,0 +1,23 @@
+<!-- Cartographer 로 지도 만들기 (대시보드 "맵" = WeGo wego/cartographer_launch.py 와 같은 구성)
+     먼저 robot.launch.xml 을 켜 둔다. 다 돌았으면 save_map.launch.xml 로 저장
+     ros2 launch limo_fire_bringup mapping.launch.xml [rviz:=false] -->
+<launch>
+  <arg name="configuration_directory" default="$(find-pkg-share limo_fire_navigation)/config"/>
+  <arg name="configuration_basename" default="cartographer_2d.lua"/>
+  <arg name="resolution" default="0.05" description="지도 한 칸 크기(m)"/>
+  <arg name="publish_period_sec" default="1.0" description="/map 발행 주기(s)"/>
+  <arg name="rviz" default="true"/>
+
+  <node pkg="cartographer_ros" exec="cartographer_node" name="cartographer_node" output="screen"
+        args="-configuration_directory $(var configuration_directory) -configuration_basename $(var configuration_basename)">
+    <remap from="odom" to="odometry/filtered"/>
+  </node>
+
+  <node pkg="cartographer_ros" exec="cartographer_occupancy_grid_node" name="cartographer_occupancy_grid_node" output="screen"
+        args="-resolution $(var resolution) -publish_period_sec $(var publish_period_sec)">
+    <param name="use_sim_time" value="false"/>
+  </node>
+
+  <node pkg="rviz2" exec="rviz2" name="rviz2" output="screen" if="$(var rviz)"
+        args="-d $(find-pkg-share limo_fire_description)/rviz/mapping.rviz"/>
+</launch>

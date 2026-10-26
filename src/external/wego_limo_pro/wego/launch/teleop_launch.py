@@ -51,7 +51,7 @@ def generate_launch_description():
             PathJoinSubstitution([FindPackageShare('limo_base'), 'launch', 'limo_base.launch.py'])
         ),
         IncludeLaunchDescription(
-            PathJoinSubstitution([FindPackageShare('astra_camera'), 'launch', 'dabai.launch.py'])
+            PathJoinSubstitution([FindPackageShare('orbbec_camera'), 'launch', 'astra_stereo_u3.launch.py'])
         ),
         IncludeLaunchDescription(
             PathJoinSubstitution([FindPackageShare('ydlidar_ros2_driver'), 'launch', 'ydlidar.launch.py'])

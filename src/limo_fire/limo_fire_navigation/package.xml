@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>limo_fire_navigation</name>
+  <version>0.1.0</version>
+  <description>Nav2·Cartographer 파라미터와 지도</description>
+  <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
