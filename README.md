@@ -127,6 +127,19 @@ colcon build --packages-select webots_ros2_limo   # 지금 쓰는 것만. 전체
 source env.sh
 ```
 
+### 실물 LIMO 에서
+
+```bash
+source ~/limo_fire_ws/env.sh
+colcon build --packages-select limo_fire_description limo_fire_navigation limo_fire_bringup
+source env.sh
+ros2 launch limo_fire_bringup robot.launch.xml          # 센서·구동
+ros2 launch limo_fire_bringup mapping.launch.xml        # 지도 만들기 → save_map.launch.xml 로 저장
+ros2 launch limo_fire_bringup navigation.launch.xml     # 저장한 지도로 주행
+```
+
+WeGo 대시보드 버튼과 같은 구성이다. 자세한 것은 [limo_fire_bringup](src/limo_fire/limo_fire_bringup/README.md).
+
 Isaac Sim USD(`WegoLimoUSD.zip`, 약 65MB)는 용량 때문에 저장소에 없다. [WeGo 가이드](https://goofy-pleasure-a84.notion.site/Limo-Isaac-Sim-1ff09b2ac4bf8086bdf5e94521f74946)에서 받아 푼다.
 
 ```bash
@@ -137,7 +150,7 @@ unzip WegoLimoUSD.zip -d sim/wego_LimoIsaacSIM/USD/
 
 | 폴더 | 출처 | 커밋 |
 |---|---|---|
-| `src/external/wego_limo_pro` | [WeGo-Robotics/limo_pro](https://github.com/WeGo-Robotics/limo_pro) | `7ef355c` |
+| `src/external/wego_limo_pro` | 실물 LIMO Pro 의 `~/wego_ws/src` (WeGo 출고본, [WeGo-Robotics/limo_pro](https://github.com/WeGo-Robotics/limo_pro) 와 다름) — [목록](src/external/wego_limo_pro/README.md) | 2026-10-26 복사 |
 | `src/external/webots_ros2_limo` | [inmo-jang/webots_ros2_limo](https://github.com/inmo-jang/webots_ros2_limo) (교수님) | `68d4fc0` |
 | `sim/wego_LimoIsaacSIM` | [WeGo-Robotics/LimoIsaacSIM](https://github.com/WeGo-Robotics/LimoIsaacSIM) (`sim` 브랜치) | `158da2b` |
 

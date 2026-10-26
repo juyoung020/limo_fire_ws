@@ -16,12 +16,12 @@
 
     # set the reference distance of the lane
     # higher number the closer to lane
-    reference_distance: 230
+    reference_distance: 170
 
     # Region of intererst in detecting lane
     roi_x_h: 320
     roi_x_l: 0
-    roi_y_h: 400
-    roi_y_l: 350
+    roi_y_h: 480
+    roi_y_l: 400
     use_sim_time: false
 

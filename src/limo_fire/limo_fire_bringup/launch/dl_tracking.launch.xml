@@ -1,0 +1,20 @@
+<!-- WeGo 딥러닝 주행 예제 (대시보드 "dl track" = dl_ros2_application/dl_track_application.launch.py 와 같은 구성)
+     TensorRT 엔진으로 길 따라가기 + YOLO 물체 탐지 + 비상 정지. 먼저 robot.launch.xml 을 켜 둔다. 로봇이 움직인다
+     conda 의 dl_env(TensorRT·ultralytics)가 필요하다: conda activate dl_env 후 실행 (WeGo dl_track_application.sh 와 같음)
+     가중치는 git 에 없다 — 로봇의 ~/wego_ws 에 빌드된 dl_ros2_application/weight 를 쓴다
+     ros2 launch limo_fire_bringup dl_tracking.launch.xml -->
+<launch>
+  <arg name="track_engine" default="$(find-pkg-share dl_ros2_application)/weight/dl_drive.engine"/>
+  <arg name="object_engine" default="$(find-pkg-share dl_ros2_application)/weight/best_version_2.engine"/>
+
+  <node pkg="dl_ros2_application" exec="emergency_stop" name="emergency_stop_node" output="screen"/>
+  <node pkg="dl_ros2_application" exec="trt_track_detect" name="trt_track_detect_node" output="screen">
+    <param name="engine_file_path" value="$(var track_engine)"/>
+  </node>
+  <node pkg="dl_ros2_application" exec="yolo_object_detect" name="yolo_object_detect_node" output="screen">
+    <param name="model_weight_path" value="$(var object_engine)"/>
+  </node>
+  <node pkg="dl_ros2_application" exec="dl_control" name="dl_control_node" output="screen">
+    <param from="$(find-pkg-share dl_ros2_application)/params/params.yaml"/>
+  </node>
+</launch>

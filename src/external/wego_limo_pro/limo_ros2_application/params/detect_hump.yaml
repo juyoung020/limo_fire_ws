@@ -1,6 +1,0 @@
-/detect_hump:
-  ros__parameters:
-    hump_threshold: -0.2 # lower value it will be more insensitive(rad/s)
-    slow_down_duration: 2 # how long it will slow down in sec
-    use_sim_time: false
-

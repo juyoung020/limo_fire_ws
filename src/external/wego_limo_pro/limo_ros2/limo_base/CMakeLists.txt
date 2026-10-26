@@ -14,7 +14,6 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -25,6 +24,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(limo_msgs REQUIRED)
+find_package(ackermann_msgs REQUIRED)
 
 include_directories(
   include
@@ -40,13 +40,23 @@ set(DEPENDENCIES
   "limo_msgs"
   "sensor_msgs"
   "tf2_geometry_msgs"
+  "ackermann_msgs"
 )
 
 add_executable(limo_base 
     src/limo_base_node.cpp
     src/limo_driver.cpp
     src/serial_port.cpp)
+
 ament_target_dependencies(limo_base rclcpp std_msgs tf2 tf2_ros nav_msgs sensor_msgs limo_msgs tf2_geometry_msgs)
+
+add_executable(limo_ackerman_base
+  src/limo_ackerman_base_node.cpp
+  src/limo_ackerman_driver.cpp
+  src/serial_port.cpp
+)
+
+ament_target_dependencies(limo_ackerman_base rclcpp tf2_ros nav_msgs limo_msgs sensor_msgs ackermann_msgs tf2_geometry_msgs)
 
 install(
   DIRECTORY include/
@@ -54,7 +64,8 @@ install(
 )
 
 install(TARGETS  
-  limo_base  
+  limo_base
+  limo_ackerman_base
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch
