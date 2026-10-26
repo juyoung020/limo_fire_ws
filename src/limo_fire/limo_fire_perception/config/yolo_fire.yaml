@@ -1,0 +1,9 @@
+# 우리 YOLO26s (train/detect, 7 클래스). 엔진은 이 기기에서 trtexec 로 만든다 (README)
+yolo_detector:
+  ros__parameters:
+    engine_path: /home/wego/limo_fire_ws/src/limo_fire/limo_fire_perception/models/yolo26s_fire.engine
+    conf_threshold: 0.35
+    nms_iou: 0.5
+    image_topic: /camera/color/image_raw
+    publish_image: true
+    class_names: [fire, smoke, fire_extinguisher, exit_sign, person, door, stairs]
