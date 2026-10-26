@@ -11,7 +11,8 @@
 <a href="docs/idea.md">아이디어</a> &nbsp;·&nbsp;
 <a href="docs/spec.md">스펙·구현 방향</a> &nbsp;·&nbsp;
 <a href="docs/parts.md">부품 목록</a> &nbsp;·&nbsp;
-<a href="docs/progress.md">진행 기록</a>
+<a href="docs/progress.md">진행 기록</a> &nbsp;·&nbsp;
+<a href="docs/backlog.md">프로덕트 백로그</a>
 
 <br><br>
 
