@@ -1,0 +1,17 @@
+<!-- mapping.launch.xml 이 켜져 있을 때 지금 지도를 저장 (대시보드 "맵 저장" = WeGo save_map.sh 와 같은 일)
+     WeGo 처럼 src 와 install 두 곳에 저장해서, 다시 빌드하지 않아도 navigation.launch.xml 이 새 지도를 연다
+     ros2 launch limo_fire_bringup save_map.launch.xml [name:=map] -->
+<launch>
+  <arg name="name" default="map" description="파일 이름 (확장자 없이). navigation.launch.xml 기본값은 map"/>
+  <arg name="src_dir" default="$(env HOME)/limo_fire_ws/src/limo_fire/limo_fire_navigation/maps"/>
+  <arg name="share_dir" default="$(find-pkg-share limo_fire_navigation)/maps"/>
+  <!-- map_saver_cli 기본 대기 2 초로는 /map 을 못 받고 실패하는 일이 있어서(2026-10-26 대시보드 저장 실패) 늘림 -->
+  <arg name="timeout" default="10.0"/>
+
+  <node pkg="nav2_map_server" exec="map_saver_cli" name="map_saver_src" output="screen" args="-f $(var src_dir)/$(var name)">
+    <param name="save_map_timeout" value="$(var timeout)"/>
+  </node>
+  <node pkg="nav2_map_server" exec="map_saver_cli" name="map_saver_share" output="screen" args="-f $(var share_dir)/$(var name)">
+    <param name="save_map_timeout" value="$(var timeout)"/>
+  </node>
+</launch>

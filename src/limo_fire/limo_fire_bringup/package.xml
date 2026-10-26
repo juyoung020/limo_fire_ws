@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>limo_fire_bringup</name>
+  <version>0.1.0</version>
+  <description>실물 LIMO Pro 켜기: 센서·구동, Cartographer 지도 만들기·저장, Nav2 주행 launch 와 센서 파라미터</description>
+  <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- 실물 드라이버: ~/wego_ws 에 빌드돼 있음 (env.sh 가 먼저 연다) -->
+  <exec_depend>limo_base</exec_depend>
+  <exec_depend>limo_description</exec_depend>
+  <exec_depend>orbbec_camera</exec_depend>
+  <exec_depend>ydlidar_ros2_driver</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rclcpp_components</exec_depend>
+  <exec_depend>cartographer_ros</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_smoother</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_waypoint_follower</exec_depend>
+  <exec_depend>nav2_velocity_smoother</exec_depend>
+  <exec_depend>nav2_rviz_plugins</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>limo_fire_description</exec_depend>
+  <exec_depend>limo_fire_navigation</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

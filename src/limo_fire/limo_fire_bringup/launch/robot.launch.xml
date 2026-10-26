@@ -1,0 +1,54 @@
+<!-- 실물 LIMO Pro 센서·구동 켜기 (대시보드 "센서" = WeGo wego/teleop_launch.py 와 같은 구성)
+     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [degree:=0.0]
+     URDF(limo_description) + 카메라 틸트 TF + 베이스(바퀴·IMU) + 깊이 카메라 + 라이다 + EKF -->
+<launch>
+  <arg name="degree" default="0.0" description="카메라 틸트 pitch (WeGo 와 같은 이름, 값은 라디안으로 들어간다)"/>
+  <arg name="viz" default="false"/>
+
+  <!-- 로봇 모델: WeGo limo_description 의 limo_four_diff.xacro (카메라는 여기 없고 아래 틸트 TF 로) -->
+  <node pkg="joint_state_publisher" exec="joint_state_publisher"/>
+  <node pkg="robot_state_publisher" exec="robot_state_publisher">
+    <param name="robot_description" value="$(command 'xacro $(find-pkg-share limo_description)/urdf/limo_four_diff.xacro')" type="str"/>
+  </node>
+
+  <!-- 카메라 틸트 TF: WeGo wego/camera_tilt_launch.py 그대로 -->
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="base_link_to_camera_mount"
+        args="--x 0.2 --y 0.1 --z 0.06 --yaw 0 --pitch 0 --roll 0 --frame-id base_link --child-frame-id camera_mount"/>
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="camera_mount_to_roate"
+        args="--x 0.00 --y 0.00 --z 0.00 --yaw 0 --pitch $(var degree) --roll 0 --frame-id camera_mount --child-frame-id camera_rotate"/>
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="rotate_to_camera_link"
+        args="--x 0.03 --y -0.05 --z 0.00 --yaw 0 --pitch 0 --roll 0 --frame-id camera_rotate --child-frame-id camera_link"/>
+
+  <!-- 베이스: 바퀴 오도메트리 /odom, IMU /imu, /cmd_vel 받음. odom TF 는 EKF 가 낸다 -->
+  <node pkg="limo_base" exec="limo_base" namespace="limo" output="screen" emulate_tty="true">
+    <param name="port_name" value="ttylimo"/>
+    <param name="odom_frame" value="odom"/>
+    <param name="base_frame" value="base_link"/>
+    <param name="odom_topic_name" value="odom"/>
+    <param name="pub_odom_tf" value="false"/>
+    <param name="control_rate" value="50"/>
+  </node>
+
+  <!-- 깊이 카메라 Orbbec Dabai DC1 -->
+  <group>
+    <push_ros_namespace namespace="camera"/>
+    <node_container pkg="rclcpp_components" exec="component_container" name="camera_container" namespace="" output="screen">
+      <composable_node pkg="orbbec_camera" plugin="orbbec_camera::OBCameraNodeDriver" name="camera" namespace="">
+        <param from="$(find-pkg-share limo_fire_bringup)/config/orbbec_dabai_dc1.yaml"/>
+      </composable_node>
+    </node_container>
+  </group>
+
+  <!-- 라이다 YDLIDAR T-mini Plus -->
+  <node pkg="ydlidar_ros2_driver" exec="ydlidar_ros2_driver_node" name="ydlidar_ros2_driver_node" namespace="/" output="screen" emulate_tty="true">
+    <param from="$(find-pkg-share limo_fire_bringup)/config/ydlidar.yaml"/>
+  </node>
+
+  <!-- EKF: /odom + /imu → /odometry/filtered, odom → base_link -->
+  <node pkg="robot_localization" exec="ekf_node" name="ekf_filter_node_odom" output="screen">
+    <param from="$(find-pkg-share limo_fire_bringup)/config/ekf.yaml"/>
+  </node>
+
+  <node pkg="rviz2" exec="rviz2" name="rviz2" output="screen" if="$(var viz)"
+        args="-d $(find-pkg-share limo_fire_description)/rviz/sensors.rviz"/>
+</launch>

@@ -127,6 +127,19 @@ colcon build --packages-select webots_ros2_limo   # 지금 쓰는 것만. 전체
 source env.sh
 ```
 
+### 실물 LIMO 에서
+
+```bash
+source ~/limo_fire_ws/env.sh
+colcon build --packages-select limo_fire_description limo_fire_navigation limo_fire_bringup
+source env.sh
+ros2 launch limo_fire_bringup robot.launch.xml          # 센서·구동
+ros2 launch limo_fire_bringup mapping.launch.xml        # 지도 만들기 → save_map.launch.xml 로 저장
+ros2 launch limo_fire_bringup navigation.launch.xml     # 저장한 지도로 주행
+```
+
+WeGo 대시보드 버튼과 같은 구성이다. 자세한 것은 [limo_fire_bringup](src/limo_fire/limo_fire_bringup/README.md).
+
 Isaac Sim USD(`WegoLimoUSD.zip`, 약 65MB)는 용량 때문에 저장소에 없다. [WeGo 가이드](https://goofy-pleasure-a84.notion.site/Limo-Isaac-Sim-1ff09b2ac4bf8086bdf5e94521f74946)에서 받아 푼다.
 
 ```bash
