@@ -1,0 +1,52 @@
+diff --git a/dependencies/Makefile.linux b/dependencies/Makefile.linux
+index f79ab05..80ae1d3 100644
+--- a/dependencies/Makefile.linux
++++ b/dependencies/Makefile.linux
+@@ -14,7 +14,7 @@ PICO_PACKAGE = libpico.tar.bz2
+ OPENSSL_VERSION=3.0.14
+ OPENSSL_SRC_PACKAGE=openssl-$(OPENSSL_VERSION).tar.gz
+ 
+-PACKAGES = qt open-al ois pico assimp
++PACKAGES = open-al  # ARM64 포팅: qt·ois·pico·assimp 는 시스템 라이브러리를 심볼릭 링크로 연결함
+ PACKAGES_CLEAN = $(addsuffix -clean, $(PACKAGES))
+ 
+ .PHONY: release debug distrib profile clean cleanse $(PACKAGES) $(PACKAGES_CLEAN)
+diff --git a/src/webots/Makefile b/src/webots/Makefile
+index 945f945..7c2f69a 100644
+--- a/src/webots/Makefile
++++ b/src/webots/Makefile
+@@ -104,7 +104,7 @@ CFLAGS += -Wno-deprecated-register
+ else ifeq ($(OSTYPE),linux)
+ LIB_WREN           = ../wren/libwren.a ../glad/libglad.a
+ ASSIMP_INCLUDE     = -I$(WEBOTS_PATH)/include/libassimp/include
+-QT_CORE_INCLUDE    = -isystem $(WEBOTS_PATH)/include/qt/QtCore
++QT_CORE_INCLUDE    = -isystem $(WEBOTS_PATH)/include/qt/QtCore -isystem $(WEBOTS_PATH)/include/qt  # ARM64 포팅: 시스템 Qt 는 <QtCore/...> 형태라 상위 폴더도 필요
+ QT_GUI_INCLUDE     = -isystem $(WEBOTS_PATH)/include/qt/QtGui
+ QT_WIDGETS_INCLUDE = -isystem $(WEBOTS_PATH)/include/qt/QtWidgets
+ QT_PRINT_SUPPORT_INCLUDE = -isystem $(WEBOTS_PATH)/include/qt/QtPrintSupport
+diff --git a/src/wren/Camera.cpp b/src/wren/Camera.cpp
+index 332a3a2..2608210 100644
+--- a/src/wren/Camera.cpp
++++ b/src/wren/Camera.cpp
+@@ -124,9 +124,18 @@ namespace wren {
+       return;
+ 
+     if (mProjectionMode == WR_CAMERA_PROJECTION_MODE_PERSPECTIVE) {
+-      mDpProjectionMatrix =
+-        glm::perspective(static_cast<double>(mFovy), static_cast<double>(mAspectRatio), static_cast<double>(mNear),
+-                         static_cast<double>(mFar));  // used for frustum culling & depth rendering
++      // ARM64(aarch64) 포팅: glm::perspective 를 double 로 부르면 쓰레기 값이 나와 거리 센서·라이다가 아무것도 못 그렸다.
++      // 같은 공식(glm perspectiveRH_ZO, GLM_FORCE_DEPTH_ZERO_TO_ONE)을 직접 계산한다.
++      {
++        const double tanHalfFovy = tan(static_cast<double>(mFovy) / 2.0);
++        const double zNear = mNear, zFar = mFar;
++        mDpProjectionMatrix = glm::dmat4(0.0);
++        mDpProjectionMatrix[0][0] = 1.0 / (static_cast<double>(mAspectRatio) * tanHalfFovy);
++        mDpProjectionMatrix[1][1] = 1.0 / tanHalfFovy;
++        mDpProjectionMatrix[2][2] = zFar / (zNear - zFar);
++        mDpProjectionMatrix[2][3] = -1.0;
++        mDpProjectionMatrix[3][2] = -(zFar * zNear) / (zFar - zNear);
++      }  // used for frustum culling & depth rendering
+       mMatrices.mProjection = mDpProjectionMatrix;
+       mMatrices.mInfiniteProjection = infinitePerspective(mFovy, mAspectRatio, mNear);  // used for rendering
+     } else {

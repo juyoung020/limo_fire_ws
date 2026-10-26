@@ -54,7 +54,11 @@ sudo apt install qt6-base-dev qt6-base-dev-tools qt6-base-private-dev qt6-declar
 
 1. Qt WebSockets 6.2.4 는 Ubuntu 22.04 arm64 패키지가 없어서 소스(`qtwebsockets-everywhere-src-6.2.4`)를 cmake 로 빌드해 `/usr` 에 설치.
 2. Webots 가 내려받는 x86 전용 의존(Qt 6.5.3·OIS·assimp·pico) 대신 시스템 것을 연결: `include/qt/<모듈>` → `/usr/include/aarch64-linux-gnu/qt6/<모듈>`, `bin/qt/{moc,lrelease,lupdate}` → `/usr/lib/qt6/...`, `lib/webots/{libOIS,libassimp,libpico}.so` → 시스템 라이브러리, `lib/webots/qt/plugins` → `/usr/lib/aarch64-linux-gnu/qt6/plugins`, `dependencies/Makefile.linux` 의 `PACKAGES = open-al`.
-3. 소스 두 군데: `src/webots/Makefile` 의 `QT_CORE_INCLUDE` 에 `-isystem $(WEBOTS_PATH)/include/qt` 추가(시스템 Qt 는 `<QtCore/...>` 형태), `include/libpico/*.h` 는 복사본에서 인자 이름 `this` → `this_` (C++ 예약어).
+3. 소스 세 군데 — [webots_R2025a_arm64.patch](webots_R2025a_arm64.patch) (`git apply`):
+   - `src/webots/Makefile` 의 `QT_CORE_INCLUDE` 에 `-isystem $(WEBOTS_PATH)/include/qt` 추가(시스템 Qt 는 `<QtCore/...>` 형태)
+   - `dependencies/Makefile.linux` 의 `PACKAGES = open-al`
+   - **`src/wren/Camera.cpp`: `glm::perspective` 를 double 로 부르면 aarch64 에서 쓰레기 행렬(예: [0][0]=1, [1][1]=0)이 나온다.** 이 행렬은 거리 렌더링(RangeFinder·Lidar)에만 쓰여서 컬러 카메라는 멀쩡하고 라이다·깊이만 전부 `inf`(ROS 로는 0)가 됐다. 같은 공식(perspectiveRH_ZO)을 직접 계산하게 바꿨다.
+   - 그 밖에 `include/libpico/*.h` 는 복사본에서 인자 이름 `this` → `this_` (C++ 예약어)
 4. `make webots_target TARGET=release -j6` 와 `make -C src/controller release`. 로봇 창용 `qt_utils` 는 실패하지만 우리 시나리오(LIMO 는 `<extern>` ROS 컨트롤러)에는 필요 없다.
 5. `sudo ln -s ~/webots_build/webots /usr/local/webots` (`env.sh` 의 `WEBOTS_HOME`).
 
@@ -63,6 +67,8 @@ sudo apt install qt6-base-dev qt6-base-dev-tools qt6-base-private-dev qt6-declar
 - [x] 월드가 오류 없이 열린다 — 우리 proto 3 개 포함, ROS 컨트롤러 연결, `/camera/color/image_raw` 20 Hz · `/scan` 9.4 Hz · `/odom` 46 Hz · `/imu` 99 Hz
 - [x] 로봇 카메라에 소화기·사람·계단·유도등·작은 불이 보인다
 - [x] 소화기가 물리 때문에 넘어져서 `enablePhysics FALSE` 로 고정
+- [x] 라이다·깊이 카메라 정상(위 Camera.cpp 수정 뒤): `/scan` 248 빔 0.82~6.09 m, 교수님 `slam:=true` 로 Cartographer 지도 생성
+- [x] YOLO26s TensorRT(`limo_fire_perception`) 로 계단 84 % · 소화기 88 % · 문 84 % · 유도등 86 % 검출
 
 ## 아직 볼 것
 
