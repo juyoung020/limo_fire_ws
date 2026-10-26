@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>limo_fire_perception</name>
+  <version>0.1.0</version>
+  <description>불·연기·소화기·유도등·사람·문·계단 탐지 (TensorRT YOLO) — 실물·Webots 공용</description>
+  <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>libopencv-dev</depend>
+
+  <exec_depend>rqt_image_view</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
