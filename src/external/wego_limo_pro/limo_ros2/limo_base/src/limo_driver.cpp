@@ -480,8 +480,7 @@ void LimoDriver::publishIMUData(double stamp) {
     imu_msg.angular_velocity.z = imu_data_.gyro_z;
 
     tf2::Quaternion q;
-    q.setRPY(0.0, 0.0, degToRad(imu_data_.yaw));
-
+    q.setRPY(degToRad(imu_data_.pitch), degToRad(imu_data_.roll), degToRad(imu_data_.yaw));
     if (flag==0)
     {
         double present_theta_ =imu_data_.yaw;
@@ -533,47 +532,49 @@ void LimoDriver::publishOdometry(double stamp, double linear_velocity,
             vx = linear_velocity;
             vy = 0;
             wz = angular_velocity;
-            break;
-        }
-        case MODE_ACKERMANN: {
-            double inner_angle = steering_angle;
-            double r = wheelbase_ / std::tan(std::fabs(inner_angle)) + track_ / 2.0;
-            double central_angle  = convertInnerAngleToCentral(inner_angle);
-            if (central_angle > 0) {
-                wz = linear_velocity / r;
+            encoder_present_theta_ = encoder_last_theta_ + wz * dt;
+            
+            while(encoder_present_theta_ <= -3.141592){
+                encoder_present_theta_ += 6.283184;
             }
-            else {
-                wz = -linear_velocity / r;
-            }
-            vx = linear_velocity * std::cos(central_angle);
-            if (linear_velocity >= 0.0) {
-                vy = linear_velocity * std::sin(central_angle);
-            }
-            else {
-                vy = linear_velocity * std::sin(-central_angle);
-            }
+            while(encoder_present_theta_ >= 3.141592){
+                encoder_present_theta_ -= 6.283184;
+            } 
+            
+            encoder_last_theta_ = encoder_present_theta_;
             break;
         }
         case MODE_MCNAMU: {
             vx = linear_velocity;
             vy = lateral_velocity;
             wz = angular_velocity;
+            encoder_present_theta_ = encoder_last_theta_ + wz * dt;
+            
+            while(encoder_present_theta_ <= -3.141592){
+                encoder_present_theta_ += 6.283184;
+            }
+            while(encoder_present_theta_ >= 3.141592){
+                encoder_present_theta_ -= 6.283184;
+            } 
+            
+            encoder_last_theta_ = encoder_present_theta_;
             break;
         }
-        default:
+        default:{
+            RCLCPP_WARN(this->get_logger(),"Invalid motion mode you should change limo to ackermann mode!");
+            return;
             break;
+        }
     }
-    rad = degToRad(real_theta_);
 
-    position_x_ += cos(rad) * vx * dt - sin(rad) * vy * dt;
-    position_y_ += sin(rad) * vx * dt + cos(rad) * vy * dt;
-
-    // geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(rad);
-    // double limo_yaw=tf2::Quaternion::setRPY();
-    // double limo_yaw;
     tf2::Quaternion limo_yaw;
-    limo_yaw.setRPY(0,0,rad);
+
+    position_x_ += cos(encoder_present_theta_) * vx * dt - sin(encoder_present_theta_) * vy * dt;
+    position_y_ += sin(encoder_present_theta_) * vx * dt + cos(encoder_present_theta_) * vy * dt;
+    limo_yaw.setRPY(0,0,encoder_present_theta_);
+    
     geometry_msgs::msg::Quaternion odom_quat = tf2::toMsg(limo_yaw);
+    
   
     //std::cout<< "odom_quat:" << odom_quat<<std::endl;
     if (pub_odom_tf_) {

@@ -1,0 +1,9 @@
+/lift_1/lift_ctr:
+  ros__parameters:
+    baud_rate: 115200
+    port: /dev/ttyUSB0
+
+/lift_2/lift_ctr:
+  ros__parameters:
+    baud_rate: 115200
+    port: /dev/ttyUSB1

@@ -9,8 +9,8 @@ from cv_bridge import CvBridge
 
 from sensor_msgs.msg import Image
 
-from ament_index_python.packages import get_package_share_directory
 from wego_msgs.srv import Chalkak
+from datetime import datetime
 
 
 class LetsTakeAPicture(Node):
@@ -36,22 +36,34 @@ class LetsTakeAPicture(Node):
         self.sub_flag = False
 
         # for saving the image
-        package_directory = get_package_share_directory('limo_ros2_application')
-        self.picture_directory = package_directory + '/picture/'
-        self.picture_index = 1
-
+        self.dataset_directory = '/home/wego/resources/dataset' 
 
     def take_picture(self, request, response):
-        if self.sub_flag and request.kimchi: # if all goes well save picture at package + picture directory
-            response.picture = f'{self.picture_directory}{self.picture_index}_pic.png'
+        if self.sub_flag and request.kimchi: 
+            # if all goes well save picture at directory + picture name
+            #get the current time
+            current_time_sec = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+            
+            # set the file name and directory
+            response.picture = os.path.join(
+                self.dataset_directory,
+                f'img_{current_time_sec}.jpg')
+
+            # write the image
             cv2.imwrite(response.picture,self.image_)
-            self.picture_index = self.picture_index + 1
         else:
+            # you did something wrong
             response.picture = 'Did you execute the camera driver?'
         return response
 
     def image_callback(self, msg):
-        self.image_ = self.br.imgmsg_to_cv2(msg, 'bgr8') # subscribe image and change to cv type
+        # subscribe image and change to cv type
+        cv_img = self.br.imgmsg_to_cv2(msg, 'bgr8') 
+        
+        # resize image
+        self.image_ = cv2.resize(cv_img, (300, 300))
+
+        # set flag true
         self.sub_flag = True
         
 
@@ -62,9 +74,6 @@ def main(args=None):
 
     rclpy.spin(lets_take_a_picture)
 
-    # Destroy the node explicitly
-    # (optional - otherwise it will be done automatically
-    # when the garbage collector destroys the node object)
     lets_take_a_picture.destroy_node()
     rclpy.shutdown()
 

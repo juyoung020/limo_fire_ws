@@ -20,6 +20,18 @@ ros2 launch limo_fire_bringup navigation.launch.xml            # 2-b. 저장한 
 | 맵 | `wego/cartographer_launch.py` | `mapping.launch.xml` |
 | 맵 저장 | `save_map.sh` | `save_map.launch.xml` |
 | 네비게이션 | `wego/navigation_diff_launch.py` | `navigation.launch.xml` |
+| 차선 인식 | `limo_ros2_application/track_application_launch.py` | `lane_tracking.launch.xml` (로봇이 움직임) |
+| 딥러닝 주행 | `dl_ros2_application/dl_track_application.launch.py` | `dl_tracking.launch.xml` (로봇이 움직임, `conda activate dl_env` 필요) |
+
+나머지 버튼은 명령 한 줄이라 launch 를 따로 만들지 않았다.
+
+| 버튼 | 명령 |
+|---|---|
+| 사진 찍기 | `ros2 run dl_ros2_application take_a_picture` |
+| 사진 저장 (TensorFlow용 / YOLO용) | `ros2 service call /photoshoot dl_ros2_msgs/srv/PhotoShoot "{chalkak: true}"` / `false` |
+| YOLO 라벨링 | `ros2 run dl_ros2_application yolo_labeler` |
+| TensorFlow → TensorRT | `ros2 run dl_ros2_application tf_to_trt <.h5>` (dl_env) |
+| YOLO → TensorRT | `ros2 run dl_ros2_application yolo_to_trt <.pt>` (dl_env) |
 
 | 파일 | 원본 |
 |---|---|

@@ -150,7 +150,7 @@ unzip WegoLimoUSD.zip -d sim/wego_LimoIsaacSIM/USD/
 
 | 폴더 | 출처 | 커밋 |
 |---|---|---|
-| `src/external/wego_limo_pro` | [WeGo-Robotics/limo_pro](https://github.com/WeGo-Robotics/limo_pro) | `7ef355c` |
+| `src/external/wego_limo_pro` | 실물 LIMO Pro 의 `~/wego_ws/src` (WeGo 출고본, [WeGo-Robotics/limo_pro](https://github.com/WeGo-Robotics/limo_pro) 와 다름) — [목록](src/external/wego_limo_pro/README.md) | 2026-10-26 복사 |
 | `src/external/webots_ros2_limo` | [inmo-jang/webots_ros2_limo](https://github.com/inmo-jang/webots_ros2_limo) (교수님) | `68d4fc0` |
 | `sim/wego_LimoIsaacSIM` | [WeGo-Robotics/LimoIsaacSIM](https://github.com/WeGo-Robotics/LimoIsaacSIM) (`sim` 브랜치) | `158da2b` |
 

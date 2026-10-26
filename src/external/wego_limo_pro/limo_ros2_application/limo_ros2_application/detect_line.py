@@ -32,8 +32,8 @@ class DetectLine(Node):
         # Parameters (For Masking Lane, For the reference distance of lane, ROI)
         self.declare_parameter('roi_x_l', 0)
         self.declare_parameter('roi_x_h', 320) 
-        self.declare_parameter('roi_y_l', 350)
-        self.declare_parameter('roi_y_h', 400)
+        self.declare_parameter('roi_y_l', 400)
+        self.declare_parameter('roi_y_h', 480)
         
         self.roi_x_l=self.get_parameter('roi_x_l')
         self.roi_x_h=self.get_parameter('roi_x_h')
@@ -61,7 +61,7 @@ class DetectLine(Node):
                                           lane_l_h.value, 
                                           lane_s_h.value])
         
-        self.declare_parameter('reference_distance', 250)
+        self.declare_parameter('reference_distance', 170)
         self.reference_distance = self.get_parameter('reference_distance')
 
         # Parameter For debugging
@@ -102,7 +102,14 @@ class DetectLine(Node):
             cx = int(M['m10']/M['m00'])
             cy = int(M['m01']/M['m00'])
             cy = self.roi_y_l.value + cy
+                        
+            self.image_ = cv2.line(self.image_, 
+                        (self.reference_distance.value, 0),
+                        (self.reference_distance.value, 480),
+                        (0, 255, 0), 
+                        5)
             self.image_ = cv2.circle(self.image_, (cx, cy), 10,(255, 0, 0), -1)
+
             distance_to_ref = self.reference_distance.value -cx
         else: # When limo cannot find lane publish 0 data
             distance_to_ref = 0

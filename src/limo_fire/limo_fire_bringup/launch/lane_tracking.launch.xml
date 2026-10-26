@@ -1,0 +1,12 @@
+<!-- WeGo 차선 따라가기 예제 (대시보드 "lane detection" = limo_ros2_application/track_application_launch.py 와 같은 구성)
+     먼저 robot.launch.xml 을 켜 둔다. 로봇이 움직인다
+     ros2 launch limo_fire_bringup lane_tracking.launch.xml -->
+<launch>
+  <node pkg="limo_ros2_application" exec="detect_line" name="detect_line">
+    <param from="$(find-pkg-share limo_ros2_application)/params/detect_line.yaml"/>
+  </node>
+  <node pkg="limo_ros2_application" exec="limo_e_stop" name="limo_e_stop"/>
+  <node pkg="limo_ros2_application" exec="limo_control" name="limo_control">
+    <param from="$(find-pkg-share limo_ros2_application)/params/limo_control.yaml"/>
+  </node>
+</launch>
