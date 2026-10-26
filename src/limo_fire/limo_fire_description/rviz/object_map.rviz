@@ -1,14 +1,13 @@
+# 지도 위 물체 보기. 왼쪽 = YOLO 탐지 영상, 오른쪽 = 지도 + 현황판(왼쪽 위). 표시 켜고 끄기는 메뉴 Panels → Displays
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
-  - Class: rviz_common/Views
-    Name: Views
 Visualization Manager:
   Class: ""
   Displays:
     - Class: rviz_default_plugins/Grid
       Name: Grid
-      Enabled: true
+      Enabled: false
       Reference Frame: map
       Cell Size: 1
       Plane Cell Count: 20
@@ -40,7 +39,7 @@ Visualization Manager:
       Style: Points
       Size (Pixels): 3
       Color Transformer: FlatColor
-      Color: 255; 40; 40
+      Color: 255; 70; 70
       Value: true
     - Class: rviz_default_plugins/RobotModel
       Name: RobotModel
@@ -55,10 +54,13 @@ Visualization Manager:
       Visual Enabled: true
       Collision Enabled: false
       Value: true
-    - Class: rviz_default_plugins/TF
-      Name: TF
-      Enabled: false
-      Value: false
+    - Class: rviz_default_plugins/Axes
+      Name: Robot
+      Enabled: true
+      Reference Frame: base_link
+      Length: 0.5
+      Radius: 0.06
+      Value: true
     - Class: rviz_default_plugins/MarkerArray
       Name: Objects
       Enabled: true
@@ -68,6 +70,16 @@ Visualization Manager:
         Reliability Policy: Reliable
         History Policy: Keep Last
         Depth: 5
+      Value: true
+    - Class: rviz_2d_overlay_plugins/TextOverlay
+      Name: Summary
+      Enabled: true
+      Topic:
+        Value: /object_mapper/summary
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+        Depth: 1
       Value: true
     - Class: rviz_default_plugins/Image
       Name: YOLO
@@ -82,7 +94,7 @@ Visualization Manager:
       Value: true
   Enabled: true
   Global Options:
-    Background Color: 48; 48; 48
+    Background Color: 24; 26; 31
     Fixed Frame: map
     Frame Rate: 30
   Name: root
@@ -95,19 +107,22 @@ Visualization Manager:
     Current:
       Class: rviz_default_plugins/TopDownOrtho
       Name: Current View
-      Scale: 70
+      Scale: 85
       X: 1.2
-      Y: 0
+      Y: -2.5
       Angle: 1.5708
       Target Frame: <Fixed Frame>
       Value: TopDownOrtho (rviz_default_plugins)
     Saved: ~
 Window Geometry:
-  Width: 1600
-  Height: 950
-  X: 100
-  Y: 50
   Displays:
-    collapsed: false
-  Views:
     collapsed: true
+  Height: 1016
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd0000000100000000000002070000039efc0200000002fb000000080059004f004c004f010000003d000002bb0000002800fffffffb000000100044006900730070006c00610079007301000002fe000000dd000000c900ffffff0000052d0000039e00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Width: 1850
+  X: 70
+  Y: 27
+  YOLO:
+    collapsed: false

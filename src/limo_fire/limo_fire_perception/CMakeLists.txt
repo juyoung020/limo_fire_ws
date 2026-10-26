@@ -15,6 +15,8 @@ find_package(geometry_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(rviz_2d_overlay_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc dnn)
 find_package(CUDAToolkit REQUIRED)
 
@@ -37,7 +39,7 @@ ament_target_dependencies(yolo_detector rclcpp sensor_msgs vision_msgs)
 # 탐지 상자 + 깊이 → 지도 위 물체 위치 (TensorRT·OpenCV 안 씀)
 add_executable(object_mapper src/object_mapper_node.cpp)
 ament_target_dependencies(object_mapper rclcpp sensor_msgs vision_msgs visualization_msgs geometry_msgs
-  message_filters tf2_ros tf2_geometry_msgs)
+  message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs)
 
 install(TARGETS trt_yolo yolo_detector object_mapper
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION lib/${PROJECT_NAME})

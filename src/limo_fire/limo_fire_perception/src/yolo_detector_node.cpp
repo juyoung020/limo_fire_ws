@@ -37,7 +37,8 @@ public:
     }
 
     det_pub_ = create_publisher<vision_msgs::msg::Detection2DArray>("~/detections", 10);
-    img_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", rclcpp::SensorDataQoS());
+    // 신뢰(RELIABLE) 발행이면 RViz·rqt 의 신뢰/최선 구독 둘 다 받는다
+    img_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", rclcpp::QoS(1));
     // 카메라 드라이버(실물 Orbbec, Webots 플러그인) 둘 다 받도록 SensorData(BEST_EFFORT)
     sub_ = create_subscription<sensor_msgs::msg::Image>(
       image_topic, rclcpp::SensorDataQoS(),
