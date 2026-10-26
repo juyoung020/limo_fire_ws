@@ -1,0 +1,20 @@
+# limo_fire_world.wbt 에 놓은 YOLO 정답 물체 (Webots 세계 좌표, m). YOLO 벤치마크에서 카메라에 투영해 2D 정답 상자를 만든다.
+# center: 물체 가운데, size: [x 폭, y 폭, 높이] (회전 전, 물체 자기 축). approx: true 면 Webots 모델 크기를 눈대중으로 적은 값 — Webots 에서 재서 고칠 것
+# 클래스 번호는 train/detect 와 같다: 0 fire · 1 smoke · 2 fire_extinguisher · 3 exit_sign · 4 person · 5 door · 6 stairs
+world: worlds/limo_fire_world.wbt
+robot_start: {x: 6.36, y: 0.0, yaw: 0.0}
+objects:
+  - {name: fire_floor,             cls: 0, center: [8.60, -1.60, 0.20],  size: [0.70, 0.70, 0.40], yaw: 0.0}
+  - {name: fire_candle,            cls: 0, center: [7.45, -0.65, 0.655], size: [0.06, 0.06, 0.07], yaw: 0.0, note: "촛불 불꽃만. 초는 z 0.50~0.62"}
+  - {name: fire_small,             cls: 0, center: [7.00, 3.60, 0.20],  size: [0.30, 0.30, 0.40], yaw: 0.0}
+  - {name: smoke_floor,            cls: 1, center: [8.60, -1.60, 0.85], size: [1.10, 1.10, 1.00], yaw: 0.0}
+  - {name: extinguisher_east,      cls: 2, center: [9.85, 2.00, 0.42],  size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
+  - {name: extinguisher_west,      cls: 2, center: [5.30, 0.60, 0.42],  size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
+  - {name: extinguisher_southwest, cls: 2, center: [5.30, -4.75, 0.42], size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
+  - {name: exit_sign_door,         cls: 3, center: [5.13, -1.50, 2.15], size: [0.04, 0.38, 0.20], yaw: 0.0}
+  - {name: exit_sign_east,         cls: 3, center: [9.98, 0.80, 2.00],  size: [0.04, 0.38, 0.20], yaw: 3.14159}
+  - {name: exit_sign_north,        cls: 3, center: [6.60, 4.98, 2.00],  size: [0.04, 0.38, 0.20], yaw: -1.5708}
+  - {name: person_1,               cls: 4, center: [8.30, 2.60, 0.90],  size: [0.35, 0.55, 1.80], yaw: 3.14159, approx: true}
+  - {name: person_2,               cls: 4, center: [6.20, -3.10, 0.90], size: [0.35, 0.55, 1.80], yaw: 1.5708, approx: true}
+  - {name: door,                   cls: 5, center: [5.00, -1.50, 1.05], size: [0.20, 1.00, 2.10], yaw: 0.0, approx: true, note: "교수님 맵 원래 문(열린 상태)"}
+  - {name: stairs,                 cls: 6, center: [9.10, -4.00, 0.30], size: [1.20, 1.00, 0.60], yaw: 0.0, approx: true, note: "StraightStairs 4 단, +x 로 올라감. 원점 위치 Webots 에서 확인"}

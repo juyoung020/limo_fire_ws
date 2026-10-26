@@ -1,0 +1,46 @@
+#VRML_SIM R2025a utf8
+# 시연용 촛불: 흰 초 + 사진 불꽃. 바닥(z=0)에 선다. 불꽃은 YOLO fire 클래스
+# template language: javascript
+
+EXTERNPROTO "FireBillboard.proto"
+
+PROTO Candle [
+  field SFVec3f    translation  0 0 0
+  field SFRotation rotation     0 0 1 0
+  field SFString   name         "candle"
+  field SFFloat    radius       0.025   # 초 반지름(m)
+  field SFFloat    candleHeight 0.12    # 초 높이(m)
+  field SFFloat    flameHeight  0.07    # 불꽃 높이(m)
+]
+{
+  %< const ch = fields.candleHeight.value; const fh = fields.flameHeight.value; >%
+  Solid {
+    translation IS translation
+    rotation IS rotation
+    name IS name
+    children [
+      Pose {
+        translation 0 0 %<= ch / 2 >%
+        children [
+          Shape {
+            appearance PBRAppearance { baseColor 0.95 0.93 0.88 roughness 0.6 metalness 0 }
+            geometry Cylinder { radius IS radius height IS candleHeight }
+          }
+        ]
+      }
+      FireBillboard {
+        translation 0 0 %<= ch >%
+        name "flame"
+        texture "flame_single"
+        width %<= fh * 0.8 >%
+        height %<= fh >%
+        emissiveIntensity 2
+        lightIntensity 0.3
+      }
+    ]
+    boundingObject Pose {
+      translation 0 0 %<= ch / 2 >%
+      children [ Cylinder { radius IS radius height IS candleHeight } ]
+    }
+  }
+}
