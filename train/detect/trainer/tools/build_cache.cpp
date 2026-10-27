@@ -1,4 +1,5 @@
 // 학습 캐시 만들기: data/yolo/{images,labels}/<split> → <out>.ycache (+ .names.txt)
+// masks/<split>/<이름>.msk(yolods) 가 있으면 마스크도 담는다(YCACHE02).
 // 사용: build_cache <yolo 폴더> <split> <out.ycache> [S=640] [threads=32] [quality=95]
 #include <turbojpeg.h>
 
@@ -38,6 +39,9 @@ int main(int argc, char** argv) {
   std::vector<CacheRec> rec(n);
   std::vector<std::vector<CacheBox>> boxes(n);
   std::vector<std::vector<uint8_t>> jpg(n);
+  bool with_masks = fs::is_directory(root + "/masks/" + split);
+  std::vector<std::vector<uint32_t>> mruns(n);
+  std::vector<CacheMask> mhead(n);
   std::vector<char> ok(n, 0);
   std::atomic<int> next{0}, done{0}, bad{0};
   auto work = [&]() {
@@ -103,6 +107,26 @@ int main(int argc, char** argv) {
         CacheBox b;
         if (ss >> b.cls >> b.cx >> b.cy >> b.w >> b.h) boxes[i].push_back(b);
       }
+      if (with_masks) {
+        std::ifstream fm(root + "/masks/" + split + "/" + stem + ".msk", std::ios::binary);
+        char mg[4];
+        uint16_t sz = 0, ni = 0;
+        uint32_t nr = 0;
+        fm.read(mg, 4).read((char*)&sz, 2).read((char*)&ni, 2).read((char*)&nr, 4);
+        if (!fm || std::memcmp(mg, "YMSK", 4) != 0) {
+          std::fprintf(stderr, "마스크 없음/깨짐: %s\n", stem.c_str());
+          ++bad;
+          continue;
+        }
+        mruns[i].resize(nr);
+        fm.read((char*)mruns[i].data(), 4 * nr);
+        mhead[i] = {0, nr, sz, ni};
+        if ((size_t)ni != boxes[i].size()) {
+          std::fprintf(stderr, "마스크 물체 수 %u ≠ 상자 %zu: %s\n", ni, boxes[i].size(), stem.c_str());
+          ++bad;
+          continue;
+        }
+      }
       ok[i] = 1;
       int d = ++done;
       if (d % 5000 == 0) std::fprintf(stderr, "%d / %d\n", d, n);
@@ -117,7 +141,8 @@ int main(int argc, char** argv) {
   std::vector<CacheRec> R;
   std::vector<CacheBox> Bx;
   std::vector<std::string> names;
-  uint64_t off = 0;
+  std::vector<CacheMask> M;
+  uint64_t off = 0, moff = 0;
   for (int i = 0; i < n; ++i) {
     if (!ok[i]) continue;
     CacheRec c = rec[i];
@@ -129,10 +154,16 @@ int main(int argc, char** argv) {
     Bx.insert(Bx.end(), boxes[i].begin(), boxes[i].end());
     off += jpg[i].size();
     R.push_back(c);
+    if (with_masks) {
+      CacheMask m = mhead[i];
+      m.off = moff;
+      moff += mruns[i].size();
+      M.push_back(m);
+    }
     names.push_back(imgs[i]);
   }
   FILE* f = std::fopen((out + ".tmp").c_str(), "wb");
-  std::fwrite("YCACHE01", 1, 8, f);
+  std::fwrite(with_masks ? "YCACHE02" : "YCACHE01", 1, 8, f);
   uint32_t nn = (uint32_t)R.size(), SS = (uint32_t)S, nb = (uint32_t)Bx.size();
   std::fwrite(&nn, 4, 1, f);
   std::fwrite(&SS, 4, 1, f);
@@ -146,7 +177,7 @@ int main(int argc, char** argv) {
   std::rename((out + ".tmp").c_str(), out.c_str());
   std::ofstream fn(out + ".names.txt");
   for (auto& s : names) fn << s << "\n";
-  std::fprintf(stderr, "사진 %u 장(못 읽음 %d), 상자 %u 개, JPEG %.2f GB → %s\n", nn, bad.load(), nb, off / 1e9,
-               out.c_str());
+  std::fprintf(stderr, "사진 %u 장(못 읽음 %d), 상자 %u 개, JPEG %.2f GB, 마스크 런 %.1f MB → %s\n", nn, bad.load(), nb,
+               off / 1e9, moff * 4 / 1e6, out.c_str());
   return 0;
 }

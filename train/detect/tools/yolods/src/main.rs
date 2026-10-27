@@ -8,6 +8,9 @@
 //!
 //! 출력: <out>/images/<split>/<이름> (원본으로 심볼릭 링크), <out>/labels/<split>/<이름>.txt ("클래스 cx cy w h", 0..1),
 //!       <out>/data.yaml, <out>/stats.json. 이름 = 원본 경로 sha1 앞 16 자 + 확장자(출처가 달라도 겹치지 않게).
+//!       라벨에 마스크("m")가 있으면 <out>/masks/<split>/<이름>.msk 도 쓴다: 사진 전체(가로세로 따로 늘인)를 덮는
+//!       288×288 번호 지도 — 0 배경, j+1 = 라벨 파일 j 번째 줄. 겹치면 작은 마스크가 위(Ultralytics overlap_mask 와
+//!       같은 규칙). 형식: "YMSK" | u16 크기 | u16 물체 수 | u32 n | u32 런[n] (길이 << 8 | 번호), 행 우선.
 //!
 //! 사용: yolods <labels.jsonl> <lists 폴더(train/val/test.txt)> <out> [config.json]
 use anyhow::{bail, Context, Result};
@@ -32,6 +35,53 @@ struct Det {
     c: usize,
     s: f32,
     b: [f32; 4],
+    m: Option<Vec<u32>>, // 288×288 이진 마스크 RLE(0 부터 길이 교대)
+}
+
+/// 번호 지도 한 칸에 담을 수 있는 물체 수(u8)
+const MAX_INST: usize = 255;
+
+/// 라벨 차례대로의 마스크 RLE → 번호 지도(작은 마스크가 위) → 런 길이 부호
+fn index_map(dets: &[Det], size: usize) -> Vec<u32> {
+    let n = size * size;
+    let mut bins: Vec<(usize, Vec<bool>)> = Vec::new();
+    for (j, d) in dets.iter().enumerate().take(MAX_INST) {
+        let Some(r) = &d.m else { continue };
+        let mut m = vec![false; n];
+        let (mut p, mut on) = (0usize, false);
+        for &len in r {
+            let e = (p + len as usize).min(n);
+            if on {
+                m[p..e].iter_mut().for_each(|x| *x = true);
+            }
+            p = e;
+            on = !on;
+        }
+        bins.push((j, m));
+    }
+    // 넓이 큰 것부터 칠해 작은 것이 덮는다(같으면 라벨 차례)
+    let area = |m: &Vec<bool>| m.iter().filter(|&&x| x).count();
+    bins.sort_by_key(|(j, m)| (std::cmp::Reverse(area(m)), *j));
+    let mut idx = vec![0u8; n];
+    for (j, m) in &bins {
+        for (o, &v) in idx.iter_mut().zip(m.iter()) {
+            if v {
+                *o = (*j + 1) as u8;
+            }
+        }
+    }
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let v = idx[i];
+        let mut k = i + 1;
+        while k < n && idx[k] == v {
+            k += 1;
+        }
+        runs.push(((k - i) as u32) << 8 | v as u32);
+        i = k;
+    }
+    runs
 }
 
 fn area(b: &[f32; 4]) -> f32 {
@@ -124,10 +174,16 @@ fn main() -> Result<()> {
         }
     }
     let out = Path::new(&a[3]);
+    let mask_size = meta["mask_size"].as_u64().unwrap_or(0) as usize;
     for sp in ["train", "val", "test"] {
         fs::create_dir_all(out.join("images").join(sp))?;
         fs::create_dir_all(out.join("labels").join(sp))?;
+        if mask_size > 0 {
+            fs::create_dir_all(out.join("masks").join(sp))?;
+        }
     }
+    let mut n_mask = 0usize;
+    let mut n_mask_cut = 0usize;
     let nc = cfg.classes.len();
     let mut n_img: BTreeMap<&str, usize> = BTreeMap::new();
     let mut n_box: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -155,7 +211,8 @@ fn main() -> Result<()> {
         let mut dets = Vec::new();
         for d in r["det"].as_array().unwrap() {
             let b: Vec<f32> = d["b"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap() as f32).collect();
-            dets.push(Det { c: d["c"].as_u64().unwrap() as usize, s: d["s"].as_f64().unwrap() as f32, b: [b[0], b[1], b[2], b[3]] });
+            let m = d.get("m").and_then(|v| v.as_array()).map(|a| a.iter().map(|x| x.as_u64().unwrap() as u32).collect());
+            dets.push(Det { c: d["c"].as_u64().unwrap() as usize, s: d["s"].as_f64().unwrap() as f32, b: [b[0], b[1], b[2], b[3]], m });
         }
         let keep = select(dets, &cfg, w, h, &mut drop);
         let ext = Path::new(&img).extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_lowercase();
@@ -174,6 +231,20 @@ fn main() -> Result<()> {
             cnt[d.c] += 1;
         }
         fs::write(out.join("labels").join(sp).join(format!("{stem}.txt")), txt)?;
+        if mask_size > 0 {
+            let runs = index_map(&keep, mask_size);
+            let mut buf = Vec::with_capacity(12 + 4 * runs.len());
+            buf.extend_from_slice(b"YMSK");
+            buf.extend_from_slice(&(mask_size as u16).to_le_bytes());
+            buf.extend_from_slice(&(keep.len().min(MAX_INST) as u16).to_le_bytes());
+            buf.extend_from_slice(&(runs.len() as u32).to_le_bytes());
+            for r in &runs {
+                buf.extend_from_slice(&r.to_le_bytes());
+            }
+            fs::write(out.join("masks").join(sp).join(format!("{stem}.msk")), buf)?;
+            n_mask += keep.iter().take(MAX_INST).filter(|d| d.m.is_some()).count();
+            n_mask_cut += keep.len().saturating_sub(MAX_INST);
+        }
         writeln!(names, "{sp}\t{name}\t{img}")?;
         *n_img.entry(sp).or_default() += 1;
     }
@@ -185,7 +256,7 @@ fn main() -> Result<()> {
     fs::write(out.join("data.yaml"), yaml)?;
     let stats = serde_json::json!({
         "images": n_img, "boxes": n_box, "classes": cfg.classes, "dropped": drop,
-        "read_errors": n_err, "not_in_split": n_unsplit, "config": serde_json::from_str::<Value>(&fs::read_to_string(&cfg_path)?)?,
+        "read_errors": n_err, "not_in_split": n_unsplit, "masks": n_mask, "masks_over_255": n_mask_cut, "config": serde_json::from_str::<Value>(&fs::read_to_string(&cfg_path)?)?,
     });
     fs::write(out.join("stats.json"), serde_json::to_string_pretty(&stats)?)?;
     println!("{}", serde_json::to_string_pretty(&stats)?);

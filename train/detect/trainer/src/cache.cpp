@@ -12,7 +12,9 @@ bool Cache::open(const std::string& path) {
   if (!f) return false;
   char magic[8];
   uint32_t n, S;
-  if (std::fread(magic, 1, 8, f) != 8 || std::memcmp(magic, "YCACHE01", 8) != 0) return std::fclose(f), false;
+  if (std::fread(magic, 1, 8, f) != 8 || std::memcmp(magic, "YCACHE0", 7) != 0 || (magic[7] != '1' && magic[7] != '2'))
+    return std::fclose(f), false;
+  bool v2 = magic[7] == '2';
   std::fread(&n, 4, 1, f);
   std::fread(&S, 4, 1, f);
   S_ = (int)S;
@@ -32,6 +34,14 @@ bool Cache::open(const std::string& path) {
     if (r == 0) break;
     got += r;
   }
+  if (v2 && got == bl) {
+    mask_.resize(n);
+    std::fread(mask_.data(), sizeof(CacheMask), n, f);
+    uint64_t nr;
+    std::fread(&nr, 8, 1, f);
+    runs_.resize(nr);
+    if (std::fread(runs_.data(), 4, nr, f) != nr) return std::fclose(f), false;
+  }
   std::fclose(f);
   std::ifstream fn(path + ".names.txt");
   std::string l;
@@ -40,6 +50,16 @@ bool Cache::open(const std::string& path) {
 }
 Cache::~Cache() {
   if (blob_) cudaFreeHost(blob_);
+}
+
+void decode_mask(const uint32_t* runs, uint32_t nrun, uint8_t* dst, int size) {
+  size_t p = 0, n = size_t(size) * size;
+  for (uint32_t i = 0; i < nrun && p < n; ++i) {
+    size_t len = std::min<size_t>(runs[i] >> 8, n - p);
+    std::memset(dst + p, int(runs[i] & 255), len);
+    p += len;
+  }
+  if (p < n) std::memset(dst + p, 0, n - p);
 }
 
 void resize_linear(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw, int dh) {
