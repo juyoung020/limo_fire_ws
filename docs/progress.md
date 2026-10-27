@@ -15,7 +15,7 @@
 | LIMO Pro 기본 URDF·TF | 됨 — 센서 모듈은 배치 정해지면 | `src/limo_fire/limo_fire_description` |
 | YOLO 데이터 모으기 | 공개 데이터·크롤링 됨, 직접 찍기 남음 | `train/detect/data` |
 | 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 6.8 만 장 라벨, YOLO 데이터셋(8:1:1) 만듦 | `train/detect/teacher`, `tools/yolods` |
-| YOLO26s 학습기 (C++/CUDA) | 됨 — 100 epoch 학습 중(약 5.5 시간) | `train/detect/trainer` |
+| YOLO26s(-seg) 학습기 (C++/CUDA) | 됨 — 탐지 + 분할 모델 학습 끝(시험 상자 0.651 · 마스크 0.521), [정리](detect.md) | `train/detect/trainer` |
 | ROS 노드 (BT·인식·연기 모드·보고) | 할 일 | `src/limo_fire` |
 | ESP32 모듈 | 부품 오면 | `firmware/` |
 
@@ -179,3 +179,18 @@ best: `train/detect/data/runs/y26s_clean/best.safetensors` (지금 쓸 모델).
 | door | 0.568 | **0.657** |
 | stairs | 0.592 | 0.599 |
 | **전체** | 0.625 | **0.654** (AP50 0.751 → 0.784) |
+
+## 탐지 + 분할 모델 YOLO26s-seg (2026-10-27)
+
+상자만 내던 모델을 마스크(물체 모양)까지 내는 YOLO26s-seg 하나로 바꾸려고 재학습. 학습기에 seg 를 직접 추가(Ultralytics 와 정합성 확인, 289 장/초),
+마스크 정답은 SAM 3 가 이미 낸 마스크(288×288)를 그대로 썼다(SAM 3 다시 안 돌림). 100 epoch 5.1 시간, best 99 epoch.
+발표용 전체 정리는 [detect.md](detect.md).
+
+| 시험(6,820 장) | 이전 YOLO26s 탐지 | YOLO26s-seg |
+|---|---|---|
+| 상자 mAP50 | 0.784 | 0.787 |
+| 상자 mAP50-95 | 0.654 | 0.651 |
+| 마스크 mAP50-95 | — | 0.521 |
+
+상자 성능은 같고(±0.003) 마스크를 얻었다. 마스크가 약한 것: 불 0.369 · 연기 0.442(경계가 흐림).
+

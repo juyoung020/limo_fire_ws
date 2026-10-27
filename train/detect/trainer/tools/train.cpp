@@ -1,10 +1,13 @@
 // YOLO26 학습(C++/CUDA). Ultralytics `yolo detect train model=yolo26s.pt` 기본값과 같은 규칙.
+// --seg: `yolo segment train model=yolo26s-seg.pt` (캐시에 마스크가 있어야 함). 검증에 마스크 mAP 도.
 //
 // 사용: train --train <train.ycache> --val <val.ycache> --weights <yolo26s.safetensors> --out <폴더>
-//             [--epochs 100] [--batch 32] [--imgsz 640] [--workers 16] [--close-mosaic 10] [--seed 0]
+//             [--seg] [--epochs 100] [--batch 32] [--imgsz 640] [--workers 16] [--close-mosaic 10] [--seed 0]
 //             [--max-iters N(속도 재기)] [--resume]
-//       train --eval --val <split.ycache> --weights <best.safetensors>   (평가만: 클래스별 AP·정답 수)
+//       train --eval --val <split.ycache> --weights <best.safetensors> [--seg]   (평가만: 클래스별 AP·정답 수)
+//             [--draw <폴더> [--draw-n 24] [--draw-conf 0.4]]  처음 N 장의 예측(상자·마스크)을 PPM 그림으로
 // 결과: <out>/last.safetensors·best.safetensors(EMA 가중치, PyTorch 이름), <out>/state.bin(이어 하기), <out>/log.tsv
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -18,7 +21,7 @@
 #include "data.h"
 #include "evalmap.h"
 #include "kern.cuh"
-#include "loss.cuh"
+#include "segloss.cuh"
 #include "optim.cuh"
 
 namespace fs = std::filesystem;
@@ -29,7 +32,10 @@ struct Args {
   std::string train, val, weights, out = "runs/train";
   int epochs = 100, batch = 32, imgsz = 640, workers = 16, close_mosaic = 10, max_iters = -1, val_every = 1, stop_epochs = -1;
   uint64_t seed = 0;
-  bool resume = false, eval = false;
+  bool resume = false, eval = false, seg = false;
+  std::string draw;
+  int draw_n = 24;
+  float draw_conf = 0.4f;
 };
 static Args parse(int argc, char** argv) {
   Args a;
@@ -50,6 +56,10 @@ static Args parse(int argc, char** argv) {
     else if (k == "--val-every") a.val_every = std::stoi(v());
     else if (k == "--resume") a.resume = true;
     else if (k == "--eval") a.eval = true;
+    else if (k == "--seg") a.seg = true;
+    else if (k == "--draw") a.draw = v();
+    else if (k == "--draw-n") a.draw_n = std::stoi(v());
+    else if (k == "--draw-conf") a.draw_conf = std::stof(v());
     else if (k == "--stop-epochs") a.stop_epochs = std::stoi(v());
     else {
       std::fprintf(stderr, "모르는 인자 %s\n", k.c_str());
@@ -98,21 +108,22 @@ static void init_params(Net& net, const std::string& weights, int nc, uint64_t s
   auto sk = P.load(W);
   std::printf("사전학습 가중치: %zu 개 중 %zu 개 불러옴(모양 다른 분류층 %zu 개는 초기값)\n", P.list.size(),
               P.list.size() - sk.size(), sk.size());
-  // cls_remap: 이름이 같은 클래스(person) 행만 COCO 에서 복사
+  // cls_remap: 이름이 같은 클래스(person) 행만 COCO 에서 복사(분류층, seg 면 의미 분할 마지막 층도)
   CK(cudaMemcpy(h.data(), P.vals, P.total * 4, cudaMemcpyDeviceToHost));
   int remapped = 0;
+  std::vector<std::string> heads;
   for (int l = 0; l < 3; ++l)
-    for (std::string br : {"cv3.", "one2one_cv3."}) {
-      std::string pre = "model.23." + br + std::to_string(l) + ".2.";
-      for (std::string t : {"weight", "bias"}) {
-        if (!W.has(pre + t)) continue;
-        const auto& src = W.get(pre + t);
-        const auto& p = P.p(pre + t);
-        int64_t row = p.n / p.shape[0];
-        if (src.numel() / src.shape[0] != row || src.shape[0] == p.shape[0]) continue;  // 우리 학습 결과면 그대로
-        std::memcpy(&h[p.off + kOurPerson * row], src.f32() + kCocoPerson * row, row * 4);
-        ++remapped;
-      }
+    for (std::string br : {"cv3.", "one2one_cv3."}) heads.push_back("model.23." + br + std::to_string(l) + ".2.");
+  if (net.cfg.seg) heads.push_back("model.23.proto.semseg.2.");
+  for (const auto& pre : heads)
+    for (std::string t : {"weight", "bias"}) {
+      if (!W.has(pre + t)) continue;
+      const auto& src = W.get(pre + t);
+      const auto& p = P.p(pre + t);
+      int64_t row = p.n / p.shape[0];
+      if (src.numel() / src.shape[0] != row || src.shape[0] == p.shape[0]) continue;  // 우리 학습 결과면 그대로
+      std::memcpy(&h[p.off + kOurPerson * row], src.f32() + kCocoPerson * row, row * 4);
+      ++remapped;
     }
   CK(cudaMemcpy(P.vals, h.data(), P.total * 4, cudaMemcpyHostToDevice));
   std::printf("cls_remap: person 행 %d 개 텐서\n", remapped);
@@ -151,17 +162,94 @@ static bool load_state(const std::string& path, Net& net, Optimizer& opt, Ckpt& 
   return true;
 }
 
-// EMA 가중치로 검증
+// EMA 가중치로 검증. mres(seg): 마스크 mAP
+// 예측 그림(평가 --draw): 입력 영상에 마스크(로짓 > 0, 상자 안)를 클래스 색으로 덧칠하고 상자·점수 막대를 그린다
+static std::string g_draw;
+static int g_draw_left = 0;
+static float g_draw_conf = 0.4f;
+static void draw_one(Net& net, int b, const std::vector<Det>& det, int nc, cudaStream_t s) {
+  static const unsigned char col[7][3] = {{255, 80, 0}, {160, 160, 160}, {255, 0, 0}, {0, 220, 0}, {0, 120, 255}, {170, 0, 255}, {255, 220, 0}};
+  const int S = net.cfg.imgsz, C = net.input()->C, M = S / 4, nm = net.cfg.nm;
+  std::vector<act_t> in((size_t)S * S * C), pr;
+  CK(cudaMemcpyAsync(in.data(), net.input()->x + (size_t)b * S * S * C, in.size() * sizeof(act_t), cudaMemcpyDeviceToHost, s));
+  std::vector<std::vector<act_t>> cf(3);
+  if (net.cfg.seg) {
+    pr.resize((size_t)M * M * nm);
+    CK(cudaMemcpyAsync(pr.data(), net.proto()->x + (size_t)b * M * M * nm, pr.size() * sizeof(act_t), cudaMemcpyDeviceToHost, s));
+    for (int l = 0; l < 3; ++l) {
+      Tensor* t = net.head_mask(1, l);
+      cf[l].resize((size_t)t->H * t->W * nm);
+      CK(cudaMemcpyAsync(cf[l].data(), t->x + (size_t)b * t->H * t->W * nm, cf[l].size() * sizeof(act_t), cudaMemcpyDeviceToHost, s));
+    }
+  }
+  CK(cudaStreamSynchronize(s));
+  std::vector<unsigned char> im((size_t)S * S * 3);
+  for (int i = 0; i < S * S; ++i)
+    for (int c = 0; c < 3; ++c) im[(size_t)i * 3 + c] = (unsigned char)std::lround(std::clamp(to_f(in[(size_t)i * C + c]), 0.f, 1.f) * 255.f);
+  std::vector<const Det*> show;
+  for (auto& d : det)
+    if (d.conf >= g_draw_conf) show.push_back(&d);
+  // 마스크: 점수 낮은 것부터 칠해 높은 것이 위
+  for (int i = (int)show.size() - 1; net.cfg.seg && i >= 0; --i) {
+    const Det& d = *show[i];
+    const act_t* c = cf[d.lvl].data() + (size_t)d.cell * nm;
+    const unsigned char* k = col[d.cls % 7];
+    for (int y = std::max(0, (int)d.y1); y < std::min(S, (int)std::ceil(d.y2)); ++y)
+      for (int x = std::max(0, (int)d.x1); x < std::min(S, (int)std::ceil(d.x2)); ++x) {
+        const act_t* p = pr.data() + ((size_t)(y / 4) * M + x / 4) * nm;
+        float z = 0.f;
+        for (int j = 0; j < nm; ++j) z += to_f(c[j]) * to_f(p[j]);
+        if (z <= 0.f) continue;
+        for (int q = 0; q < 3; ++q) im[((size_t)y * S + x) * 3 + q] = (unsigned char)((im[((size_t)y * S + x) * 3 + q] + k[q]) / 2);
+      }
+  }
+  for (auto* dp : show) {
+    const Det& d = *dp;
+    const unsigned char* k = col[d.cls % 7];
+    int x1 = std::clamp((int)d.x1, 0, S - 1), y1 = std::clamp((int)d.y1, 0, S - 1), x2 = std::clamp((int)d.x2, 0, S - 1),
+        y2 = std::clamp((int)d.y2, 0, S - 1);
+    auto put = [&](int x, int y) { std::copy(k, k + 3, &im[((size_t)y * S + x) * 3]); };
+    for (int t = 0; t < 2; ++t) {
+      for (int x = x1; x <= x2; ++x) put(x, std::min(S - 1, y1 + t)), put(x, std::max(0, y2 - t));
+      for (int y = y1; y <= y2; ++y) put(std::min(S - 1, x1 + t), y), put(std::max(0, x2 - t), y);
+    }
+    // 점수 막대(상자 위 왼쪽, 길이 = 점수 · 상자 폭)
+    int len = (int)((x2 - x1) * d.conf);
+    for (int y = std::max(0, y1 - 6); y < y1; ++y)
+      for (int x = x1; x <= x1 + len && x < S; ++x) put(x, y);
+  }
+  (void)nc;
+  std::FILE* f = std::fopen((g_draw + "/pred" + std::to_string(g_draw_left) + ".ppm").c_str(), "wb");
+  std::fprintf(f, "P6\n%d %d\n255\n", S, S);
+  std::fwrite(im.data(), 1, im.size(), f);
+  std::fclose(f);
+}
+
 static MapEval::Result validate(Net& net, Optimizer& opt, Loader& vl, int64_t nbv, const Cache& vc, int nc,
-                                cudaStream_t s) {
+                                cudaStream_t s, MapEval::Result* mres = nullptr) {
   auto& P = net.params;
   static float* saved = nullptr;
   if (!saved) saved = dalloc<float>(P.total);
   CK(cudaMemcpyAsync(saved, P.vals, P.total * 4, cudaMemcpyDeviceToDevice, s));
   CK(cudaMemcpyAsync(P.vals, opt.ema(), P.total * 4, cudaMemcpyDeviceToDevice, s));
   P.sync_w16(s);
-  MapEval ev(nc);
+  MapEval ev(nc), evm(nc);
   int B = net.cfg.batch;
+  // 마스크: 예측 질의(최대 B·300)·결과·정답 번호 지도
+  const bool seg = mres != nullptr;
+  const int G = vl.cfg.G, MH = net.cfg.imgsz / 4, maxq = B * 300;
+  static MaskQuery *hq = nullptr, *dq = nullptr;
+  static int *hpa = nullptr, *dpa = nullptr, *hin = nullptr, *din = nullptr;
+  static int16_t* hgm = nullptr;
+  if (seg && !hq) {
+    CK(cudaMallocHost(&hq, sizeof(MaskQuery) * maxq));
+    CK(cudaMallocHost(&hpa, 4 * maxq));
+    CK(cudaMallocHost(&hin, 4 * int64_t(maxq) * G));
+    CK(cudaMallocHost(&hgm, 2 * int64_t(B) * MH * MH));
+    dq = dalloc<MaskQuery>(maxq);
+    dpa = dalloc<int>(maxq);
+    din = dalloc<int>(int64_t(maxq) * G);
+  }
   std::vector<int> idx(B);
   int hh[3], ww[3];
   std::vector<std::vector<act_t>> hb(3), hc(3);
@@ -176,7 +264,8 @@ static MapEval::Result validate(Net& net, Optimizer& opt, Loader& vl, int64_t nb
     int *gn;
     float4* gbx;
     int* gcl;
-    vl.next(net.input()->x, &gn, &gbx, &gcl, idx.data(), s);
+    int16_t* gm = nullptr;
+    vl.next(net.input()->x, &gn, &gbx, &gcl, idx.data(), s, seg ? &gm : nullptr);
     net.forward(false);
     for (int l = 0; l < 3; ++l) {
       CK(cudaMemcpyAsync(hb[l].data(), net.head_box(1, l)->x, hb[l].size() * sizeof(act_t), cudaMemcpyDeviceToHost, s));
@@ -189,6 +278,8 @@ static MapEval::Result validate(Net& net, Optimizer& opt, Loader& vl, int64_t nb
       for (size_t i = 0; i < hb[l].size(); ++i) fb[l][i] = to_f(hb[l][i]);
       for (size_t i = 0; i < hc[l].size(); ++i) fc[l][i] = to_f(hc[l][i]);
     }
+    std::vector<std::vector<Det>> dets(B);
+    std::vector<std::vector<GtBox>> gts(B);
     for (int b = 0; b < B; ++b) {
       if (idx[b] < 0) continue;
       const float* bx[3];
@@ -209,8 +300,50 @@ static MapEval::Result validate(Net& net, Optimizer& opt, Loader& vl, int64_t nb
         gt.push_back({cx_ - w / 2, cy_ - h / 2, cx_ + w / 2, cy_ + h / 2, (int)cb[j].cls});
       }
       ev.add(det, gt);
+      if (g_draw_left > 0) {
+        draw_one(net, b, det, nc, s);
+        --g_draw_left;
+      }
+      dets[b] = std::move(det);
+      gts[b] = std::move(gt);
+    }
+    if (seg) {  // 예측 마스크 넓이·정답별 교집합을 장치에서, IoU 짝짓기는 여기서
+      int nq = 0;
+      for (int b = 0; b < B; ++b)
+        for (auto& d : dets[b]) {
+          int l = d.lvl;
+          hq[nq++] = {b, l, b * hh[l] * ww[l] + d.cell, d.x1, d.y1, d.x2, d.y2};
+        }
+      CK(cudaMemcpyAsync(dq, hq, sizeof(MaskQuery) * nq, cudaMemcpyHostToDevice, s));
+      mask_inter(dq, nq, net.head_mask(1, 0)->x, net.head_mask(1, 1)->x, net.head_mask(1, 2)->x, net.proto()->x, MH, MH,
+                 net.cfg.nm, net.cfg.imgsz, gm, G, dpa, din, s);
+      CK(cudaMemcpyAsync(hpa, dpa, 4 * nq, cudaMemcpyDeviceToHost, s));
+      CK(cudaMemcpyAsync(hin, din, 4 * int64_t(nq) * G, cudaMemcpyDeviceToHost, s));
+      CK(cudaMemcpyAsync(hgm, gm, 2 * int64_t(B) * MH * MH, cudaMemcpyDeviceToHost, s));
+      CK(cudaStreamSynchronize(s));
+      int q0 = 0;
+      for (int b = 0; b < B; ++b) {
+        if (idx[b] < 0) continue;
+        int ng = std::min<int>((int)gts[b].size(), G);
+        std::vector<int> garea(ng, 0), gc(ng);
+        for (int i = 0; i < MH * MH; ++i) {
+          int v = hgm[int64_t(b) * MH * MH + i];
+          if (v > 0 && v <= ng) garea[v - 1]++;
+        }
+        for (int g = 0; g < ng; ++g) gc[g] = gts[b][g].cls;
+        int np = (int)dets[b].size();
+        std::vector<float> io(size_t(np) * ng);
+        for (int p = 0; p < np; ++p)
+          for (int g = 0; g < ng; ++g) {
+            float in = (float)hin[int64_t(q0 + p) * G + g];
+            io[size_t(p) * ng + g] = in / ((float)hpa[q0 + p] + garea[g] - in + 1e-7f);
+          }
+        evm.add_iou(dets[b], gc, io);
+        q0 += np;
+      }
     }
   }
+  if (seg) *mres = evm.compute();
   CK(cudaMemcpyAsync(P.vals, saved, P.total * 4, cudaMemcpyDeviceToDevice, s));
   P.sync_w16(s);
   CK(cudaStreamSynchronize(s));
@@ -245,6 +378,7 @@ int main(int argc, char** argv) {
   ncf.batch = a.batch;
   ncf.imgsz = a.imgsz;
   ncf.nc = nc;
+  ncf.seg = a.seg;
   net.build(ncf, dnn, blas, s);
   init_params(net, a.weights, nc, a.seed);
   net.params.sync_w16(s);
@@ -255,6 +389,7 @@ int main(int argc, char** argv) {
   ac.epochs = a.epochs;
   ac.close_mosaic = a.close_mosaic;
   ac.seed = a.seed;
+  ac.masks = a.seg;
   Loader tl;
   tl.open(&tc, ac, a.workers, 8);
   AugCfg vcfg = ac;
@@ -271,6 +406,8 @@ int main(int argc, char** argv) {
   for (int l = 0; l < 3; ++l) lc.lh[l] = lc.lw[l] = a.imgsz / lc.stride[l];
   E2ELoss loss;
   loss.init(lc);
+  SegLoss sloss;
+  if (a.seg) sloss.init(lc, ncf.nm);
 
   OptCfg oc;
   oc.epochs = a.epochs;
@@ -282,7 +419,21 @@ int main(int argc, char** argv) {
 
   if (a.eval) {  // 불러온 가중치를 그대로(EMA 자리에 두고) 검증
     CK(cudaMemcpy(opt.ema(), net.params.vals, net.params.total * 4, cudaMemcpyDeviceToDevice));
-    MapEval::Result r = validate(net, opt, vl, nbv, vc, nc, s);
+    MapEval::Result r, rm;
+    if (!a.draw.empty()) {
+      fs::create_directories(a.draw);
+      g_draw = a.draw;
+      g_draw_left = a.draw_n;
+      g_draw_conf = a.draw_conf;
+    }
+    r = validate(net, opt, vl, nbv, vc, nc, s, a.seg ? &rm : nullptr);
+    if (a.seg) {
+      std::printf("%-18s %8s %8s %8s %8s %8s\n", "클래스", "정답 수", "상자AP50", "AP50-95", "마스크AP50", "AP50-95");
+      for (int c = 0; c < nc; ++c)
+        std::printf("%-18s %8d %8.4f %8.4f %8.4f %8.4f\n", kNames[c], (int)r.ngt[c], r.ap50[c], r.ap[c], rm.ap50[c], rm.ap[c]);
+      std::printf("%-18s %8s %8.4f %8.4f %8.4f %8.4f\n", "전체", "", r.map50, r.map, rm.map50, rm.map);
+      return 0;
+    }
     std::printf("%-18s %8s %8s %8s\n", "클래스", "정답 수", "AP50", "AP50-95");
     for (int c = 0; c < nc; ++c) std::printf("%-18s %8d %8.4f %8.4f\n", kNames[c], (int)r.ngt[c], r.ap50[c], r.ap[c]);
     std::printf("%-18s %8s %8.4f %8.4f\n", "전체", "", r.map50, r.map);
@@ -296,8 +447,23 @@ int main(int argc, char** argv) {
     std::printf("이어 하기: epoch %d 부터, 최고 mAP50-95 %.4f\n", ck.epoch + 1, ck.best);
   }
   std::FILE* log = std::fopen((a.out + "/log.tsv").c_str(), a.resume ? "a" : "w");
-  if (!a.resume) std::fprintf(log, "epoch\tbox\tcls\tl1\tmAP50\tmAP50-95\tsec\n");
+  if (!a.resume)
+    std::fprintf(log, a.seg ? "epoch\tbox\tcls\tl1\tseg\tsem\tmAP50\tmAP50-95\tmask_mAP50\tmask_mAP50-95\tsec\n"
+                            : "epoch\tbox\tcls\tl1\tmAP50\tmAP50-95\tsec\n");
   HeadDev hd[2];
+  SegHeadDev shd[2] = {};
+  if (a.seg)
+    for (int br = 0; br < 2; ++br) {
+      for (int l = 0; l < 3; ++l) {
+        shd[br].coef[l] = net.head_mask(br, l)->x;
+        shd[br].dcoef[l] = net.head_mask(br, l)->g;
+      }
+      shd[br].proto = net.proto()->x;
+      shd[br].sem = net.semantic()->x;
+      shd[br].dproto = br == 0 ? net.proto()->g : nullptr;  // one2one 은 원형 마스크·의미 분할을 떼어 낸다
+      shd[br].dsem = br == 0 ? net.semantic()->g : nullptr;
+    }
+  int16_t* cur_gm = nullptr;
   for (int br = 0; br < 2; ++br)
     for (int l = 0; l < 3; ++l) {
       hd[br].box[l] = net.head_box(br, l)->x;
@@ -316,7 +482,9 @@ int main(int argc, char** argv) {
     net.zero_act_grads();
     net.forward(true);
     loss.run(0, hd[0], gt, lw, opt.scale(), s);
+    if (a.seg) sloss.run(0, shd[0], gt, cur_gm, loss.assigned(), lw, opt.scale(), s);
     loss.run(1, hd[1], gt, lw + 1, opt.scale(), s);
+    if (a.seg) sloss.run(1, shd[1], gt, cur_gm, loss.assigned(), lw + 1, opt.scale(), s);
     net.backward();
     net.params.gather_dw(s, true);
   };
@@ -330,7 +498,7 @@ int main(int argc, char** argv) {
     lw_h[1] = o2o;
     CK(cudaMemcpyAsync(lw, lw_h, 8, cudaMemcpyHostToDevice, s));
     auto t0 = std::chrono::steady_clock::now();
-    double sum[3] = {0, 0, 0};
+    double sum[5] = {0, 0, 0, 0, 0};
     int nsum = 0;
     tl.wait_ms = 0;
     for (int64_t k = 0; k < nb; ++k) {
@@ -338,7 +506,7 @@ int main(int argc, char** argv) {
       int* gn;
       float4* gbx;
       int* gcl;
-      tl.next(net.input()->x, &gn, &gbx, &gcl, nullptr, s);
+      tl.next(net.input()->x, &gn, &gbx, &gcl, nullptr, s, a.seg ? &cur_gm : nullptr);
       GtDev gt{gn, gbx, gcl};
       if (!use_graph || ni == int64_t(ck.epoch) * nb) {
         iteration(gt);  // 처음 한 번은 그대로(지연 초기화가 끝나도록)
@@ -361,16 +529,19 @@ int main(int argc, char** argv) {
         last_opt = ni;
       }
       if (k % 50 == 0 || k == nb - 1) {
-        float it[8];
+        float it[8], si[4] = {0, 0, 0, 0};
         CK(cudaMemcpyAsync(it, loss.items(), 32, cudaMemcpyDeviceToHost, s));
+        if (a.seg) CK(cudaMemcpyAsync(si, sloss.items(), 16, cudaMemcpyDeviceToHost, s));
         CK(cudaStreamSynchronize(s));
-        sum[0] += it[3], sum[1] += it[4], sum[2] += it[5];
+        sum[0] += it[3], sum[1] += it[4], sum[2] += it[5], sum[3] += si[2], sum[4] += si[3];
         ++nsum;
         double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         OptDev od = opt.read_state();
-        std::printf("\r%3d/%d %5lld/%lld  box %.3f cls %.3f l1 %.3f  lr %.5f scale %g  %.1f 장/초 (기다림 %.0f%%)   ",
-                    epoch + 1, a.epochs, (long long)k + 1, (long long)nb, it[3], it[4], it[5], opt.lr_now[0], od.scale,
-                    (k + 1) * a.batch / sec, 100.0 * tl.wait_ms / 1000.0 / sec);
+        char segs[64] = "";
+        if (a.seg) std::snprintf(segs, sizeof(segs), " seg %.3f sem %.3f", si[2], si[3]);
+        std::printf("\r%3d/%d %5lld/%lld  box %.3f cls %.3f l1 %.3f%s  lr %.5f scale %g  %.1f 장/초 (기다림 %.0f%%)   ",
+                    epoch + 1, a.epochs, (long long)k + 1, (long long)nb, it[3], it[4], it[5], segs, opt.lr_now[0],
+                    od.scale, (k + 1) * a.batch / sec, 100.0 * tl.wait_ms / 1000.0 / sec);
         std::fflush(stdout);
       }
       if (a.max_iters > 0 && ni + 1 >= a.max_iters) {
@@ -383,13 +554,20 @@ int main(int argc, char** argv) {
     }
     double tsec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::printf("\n");
-    MapEval::Result r;
+    MapEval::Result r, rm;
     if ((epoch + 1) % a.val_every == 0 || epoch + 1 == a.epochs) {
-      r = validate(net, opt, vl, nbv, vc, nc, s);
+      r = validate(net, opt, vl, nbv, vc, nc, s, a.seg ? &rm : nullptr);
       std::printf("  검증 mAP50 %.4f  mAP50-95 %.4f |", r.map50, r.map);
       for (int c = 0; c < nc; ++c) std::printf(" %s %.3f", kNames[c], r.ap[c]);
       std::printf("\n");
+      if (a.seg) {
+        std::printf("  마스크 mAP50 %.4f  mAP50-95 %.4f |", rm.map50, rm.map);
+        for (int c = 0; c < nc; ++c) std::printf(" %s %.3f", kNames[c], rm.ap[c]);
+        std::printf("\n");
+      }
     }
+    // 최고 기준: 상자 mAP50-95 (seg 면 + 마스크 mAP50-95, Ultralytics SegmentMetrics.fitness 와 같은 합)
+    double fit = r.map + (a.seg ? rm.map : 0.0);
     // EMA 가중치 저장
     {
       auto& P = net.params;
@@ -398,8 +576,8 @@ int main(int argc, char** argv) {
       CK(cudaMemcpyAsync(P.vals, opt.ema(), P.total * 4, cudaMemcpyDeviceToDevice, s));
       CK(cudaStreamSynchronize(s));
       P.save(a.out + "/last.safetensors");
-      if (r.map > ck.best) {
-        ck.best = r.map;
+      if (fit > ck.best) {
+        ck.best = fit;
         P.save(a.out + "/best.safetensors");
       }
       CK(cudaMemcpyAsync(P.vals, saved, P.total * 4, cudaMemcpyDeviceToDevice, s));
@@ -407,8 +585,12 @@ int main(int argc, char** argv) {
     }
     ck.epoch = epoch + 1;
     save_state(a.out + "/state.bin", net, opt, ck);
-    std::fprintf(log, "%d\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.0f\n", epoch + 1, sum[0] / nsum, sum[1] / nsum, sum[2] / nsum,
-                 r.map50, r.map, tsec);
+    if (a.seg)
+      std::fprintf(log, "%d\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.0f\n", epoch + 1, sum[0] / nsum,
+                   sum[1] / nsum, sum[2] / nsum, sum[3] / nsum, sum[4] / nsum, r.map50, r.map, rm.map50, rm.map, tsec);
+    else
+      std::fprintf(log, "%d\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.0f\n", epoch + 1, sum[0] / nsum, sum[1] / nsum,
+                   sum[2] / nsum, r.map50, r.map, tsec);
     std::fflush(log);
     if (a.stop_epochs > 0 && epoch + 1 >= a.stop_epochs) break;
   }

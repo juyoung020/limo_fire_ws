@@ -35,6 +35,12 @@ void Loader::open(const Cache* cache, const AugCfg& c, int workers, int slots) {
   int S = c.S, B = c.batch;
   nb_ = batches_per_epoch();
   img_cap_ = int64_t(B) * (c.augment ? 4 : 1) * S * S * 3;
+  if (c.masks) {
+    YT_ASSERT(cache->has_masks(), "캐시에 마스크가 없음(yolods 마스크로 build_cache 다시)");
+    int ms = 0;
+    for (int i = 0; i < cache->n(); ++i) ms = std::max<int>(ms, cache->mask(i).size);
+    msk_cap_ = int64_t(B) * (c.augment ? 4 : 1) * ms * ms;
+  }
   slots_.resize(slots);
   for (auto& s : slots_) {
     CK(cudaMallocHost(&s.img, img_cap_));
@@ -44,6 +50,10 @@ void Loader::open(const Cache* cache, const AugCfg& c, int workers, int slots) {
     CK(cudaMallocHost(&s.gt_box, sizeof(float4) * B * c.G));
     CK(cudaMallocHost(&s.gt_cls, sizeof(int) * B * c.G));
     CK(cudaMallocHost(&s.idx, sizeof(int) * B));
+    if (msk_cap_) {
+      CK(cudaMallocHost(&s.msk, msk_cap_));
+      s.msk_cap = msk_cap_;
+    }
   }
   for (int i = 0; i < 2; ++i) {
     d_img_[i] = dalloc<uint8_t>(img_cap_);
@@ -51,6 +61,10 @@ void Loader::open(const Cache* cache, const AugCfg& c, int workers, int slots) {
     d_n_[i] = dalloc<int>(B);
     d_box_[i] = dalloc<float4>(int64_t(B) * c.G);
     d_cls_[i] = dalloc<int>(int64_t(B) * c.G);
+    if (msk_cap_) {
+      d_msk_[i] = dalloc<uint8_t>(msk_cap_);
+      d_gm_[i] = dalloc<int16_t>(int64_t(B) * (S / c.mask_ratio) * (S / c.mask_ratio));
+    }
     CK(cudaEventCreateWithFlags(&ev_copied_[i], cudaEventDisableTiming));
     CK(cudaEventCreateWithFlags(&ev_used_[i], cudaEventDisableTiming));
     CK(cudaEventRecord(ev_used_[i], 0));
@@ -73,6 +87,7 @@ Loader::~Loader() {
     cudaFreeHost(s.gt_box);
     cudaFreeHost(s.gt_cls);
     cudaFreeHost(s.idx);
+    if (s.msk) cudaFreeHost(s.msk);
   }
 }
 
@@ -136,6 +151,18 @@ void Loader::fill(Slot& sl, int64_t gb) {
   auto uni = [&](double a, double b) { return a + (b - a) * U(rng); };
   tjhandle dec = tjInitDecompress();
   sl.img_used = 0;
+  sl.msk_used = 0;
+  // 번호 지도 풀기(마스크를 쓸 때): 타일 t 에 캐시 번호 ci
+  auto decode_m = [&](SampleParam& p, int t, int ci) {
+    if (!cfg.masks) return;
+    const CacheMask& m = cache_->mask(ci);
+    int64_t n = int64_t(m.size) * m.size;
+    YT_ASSERT(sl.msk_used + n <= sl.msk_cap, "슬롯 마스크 공간 부족");
+    decode_mask(cache_->runs(ci), m.nrun, sl.msk + sl.msk_used, m.size);
+    p.moff[t] = sl.msk_used;
+    p.msz[t] = m.size;
+    sl.msk_used += n;
+  };
   auto decode = [&](int ci, int& w, int& h) -> int64_t {
     const CacheRec& r = cache_->rec(ci);
     w = r.w;
@@ -149,6 +176,7 @@ void Loader::fill(Slot& sl, int64_t gb) {
   struct Bx {
     float x1, y1, x2, y2;
     int c;
+    int src;  // 타일 · 256 + 그 사진의 상자 번호(번호 지도와 짝)
   };
   for (int s = 0; s < B; ++s) {
     SampleParam& p = sl.sp[s];
@@ -164,11 +192,12 @@ void Loader::fill(Slot& sl, int64_t gb) {
     int idx = order[pos];
     sl.idx[s] = idx;
     std::vector<Bx> boxes;
-    auto add_boxes = [&](int ci, int w, int h, float px, float py) {
+    auto add_boxes = [&](int ci, int w, int h, float px, float py, int t) {
       const CacheBox* cb = cache_->boxes(ci);
       for (int j = 0; j < cache_->rec(ci).nbox; ++j) {
         float cx = cb[j].cx * w, cy = cb[j].cy * h, bw = cb[j].w * w, bh = cb[j].h * h;
-        boxes.push_back({cx - bw / 2 + px, cy - bh / 2 + py, cx + bw / 2 + px, cy + bh / 2 + py, (int)cb[j].cls});
+        boxes.push_back({cx - bw / 2 + px, cy - bh / 2 + py, cx + bw / 2 + px, cy + bh / 2 + py, (int)cb[j].cls,
+                         j < 255 ? t * 256 + j : -1});
       }
     };
     if (!cfg.augment) {
@@ -176,6 +205,7 @@ void Loader::fill(Slot& sl, int64_t gb) {
       int w, h;
       p.ntile = 1;
       p.off[0] = decode(idx, w, h);
+      decode_m(p, 0, idx);
       p.sw[0] = w;
       p.sh[0] = h;
       p.cw = w;
@@ -185,7 +215,7 @@ void Loader::fill(Slot& sl, int64_t gb) {
       p.Mi[0] = 1, p.Mi[1] = 0, p.Mi[2] = (float)-left;
       p.Mi[3] = 0, p.Mi[4] = 1, p.Mi[5] = (float)-top;
       p.hsv[0] = p.hsv[1] = p.hsv[2] = 1.f;
-      add_boxes(idx, w, h, (float)left, (float)top);
+      add_boxes(idx, w, h, (float)left, (float)top, 0);
     } else {
       bool mosaic = U(rng) <= mosaic_p && mosaic_p > 0.f;
       if (mosaic) {
@@ -197,6 +227,7 @@ void Loader::fill(Slot& sl, int64_t gb) {
         for (int t = 0; t < 4; ++t) {
           int w, h;
           p.off[t] = decode(ids[t], w, h);
+          decode_m(p, t, ids[t]);
           p.sw[t] = w;
           p.sh[t] = h;
           int x1a, y1a, x2a, y2a, x1b, y1b;
@@ -216,7 +247,7 @@ void Loader::fill(Slot& sl, int64_t gb) {
           p.ta[t][0] = x1a, p.ta[t][1] = y1a, p.ta[t][2] = x2a, p.ta[t][3] = y2a;
           p.pad[t][0] = x1a - x1b;
           p.pad[t][1] = y1a - y1b;
-          add_boxes(ids[t], w, h, (float)p.pad[t][0], (float)p.pad[t][1]);
+          add_boxes(ids[t], w, h, (float)p.pad[t][0], (float)p.pad[t][1], t);
         }
         // 캔버스로 자르고 넓이 0 인 것 버림
         std::vector<Bx> kept;
@@ -230,9 +261,10 @@ void Loader::fill(Slot& sl, int64_t gb) {
         int w, h;
         p.ntile = 1;
         p.off[0] = decode(idx, w, h);
+        decode_m(p, 0, idx);
         p.sw[0] = w, p.sh[0] = h, p.cw = w, p.ch = h;
         p.ta[0][0] = 0, p.ta[0][1] = 0, p.ta[0][2] = w, p.ta[0][3] = h;
-        add_boxes(idx, w, h, 0.f, 0.f);
+        add_boxes(idx, w, h, 0.f, 0.f, 0);
       }
       // RandomPerspective(degrees 0, shear 0, perspective 0): M = T·R(s)·C
       double sc = uni(1 - cfg.scale, 1 + cfg.scale);
@@ -243,7 +275,7 @@ void Loader::fill(Slot& sl, int64_t gb) {
       std::vector<Bx> kept;
       for (auto b : boxes) {
         float w1 = (b.x2 - b.x1) * (float)sc, h1 = (b.y2 - b.y1) * (float)sc;
-        Bx n{(float)(b.x1 * sc + ox), (float)(b.y1 * sc + oy), (float)(b.x2 * sc + ox), (float)(b.y2 * sc + oy), b.c};
+        Bx n{(float)(b.x1 * sc + ox), (float)(b.y1 * sc + oy), (float)(b.x2 * sc + ox), (float)(b.y2 * sc + oy), b.c, b.src};
         n.x1 = std::clamp(n.x1, 0.f, (float)S), n.x2 = std::clamp(n.x2, 0.f, (float)S);
         n.y1 = std::clamp(n.y1, 0.f, (float)S), n.y2 = std::clamp(n.y2, 0.f, (float)S);
         float w2 = n.x2 - n.x1, h2 = n.y2 - n.y1;
@@ -264,6 +296,9 @@ void Loader::fill(Slot& sl, int64_t gb) {
     }
     int n = std::min<int>((int)boxes.size(), G);
     sl.gt_n[s] = n;
+    std::memset(p.lmap, 0xff, sizeof(p.lmap));
+    for (int j = 0; j < n; ++j)
+      if (boxes[j].src >= 0) p.lmap[boxes[j].src / 256][boxes[j].src % 256] = (int16_t)j;
     for (int j = 0; j < n; ++j) {
       sl.gt_box[s * G + j] = make_float4(boxes[j].x1, boxes[j].y1, boxes[j].x2, boxes[j].y2);
       sl.gt_cls[s * G + j] = boxes[j].c;
@@ -272,7 +307,8 @@ void Loader::fill(Slot& sl, int64_t gb) {
   tjDestroy(dec);
 }
 
-void Loader::next(act_t* input, int** gt_n, float4** gt_box, int** gt_cls, int* idx_host, cudaStream_t compute) {
+void Loader::next(act_t* input, int** gt_n, float4** gt_box, int** gt_cls, int* idx_host, cudaStream_t compute,
+                  int16_t** gt_mask) {
   const int B = cfg.batch, G = cfg.G;
   // 앞 배치를 쓴 계산(학습 한 스텝 전부)이 다 올라간 뒤 표시 → 그 장치 버퍼를 다음다음에 다시 쓸 수 있다
   if (prev_ >= 0) CK(cudaEventRecord(ev_used_[prev_], compute));
@@ -311,10 +347,13 @@ void Loader::next(act_t* input, int** gt_n, float4** gt_box, int** gt_cls, int* 
   CK(cudaMemcpyAsync(d_n_[c], sl.gt_n, sizeof(int) * B, cudaMemcpyHostToDevice, copy_));
   CK(cudaMemcpyAsync(d_box_[c], sl.gt_box, sizeof(float4) * B * G, cudaMemcpyHostToDevice, copy_));
   CK(cudaMemcpyAsync(d_cls_[c], sl.gt_cls, sizeof(int) * B * G, cudaMemcpyHostToDevice, copy_));
+  if (msk_cap_) CK(cudaMemcpyAsync(d_msk_[c], sl.msk, sl.msk_used, cudaMemcpyHostToDevice, copy_));
   CK(cudaEventRecord(ev_copied_[c], copy_));
   if (idx_host) std::memcpy(idx_host, sl.idx, sizeof(int) * B);
   CK(cudaStreamWaitEvent(compute, ev_copied_[c], 0));
   augment_batch(d_img_[c], d_sp_[c], B, cfg.S, cfg.in_c, input, compute);
+  if (msk_cap_) mask_targets(d_msk_[c], d_sp_[c], B, cfg.S, cfg.mask_ratio, d_gm_[c], compute);
+  if (gt_mask) *gt_mask = d_gm_[c];
   *gt_n = d_n_[c];
   *gt_box = d_box_[c];
   *gt_cls = d_cls_[c];

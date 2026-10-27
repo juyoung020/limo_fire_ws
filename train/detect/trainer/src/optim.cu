@@ -177,7 +177,8 @@ void Optimizer::init(const OptCfg& c, Net* net, cublasHandle_t blas, cudaStream_
   std::map<std::pair<int, int>, std::vector<MatInfo>> infos;
   for (auto& p : P.list) {
     int grp = p.kind == P_CONV ? 0 : p.kind == P_BN_W ? 1 : (p.kind == P_BN_B || p.kind == P_BIAS) ? 2 : 3;
-    bool boost = p.name.rfind("model.23.cv3.", 0) == 0 || p.name.rfind("model.23.one2one_cv3.", 0) == 0;
+    bool boost = p.name.rfind("model.23.cv3.", 0) == 0 || p.name.rfind("model.23.one2one_cv3.", 0) == 0 ||
+                 p.name.rfind("model.23.proto.semseg.", 0) == 0;
     for (int64_t i = 0; i < p.n; ++i) kind[p.off + i] = uint8_t(grp | (boost ? 4 : 0));
     if (grp == 0) {
       int R0 = (int)p.shape[0], C0 = (int)(p.n / p.shape[0]);
