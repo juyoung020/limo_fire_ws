@@ -62,6 +62,8 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
     }
     if (engine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
       in_name_ = name;
+    } else if (engine_->getTensorShape(name).nbDims == 4) {
+      proto_name_ = name;   // 분할 모델의 원형 마스크 [1, nm, ph, pw]
     } else if (out_name_.empty()) {
       out_name_ = name;
     }
@@ -84,10 +86,19 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
   if (out_dims.nbDims != 3) {
     throw std::runtime_error("출력은 3 차원이어야 함");
   }
-  if (out_dims.d[2] == 6) {
+  if (!proto_name_.empty()) {
+    const nvinfer1::Dims pd = context_->getTensorShape(proto_name_.c_str());
+    nm_ = pd.d[1];
+    ph_ = pd.d[2];
+    pw_ = pd.d[3];
+    if (out_dims.d[2] != 6 + nm_) {
+      throw std::runtime_error("분할 모델은 end2end 출력 [1, N, 6 + 마스크 계수] 여야 함");
+    }
+  }
+  if (out_dims.d[2] == 6 + nm_) {
     end2end_ = true;
     out_rows_ = out_dims.d[1];
-    out_cols_ = 6;
+    out_cols_ = 6 + nm_;
   } else {
     end2end_ = false;
     out_rows_ = out_dims.d[1];   // 4 + 클래스 수
@@ -102,6 +113,11 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
   check_cuda(cudaMalloc(&d_out_, h_out_.size() * sizeof(float)), "cudaMalloc out");
   context_->setTensorAddress(in_name_.c_str(), d_in_);
   context_->setTensorAddress(out_name_.c_str(), d_out_);
+  if (!proto_name_.empty()) {
+    h_proto_.resize(static_cast<size_t>(nm_) * ph_ * pw_);
+    check_cuda(cudaMalloc(&d_proto_, h_proto_.size() * sizeof(float)), "cudaMalloc proto");
+    context_->setTensorAddress(proto_name_.c_str(), d_proto_);
+  }
 }
 
 TrtYolo::~TrtYolo()
@@ -111,6 +127,7 @@ TrtYolo::~TrtYolo()
   runtime_.reset();
   if (d_in_) {cudaFree(d_in_);}
   if (d_out_) {cudaFree(d_out_);}
+  if (d_proto_) {cudaFree(d_proto_);}
   if (stream_) {cudaStreamDestroy(static_cast<cudaStream_t>(stream_));}
 }
 
@@ -150,6 +167,10 @@ std::vector<Detection> TrtYolo::infer(const cv::Mat & bgr)
     throw std::runtime_error("enqueueV3 실패");
   }
   check_cuda(cudaMemcpyAsync(h_out_.data(), d_out_, h_out_.size() * sizeof(float), cudaMemcpyDeviceToHost, st), "D2H");
+  if (d_proto_) {
+    check_cuda(cudaMemcpyAsync(h_proto_.data(), d_proto_, h_proto_.size() * sizeof(float), cudaMemcpyDeviceToHost, st),
+      "D2H proto");
+  }
   check_cuda(cudaStreamSynchronize(st), "sync");
   return end2end_ ? decode_end2end(lb, bgr.cols, bgr.rows) : decode_raw(lb, bgr.cols, bgr.rows);
 }
@@ -170,14 +191,66 @@ std::vector<Detection> TrtYolo::decode_end2end(const Letterbox & lb, int img_w, 
 {
   std::vector<Detection> out;
   for (int r = 0; r < out_rows_; ++r) {
-    const float * p = &h_out_[static_cast<size_t>(r) * 6];
+    const float * p = &h_out_[static_cast<size_t>(r) * out_cols_];
     if (p[4] < conf_) {
       continue;
     }
     out.push_back({unletterbox(p[0], p[1], p[2], p[3], lb.scale, lb.pad_x, lb.pad_y, img_w, img_h),
-        p[4], static_cast<int>(p[5])});
+        p[4], static_cast<int>(p[5]), {}, {}});
+    if (nm_ > 0) {
+      decode_mask(p + 6, lb, img_w, img_h, out.back());
+    }
   }
   return out;
+}
+
+void TrtYolo::decode_mask(const float * coeffs, const Letterbox & lb, int img_w, int img_h, Detection & det) const
+{
+  // Ultralytics process_mask 와 같은 순서: 계수 · 원형 → 상자 밖 버림 → 원본 크기로 키움 → 0.5 문턱
+  // 상자 부분만 계산한다: 원본 상자 → 입력(640) 좌표 → 원형(160) 좌표
+  det.mask_roi = cv::Rect(det.box) & cv::Rect(0, 0, img_w, img_h);
+  if (det.mask_roi.empty()) {
+    return;
+  }
+  const float kx = static_cast<float>(pw_) / in_w_, ky = static_cast<float>(ph_) / in_h_;
+  const float px0 = (det.mask_roi.x * lb.scale + lb.pad_x) * kx;
+  const float py0 = (det.mask_roi.y * lb.scale + lb.pad_y) * ky;
+  const float px1 = (det.mask_roi.br().x * lb.scale + lb.pad_x) * kx;
+  const float py1 = (det.mask_roi.br().y * lb.scale + lb.pad_y) * ky;
+  const int gx0 = std::clamp(static_cast<int>(std::floor(px0)), 0, pw_ - 1);
+  const int gy0 = std::clamp(static_cast<int>(std::floor(py0)), 0, ph_ - 1);
+  const int gx1 = std::clamp(static_cast<int>(std::ceil(px1)), gx0 + 1, pw_);
+  const int gy1 = std::clamp(static_cast<int>(std::ceil(py1)), gy0 + 1, ph_);
+
+  // 원형 칸마다 로짓 = Σ 계수 × 원형
+  cv::Mat logit(gy1 - gy0, gx1 - gx0, CV_32F, cv::Scalar(0));
+  const size_t plane = static_cast<size_t>(ph_) * pw_;
+  for (int k = 0; k < nm_; ++k) {
+    const float c = coeffs[k];
+    const float * pk = &h_proto_[k * plane];
+    for (int y = gy0; y < gy1; ++y) {
+      float * row = logit.ptr<float>(y - gy0);
+      const float * src = pk + static_cast<size_t>(y) * pw_;
+      for (int x = gx0; x < gx1; ++x) {
+        row[x - gx0] += c * src[x];
+      }
+    }
+  }
+  // 원본 픽셀 (u, v) 의 원형 좌표 = (u·s + pad)·k - 0.5 (칸 가운데 기준). 그 자리를 쌍선형으로 읽는다
+  cv::Mat map_x(det.mask_roi.size(), CV_32F), map_y(det.mask_roi.size(), CV_32F);
+  for (int v = 0; v < det.mask_roi.height; ++v) {
+    const float gy = ((det.mask_roi.y + v + 0.5f) * lb.scale + lb.pad_y) * ky - 0.5f - gy0;
+    float * mx = map_x.ptr<float>(v);
+    float * my = map_y.ptr<float>(v);
+    for (int u = 0; u < det.mask_roi.width; ++u) {
+      mx[u] = ((det.mask_roi.x + u + 0.5f) * lb.scale + lb.pad_x) * kx - 0.5f - gx0;
+      my[u] = gy;
+    }
+  }
+  cv::Mat up;
+  cv::remap(logit, up, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+  // 시그모이드 > 0.5 ⇔ 로짓 > 0
+  cv::compare(up, 0.0, det.mask, cv::CMP_GT);
 }
 
 std::vector<Detection> TrtYolo::decode_raw(const Letterbox & lb, int img_w, int img_h) const
@@ -206,7 +279,7 @@ std::vector<Detection> TrtYolo::decode_raw(const Letterbox & lb, int img_w, int 
   cv::dnn::NMSBoxesBatched(boxes, scores, classes, conf_, nms_iou_, keep);
   std::vector<Detection> out;
   for (int i : keep) {
-    out.push_back({cv::Rect2f(boxes[i]), scores[i], classes[i]});
+    out.push_back({cv::Rect2f(boxes[i]), scores[i], classes[i], {}, {}});
   }
   return out;
 }

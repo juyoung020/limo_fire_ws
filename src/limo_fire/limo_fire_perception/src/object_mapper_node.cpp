@@ -1,9 +1,11 @@
 // YOLO 탐지 상자 + 정렬된 깊이 영상 → 물체의 지도(map) 좌표 → RViz 마커 + 한글 현황판(오버레이)
 // 같은 클래스가 merge_radius 안에서 다시 보이면 같은 물체로 보고 위치를 평균한다. min_hits 번 이상 본 것만 지도에 올린다.
 // 깊이는 컬러 카메라에 정렬돼 있어야 한다 (실물 Orbbec align_mode HW, Webots 는 원래 같은 프레임)
+// 분할 모델이면 같은 시각의 물체 번호 영상(yolo_detector/mask)으로 물체 픽셀만 골라 위치·거리·(불) 넓이를 잰다. 없으면 상자로
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -88,6 +90,7 @@ public:
     max_depth_ = declare_parameter<double>("max_depth", 5.0);
     box_shrink_ = declare_parameter<double>("box_shrink", 0.5);
     depth_percentile_ = declare_parameter<double>("depth_percentile", 0.3);
+    mask_depth_percentile_ = declare_parameter<double>("mask_depth_percentile", 0.5);
     merge_radius_ = declare_parameter<double>("merge_radius", 0.8);
     min_hits_ = declare_parameter<int>("min_hits", 3);
     min_score_ = declare_parameter<double>("min_score", 0.5);
@@ -108,6 +111,13 @@ public:
     info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
       declare_parameter<std::string>("camera_info_topic", "/camera/depth/camera_info"), rclcpp::SensorDataQoS(),
       [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {info_ = msg;});
+    // 마스크는 탐지와 시각이 같다. 최근 몇 장만 두고 탐지가 오면 같은 시각 것을 찾는다
+    mask_sub_ = create_subscription<sensor_msgs::msg::Image>(
+      declare_parameter<std::string>("mask_topic", "/yolo_detector/mask"), 10,
+      [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
+        masks_.push_back(msg);
+        if (masks_.size() > 10) {masks_.pop_front();}
+      });
     // 지도에 올린 물체를 모두 지운다: ros2 service call /object_mapper/clear std_srvs/srv/Trigger
     clear_srv_ = create_service<std_srvs::srv::Trigger>("~/clear",
         [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
@@ -143,6 +153,13 @@ private:
     double yaw;      // 처음 본 방향 (문·유도등·계단 판을 카메라 쪽으로 세움)
     int hits;
     double best_score;
+    double area;     // m², 마스크로 잰 앞면 넓이 (불 크기). 마스크가 없으면 0
+  };
+
+  // 탐지 하나를 지도에 올릴 값: 영상 좌표 (u, v), 거리 z, 앞면 넓이
+  struct Measure
+  {
+    double u, v, z, area;
   };
 
   using Policy = message_filters::sync_policies::ApproximateTime<
@@ -180,6 +197,42 @@ private:
     return vals[k];
   }
 
+  // 마스크 픽셀의 무게중심과 그 픽셀들 깊이의 mask_depth_percentile 값. 유효한 깊이가 적으면 false
+  bool mask_measure(const sensor_msgs::msg::Image & depth, const sensor_msgs::msg::Image & mask, uint8_t id,
+    const vision_msgs::msg::BoundingBox2D & box, double sx, double sy, double fx, double fy, Measure & m) const
+  {
+    const int x0 = std::max(0, static_cast<int>(box.center.position.x - box.size_x / 2));
+    const int x1 = std::min(static_cast<int>(mask.width) - 1, static_cast<int>(box.center.position.x + box.size_x / 2));
+    const int y0 = std::max(0, static_cast<int>(box.center.position.y - box.size_y / 2));
+    const int y1 = std::min(static_cast<int>(mask.height) - 1, static_cast<int>(box.center.position.y + box.size_y / 2));
+    std::vector<float> vals;
+    double su = 0, sv = 0;
+    size_t n = 0;
+    for (int y = y0; y <= y1; ++y) {
+      const uint8_t * mrow = mask.data.data() + static_cast<size_t>(y) * mask.step;
+      const int dy = std::min(static_cast<int>(y * sy), static_cast<int>(depth.height) - 1);
+      const uint8_t * drow = depth.data.data() + static_cast<size_t>(dy) * depth.step;
+      for (int x = x0; x <= x1; ++x) {
+        if (mrow[x] != id) {continue;}
+        su += x;
+        sv += y;
+        ++n;
+        const int dx = std::min(static_cast<int>(x * sx), static_cast<int>(depth.width) - 1);
+        const float d = depth.encoding == "16UC1" ?
+          reinterpret_cast<const uint16_t *>(drow)[dx] * 0.001f : reinterpret_cast<const float *>(drow)[dx];
+        if (std::isfinite(d) && d >= min_depth_ && d <= max_depth_) {vals.push_back(d);}
+      }
+    }
+    if (vals.size() < 10) {return false;}
+    const auto k = static_cast<size_t>(mask_depth_percentile_ * (vals.size() - 1));
+    std::nth_element(vals.begin(), vals.begin() + k, vals.end());
+    m.u = su / n;
+    m.v = sv / n;
+    m.z = vals[k];
+    m.area = n * m.z * m.z / (fx * fy);   // 픽셀 하나 = (z/fx)·(z/fy) m²
+    return true;
+  }
+
   void on_pair(
     const vision_msgs::msg::Detection2DArray::ConstSharedPtr & dets,
     const sensor_msgs::msg::Image::ConstSharedPtr & depth)
@@ -203,26 +256,37 @@ private:
       return;
     }
 
-    for (const auto & d : dets->detections) {
+    // 같은 시각 마스크 (분할 모델일 때). 영상 크기가 탐지 기준(camera_info)과 같아야 쓴다
+    sensor_msgs::msg::Image::ConstSharedPtr mask;
+    for (const auto & mk : masks_) {
+      if (mk->header.stamp == dets->header.stamp && mk->width == info_->width && mk->height == info_->height) {
+        mask = mk;
+      }
+    }
+
+    for (size_t i = 0; i < dets->detections.size(); ++i) {
+      const auto & d = dets->detections[i];
       if (d.results.empty() || d.results[0].hypothesis.score < min_score_) {continue;}
       const int cls = class_index(d.results[0].hypothesis.class_id);
       if (cls < 0) {continue;}
-      const double u = d.bbox.center.position.x, v = d.bbox.center.position.y;
-      const double z = box_depth(*depth, u * sx, v * sy, d.bbox.size_x * sx, d.bbox.size_y * sy);
-      if (!std::isfinite(z)) {continue;}
+      Measure m{d.bbox.center.position.x, d.bbox.center.position.y, 0.0, 0.0};
+      if (!mask || i >= 255 || !mask_measure(*depth, *mask, static_cast<uint8_t>(i + 1), d.bbox, sx, sy, fx, fy, m)) {
+        m.z = box_depth(*depth, m.u * sx, m.v * sy, d.bbox.size_x * sx, d.bbox.size_y * sy);
+      }
+      if (!std::isfinite(m.z)) {continue;}
 
       geometry_msgs::msg::PointStamped p_cam, p_map;
-      p_cam.point.x = (u - cx) * z / fx;
-      p_cam.point.y = (v - cy) * z / fy;
-      p_cam.point.z = z;
+      p_cam.point.x = (m.u - cx) * m.z / fx;
+      p_cam.point.y = (m.v - cy) * m.z / fy;
+      p_cam.point.z = m.z;
       tf2::doTransform(p_cam, p_map, tf);
       const double view_yaw = std::atan2(p_map.point.y - tf.transform.translation.y,
           p_map.point.x - tf.transform.translation.x);
-      add(cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw, d.results[0].hypothesis.score);
+      add(cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw, d.results[0].hypothesis.score, m.area);
     }
   }
 
-  void add(int cls, double x, double y, double z, double yaw, double score)
+  void add(int cls, double x, double y, double z, double yaw, double score, double area)
   {
     Landmark * best = nullptr;
     double best_d = merge_radii_[cls];
@@ -231,7 +295,7 @@ private:
       if (l.cls == cls && dist < best_d) {best = &l; best_d = dist;}
     }
     if (!best) {
-      landmarks_.push_back({cls, 0, x, y, z, yaw, 1, score});
+      landmarks_.push_back({cls, 0, x, y, z, yaw, 1, score, area});
       return;
     }
     // 처음 몇 번은 평균, 그 뒤로는 천천히 따라간다 (멀리서 본 부정확한 값이 남지 않게)
@@ -239,6 +303,7 @@ private:
     best->x += a * (x - best->x);
     best->y += a * (y - best->y);
     best->z += a * (z - best->z);
+    if (area > 0) {best->area = best->area > 0 ? best->area + a * (area - best->area) : area;}
     best->hits++;
     best->best_score = std::max(best->best_score, score);
     if (best->hits >= min_hits_ && best->number == 0) {
@@ -338,14 +403,14 @@ private:
     } catch (const tf2::TransformException &) {
     }
 
-    struct Row {int count = 0; double nearest = 1e9; int nearest_no = 0;};
+    struct Row {int count = 0; double nearest = 1e9; int nearest_no = 0; double nearest_area = 0;};
     std::vector<Row> rows(class_names_.size());
     for (const auto & l : landmarks_) {
       if (l.number == 0) {continue;}
       Row & r = rows[l.cls];
       r.count++;
       const double d = std::hypot(l.x - rx, l.y - ry);
-      if (d < r.nearest) {r.nearest = d; r.nearest_no = l.number;}
+      if (d < r.nearest) {r.nearest = d; r.nearest_no = l.number; r.nearest_area = l.area;}
     }
     auto dist_text = [&](const Row & r, const Style & s) {
         if (!have_robot) {return std::string();}
@@ -358,9 +423,15 @@ private:
     int lines = 1;
     const int fire = class_index("fire");
     if (fire >= 0 && rows[fire].count > 0) {
+      std::string size_text;
+      if (rows[fire].nearest_area > 0) {
+        char buf[48];
+        std::snprintf(buf, sizeof(buf), " · 크기 약 %.2f m²", rows[fire].nearest_area);
+        size_text = buf;
+      }
       html += "<div style='color:#ff6b4a;font-size:large;'><b>⚠ 화재 " + std::to_string(rows[fire].count) +
         "곳 감지</b></div><div style='color:#ffb4a2;'>가장 가까운 불 " + dist_text(rows[fire], style_of("fire")) +
-        "</div>";
+        size_text + "</div>";
       lines += 2;
     }
     html += "<table cellspacing='0' cellpadding='3' width='100%'>";
@@ -397,7 +468,8 @@ private:
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   std::string map_frame_, robot_frame_;
-  double min_depth_, max_depth_, box_shrink_, depth_percentile_, merge_radius_, min_score_, fire_zone_radius_;
+  double min_depth_, max_depth_, box_shrink_, depth_percentile_, mask_depth_percentile_, merge_radius_, min_score_,
+    fire_zone_radius_;
   std::vector<double> merge_radii_;
   std::vector<double> label_offset_;
   double icon_size_, icon_yaw_;
@@ -407,11 +479,13 @@ private:
   std::array<int, 16> counters_{};
   unsigned tick_ = 0;
   sensor_msgs::msg::CameraInfo::ConstSharedPtr info_;
+  std::deque<sensor_msgs::msg::Image::ConstSharedPtr> masks_;
 
   message_filters::Subscriber<vision_msgs::msg::Detection2DArray> det_sub_;
   message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub_;
   std::shared_ptr<message_filters::Synchronizer<Policy>> sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr overlay_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr clear_srv_;
