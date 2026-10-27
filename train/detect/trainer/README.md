@@ -55,7 +55,8 @@ cmake -S . -B build && cmake --build build -j
 ./build/train --seg --eval --val ../data/cache/seg_test_640.ycache --weights ../data/runs/y26s_seg/best.safetensors
 ```
 
-seg 속도: **289 장/초**(탐지만 393). 첫 epoch 검증 상자 mAP50-95 0.461 · 마스크 0.374.
+seg 속도: **289 장/초**(탐지만 393). 100 epoch(5.1 시간) 뒤 시험 상자 mAP50-95 0.651 · 마스크 0.521 — [docs/detect.md](../../../docs/detect.md).
+평가에 `--draw <폴더>` 를 붙이면 처음 N 장(`--draw-n`, 기본 24)의 예측(상자·마스크, 확신도 `--draw-conf` 0.4 이상)을 PPM 그림으로 저장한다.
 
 ## 속도 (RTX 5070 Ti, 640, 배치 32)
 

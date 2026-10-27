@@ -5,7 +5,9 @@
 //             [--seg] [--epochs 100] [--batch 32] [--imgsz 640] [--workers 16] [--close-mosaic 10] [--seed 0]
 //             [--max-iters N(속도 재기)] [--resume]
 //       train --eval --val <split.ycache> --weights <best.safetensors> [--seg]   (평가만: 클래스별 AP·정답 수)
+//             [--draw <폴더> [--draw-n 24] [--draw-conf 0.4]]  처음 N 장의 예측(상자·마스크)을 PPM 그림으로
 // 결과: <out>/last.safetensors·best.safetensors(EMA 가중치, PyTorch 이름), <out>/state.bin(이어 하기), <out>/log.tsv
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -31,6 +33,9 @@ struct Args {
   int epochs = 100, batch = 32, imgsz = 640, workers = 16, close_mosaic = 10, max_iters = -1, val_every = 1, stop_epochs = -1;
   uint64_t seed = 0;
   bool resume = false, eval = false, seg = false;
+  std::string draw;
+  int draw_n = 24;
+  float draw_conf = 0.4f;
 };
 static Args parse(int argc, char** argv) {
   Args a;
@@ -52,6 +57,9 @@ static Args parse(int argc, char** argv) {
     else if (k == "--resume") a.resume = true;
     else if (k == "--eval") a.eval = true;
     else if (k == "--seg") a.seg = true;
+    else if (k == "--draw") a.draw = v();
+    else if (k == "--draw-n") a.draw_n = std::stoi(v());
+    else if (k == "--draw-conf") a.draw_conf = std::stof(v());
     else if (k == "--stop-epochs") a.stop_epochs = std::stoi(v());
     else {
       std::fprintf(stderr, "모르는 인자 %s\n", k.c_str());
@@ -155,6 +163,68 @@ static bool load_state(const std::string& path, Net& net, Optimizer& opt, Ckpt& 
 }
 
 // EMA 가중치로 검증. mres(seg): 마스크 mAP
+// 예측 그림(평가 --draw): 입력 영상에 마스크(로짓 > 0, 상자 안)를 클래스 색으로 덧칠하고 상자·점수 막대를 그린다
+static std::string g_draw;
+static int g_draw_left = 0;
+static float g_draw_conf = 0.4f;
+static void draw_one(Net& net, int b, const std::vector<Det>& det, int nc, cudaStream_t s) {
+  static const unsigned char col[7][3] = {{255, 80, 0}, {160, 160, 160}, {255, 0, 0}, {0, 220, 0}, {0, 120, 255}, {170, 0, 255}, {255, 220, 0}};
+  const int S = net.cfg.imgsz, C = net.input()->C, M = S / 4, nm = net.cfg.nm;
+  std::vector<act_t> in((size_t)S * S * C), pr;
+  CK(cudaMemcpyAsync(in.data(), net.input()->x + (size_t)b * S * S * C, in.size() * sizeof(act_t), cudaMemcpyDeviceToHost, s));
+  std::vector<std::vector<act_t>> cf(3);
+  if (net.cfg.seg) {
+    pr.resize((size_t)M * M * nm);
+    CK(cudaMemcpyAsync(pr.data(), net.proto()->x + (size_t)b * M * M * nm, pr.size() * sizeof(act_t), cudaMemcpyDeviceToHost, s));
+    for (int l = 0; l < 3; ++l) {
+      Tensor* t = net.head_mask(1, l);
+      cf[l].resize((size_t)t->H * t->W * nm);
+      CK(cudaMemcpyAsync(cf[l].data(), t->x + (size_t)b * t->H * t->W * nm, cf[l].size() * sizeof(act_t), cudaMemcpyDeviceToHost, s));
+    }
+  }
+  CK(cudaStreamSynchronize(s));
+  std::vector<unsigned char> im((size_t)S * S * 3);
+  for (int i = 0; i < S * S; ++i)
+    for (int c = 0; c < 3; ++c) im[(size_t)i * 3 + c] = (unsigned char)std::lround(std::clamp(to_f(in[(size_t)i * C + c]), 0.f, 1.f) * 255.f);
+  std::vector<const Det*> show;
+  for (auto& d : det)
+    if (d.conf >= g_draw_conf) show.push_back(&d);
+  // 마스크: 점수 낮은 것부터 칠해 높은 것이 위
+  for (int i = (int)show.size() - 1; net.cfg.seg && i >= 0; --i) {
+    const Det& d = *show[i];
+    const act_t* c = cf[d.lvl].data() + (size_t)d.cell * nm;
+    const unsigned char* k = col[d.cls % 7];
+    for (int y = std::max(0, (int)d.y1); y < std::min(S, (int)std::ceil(d.y2)); ++y)
+      for (int x = std::max(0, (int)d.x1); x < std::min(S, (int)std::ceil(d.x2)); ++x) {
+        const act_t* p = pr.data() + ((size_t)(y / 4) * M + x / 4) * nm;
+        float z = 0.f;
+        for (int j = 0; j < nm; ++j) z += to_f(c[j]) * to_f(p[j]);
+        if (z <= 0.f) continue;
+        for (int q = 0; q < 3; ++q) im[((size_t)y * S + x) * 3 + q] = (unsigned char)((im[((size_t)y * S + x) * 3 + q] + k[q]) / 2);
+      }
+  }
+  for (auto* dp : show) {
+    const Det& d = *dp;
+    const unsigned char* k = col[d.cls % 7];
+    int x1 = std::clamp((int)d.x1, 0, S - 1), y1 = std::clamp((int)d.y1, 0, S - 1), x2 = std::clamp((int)d.x2, 0, S - 1),
+        y2 = std::clamp((int)d.y2, 0, S - 1);
+    auto put = [&](int x, int y) { std::copy(k, k + 3, &im[((size_t)y * S + x) * 3]); };
+    for (int t = 0; t < 2; ++t) {
+      for (int x = x1; x <= x2; ++x) put(x, std::min(S - 1, y1 + t)), put(x, std::max(0, y2 - t));
+      for (int y = y1; y <= y2; ++y) put(std::min(S - 1, x1 + t), y), put(std::max(0, x2 - t), y);
+    }
+    // 점수 막대(상자 위 왼쪽, 길이 = 점수 · 상자 폭)
+    int len = (int)((x2 - x1) * d.conf);
+    for (int y = std::max(0, y1 - 6); y < y1; ++y)
+      for (int x = x1; x <= x1 + len && x < S; ++x) put(x, y);
+  }
+  (void)nc;
+  std::FILE* f = std::fopen((g_draw + "/pred" + std::to_string(g_draw_left) + ".ppm").c_str(), "wb");
+  std::fprintf(f, "P6\n%d %d\n255\n", S, S);
+  std::fwrite(im.data(), 1, im.size(), f);
+  std::fclose(f);
+}
+
 static MapEval::Result validate(Net& net, Optimizer& opt, Loader& vl, int64_t nbv, const Cache& vc, int nc,
                                 cudaStream_t s, MapEval::Result* mres = nullptr) {
   auto& P = net.params;
@@ -230,6 +300,10 @@ static MapEval::Result validate(Net& net, Optimizer& opt, Loader& vl, int64_t nb
         gt.push_back({cx_ - w / 2, cy_ - h / 2, cx_ + w / 2, cy_ + h / 2, (int)cb[j].cls});
       }
       ev.add(det, gt);
+      if (g_draw_left > 0) {
+        draw_one(net, b, det, nc, s);
+        --g_draw_left;
+      }
       dets[b] = std::move(det);
       gts[b] = std::move(gt);
     }
@@ -346,6 +420,12 @@ int main(int argc, char** argv) {
   if (a.eval) {  // 불러온 가중치를 그대로(EMA 자리에 두고) 검증
     CK(cudaMemcpy(opt.ema(), net.params.vals, net.params.total * 4, cudaMemcpyDeviceToDevice));
     MapEval::Result r, rm;
+    if (!a.draw.empty()) {
+      fs::create_directories(a.draw);
+      g_draw = a.draw;
+      g_draw_left = a.draw_n;
+      g_draw_conf = a.draw_conf;
+    }
     r = validate(net, opt, vl, nbv, vc, nc, s, a.seg ? &rm : nullptr);
     if (a.seg) {
       std::printf("%-18s %8s %8s %8s %8s %8s\n", "클래스", "정답 수", "상자AP50", "AP50-95", "마스크AP50", "AP50-95");
