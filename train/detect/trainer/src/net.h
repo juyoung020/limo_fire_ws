@@ -1,5 +1,6 @@
-// YOLO26 탐지 신경망(정방향·역방향). Ultralytics yolo26.yaml + C3k2·C3k·SPPF·C2PSA·PSABlock·Detect(end2end) 와
-// 같은 계산을 한다. 이름·모양은 PyTorch state_dict 와 같다(model.<층>.…).
+// YOLO26 탐지·분할 신경망(정방향·역방향). Ultralytics yolo26.yaml + C3k2·C3k·SPPF·C2PSA·PSABlock·Detect(end2end) 와
+// 같은 계산을 한다. seg 면 yolo26-seg.yaml 의 Segment26(마스크 계수 cv4 두 벌 + Proto26: 원형 마스크·의미 분할)까지.
+// 이름·모양은 PyTorch state_dict 와 같다(model.<층>.…).
 //
 // 연산은 차례대로 쌓아 두고 정방향은 앞에서, 역방향은 뒤에서 돈다. 활성값·기울기는 NHWC act_t, 기울기는 스텝마다
 // 0 으로 지우고 모든 역방향이 더한다. 합성곱은 cuDNN, 나머지는 kern.cu·attn.cu.
@@ -79,6 +80,8 @@ std::unique_ptr<Op> make_attn_op(Tensor* qkv, Tensor* o, Tensor* vf, int nh, int
 
 struct NetCfg {
   int batch = 16, imgsz = 640, nc = 7;
+  bool seg = false;
+  int nm = 32, npr = 128;  // 마스크 계수 수, Proto 중간 채널(yolo26s-seg: 256 × 폭 0.5)
   float bn_momentum = 0.03f, bn_eps = 1e-3f;
 };
 
@@ -95,6 +98,10 @@ class Net {
   // 머리 출력: br 0 = one2many, 1 = one2one; lvl 0..2 (P3·P4·P5). box [B,H,W,4] (ltrb, 격자 단위), cls [B,H,W,nc]
   Tensor* head_box(int br, int lvl) { return hbox_[br][lvl]; }
   Tensor* head_cls(int br, int lvl) { return hcls_[br][lvl]; }
+  // seg: 마스크 계수 [B,h,w,nm], 원형 마스크 [B,S/4,S/4,nm], 의미 분할 로짓 [B,S/8,S/8,nc](학습 때만 쓴다)
+  Tensor* head_mask(int br, int lvl) { return hmask_[br][lvl]; }
+  Tensor* proto() { return proto_; }
+  Tensor* semantic() { return sem_; }
   Params params;
   NetCfg cfg;
   int strides[3] = {8, 16, 32};
@@ -110,6 +117,7 @@ class Net {
   Tensor* tensor(int N, int H, int W, int C, bool grad = true);
   Tensor* conv_bn(const std::string& name, Tensor* in, int K, int k, int s, int act, int groups = 1, bool detach = false);
   Tensor* conv_bias(const std::string& name, Tensor* in, int K, bool detach = false);
+  Tensor* conv_t2(const std::string& name, Tensor* in, int K);  // ConvTranspose2d(k 2, s 2, 편향)
   Tensor* cat(std::vector<Tensor*> ins);
   Tensor* slice(Tensor* in, int c0, int n);
   Tensor* add(Tensor* a, Tensor* b);
@@ -122,6 +130,7 @@ class Net {
   Tensor* sppf(const std::string& name, Tensor* x, int c2);
   Tensor* c2psa(const std::string& name, Tensor* x);
   void detect(const std::string& name, Tensor* p3, Tensor* p4, Tensor* p5);
+  void proto26(const std::string& name, Tensor* p3, Tensor* p4, Tensor* p5);
 
  private:
   cudnnHandle_t dnn_ = nullptr;
@@ -132,6 +141,9 @@ class Net {
   Tensor* in_ = nullptr;
   Tensor* hbox_[2][3] = {};
   Tensor* hcls_[2][3] = {};
+  Tensor* hmask_[2][3] = {};
+  Tensor* proto_ = nullptr;
+  Tensor* sem_ = nullptr;
   double* acc_ = nullptr;  // 채널 합 작업 공간
   act_t* dz_ = nullptr;    // BN 역방향 출력(합성곱 기울기 입력) 공용 버퍼
   float* dwtmp_ = nullptr; // depthwise 가중치 기울기 누적
@@ -139,6 +151,7 @@ class Net {
   int64_t grad_arena_n_ = 0;
   friend class OpConvBN;
   friend class OpConvBias;
+  friend class OpConvT;
   friend class OpAttn;
   void finalize();
 };

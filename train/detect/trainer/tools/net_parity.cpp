@@ -1,5 +1,6 @@
 // 신경망 정합성: Ultralytics(ref/net_dump.py) 의 정방향 출력·BN running 통계·파라미터 기울기와 비교(fp32 빌드).
-// 사용: net_parity <가중치.safetensors> <기준.safetensors> <배치> <크기>
+// 사용: net_parity <가중치.safetensors> <기준.safetensors> <배치> <크기> [seg]
+//       seg: YOLO26s-seg(ref/seg_net_dump.py) — 마스크 계수·원형 마스크·의미 분할 출력과 그 기울기까지
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -31,6 +32,7 @@ static void cmp(const std::string& name, const float* got, const float* ref, siz
 int main(int argc, char** argv) {
   SafeTensors W(argv[1]), R(argv[2]);
   int B = std::stoi(argv[3]), S = std::stoi(argv[4]);
+  bool seg = argc > 5 && std::string(argv[5]) == "seg";
   cudaStream_t s;
   CK(cudaStreamCreate(&s));
   cudnnHandle_t dnn;
@@ -45,6 +47,7 @@ int main(int argc, char** argv) {
   cfg.batch = B;
   cfg.imgsz = S;
   cfg.nc = 80;
+  cfg.seg = seg;
   net.build(cfg, dnn, blas, s);
   auto skipped = net.params.load(W);
   std::printf("파라미터 %zu 개, 못 불러온 것 %zu 개, 활성 메모리 %.2f GB\n", net.params.list.size(), skipped.size(),
@@ -71,7 +74,14 @@ int main(int argc, char** argv) {
       Tensor* c = net.head_cls(br, l);
       cmp("box" + k, d2h(b).data(), R.get("out.box" + k).f32(), b->n());
       cmp("cls" + k, d2h(c).data(), R.get("out.cls" + k).f32(), c->n());
+      if (seg) cmp("msk" + k, d2h(net.head_mask(br, l)).data(), R.get("out.msk" + k).f32(), net.head_mask(br, l)->n());
     }
+  if (seg) {
+    cmp("fuse", d2h(net.named.at("model.23.proto.feat_fuse")).data(), R.get("out.fuse").f32(),
+        net.named.at("model.23.proto.feat_fuse")->n());
+    cmp("proto", d2h(net.proto()).data(), R.get("out.proto").f32(), net.proto()->n());
+    cmp("sem", d2h(net.semantic()).data(), R.get("out.sem").f32(), net.semantic()->n());
+  }
   // BN running 통계(정방향 한 번 뒤)
   std::vector<float> vals(net.params.total);
   CK(cudaMemcpy(vals.data(), net.params.vals, vals.size() * 4, cudaMemcpyDeviceToHost));
@@ -82,16 +92,23 @@ int main(int argc, char** argv) {
   std::printf("running 통계 최악 상대 %.2e\n", worst);
   // 역방향: 출력 기울기 = 기준 무작위 가중치
   net.zero_act_grads();
+  auto put = [&](Tensor* t, const std::string& nm) {
+    const float* g = R.get("gout." + nm).f32();
+    std::vector<act_t> h(t->n());
+    for (size_t i = 0; i < h.size(); ++i) h[i] = from_f<act_t>(g[i]);
+    CK(cudaMemcpy(t->g, h.data(), h.size() * sizeof(act_t), cudaMemcpyHostToDevice));
+  };
   for (int br = 0; br < 2; ++br)
     for (int l = 0; l < 3; ++l) {
       std::string k = std::to_string(br) + std::to_string(l);
-      for (auto [t, nm] : {std::pair{net.head_box(br, l), "box"}, {net.head_cls(br, l), "cls"}}) {
-        const float* g = R.get(std::string("gout.") + nm + k).f32();
-        std::vector<act_t> h(t->n());
-        for (size_t i = 0; i < h.size(); ++i) h[i] = from_f<act_t>(g[i]);
-        CK(cudaMemcpy(t->g, h.data(), h.size() * sizeof(act_t), cudaMemcpyHostToDevice));
-      }
+      put(net.head_box(br, l), "box" + k);
+      put(net.head_cls(br, l), "cls" + k);
+      if (seg) put(net.head_mask(br, l), "msk" + k);
     }
+  if (seg) {
+    put(net.proto(), "proto");
+    put(net.semantic(), "sem");
+  }
   CK(cudaMemset(net.params.grads, 0, net.params.total * 4));
   net.backward();
   net.params.gather_dw(s, true);

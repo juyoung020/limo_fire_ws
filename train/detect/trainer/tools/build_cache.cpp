@@ -173,6 +173,12 @@ int main(int argc, char** argv) {
   std::fwrite(&off, 8, 1, f);
   for (int i = 0; i < n; ++i)
     if (ok[i]) std::fwrite(jpg[i].data(), 1, jpg[i].size(), f);
+  if (with_masks) {
+    std::fwrite(M.data(), sizeof(CacheMask), M.size(), f);
+    std::fwrite(&moff, 8, 1, f);
+    for (int i = 0; i < n; ++i)
+      if (ok[i]) std::fwrite(mruns[i].data(), 4, mruns[i].size(), f);
+  }
   std::fclose(f);
   std::rename((out + ".tmp").c_str(), out.c_str());
   std::ofstream fn(out + ".names.txt");

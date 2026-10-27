@@ -203,6 +203,40 @@ class OpConvBias : public Op {
   }
 };
 
+// ConvTranspose2d(k 2, s 2, 편향). 출력 → 입력 방향 합성곱(k 2, s 2)을 생각하면 정방향은 그 입력 기울기, 입력 기울기는
+// 그 정방향, 가중치 기울기는 (출력 기울기, 입력)으로 잰 그 가중치 기울기. PyTorch 가중치 [in, out, 2, 2] 가 곧 그
+// 합성곱의 cuDNN 필터 [K = in, C = out, R, S] 다.
+class OpConvT : public Op {
+ public:
+  Net* net;
+  Tensor *in, *out;
+  ConvOp conv;
+  std::string pre;
+  int pw, pb;
+  OpConvT(Net* n, const std::string& name, Tensor* i, Tensor* o) : net(n), in(i), out(o), pre(name) {
+    ConvGeom g{o->N, o->H, o->W, o->C, i->C, 2, 2, 2, 0, 1};
+    conv.init(net->dnn_, g);
+    pw = net->params.add(name + ".weight", P_CONV, {i->C, o->C, 2, 2});
+    pb = net->params.add(name + ".bias", P_BIAS, {o->C});
+  }
+  void fwd(bool) override {
+    auto& P = net->params;
+    conv.dgrad(in->x, P.w16 + P.list[pw].woff, out->x, net->ws, net->ws_bytes, 0.f);
+    kern::add_bias(out->x, out->M(), out->C, P.vals + P.list[pb].off, net->s_);
+  }
+  void bwd() override {
+    auto& P = net->params;
+    kern::bias_grad(out->g, out->M(), out->C, net->acc_, P.grads + P.list[pb].off, net->s_);
+    if (in->g) conv.fwd(out->g, P.w16 + P.list[pw].woff, in->g, net->ws, net->ws_bytes, dgrad_first ? 0.f : 1.f);
+    conv.wgrad(out->g, in->x, P.dw16 + P.list[pw].woff, net->ws, net->ws_bytes, 0.f);
+  }
+  std::string desc() const override { return "conv_t2 " + pre; }
+  std::vector<Tensor*> grad_writes() const override {
+    if (in->g) return {in};
+    return {};
+  }
+};
+
 class OpCat : public Op {
  public:
   std::vector<Tensor*> ins;
@@ -310,6 +344,14 @@ Tensor* Net::conv_bias(const std::string& name, Tensor* in, int K, bool detach) 
   in->packed = true;
   o->packed = true;  // cuDNN 이 꽉 찬 출력에 쓴다
   ops_.push_back(std::make_unique<OpConvBias>(this, name, in, o, detach));
+  named[name] = o;
+  return o;
+}
+Tensor* Net::conv_t2(const std::string& name, Tensor* in, int K) {
+  Tensor* o = tensor(in->N, in->H * 2, in->W * 2, K);
+  in->packed = true;
+  o->packed = true;
+  ops_.push_back(std::make_unique<OpConvT>(this, name, in, o));
   named[name] = o;
   return o;
 }
@@ -430,6 +472,36 @@ void Net::detect(const std::string& n, Tensor* p3, Tensor* p4, Tensor* p5) {
       hcls_[br][l] = conv_bias(cn + L + ".2", c, cfg.nc);
     }
   }
+  if (!cfg.seg) return;
+  // Segment26: 마스크 계수 cv4(3×3, 3×3, 1×1+편향 → nm), c4 = max(P3 채널/4, nm). one2one 은 떼어 낸 입력
+  int c4 = std::max(p3->C / 4, cfg.nm);
+  for (int br = 0; br < 2; ++br) {
+    std::string mn = n + (br == 0 ? ".cv4." : ".one2one_cv4.");
+    for (int l = 0; l < 3; ++l) {
+      std::string L = std::to_string(l);
+      Tensor* m = conv_bn(mn + L + ".0", xs[l], c4, 3, 1, 1, 1, br == 1);
+      m = conv_bn(mn + L + ".1", m, c4, 3, 1, 1);
+      hmask_[br][l] = conv_bias(mn + L + ".2", m, cfg.nm);
+    }
+  }
+  proto26(n + ".proto", p3, p4, p5);
+}
+// Proto26: feat = P3 + up2(feat_refine.0(P4)) + up4(feat_refine.1(P5)) → feat_fuse(3×3) → Proto(cv1 3×3 → ConvT 2× →
+// cv2 3×3 → cv3 1×1 → nm). 의미 분할 semseg(3×3, 3×3, 1×1+편향 → nc)은 feat 에서(학습 때만 손실에 쓴다)
+void Net::proto26(const std::string& n, Tensor* p3, Tensor* p4, Tensor* p5) {
+  int c0 = p3->C, c_ = cfg.npr;
+  Tensor* r0 = up2(conv_bn(n + ".feat_refine.0", p4, c0, 1, 1, 1));
+  Tensor* r1 = up2(up2(conv_bn(n + ".feat_refine.1", p5, c0, 1, 1, 1)));
+  Tensor* feat = add(add(p3, r0), r1);
+  named[n + ".feat"] = feat;
+  Tensor* f = conv_bn(n + ".feat_fuse", feat, c_, 3, 1, 1);
+  Tensor* a = conv_bn(n + ".cv1", f, c_, 3, 1, 1);
+  Tensor* u = conv_t2(n + ".upsample", a, c_);
+  Tensor* b = conv_bn(n + ".cv2", u, c_, 3, 1, 1);
+  proto_ = conv_bn(n + ".cv3", b, cfg.nm, 1, 1, 1);
+  Tensor* s0 = conv_bn(n + ".semseg.0", feat, c_, 3, 1, 1);
+  Tensor* s1 = conv_bn(n + ".semseg.1", s0, c_, 3, 1, 1);
+  sem_ = conv_bias(n + ".semseg.2", s1, cfg.nc);
 }
 
 void Net::build(const NetCfg& c, cudnnHandle_t dnn, cublasHandle_t blas, cudaStream_t s) {
@@ -550,6 +622,10 @@ void Net::finalize() {
       ws_bytes = std::max(ws_bytes, b->conv.tune(b->in->x, params.w16 + params.list[b->pw].woff, b->out->x,
                                                  b->in->g ? b->in->g : dz_, params.dw16 + params.list[b->pw].woff,
                                                  b->out->g, tmp_ws, lim, !b->detach && b->in->g, b->dgrad_first));
+    else if (auto* t = dynamic_cast<OpConvT*>(op.get()))  // 가상 합성곱: x = 출력, y = 입력
+      ws_bytes = std::max(ws_bytes, t->conv.tune(t->out->x, params.w16 + params.list[t->pw].woff, t->in->x, t->out->g,
+                                                 params.dw16 + params.list[t->pw].woff, t->in->g ? t->in->g : dz_,
+                                                 tmp_ws, lim, true, true));
   }
   CK(cudaFree(tmp_ws));
   ws = ws_bytes ? dalloc<char>(ws_bytes) : nullptr;
@@ -559,6 +635,7 @@ void Net::finalize() {
       ConvOp* c = nullptr;
       if (auto* a = dynamic_cast<OpConvBN*>(op.get()); a && !a->dw) c = &a->conv;
       if (auto* b = dynamic_cast<OpConvBias*>(op.get())) c = &b->conv;
+      if (auto* t = dynamic_cast<OpConvT*>(op.get())) c = &t->conv;
       if (!c) continue;
       ++nconv;
       for (int i = 0; i < 3; ++i) nbe[i] += c->use_be[i];
