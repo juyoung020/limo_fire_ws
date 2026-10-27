@@ -1,6 +1,9 @@
 // 카메라 영상 → TensorRT YOLO → vision_msgs/Detection2DArray + 상자 그린 영상
+// 분할(-seg) 엔진이면 물체 번호 영상(~/mask, mono8, 값 = detections 안 순서 + 1, 0 = 배경)도 같은 시각으로 낸다
 // 파라미터는 config/*.yaml (엔진 경로·문턱·클래스 이름·토픽)
+#include <algorithm>
 #include <chrono>
+#include <numeric>
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,6 +40,10 @@ public:
     }
 
     det_pub_ = create_publisher<vision_msgs::msg::Detection2DArray>("~/detections", 10);
+    if (yolo_->has_masks()) {
+      mask_pub_ = create_publisher<sensor_msgs::msg::Image>("~/mask", 10);
+      RCLCPP_INFO(get_logger(), "분할 모델: 물체 마스크를 ~/mask 로 냄");
+    }
     // 신뢰(RELIABLE) 발행이면 RViz·rqt 의 신뢰/최선 구독 둘 다 받는다
     img_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", rclcpp::QoS(1));
     // 카메라 드라이버(실물 Orbbec, Webots 플러그인) 둘 다 받도록 SensorData(BEST_EFFORT)
@@ -72,6 +79,11 @@ private:
     ms_avg_ = ms_avg_ <= 0 ? ms : 0.9 * ms_avg_ + 0.1 * ms;
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "추론 %.1f ms (평균), 탐지 %zu 개", ms_avg_, dets.size());
 
+    // 마스크를 탐지보다 먼저 낸다 (object_mapper 가 탐지를 받을 때 같은 시각 마스크가 이미 와 있게)
+    if (mask_pub_) {
+      publish_mask(msg->header, bgr.size(), dets);
+    }
+
     vision_msgs::msg::Detection2DArray arr;
     arr.header = msg->header;
     for (const auto & d : dets) {
@@ -91,6 +103,15 @@ private:
 
     if (publish_image_ && img_pub_->get_subscription_count() > 0) {
       cv::Mat vis = bgr;
+      // 마스크는 클래스 색을 반투명하게 덧칠
+      for (const auto & d : dets) {
+        if (d.mask.empty()) {continue;}
+        cv::Mat roi = vis(d.mask_roi);
+        cv::Mat tint(roi.size(), roi.type(), color_of(d.class_id));
+        cv::Mat blended;
+        cv::addWeighted(roi, 0.55, tint, 0.45, 0.0, blended);
+        blended.copyTo(roi, d.mask);
+      }
       for (const auto & d : dets) {
         const cv::Scalar col = color_of(d.class_id);
         cv::rectangle(vis, d.box, col, 2);
@@ -113,6 +134,30 @@ private:
     }
   }
 
+  // 물체 번호 영상: 큰 물체부터 칠해 겹치면 작은 물체가 위 (SAM 3 정답과 같은 규칙)
+  void publish_mask(const std_msgs::msg::Header & header, cv::Size size, const std::vector<Detection> & dets)
+  {
+    sensor_msgs::msg::Image out;
+    out.header = header;
+    out.height = size.height;
+    out.width = size.width;
+    out.encoding = "mono8";
+    out.step = size.width;
+    out.data.assign(static_cast<size_t>(size.area()), 0);
+    cv::Mat ids(size, CV_8UC1, out.data.data());
+    std::vector<size_t> order(std::min<size_t>(dets.size(), 255));
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return dets[a].mask_roi.area() > dets[b].mask_roi.area();
+      });
+    for (size_t i : order) {
+      if (!dets[i].mask.empty()) {
+        ids(dets[i].mask_roi).setTo(static_cast<uint8_t>(i + 1), dets[i].mask);
+      }
+    }
+    mask_pub_->publish(out);
+  }
+
   static cv::Scalar color_of(int c)
   {
     // 클래스마다 눈에 띄는 색 (BGR). 0 불 주황 · 1 연기 회색 · 2 소화기 빨강 · 3 유도등 초록 · 4 사람 파랑 · 5 문 갈색 · 6 계단 보라
@@ -128,6 +173,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_;
   rclcpp::Publisher<vision_msgs::msg::Detection2DArray>::SharedPtr det_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr img_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mask_pub_;
 };
 
 }  // namespace limo_fire_perception
