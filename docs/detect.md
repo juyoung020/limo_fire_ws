@@ -238,7 +238,7 @@ Ultralytics 공식 학습 코드는 파이썬(PyTorch)이다. 우리 프로젝�
 | 데이터 준비·자동 라벨 | [train/detect/README.md](../train/detect/README.md) |
 | 학습기 구조·정합성·실행 명령 | [train/detect/trainer/README.md](../train/detect/trainer/README.md) |
 | 학습 기록 | `train/detect/data/runs/y26s_seg/log.tsv` (git 제외) |
-| 가중치 | `train/detect/data/runs/y26s_seg/best.safetensors` (46 MB, git 제외) |
+| 가중치 | GitHub Release [detect-y26s-seg](https://github.com/juyoung020/limo_fire_ws/releases/tag/detect-y26s-seg) `yolo26s-seg_fire7.safetensors` (46 MB) = `train/detect/data/runs/y26s_seg/best.safetensors` |
 | 시험 평가 | `train --seg --eval --val ../data/cache/seg_test_640.ycache --weights <best>` |
 | 예측 그림 | 위 명령에 `--draw <폴더>` |
 
