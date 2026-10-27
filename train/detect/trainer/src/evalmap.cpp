@@ -43,7 +43,16 @@ double compute_ap(const std::vector<double>& rec, const std::vector<double>& pre
 }  // namespace
 
 void MapEval::add(const std::vector<Det>& pred, const std::vector<GtBox>& gt) {
-  for (auto& g : gt) ngt_[g.cls]++;
+  std::vector<int> gc;
+  std::vector<float> io(pred.size() * gt.size());
+  for (auto& g : gt) gc.push_back(g.cls);
+  for (size_t p = 0; p < pred.size(); ++p)
+    for (size_t g = 0; g < gt.size(); ++g) io[p * gt.size() + g] = iou(pred[p], gt[g]);
+  add_iou(pred, gc, io);
+}
+
+void MapEval::add_iou(const std::vector<Det>& pred, const std::vector<int>& gt, const std::vector<float>& io) {
+  for (int c : gt) ngt_[c]++;
   std::vector<unsigned> tp(pred.size(), 0);
   if (!pred.empty() && !gt.empty()) {
     // (짝 후보) IoU ≥ 문턱이고 클래스 같음 → IoU 큰 순, 예측·정답 각각 한 번만
@@ -54,8 +63,8 @@ void MapEval::add(const std::vector<Det>& pred, const std::vector<GtBox>& gt) {
     std::vector<M> all;
     for (int p = 0; p < (int)pred.size(); ++p)
       for (int g = 0; g < (int)gt.size(); ++g)
-        if (pred[p].cls == gt[g].cls) {
-          float v = iou(pred[p], gt[g]);
+        if (pred[p].cls == gt[g]) {
+          float v = io[size_t(p) * gt.size() + g];
           if (v >= 0.5f) all.push_back({v, p, g});
         }
     // Ultralytics match_predictions: IoU 큰 순 → 예측마다 가장 큰 것 하나 → (예측 번호 순서에서) 정답마다 처음 것
@@ -154,7 +163,7 @@ std::vector<Det> decode_o2o(const float* const box[3], const float* const cls[3]
     int ix = a.k % w[a.l], iy = a.k / w[a.l];
     const float* b = box[a.l] + (size_t)a.k * 4;
     float s = (float)stride[a.l], ax = ix + 0.5f, ay = iy + 0.5f;
-    out.push_back({(ax - b[0]) * s, (ay - b[1]) * s, (ax + b[2]) * s, (ay + b[3]) * s, p, cs[i].c});
+    out.push_back({(ax - b[0]) * s, (ay - b[1]) * s, (ax + b[2]) * s, (ay + b[3]) * s, p, cs[i].c, a.l, a.k});
   }
   return out;
 }

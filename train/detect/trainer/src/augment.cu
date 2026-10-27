@@ -93,7 +93,38 @@ __global__ void augment_k(const uint8_t* img, const SampleParam* sps, int B, int
   }
   for (int c = 0; c < 3; ++c) o[c] = from_f<act_t>(rgb[c] / 255.f);
 }
+// 출력 마스크 칸 (mx, my) = 출력 화소 r×r 의 가운데(화소 번호 좌표 r·m + (r − 1)/2) → 뒤집기 → 역 affine → 가장 가까운
+// 캔버스 화소 → 타일 → 원본 사진 좌표 → 번호 지도 칸(최근접) → 출력 정답 번호
+__global__ void mask_k(const uint8_t* msk, const SampleParam* sps, int B, int S, int r, int16_t* out) {
+  int M = S / r;
+  int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
+  if (i >= int64_t(B) * M * M) return;
+  int mx = int(i % M), my = int((i / M) % M), b = int(i / (int64_t(M) * M));
+  const SampleParam& p = sps[b];
+  int16_t v = 0;
+  if (p.ntile > 0) {
+    float xo = r * mx + (r - 1) * 0.5f, yo = r * my + (r - 1) * 0.5f;
+    float xs = p.flip ? S - 1 - xo : xo;
+    float u = p.Mi[0] * xs + p.Mi[1] * yo + p.Mi[2], w = p.Mi[3] * xs + p.Mi[4] * yo + p.Mi[5];
+    int x = (int)floorf(u + 0.5f), y = (int)floorf(w + 0.5f);
+    if (x >= 0 && y >= 0 && x < p.cw && y < p.ch)
+      for (int t = 0; t < p.ntile; ++t)
+        if (x >= p.ta[t][0] && x < p.ta[t][2] && y >= p.ta[t][1] && y < p.ta[t][3]) {
+          int sx = x - p.pad[t][0], sy = y - p.pad[t][1], n = p.msz[t];
+          int qx = min(n - 1, (int)((sx + 0.5f) * n / p.sw[t])), qy = min(n - 1, (int)((sy + 0.5f) * n / p.sh[t]));
+          int j = msk[p.moff[t] + int64_t(qy) * n + qx];
+          if (j > 0 && p.lmap[t][j - 1] >= 0) v = int16_t(p.lmap[t][j - 1] + 1);
+          break;
+        }
+  }
+  out[i] = v;
+}
 }  // namespace
+
+void mask_targets(const uint8_t* msk, const SampleParam* sp, int B, int S, int r, int16_t* out, cudaStream_t s) {
+  int64_t n = int64_t(B) * (S / r) * (S / r);
+  mask_k<<<cdiv(n, 256), 256, 0, s>>>(msk, sp, B, S, r, out);
+}
 
 void augment_batch(const uint8_t* img, const SampleParam* sp, int B, int S, int C, act_t* out, cudaStream_t s) {
   int64_t n = int64_t(B) * S * S;

@@ -10,7 +10,7 @@ find_package(CUDAToolkit REQUIRED)
 find_package(nlohmann_json REQUIRED)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr --extended-lambda -lineinfo")
 
-set(NET_SRC src/st.cpp src/conv.cpp src/kern.cu src/bnv.cu src/attn.cu src/net.cpp src/loss.cu src/optim.cu src/cache.cpp src/data.cpp src/augment.cu src/evalmap.cpp)
+set(NET_SRC src/st.cpp src/conv.cpp src/kern.cu src/bnv.cu src/attn.cu src/net.cpp src/loss.cu src/segloss.cu src/optim.cu src/cache.cpp src/data.cpp src/augment.cu src/evalmap.cpp src/evalmask.cu)
 # 학습용(fp16)과 정합성 시험용(fp32) 두 벌
 add_library(ytnet STATIC ${NET_SRC})
 add_library(ytnet32 STATIC ${NET_SRC})

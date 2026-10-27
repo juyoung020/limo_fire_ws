@@ -1,6 +1,6 @@
 // 옵티마이저: Ultralytics 8.4 trainer(optimizer=auto → 반복 > 1 만이면 MuSGD) 와 같은 규칙.
 //  - 무리: 합성곱 가중치(Muon + SGD, 감쇠 있음) / BN γ(SGD, 감쇠 없음) / 편향·BN β(SGD, 감쇠 없음).
-//    Detect 의 분류 가지(cv3, one2one_cv3) 파라미터는 lr ×3.
+//    Detect 의 분류 가지(cv3, one2one_cv3)와 분할의 의미 분할 가지(proto.semseg) 파라미터는 lr ×3.
 //  - MuSGD: Muon 몫 = lr·0.2·NS5(nesterov 모멘텀(β = momentum)), SGD 몫 = lr·1.0·nesterov SGD(감쇠 포함).
 //    NS5 = Newton–Schulz 5 회(bf16, 계수 3.4445, −4.7750, 2.0315), 가중치를 [K, C·R·S] 행렬로.
 //  - 워밍업(ni ≤ nw): lr 0 → lr0·lf(epoch), momentum 0.8 → 0.937. lf = 선형 (1 − e/E)(1 − lrf) + lrf.
