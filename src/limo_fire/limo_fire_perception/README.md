@@ -8,11 +8,19 @@ ros2 launch limo_fire_perception yolo.launch.xml          # 탐지 + rqt_image_v
 
 - 입력: `/camera/color/image_raw` (rgb8·bgr8)
 - 출력: `/yolo_detector/detections` (`vision_msgs/Detection2DArray`), 상자 그린 영상 `/yolo_detector/image`
+- 분할(-seg) 엔진이면 물체 번호 영상 `/yolo_detector/mask` (mono8, 값 = `detections` 안 순서 + 1, 0 = 배경, 겹치면 작은 물체가 위)도 같은 시각으로 내고, 탐지 영상에 마스크를 반투명하게 칠한다
 - 파라미터: `config/yolo_fire.yaml` (엔진 경로·문턱·클래스 이름)
-- 출력 형식 두 가지를 알아서 구분: YOLO26 end2end `[1, 300, 6]`(NMS 없음), YOLOv8/11 raw `[1, 4+클래스, 앵커]`(+NMS)
+- 출력 형식을 알아서 구분: YOLO26 end2end `[1, 300, 6]`(NMS 없음), YOLO26-seg end2end `[1, 300, 38]` + 원형 마스크 `[1, 32, 160, 160]`, YOLOv8/11 raw `[1, 4+클래스, 앵커]`(+NMS)
 - `cv_bridge` 는 쓰지 않는다: ROS 의 cv_bridge 는 Ubuntu OpenCV 4.5, Jetson 은 OpenCV 4.8 이라 한 프로세스에 섞이면 위험
 
 ## 엔진 만들기 (기기마다 한 번)
+
+기본 엔진은 탐지 + 분할 모델 `models/yolo26s_seg_fire.engine` (Release [detect-y26s-seg](https://github.com/juyoung020/limo_fire_ws/releases/tag/detect-y26s-seg) `yolo26s-seg_fire7.safetensors`). 아래 순서에서 다음만 바꾼다:
+`DetectionModel('yolo26s.yaml', …)` → `SegmentationModel('yolo26s-seg.yaml', …)`, `dm.args['task'] = 'segment'`, `YOLO(…, task='segment')`, 파일 이름 `yolo26s-seg_fire7.*`, `--saveEngine=…/models/yolo26s_seg_fire.engine`.
+출력은 `(1, 300, 38)` + `(1, 32, 160, 160)`. trtexec FP16 GPU 시간 중앙값 14.4 ms (Webots 와 같이 돌 때, 탐지만 하는 모델은 10.4 ms).
+마스크 계산은 Ultralytics `process_mask` + `scale_masks` 와 같다 (같은 ONNX 출력에서 마스크 IoU 1.000 확인).
+
+상자만 내는 이전 모델 (Release detect-y26s-clean):
 
 가중치는 Release [detect-y26s-clean](https://github.com/juyoung020/limo_fire_ws/releases/tag/detect-y26s-clean) 의 `yolo26s_fire7.safetensors`(우리 학습기 형식). Ultralytics 공식 YOLO26s 에 넣어 ONNX 로 내보낸 뒤 trtexec 로 엔진을 만든다. WeGo `dl_env` 를 건드리지 않게 따로 만든 venv 에서 한다.
 
@@ -48,7 +56,8 @@ PY
 ## 지도에 물체 올리기 (`object_mapper`)
 
 탐지 상자 + 컬러에 정렬된 깊이 영상 + TF(`map ← camera_color_optical_frame`) → 물체의 지도 좌표 → `/object_mapper/markers` (MarkerArray, 클래스별 색 기둥 + 이름).
-상자 가운데 50 % 깊이의 하위 30 % 값을 거리로 쓰고(얇은 소화기 뒤 벽 무시), 같은 클래스가 0.8 m 안이면 같은 물체로 합치며, 5 번 이상 본 것만 올린다. 값은 `config/yolo_fire.yaml`.
+분할 모델이면 같은 시각의 `/yolo_detector/mask` 에서 그 물체 픽셀만 골라, 픽셀 무게중심 방향 + 그 픽셀 깊이의 가운데 값으로 위치를 잰다(배경·뒤 벽이 안 섞임). 불은 마스크 픽셀 수로 앞면 넓이(m²)도 재서 현황판에 보인다.
+마스크가 없으면(탐지 전용 엔진) 상자 가운데 50 % 깊이의 하위 30 % 값을 거리로 쓴다(얇은 소화기 뒤 벽 무시). 같은 클래스가 0.8 m 안이면 같은 물체로 합치며, 5 번 이상 본 것만 올린다. 값은 `config/yolo_fire.yaml`.
 `map` 프레임이 있어야 하므로 SLAM(Cartographer) 또는 AMCL 과 같이 돌린다.
 
 `rviz:=true` 화면 (`limo_fire_description/rviz/object_map.rviz`):
@@ -73,3 +82,15 @@ ros2 launch limo_fire_perception yolo.launch.xml use_sim_time:=true viewer:=fals
 | 계단 | 0.61 m (계단 원점이 한쪽 끝이라 가운데와 차이) |
 
 틀린 3 개는 위치가 아니라 YOLO 클래스 오류: 사람(person_1) → 소화기, 탁자 → 계단, 불 근처 → 유도등. 사람 2 명·벽 높이 유도등 2 개·촛불·연기는 못 잡음.
+
+### 분할 모델로 다시 확인 (2026-10-27, 같은 방·같은 웨이포인트, 마스크로 위치 재기)
+
+| 정답 물체 | 상자로 잴 때 | 마스크로 잴 때 |
+|---|---|---|
+| 불(바닥) · 불(작은 것) | 0.06 · 0.09 m | 0.17 · 0.07 m |
+| 소화기 동 · 서 · 남서 | 0.06 · 0.19 · 0.41 m | 0.14 · 0.02 · 0.33 m |
+| 문 | 0.31 m | 0.19 m |
+| 계단 | 0.61 m | 0.52 m |
+
+틀린 것: 사람(person_1) → 소화기(위치는 0.14 m), 북쪽 벽 → 문 1 개. 탁자 → 계단, 불 근처 → 유도등 오류는 없어짐. 사람·유도등·촛불·연기는 여전히 못 잡음.
+노드 전체 추론(전처리·마스크 포함) 약 47 ms (Webots 와 같이 돌 때).

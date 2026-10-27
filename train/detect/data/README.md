@@ -3,6 +3,7 @@
 YOLO 학습 이미지·라벨·사전학습 가중치. 용량 때문에 git 에 넣지 않는다(이 파일만 올라감). 받은 날짜 2026-10-23.
 
 학습한 가중치는 GitHub Release 에 올린다: [detect-y26s-clean](https://github.com/juyoung020/limo_fire_ws/releases/tag/detect-y26s-clean) — `yolo26s_fire7.safetensors` (`runs/y26s_clean/best.safetensors`, 시험 mAP50-95 0.654).
+탐지 + 분할: [detect-y26s-seg](https://github.com/juyoung020/limo_fire_ws/releases/tag/detect-y26s-seg) — `yolo26s-seg_fire7.safetensors` (`runs/y26s_seg/best.safetensors`, 시험 상자 0.651 · 마스크 0.521, `--seg` 로 읽음).
 
 ## 받아 둔 것 (`raw/`, `weights/`)
 
