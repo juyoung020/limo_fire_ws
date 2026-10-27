@@ -54,7 +54,7 @@ PY
 `rviz:=true` 화면 (`limo_fire_description/rviz/object_map.rviz`):
 - 왼쪽: YOLO 탐지 영상. 오른쪽: 지도 + 물체 + 로봇(축)
 - 왼쪽 위 현황판(`/object_mapper/summary`, `rviz_2d_overlay_plugins`): 화재 경고, 종류별 개수, 로봇에서 가장 가까운 것과 거리
-- 물체마다 종류별 3D 모양 + 번호 라벨(`EXT-1` …). 불은 위험 반경(`fire_zone_radius`)이 깜빡인다
+- 물체마다 원형 아이콘 배지(`icons/`, Material Symbols) + 번호 라벨(`EXT-1` …). 불은 위험 반경(`fire_zone_radius`)이 깜빡인다
 - 표시 켜고 끄기: 메뉴 Panels → Displays. 지도 물체 모두 지우기: `ros2 service call /object_mapper/clear std_srvs/srv/Trigger`
 - 필요한 apt 패키지: `ros-humble-rviz-2d-overlay-plugins`
 

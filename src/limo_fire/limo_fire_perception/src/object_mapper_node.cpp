@@ -92,7 +92,9 @@ public:
     min_hits_ = declare_parameter<int>("min_hits", 3);
     min_score_ = declare_parameter<double>("min_score", 0.5);
     fire_zone_radius_ = declare_parameter<double>("fire_zone_radius", 1.0);
-    label_offset_ = declare_parameter<std::vector<double>>("label_offset", {-0.45, 0.0});
+    label_offset_ = declare_parameter<std::vector<double>>("label_offset", {-0.55, 0.0});
+    icon_size_ = declare_parameter<double>("icon_size", 0.6);
+    icon_yaw_ = declare_parameter<double>("icon_yaw", M_PI / 2);
     label_offset_.resize(2, 0.0);
     class_names_ = declare_parameter<std::vector<std::string>>("class_names");
     // 클래스별 병합 반경 (class_names 순서). 계단·문처럼 큰 물체는 넓게. 비우면 모두 merge_radius
@@ -269,46 +271,26 @@ private:
         m.color = c;
         return m;
       };
-    const auto solid = rgba(s.r, s.g, s.b, 1.0f);
-    const std::string name = s.name;
+    const bool is_fire = std::string(s.name) == "fire";
+    const float pulse = 0.5f + 0.5f * static_cast<float>(std::sin(t * 4.0));
 
-    if (name == "fire") {
+    if (is_fire) {
       // 위험 반경: 숨 쉬듯 진해졌다 옅어진다
-      const float pulse = 0.5f + 0.5f * static_cast<float>(std::sin(t * 4.0));
       const double d = 2 * fire_zone_radius_;
-      arr.markers.push_back(make(0, Marker::CYLINDER, 0.01, d, d, 0.02, rgba(1.0f, 0.15f, 0.05f, 0.12f + 0.18f * pulse)));
-      arr.markers.push_back(make(1, Marker::CYLINDER, 0.02, d * 0.45, d * 0.45, 0.02, rgba(1.0f, 0.2f, 0.05f, 0.35f)));
-      const double k = 1.0 + 0.12 * pulse;
-      arr.markers.push_back(make(2, Marker::SPHERE, 0.18, 0.34 * k, 0.34 * k, 0.40 * k, rgba(1.0f, 0.30f, 0.05f, 0.95f)));
-      arr.markers.push_back(make(3, Marker::SPHERE, 0.30, 0.18 * k, 0.18 * k, 0.24 * k, rgba(1.0f, 0.85f, 0.15f, 1.0f)));
-    } else {
-      arr.markers.push_back(make(0, Marker::CYLINDER, 0.01, 0.55, 0.55, 0.02, rgba(s.r, s.g, s.b, 0.35f)));
-      if (name == "fire_extinguisher") {
-        arr.markers.push_back(make(2, Marker::CYLINDER, 0.24, 0.17, 0.17, 0.46, solid));
-        arr.markers.push_back(make(3, Marker::CYLINDER, 0.52, 0.07, 0.07, 0.10, rgba(0.12f, 0.12f, 0.12f, 1.0f)));
-      } else if (name == "exit_sign") {
-        arr.markers.push_back(make(2, Marker::CUBE, 0.55, 0.05, 0.42, 0.22, solid, l.yaw));
-        arr.markers.push_back(make(3, Marker::CYLINDER, 0.22, 0.03, 0.03, 0.44, rgba(0.5f, 0.5f, 0.5f, 1.0f)));
-      } else if (name == "person") {
-        arr.markers.push_back(make(2, Marker::CYLINDER, 0.28, 0.26, 0.26, 0.56, solid));
-        arr.markers.push_back(make(3, Marker::SPHERE, 0.66, 0.22, 0.22, 0.22, solid));
-      } else if (name == "door") {
-        arr.markers.push_back(make(2, Marker::CUBE, 0.45, 0.06, 0.55, 0.90, solid, l.yaw));
-      } else if (name == "stairs") {
-        Marker m = make(2, Marker::CUBE_LIST, 0.0, 0.18, 0.5, 0.12, solid, l.yaw);
-        for (int i = 0; i < 3; ++i) {  // 로봇이 본 쪽에서 멀어질수록 올라가는 세 단
-          for (int j = 0; j <= i; ++j) {
-            geometry_msgs::msg::Point p;
-            p.x = -0.18 + 0.18 * i;
-            p.z = 0.06 + 0.12 * j;
-            m.points.push_back(p);
-          }
-        }
-        arr.markers.push_back(m);
-      } else {  // 연기 등
-        arr.markers.push_back(make(2, Marker::SPHERE, 0.6, 0.6, 0.6, 0.6, rgba(s.r, s.g, s.b, 0.45f)));
-      }
+      arr.markers.push_back(make(0, Marker::CYLINDER, 0.01, d, d, 0.02, rgba(1.0f, 0.15f, 0.05f, 0.10f + 0.16f * pulse)));
+      arr.markers.push_back(make(1, Marker::CYLINDER, 0.02, d * 0.5, d * 0.5, 0.02, rgba(1.0f, 0.25f, 0.05f, 0.25f)));
     }
+    // 아이콘 배지: icons/<클래스>.obj (납작한 원판 + 그림 텍스처). 그림 위쪽이 화면 위로 오게 icon_yaw 만큼 돌린다
+    const double size = icon_size_ * (is_fire ? 1.0 + 0.1 * pulse : 1.0);
+    Marker shadow = make(2, Marker::CYLINDER, 0.88, size * 1.08, size * 1.08, 0.01, rgba(0.0f, 0.0f, 0.0f, 0.35f));
+    shadow.pose.position.x += 0.03 * std::sin(icon_yaw_);  // 화면 아래쪽으로 살짝 → 떠 있는 느낌
+    shadow.pose.position.y -= 0.03 * std::cos(icon_yaw_);
+    arr.markers.push_back(shadow);
+    Marker icon = make(3, Marker::MESH_RESOURCE, 0.9, size, size, 1.0, rgba(0.0f, 0.0f, 0.0f, 0.0f), icon_yaw_);
+    icon.mesh_resource = "package://limo_fire_perception/icons/" + std::string(s.name) + ".obj";
+    icon.mesh_use_embedded_materials = true;  // 색 0 = 텍스처 그대로
+    arr.markers.push_back(icon);
+
     // 라벨: 밝은 지도 위에서도 읽히게 어두운 바탕판(위에서 내려다볼 때 글자 뒤) + 클래스 색 테두리.
     // 아이콘을 가리지 않게 label_offset 만큼 비켜 둔다 (map 프레임 기준)
     const std::string text = std::string(s.tag) + "-" + std::to_string(l.number);  // RViz 글꼴은 띄어쓰기가 넓어 붙여 쓴다
@@ -320,7 +302,7 @@ private:
         m.pose.orientation.w = 1.0;
         return m;
       };
-    Marker edge = shifted(make(6, Marker::CUBE, 0.95, 0.36, len + 0.05, 0.01, solid));
+    Marker edge = shifted(make(6, Marker::CUBE, 0.95, 0.36, len + 0.05, 0.01, rgba(s.r, s.g, s.b, 1.0f)));
     edge.ns = "labels";
     arr.markers.push_back(edge);
     Marker plate = shifted(make(7, Marker::CUBE, 0.97, 0.31, len, 0.01, rgba(0.08f, 0.09f, 0.11f, 0.92f)));
@@ -418,6 +400,7 @@ private:
   double min_depth_, max_depth_, box_shrink_, depth_percentile_, merge_radius_, min_score_, fire_zone_radius_;
   std::vector<double> merge_radii_;
   std::vector<double> label_offset_;
+  double icon_size_, icon_yaw_;
   int min_hits_;
   std::vector<std::string> class_names_;
   std::vector<Landmark> landmarks_;

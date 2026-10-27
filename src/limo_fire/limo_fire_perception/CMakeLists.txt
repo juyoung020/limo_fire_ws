@@ -43,6 +43,6 @@ ament_target_dependencies(object_mapper rclcpp sensor_msgs vision_msgs visualiza
 
 install(TARGETS trt_yolo yolo_detector object_mapper
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch config icons DESTINATION share/${PROJECT_NAME})
 
 ament_package()

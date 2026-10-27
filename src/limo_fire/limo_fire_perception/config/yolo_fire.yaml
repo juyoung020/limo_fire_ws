@@ -24,7 +24,9 @@ object_mapper:
     merge_radius: 0.8    # m, 같은 클래스가 이 안이면 같은 물체
     merge_radii: [0.8, 1.2, 0.8, 0.8, 0.8, 1.0, 1.6]  # 클래스별 (class_names 순서), 계단·문은 커서 넓게
     fire_zone_radius: 1.0  # m, 불 둘레 위험 반경 표시
-    label_offset: [-0.45, 0.0]  # m (map x, y), 지도 라벨을 아이콘 옆으로 비켜 둠
+    label_offset: [-0.55, 0.0]  # m (map x, y), 지도 라벨을 아이콘 옆으로 비켜 둠
+    icon_size: 0.6       # m, 지도 아이콘 지름
+    icon_yaw: 1.5708     # rad, 아이콘 그림 위쪽 방향. RViz 위에서 보기(TopDownOrtho) Angle 과 같게
     robot_frame: base_link
     min_hits: 5          # 이만큼 본 것만 지도에 올림 (잘못 탐지 한두 번은 무시)
     class_names: [fire, smoke, fire_extinguisher, exit_sign, person, door, stairs]
