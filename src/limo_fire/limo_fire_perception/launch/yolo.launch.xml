@@ -1,11 +1,25 @@
 <!-- 카메라 영상에서 YOLO 탐지 (실물·Webots 공용). 결과: /yolo_detector/detections, 상자 그린 영상: /yolo_detector/image
-     ros2 launch limo_fire_perception yolo.launch.xml [viewer:=true] -->
+     mapper:=true 면 탐지 + 깊이로 물체를 지도(map)에 올린다 → RViz MarkerArray /object_mapper/markers
+     rviz:=true 면 지도 + 물체 마커 + 탐지 영상을 한 RViz 창에 (limo_fire_description/rviz/object_map.rviz)
+     ros2 launch limo_fire_perception yolo.launch.xml [viewer:=true] [mapper:=true] [rviz:=true] -->
 <launch>
   <arg name="config" default="yolo_fire.yaml"/>
   <arg name="viewer" default="true" description="rqt_image_view 로 탐지 영상 보기"/>
+  <arg name="mapper" default="true" description="탐지한 물체를 지도 좌표로 (map 프레임 TF 필요: SLAM 또는 AMCL)"/>
+  <arg name="rviz" default="false" description="지도 위 물체 RViz"/>
+  <arg name="use_sim_time" default="false"/>
 
   <node pkg="limo_fire_perception" exec="yolo_detector" name="yolo_detector" output="screen">
     <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+  <node pkg="limo_fire_perception" exec="object_mapper" name="object_mapper" output="screen" if="$(var mapper)">
+    <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
   </node>
   <node pkg="rqt_image_view" exec="rqt_image_view" name="yolo_viewer" args="/yolo_detector/image" if="$(var viewer)"/>
+  <node pkg="rviz2" exec="rviz2" name="object_map_rviz" if="$(var rviz)"
+        args="-d $(find-pkg-share limo_fire_description)/rviz/object_map.rviz">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
 </launch>
