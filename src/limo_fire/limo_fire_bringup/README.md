@@ -59,6 +59,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.2 -p
 | `limo_fire_navigation/maps/map.*` | 2026-10-26 실험실에서 만든 지도 (9.4 × 6.1 m) |
 
 WeGo 와 다른 점 (성능 측정은 limo_fire_perception README·2026-10-28 측정):
+- 로봇 모델은 WeGo `limo_four_diff.xacro` + 카메라 틸트 `static_transform_publisher` 3 개 대신 우리 `limo_fire_description/urdf/limo_fire.urdf.xacro` 하나로 낸다(`camera_driver_tf:=true`). 몸통·라이다·IMU 값은 같고, `base_link → camera_link` 는 WeGo (0.23, 0.05, 0.06) → 실측 (0.15, −0.005, 0.06). `camera_mount`·`camera_rotate` 프레임은 없어졌다. 틸트 인자 이름은 `degree` → `camera_pitch` (라디안). `camera_link` 아래 color·depth 프레임은 지금처럼 Orbbec 드라이버가 공장 값으로 낸다
 - `robot.launch.xml` 이 시작할 때 `sudo -n jetson_clocks` 로 CPU·GPU·메모리 클럭을 최대로 고정한다 (`max_clocks:=false` 로 끔, 재부팅하면 풀림).
   카메라처럼 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려가 YOLO 가 21 ms 걸리고, 고정하면 11 ms. 대신 대기 전력이 는다
 - `orbbec_dabai_dc1.yaml`: 아무도 안 쓰는 포인트 클라우드 2 개·IR 영상을 껐다. 드라이버 CPU 42 → 35 %, 깊이 영상 19 → 30 Hz (카메라만 띄워 30 초씩 잼)
@@ -72,11 +73,11 @@ WeGo 와 다른 점 (성능 측정은 limo_fire_perception README·2026-10-28 �
 - `robot.launch.xml`: WeGo 와 같은 노드 12 개, `/scan` 10 Hz · `/imu` 94~100 Hz · `/odom` 50 Hz · `/odometry/filtered` 30 Hz · 컬러 29 Hz · 깊이 28 Hz, `base_link → camera_link` (0.23, 0.05, 0.06) 로 WeGo 와 같음. 기동 때 찍히는 오류 두 줄(EKF `differential`·`relative`, 카메라 `Failed to setup devices`)도 WeGo 와 같고 동작에는 지장 없음.
 - `navigation.launch.xml`: Nav2 노드 11 개 컨테이너에 올라감, 처음 위치를 주면 전부 active, `map → base_link` 나옴.
 - `mapping.launch.xml`: `/map` 1 Hz. `save_map.launch.xml`: 두 곳 모두 저장 성공.
+- 2026-10-28 우리 URDF 로 바꾼 뒤: 노드는 위에서 static TF 3 개만 빠짐. `tf2_echo` 로 `base_link →` `camera_link` (0.15, −0.005, 0.06) · `camera_color_optical_frame` (0.15, −0.035, 0.06) · `laser_link` (0.103, 0, −0.034) · `imu_link` (0, 0, −0.1), `/tf_static` 발행자는 `robot_state_publisher` 와 카메라 드라이버 둘.
 
 ## 그대로 옮겨서 남은 것
 
 WeGo 값을 바꾸지 않았기 때문에 아래는 아직 그대로다 ([hardware.md](../../../docs/hardware.md) 참고).
 
-- 카메라 위치는 WeGo 틸트 TF 값 (0.23, 0.05, 0.06). 실측으로는 약 (0.15, −0.005) — `limo_fire_description` 으로 옮길 때 고친다.
-- 카메라 TF 를 launch 의 `static_transform_publisher` 로 낸다(CLAUDE.md 는 URDF 한 곳에 두라고 함).
+- 카메라 장착 z (0.06) 는 WeGo 틸트 TF 값 그대로다. x·y 는 실측(0.15, −0.005)으로 고쳤지만 z 는 아직 안 쟀다.
 - EKF 설정 충돌(`odom0_differential`·`odom0_relative` 둘 다 true), IMU 공분산 1e-6.
