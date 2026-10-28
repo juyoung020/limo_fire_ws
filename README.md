@@ -12,6 +12,7 @@
 <a href="docs/spec.md">스펙·구현 방향</a> &nbsp;·&nbsp;
 <a href="docs/hardware.md">하드웨어 스펙</a> &nbsp;·&nbsp;
 <a href="docs/sensor_topics.md">센서 토픽</a> &nbsp;·&nbsp;
+<a href="docs/conventions.md">규약(폴더·URDF/TF)</a> &nbsp;·&nbsp;
 <a href="docs/parts.md">부품 목록</a> &nbsp;·&nbsp;
 <a href="docs/detect.md">인식 모델(YOLO26s-seg)</a> &nbsp;·&nbsp;
 <a href="docs/progress.md">진행 기록</a> &nbsp;·&nbsp;
@@ -102,6 +103,8 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 ├── archive/             안 쓰는 것                                  [COLCON_IGNORE]
 └── env.sh               워크스페이스 환경 (conda 빼고 ROS 2 + install)
 ```
+
+패키지별 역할까지 담은 전체 구조와 URDF·TF 규약은 [규약](docs/conventions.md)에 있다.
 
 ## 시뮬레이션
 
