@@ -1,27 +1,19 @@
 <!-- 실물 LIMO Pro 센서·구동 켜기 (대시보드 "센서" = WeGo wego/teleop_launch.py 와 같은 구성)
-     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [degree:=0.0]
-     URDF(limo_description) + 카메라 틸트 TF + 베이스(바퀴·IMU) + 깊이 카메라 + 라이다 + EKF -->
+     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [camera_pitch:=0.0]
+     URDF(limo_fire_description, 카메라 장착 포함) + 베이스(바퀴·IMU) + 깊이 카메라 + 라이다 + EKF -->
 <launch>
-  <arg name="degree" default="0.0" description="카메라 틸트 pitch (WeGo 와 같은 이름, 값은 라디안으로 들어간다)"/>
+  <arg name="camera_pitch" default="0.0" description="카메라 마운트 틸트 pitch (라디안, 아래로 숙이면 +). WeGo 의 degree 인자"/>
   <arg name="viz" default="false"/>
   <arg name="max_clocks" default="true" description="jetson_clocks 로 CPU·GPU·메모리 클럭을 최대로 고정 (재부팅하면 풀림, sudo 암호 없이 될 때만)"/>
 
   <!-- 클럭 고정: 카메라처럼 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려가 YOLO 가 21 ms → 고정하면 11 ms -->
   <executable cmd="sudo -n /usr/bin/jetson_clocks" name="jetson_clocks" output="screen" if="$(var max_clocks)"/>
 
-  <!-- 로봇 모델: WeGo limo_description 의 limo_four_diff.xacro (카메라는 여기 없고 아래 틸트 TF 로) -->
+  <!-- 로봇 모델: 센서 장착 위치는 전부 URDF 에. camera_link 아래 color·depth 프레임은 Orbbec 드라이버가 낸다(publish_tf) -->
   <node pkg="joint_state_publisher" exec="joint_state_publisher"/>
   <node pkg="robot_state_publisher" exec="robot_state_publisher">
-    <param name="robot_description" value="$(command 'xacro $(find-pkg-share limo_description)/urdf/limo_four_diff.xacro')" type="str"/>
+    <param name="robot_description" value="$(command 'xacro $(find-pkg-share limo_fire_description)/urdf/limo_fire.urdf.xacro camera_pitch:=$(var camera_pitch) camera_driver_tf:=true')" type="str"/>
   </node>
-
-  <!-- 카메라 틸트 TF: WeGo wego/camera_tilt_launch.py 그대로 -->
-  <node pkg="tf2_ros" exec="static_transform_publisher" name="base_link_to_camera_mount"
-        args="--x 0.2 --y 0.1 --z 0.06 --yaw 0 --pitch 0 --roll 0 --frame-id base_link --child-frame-id camera_mount"/>
-  <node pkg="tf2_ros" exec="static_transform_publisher" name="camera_mount_to_roate"
-        args="--x 0.00 --y 0.00 --z 0.00 --yaw 0 --pitch $(var degree) --roll 0 --frame-id camera_mount --child-frame-id camera_rotate"/>
-  <node pkg="tf2_ros" exec="static_transform_publisher" name="rotate_to_camera_link"
-        args="--x 0.03 --y -0.05 --z 0.00 --yaw 0 --pitch 0 --roll 0 --frame-id camera_rotate --child-frame-id camera_link"/>
 
   <!-- 베이스: 바퀴 오도메트리 /odom, IMU /imu, /cmd_vel 받음. odom TF 는 EKF 가 낸다 -->
   <node pkg="limo_base" exec="limo_base" namespace="limo" output="screen" emulate_tty="true">

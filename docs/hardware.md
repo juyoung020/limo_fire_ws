@@ -11,7 +11,7 @@
 | 깊이 카메라 | Orbbec Dabai DC1 | USB | `/camera/color/*`, `/camera/depth/*`, `/camera/ir/*` | 장착 · 동작 확인 |
 | IMU | LIMO 본체 보드 내장 | UART `/dev/ttylimo`(→ `ttyTHS1`) | `/imu` | 장착 · 동작 확인 |
 | 바퀴 오도메트리 | LIMO 본체 (차동 구동) | UART `/dev/ttylimo` | `/odom`, EKF → `/odometry/filtered` | 장착 · 동작 확인 |
-| 카메라 틸트 | LIMO Pro 카메라 마운트 | — | TF `camera_mount_to_roate` | 장착 |
+| 카메라 틸트 | LIMO Pro 카메라 마운트 (손으로 고정) | — | URDF 인자 `camera_pitch` (`limo_fire.urdf.xacro`) | 장착 |
 | 오디오 | USB PnP Audio (JMTek 0c76:161f) | USB | — | 장착, 스피커·마이크 여부 확인 필요 |
 | 열화상 | GY-MCU90640 (MLX90640 BAB 55°, 32×24) | ESP32 UART | 예정 | 부품 대기 |
 | 레이더 | HLK-LD2450 24GHz | ESP32 UART 256000baud | 예정 | 부품 대기 |
@@ -62,8 +62,8 @@
 | 왜곡 | rational_polynomial, k1 = 0.0718, k2 = −0.0971, p1 = 8.0e-5, p2 = 6.2e-4 | `camera_info` |
 | 화각 (fx 로 계산) | 가로 66.4°, 세로 52.3° | 계산 |
 | 측정 거리 | 확인 필요 (제조사 사양 + 실측) | — |
-| 장착 (base_link → camera_link) | (0.23, 0.05, 0.06) m, 회전 0 | `tf2_echo` |
-| 장착 (base_link → camera_color_optical_frame) | (0.23, 0.02, 0.06) m, RPY (−89.9°, −0.2°, −90.3°) | `tf2_echo` |
+| 장착 (base_link → camera_link) | (0.15, −0.005, 0.06) m, 회전 0 (x·y 실측, z 는 WeGo 값 · 확인 필요). 10-26 에는 WeGo 틸트 TF (0.23, 0.05, 0.06) | `limo_fire.urdf.xacro`, `tf2_echo` |
+| 장착 (base_link → camera_color_optical_frame) | (0.15, −0.035, 0.06) m (2026-10-28), 10-26 에는 (0.23, 0.02, 0.06), RPY (−89.9°, −0.2°, −90.3°) | `tf2_echo` |
 
 - 위 "깊이 (발행) 640×480, 컬러에 정렬" 은 포인트 클라우드를 켠 10-26 설정 기준이다. 10-28 에 포인트 클라우드를 끄면서 정렬도 같이 꺼져 640×400 이 된다 → [sensor_topics.md](sensor_topics.md#주의-1-깊이가-컬러에-정렬되지-않게-바뀐다)
 - 내부 파라미터는 공장 값이다. 우리가 다시 캘리브레이션한 적은 없다.

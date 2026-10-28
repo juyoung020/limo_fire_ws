@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<!-- 깊이 카메라 Orbbec Dabai DC1 모듈.
+     <name>_link 장착(parent 기준 xyz, 틸트 pitch) + 흐름 프레임(<name>_color_frame·<name>_depth_frame)과 광학 프레임(z 앞).
+     흐름·광학 프레임은 실물에서는 Orbbec 드라이버가 공장 캘리브레이션 값으로 낸다(publish_tf: true).
+     TF 하나는 발행 주체 하나라서, 실물(driver_tf:=true)에서는 <name>_link 까지만 두고 그 아래는 드라이버에 맡긴다.
+     드라이버가 없는 곳(RViz 모델 확인·시뮬)에서는 driver_tf:=false 로 아래 값(드라이버가 내는 값과 같음)을 쓴다. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:macro name="optical_frame" params="parent name">
+    <link name="${name}_optical_frame"/>
+    <joint name="${name}_optical_joint" type="fixed">
+      <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+      <parent link="${parent}"/>
+      <child link="${name}_optical_frame"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="orbbec_dabai" params="parent name xyz pitch driver_tf">
+    <link name="${name}_link"/>
+    <joint name="${name}_joint" type="fixed">
+      <origin xyz="${xyz}" rpy="0 ${pitch} 0"/>
+      <parent link="${parent}"/>
+      <child link="${name}_link"/>
+    </joint>
+
+    <xacro:unless value="${driver_tf}">
+      <link name="${name}_color_frame"/>
+      <joint name="${name}_color_joint" type="fixed">
+        <origin xyz="0.00015 -0.03 0.00002" rpy="0 0 0"/>
+        <parent link="${name}_link"/>
+        <child link="${name}_color_frame"/>
+      </joint>
+      <xacro:optical_frame parent="${name}_color_frame" name="${name}_color"/>
+      <link name="${name}_depth_frame"/>
+      <joint name="${name}_depth_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <parent link="${name}_link"/>
+        <child link="${name}_depth_frame"/>
+      </joint>
+      <xacro:optical_frame parent="${name}_depth_frame" name="${name}_depth"/>
+    </xacro:unless>
+  </xacro:macro>
+</robot>
