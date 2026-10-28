@@ -4,13 +4,13 @@
 
 ```bash
 ros2 launch limo_fire_perception yolo.launch.xml          # 탐지 + rqt_image_view
-# 실물: 카메라 드라이버 컨테이너에 같이 올려 컬러·깊이 영상을 복사 없이 받는다
-ros2 launch limo_fire_perception yolo.launch.xml new_container:=false container:=/camera/camera_container
 ```
 
 - `yolo_detector`·`object_mapper` 는 컴포넌트(`limo_fire_perception::YoloDetectorNode`, `::ObjectMapperNode`). 같은 이름의 실행 파일도 있다
 - 기본은 둘을 멀티스레드 컨테이너 `/perception_container` 한 프로세스에 올리고 프로세스 안 전달(intra-process)로 탐지·마스크를 복사 없이 넘긴다.
   한 스레드 컨테이너는 매퍼 콜백 뒤에 영상 콜백이 밀려 5 초에 18~20 장을 버렸고, 멀티스레드는 0 장
+- 카메라 드라이버(Orbbec) 컨테이너에는 올리지 않는다: 드라이버가 transient_local 발행자를 만들어 프로세스 안 전달을 켤 수 없고
+  (켜면 rclcpp 가 노드 생성을 거부), 같은 프로세스여도 직렬화는 그대로라 이득이 작은데 YOLO 가 죽으면 카메라도 같이 죽는다
 
 - 입력: `/camera/color/image_raw` (rgb8·bgr8·rgba8·bgra8, 크기 무관)
 - 출력: `/yolo_detector/detections` (`vision_msgs/Detection2DArray`), 상자 그린 영상 `/yolo_detector/image` (rgb8)

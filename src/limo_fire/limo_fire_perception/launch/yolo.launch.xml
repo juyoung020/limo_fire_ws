@@ -1,9 +1,8 @@
 <!-- 카메라 영상에서 YOLO 탐지 (실물·Webots 공용). 결과: /yolo_detector/detections, 상자 그린 영상: /yolo_detector/image
      mapper:=true 면 탐지 + 깊이로 물체를 지도(map)에 올린다 → RViz MarkerArray /object_mapper/markers
      rviz:=true 면 지도 + 물체 마커 + 탐지 영상을 한 RViz 창에 (limo_fire_description/rviz/object_map.rviz)
-     두 노드는 컴포넌트로 한 프로세스에 올리고 프로세스 안 전달(intra-process)로 탐지·마스크를 복사 없이 넘긴다.
-     실물에서는 카메라 드라이버 컨테이너에 같이 올리면 컬러·깊이 영상도 복사 없이 받는다:
-       ros2 launch limo_fire_perception yolo.launch.xml new_container:=false container:=/camera/camera_container
+     두 노드는 컴포넌트로 한 프로세스(멀티스레드 컨테이너)에 올리고 프로세스 안 전달(intra-process)로 탐지·마스크를 복사 없이 넘긴다.
+     new_container:=false container:=<이름> 이면 이미 있는 컨테이너에 올린다
      ros2 launch limo_fire_perception yolo.launch.xml [viewer:=true] [mapper:=true] [rviz:=true] -->
 <launch>
   <arg name="config" default="yolo_fire.yaml"/>
