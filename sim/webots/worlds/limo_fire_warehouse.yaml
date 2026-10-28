@@ -1,0 +1,19 @@
+# limo_fire_warehouse.wbt 의 정답 데이터 (Webots 세계 좌표, m). 형식은 ../README.md "월드 데이터 파일"
+robot_start: {x: -4.0, y: -4.2, yaw: 1.5708}
+patrol: [[-3.8, 0.2], [-3.8, 3.8], [-0.5, 3.8], [-0.5, 0.2], [-0.9, -3.4], [-0.5, 0.2], [3.3, 0.2], [3.3, -3.8], [2.2, 3.3], [2.2, 4.3], [-0.5, 0.2], [-3.8, 0.2], [-4.0, -4.2]]
+objects:
+  - {name: fire_floor,           cls: 0, center: [3.60, 2.40, 0.25],   size: [0.80, 0.80, 0.50], yaw: 0.0}
+  - {name: fire_small_aisle,     cls: 0, center: [-0.90, 2.20, 0.20],  size: [0.30, 0.30, 0.40], yaw: 0.0}
+  - {name: fire_small_barrel,    cls: 0, center: [4.30, -1.50, 0.20],  size: [0.30, 0.30, 0.40], yaw: 0.0}
+  - {name: smoke_floor,          cls: 1, center: [3.60, 2.40, 1.05],   size: [1.40, 1.40, 1.30], yaw: 0.0}
+  - {name: extinguisher_west,    cls: 2, center: [-4.85, 0.50, 0.42],  size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
+  - {name: extinguisher_east,    cls: 2, center: [4.85, -3.00, 0.42],  size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
+  - {name: extinguisher_north,   cls: 2, center: [-0.50, 4.85, 0.42],  size: [0.22, 0.22, 0.84], yaw: 0.0, approx: true}
+  - {name: exit_sign_door_west,  cls: 3, center: [-4.97, -3.00, 2.15], size: [0.04, 0.38, 0.20], yaw: 0.0}
+  - {name: exit_sign_door_south, cls: 3, center: [3.00, -4.97, 2.15],  size: [0.04, 0.38, 0.20], yaw: 1.5708}
+  - {name: exit_sign_east,       cls: 3, center: [4.97, 3.50, 2.20],   size: [0.04, 0.38, 0.20], yaw: 3.14159}
+  - {name: person_aisle,         cls: 4, center: [0.10, -2.20, 0.90],  size: [0.35, 0.55, 1.80], yaw: -1.5708, approx: true}
+  - {name: person_east,          cls: 4, center: [2.30, -0.80, 0.90],  size: [0.35, 0.55, 1.80], yaw: 3.14159, approx: true}
+  - {name: door_west,            cls: 5, center: [-5.10, -3.00, 1.00], size: [0.20, 1.00, 2.00], yaw: 0.0, note: "닫힘"}
+  - {name: door_south,           cls: 5, center: [3.00, -5.10, 1.00],  size: [0.20, 1.00, 2.00], yaw: 1.5708, note: "닫힘"}
+  - {name: stairs,               cls: 6, center: [3.75, 4.30, 0.375],  size: [1.50, 1.00, 0.75], yaw: 0.0, note: "5 단, 원점(3, 4.3)에서 +x 로 올라감"}

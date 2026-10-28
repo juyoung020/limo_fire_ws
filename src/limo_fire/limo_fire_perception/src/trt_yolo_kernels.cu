@@ -184,13 +184,24 @@ __global__ void paint_kernel(const DetBlock * __restrict__ block, const float * 
   ids[static_cast<size_t>(v) * lb.img_w + u] = static_cast<uint8_t>(best);
 }
 
-__global__ void draw_kernel(const uint8_t * __restrict__ img, const uint8_t * __restrict__ ids,
-  const DetBlock * __restrict__ block, const uint8_t * __restrict__ colors, int n_pix, uint8_t * __restrict__ vis)
+// 물체 번호가 (x, y) 에서 d 픽셀 안에 다른 번호(배경 포함)와 맞닿으면 테두리
+__device__ bool mask_edge(const uint8_t * ids, int x, int y, int w, int h, int id, int d)
 {
-  const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= n_pix) {
+  return (x - d >= 0 && ids[y * w + x - d] != id) || (x + d < w && ids[y * w + x + d] != id) ||
+         (y - d >= 0 && ids[(y - d) * w + x] != id) || (y + d < h && ids[(y + d) * w + x] != id);
+}
+
+// 마스크 칠하기: 안쪽은 원본 0.55 + 클래스 색 0.45, 테두리는 바깥 1 픽셀 흰색 + 안쪽 1 픽셀 클래스 색.
+// (덧칠만 하면 소화기처럼 클래스 색과 같은 색 물체는 모양이 안 보인다)
+__global__ void draw_kernel(const uint8_t * __restrict__ img, const uint8_t * __restrict__ ids,
+  const DetBlock * __restrict__ block, const uint8_t * __restrict__ colors, int w, int h, uint8_t * __restrict__ vis)
+{
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= w || y >= h) {
     return;
   }
+  const int i = y * w + x;
   const uint8_t * s = img + static_cast<size_t>(i) * 3;
   uint8_t * o = vis + static_cast<size_t>(i) * 3;
   const int id = ids ? ids[i] : 0;
@@ -199,6 +210,14 @@ __global__ void draw_kernel(const uint8_t * __restrict__ img, const uint8_t * __
     return;
   }
   const uint8_t * c = colors + (block->dets[id - 1].cls & 255) * 3;
+  if (mask_edge(ids, x, y, w, h, id, 1)) {
+    o[0] = 255; o[1] = 255; o[2] = 255;
+    return;
+  }
+  if (mask_edge(ids, x, y, w, h, id, 2)) {
+    o[0] = c[0]; o[1] = c[1]; o[2] = c[2];
+    return;
+  }
   // cv::addWeighted(원본, 0.55, 색, 0.45) 와 같은 반올림
   for (int k = 0; k < 3; ++k) {
     o[k] = static_cast<uint8_t>(min(255, __float2int_rn(0.55f * s[k] + 0.45f * c[k])));
@@ -237,8 +256,8 @@ void paint_masks(const DetBlock * block, const float * logits, int ph, int pw, c
 void draw_masks(const uint8_t * img, const uint8_t * ids, const DetBlock * block, const uint8_t * colors,
   int img_w, int img_h, uint8_t * vis, cudaStream_t st)
 {
-  const int n = img_w * img_h;
-  draw_kernel<<<(n + 255) / 256, 256, 0, st>>>(img, ids, block, colors, n, vis);
+  const dim3 b(32, 8), g((img_w + 31) / 32, (img_h + 7) / 8);
+  draw_kernel<<<g, b, 0, st>>>(img, ids, block, colors, img_w, img_h, vis);
 }
 
 }  // namespace limo_fire_perception::gpu

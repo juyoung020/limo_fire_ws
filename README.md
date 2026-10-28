@@ -8,15 +8,6 @@
 <br><br>
 
 <a href="https://plausible-hallway-e4f.notion.site/3eb454b08de28190b2e8e321a33a9371">팀 노션</a> &nbsp;·&nbsp;
-<a href="docs/idea.md">아이디어</a> &nbsp;·&nbsp;
-<a href="docs/spec.md">스펙·구현 방향</a> &nbsp;·&nbsp;
-<a href="docs/hardware.md">하드웨어 스펙</a> &nbsp;·&nbsp;
-<a href="docs/sensor_topics.md">센서 토픽</a> &nbsp;·&nbsp;
-<a href="docs/conventions.md">규약(폴더·URDF/TF)</a> &nbsp;·&nbsp;
-<a href="docs/parts.md">부품 목록</a> &nbsp;·&nbsp;
-<a href="docs/detect.md">인식 모델(YOLO26s-seg)</a> &nbsp;·&nbsp;
-<a href="docs/progress.md">진행 기록</a> &nbsp;·&nbsp;
-<a href="docs/backlog.md">프로덕트 백로그</a> &nbsp;·&nbsp;
 <a href="CHANGELOG.md">변경 기록</a>
 
 <br><br>
@@ -25,6 +16,12 @@
 <img src="https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&logoColor=white" alt="Ubuntu 22.04">
 <img src="https://img.shields.io/badge/Robot-AgileX_LIMO_Pro-555" alt="AgileX LIMO Pro">
 <img src="https://img.shields.io/badge/Sim-Isaac_Sim_4.5-76B900?logo=nvidia&logoColor=white" alt="Isaac Sim 4.5">
+
+<br><br>
+
+<img src="docs/assets/sim_nav_demo.gif" width="760" alt="Webots 덕트호스 미로에서 2D Pose Estimate → 2D Goal Pose 주행하며 YOLO 탐지를 지도에 올리는 화면">
+
+<sub>Webots 덕트호스 미로(시연장 추정 모양) — RViz 에서 처음 위치를 찍고 목표를 주면 Nav2 가 미로를 돌아가며, YOLO 가 찾은 불·소화기·문·사람·계단을 지도에 올린다 (10 배속)</sub>
 
 <br><br>
 
@@ -115,12 +112,11 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 | 강화학습 (탐사·조준) | 직접 만드는 2.5D GPU 환경 — 수천 개 병렬 | `train/` |
 | 실제와 비슷한 검증 (센서·물리) | Isaac Sim 4.5 + WeGo LIMO USD | `sim/wego_LimoIsaacSIM` |
 | (공통) 맵 | AWS 병원·창고·서점·집, ProcTHOR-10K, HouseExpo | `sim/maps` ([목록](sim/maps/README.md)) |
-| Nav2·SLAM·BT 통합 검증 | Webots (교수님 환경, 실제 LIMO 와 같은 토픽·프레임) | `src/external/webots_ros2_limo` |
+| Nav2·SLAM·BT 통합 검증 | Webots (교수님 LIMO 모델, 실제 LIMO 와 같은 토픽·프레임) + 우리 맵 4 개 | `sim/webots` ([맵·실행](sim/webots/README.md)) |
 
 ```bash
 source ~/limo_fire_ws/env.sh
-ros2 launch webots_ros2_limo robot_launch.py            # Webots + LIMO
-ros2 launch webots_ros2_limo nav2_launch.py             # 다른 터미널: Nav2
+ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze     # Webots + 저장 지도 + Nav2 (slam:=true · perception:=true)
 ```
 
 ## 시작하기
