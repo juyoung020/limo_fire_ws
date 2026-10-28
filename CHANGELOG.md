@@ -12,6 +12,10 @@
 - 변경 기록 `CHANGELOG.md`.
 - 센서 토픽 문서 `docs/sensor_topics.md`: 센서마다 토픽·타입·실측 주기·frame·발행/구독 노드, 시뮬과의 차이, 포인트 클라우드를 끄면 깊이 정렬도 꺼지는 문제 기록.
 
+### Changed
+
+- 실물 `robot.launch.xml` 이 WeGo URDF + 카메라 틸트 `static_transform_publisher` 3 개 대신 우리 `limo_fire.urdf.xacro` 하나로 TF 를 낸다. 카메라는 모듈 xacro `orbbec_dabai.xacro` 로 분리하고 장착 위치를 실측 (0.15, −0.005, 0.06) 으로 고침(이전 0.23, 0.05, 0.06). color·depth 프레임은 Orbbec 드라이버만 낸다. 틸트 인자 `degree` → `camera_pitch`.
+
 ## [0.5.0] - 2026-10-28
 
 ### Changed
