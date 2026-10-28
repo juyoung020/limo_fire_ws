@@ -1,14 +1,17 @@
 #include "limo_fire_perception/trt_yolo.hpp"
 
-#include <cuda_runtime_api.h>
+#include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 
 #include <opencv2/dnn.hpp>
-#include <opencv2/imgproc.hpp>
+
+#include "trt_yolo_kernels.cuh"
 
 namespace limo_fire_perception
 {
@@ -30,7 +33,31 @@ size_t volume(const nvinfer1::Dims & d)
   }
   return v;
 }
+
+template<typename T>
+void free_device(T *& p)
+{
+  if (p) {cudaFree(p); p = nullptr;}
+}
+
+template<typename T>
+void free_host(T *& p)
+{
+  if (p) {cudaFreeHost(p); p = nullptr;}
+}
 }  // namespace
+
+// 슬롯마다 따로 가지는 것: CPU 쪽 고정(pinned) 메모리, 끝났음을 알리는 이벤트, 그 슬롯 주소로 담은 그래프
+struct TrtYolo::Slot
+{
+  uint8_t * h_img = nullptr;
+  gpu::DetBlock * h_block = nullptr;
+  uint8_t * h_ids = nullptr;
+  float * h_out = nullptr;
+  cudaEvent_t done = nullptr;
+  cudaGraphExec_t exec = nullptr;
+  bool busy = false;
+};
 
 void TrtYolo::Logger::log(Severity severity, const char * msg) noexcept
 {
@@ -42,6 +69,10 @@ void TrtYolo::Logger::log(Severity severity, const char * msg) noexcept
 TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nms_iou)
 : conf_(conf_threshold), nms_iou_(nms_iou)
 {
+  // GPU 를 기다리는 동안 CPU 가 바쁜 대기로 코어 하나를 태우지 않고 잠들게 (컨텍스트 만들기 전에만 먹힌다)
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  cudaGetLastError();
+
   std::ifstream f(engine_path, std::ios::binary);
   if (!f) {
     throw std::runtime_error("엔진 파일을 열 수 없음: " + engine_path);
@@ -57,12 +88,20 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
 
   for (int i = 0; i < engine_->getNbIOTensors(); ++i) {
     const char * name = engine_->getIOTensorName(i);
-    if (engine_->getTensorDataType(name) != nvinfer1::DataType::kFLOAT) {
-      throw std::runtime_error(std::string("입출력은 float32 여야 함 (trtexec 기본값): ") + name);
-    }
+    const auto type = engine_->getTensorDataType(name);
     if (engine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
       in_name_ = name;
-    } else if (engine_->getTensorShape(name).nbDims == 4) {
+      if (type == nvinfer1::DataType::kUINT8) {
+        in_u8_ = true;
+      } else if (type != nvinfer1::DataType::kFLOAT) {
+        throw std::runtime_error(std::string("입력은 uint8 [1,H,W,3] 또는 float32 [1,3,H,W] 여야 함: ") + name);
+      }
+      continue;
+    }
+    if (type != nvinfer1::DataType::kFLOAT) {
+      throw std::runtime_error(std::string("출력은 float32 여야 함 (trtexec 기본값): ") + name);
+    }
+    if (engine_->getTensorShape(name).nbDims == 4) {
       proto_name_ = name;   // 분할 모델의 원형 마스크 [1, nm, ph, pw]
     } else if (out_name_.empty()) {
       out_name_ = name;
@@ -72,17 +111,19 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
     throw std::runtime_error("입력·출력 텐서를 찾지 못함");
   }
 
-  nvinfer1::Dims in_dims = engine_->getTensorShape(in_name_.c_str());
-  if (in_dims.nbDims != 4) {
-    throw std::runtime_error("입력은 [1, 3, H, W] 여야 함");
+  const nvinfer1::Dims in_dims = engine_->getTensorShape(in_name_.c_str());
+  if (in_dims.nbDims != 4 || (in_u8_ && in_dims.d[3] != 3) || (!in_u8_ && in_dims.d[1] != 3)) {
+    throw std::runtime_error(in_u8_ ? "uint8 입력은 [1, H, W, 3] 여야 함" : "float 입력은 [1, 3, H, W] 여야 함");
   }
-  if (in_dims.d[2] > 0) {in_h_ = in_dims.d[2];}
-  if (in_dims.d[3] > 0) {in_w_ = in_dims.d[3];}
-  if (in_dims.d[0] < 0 || in_dims.d[2] < 0 || in_dims.d[3] < 0) {
-    context_->setInputShape(in_name_.c_str(), nvinfer1::Dims4{1, 3, in_h_, in_w_});
+  const int hd = in_u8_ ? 1 : 2, wd = in_u8_ ? 2 : 3;
+  if (in_dims.d[hd] > 0) {in_h_ = in_dims.d[hd];}
+  if (in_dims.d[wd] > 0) {in_w_ = in_dims.d[wd];}
+  if (in_dims.d[0] < 0 || in_dims.d[hd] < 0 || in_dims.d[wd] < 0) {
+    context_->setInputShape(in_name_.c_str(),
+      in_u8_ ? nvinfer1::Dims4{1, in_h_, in_w_, 3} : nvinfer1::Dims4{1, 3, in_h_, in_w_});
   }
 
-  nvinfer1::Dims out_dims = context_->getTensorShape(out_name_.c_str());
+  const nvinfer1::Dims out_dims = context_->getTensorShape(out_name_.c_str());
   if (out_dims.nbDims != 3) {
     throw std::runtime_error("출력은 3 차원이어야 함");
   }
@@ -93,6 +134,9 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
     pw_ = pd.d[3];
     if (out_dims.d[2] != 6 + nm_) {
       throw std::runtime_error("분할 모델은 end2end 출력 [1, N, 6 + 마스크 계수] 여야 함");
+    }
+    if (nm_ > 32) {
+      throw std::runtime_error("마스크 계수는 32 개까지");
     }
   }
   if (out_dims.d[2] == 6 + nm_) {
@@ -105,157 +149,236 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
     out_cols_ = out_dims.d[2];   // 앵커 수
     num_classes_ = out_rows_ - 4;
   }
+  out_elems_ = volume(out_dims);
 
-  h_in_.resize(3 * static_cast<size_t>(in_w_) * in_h_);
-  h_out_.resize(volume(out_dims));
-  check_cuda(cudaStreamCreate(reinterpret_cast<cudaStream_t *>(&stream_)), "cudaStreamCreate");
-  check_cuda(cudaMalloc(&d_in_, h_in_.size() * sizeof(float)), "cudaMalloc in");
-  check_cuda(cudaMalloc(&d_out_, h_out_.size() * sizeof(float)), "cudaMalloc out");
+  check_cuda(cudaStreamCreateWithFlags(reinterpret_cast<cudaStream_t *>(&stream_), cudaStreamNonBlocking),
+    "cudaStreamCreate");
+  const size_t in_bytes = static_cast<size_t>(in_w_) * in_h_ * 3 * (in_u8_ ? 1 : sizeof(float));
+  check_cuda(cudaMalloc(&d_in_, in_bytes), "cudaMalloc in");
+  check_cuda(cudaMalloc(&d_out_, out_elems_ * sizeof(float)), "cudaMalloc out");
+  check_cuda(cudaMalloc(&d_block_, sizeof(gpu::DetBlock)), "cudaMalloc dets");
   context_->setTensorAddress(in_name_.c_str(), d_in_);
   context_->setTensorAddress(out_name_.c_str(), d_out_);
   if (!proto_name_.empty()) {
-    h_proto_.resize(static_cast<size_t>(nm_) * ph_ * pw_);
-    check_cuda(cudaMalloc(&d_proto_, h_proto_.size() * sizeof(float)), "cudaMalloc proto");
+    check_cuda(cudaMalloc(&d_proto_, static_cast<size_t>(nm_) * ph_ * pw_ * sizeof(float)), "cudaMalloc proto");
     context_->setTensorAddress(proto_name_.c_str(), d_proto_);
+  }
+  for (int i = 0; i < kSlots; ++i) {
+    slots_.push_back(std::make_unique<Slot>());
+    check_cuda(cudaEventCreateWithFlags(&slots_.back()->done, cudaEventBlockingSync | cudaEventDisableTiming),
+      "cudaEventCreate");
   }
 }
 
 TrtYolo::~TrtYolo()
 {
+  if (stream_) {cudaStreamSynchronize(static_cast<cudaStream_t>(stream_));}
+  release_image_buffers();
+  for (auto & s : slots_) {
+    if (s->done) {cudaEventDestroy(s->done);}
+  }
   context_.reset();
   engine_.reset();
   runtime_.reset();
-  if (d_in_) {cudaFree(d_in_);}
-  if (d_out_) {cudaFree(d_out_);}
-  if (d_proto_) {cudaFree(d_proto_);}
+  free_device(d_in_);
+  free_device(d_out_);
+  free_device(d_proto_);
+  free_device(d_block_);
   if (stream_) {cudaStreamDestroy(static_cast<cudaStream_t>(stream_));}
 }
 
-TrtYolo::Letterbox TrtYolo::preprocess(const cv::Mat & bgr)
+void TrtYolo::release_image_buffers()
 {
-  // 비율 유지 축소 + 회색(114) 덧대기 — Ultralytics 와 같은 방식
-  const float s = std::min(static_cast<float>(in_w_) / bgr.cols, static_cast<float>(in_h_) / bgr.rows);
-  const int nw = static_cast<int>(std::round(bgr.cols * s));
-  const int nh = static_cast<int>(std::round(bgr.rows * s));
-  const float px = (in_w_ - nw) / 2.0f;
-  const float py = (in_h_ - nh) / 2.0f;
-
-  cv::Mat resized, canvas(in_h_, in_w_, CV_8UC3, cv::Scalar(114, 114, 114));
-  cv::resize(bgr, resized, cv::Size(nw, nh), 0, 0, cv::INTER_LINEAR);
-  resized.copyTo(canvas(cv::Rect(static_cast<int>(std::round(px - 0.1f)), static_cast<int>(std::round(py - 0.1f)), nw, nh)));
-
-  // HWC BGR uint8 → CHW RGB float [0, 1]
-  const size_t plane = static_cast<size_t>(in_w_) * in_h_;
-  for (int y = 0; y < in_h_; ++y) {
-    const cv::Vec3b * row = canvas.ptr<cv::Vec3b>(y);
-    for (int x = 0; x < in_w_; ++x) {
-      const size_t i = static_cast<size_t>(y) * in_w_ + x;
-      h_in_[i] = row[x][2] / 255.0f;
-      h_in_[plane + i] = row[x][1] / 255.0f;
-      h_in_[2 * plane + i] = row[x][0] / 255.0f;
-    }
+  for (auto & s : slots_) {
+    if (s->exec) {cudaGraphExecDestroy(s->exec); s->exec = nullptr;}
+    free_host(s->h_img);
+    free_host(s->h_block);
+    free_host(s->h_ids);
+    free_host(s->h_out);
   }
-  return {s, px, py};
+  free_device(d_img_);
+  free_device(d_ids_);
 }
 
-std::vector<Detection> TrtYolo::infer(const cv::Mat & bgr)
+void TrtYolo::configure(int img_w, int img_h)
 {
-  const Letterbox lb = preprocess(bgr);
+  for (const auto & s : slots_) {
+    if (s->busy) {
+      throw std::runtime_error("영상 크기가 바뀌었는데 아직 collect 하지 않은 슬롯이 있음");
+    }
+  }
   auto st = static_cast<cudaStream_t>(stream_);
-  check_cuda(cudaMemcpyAsync(d_in_, h_in_.data(), h_in_.size() * sizeof(float), cudaMemcpyHostToDevice, st), "H2D");
+  check_cuda(cudaStreamSynchronize(st), "sync");
+  release_image_buffers();
+  img_w_ = img_w;
+  img_h_ = img_h;
+
+  // 비율 유지 축소 + 회색(114) 덧대기 — Ultralytics LetterBox 와 같은 방식
+  lb_scale_ = std::min(static_cast<float>(in_w_) / img_w, static_cast<float>(in_h_) / img_h);
+  lb_nw_ = static_cast<int>(std::round(img_w * lb_scale_));
+  lb_nh_ = static_cast<int>(std::round(img_h * lb_scale_));
+  lb_pad_x_ = (in_w_ - lb_nw_) / 2.0f;
+  lb_pad_y_ = (in_h_ - lb_nh_) / 2.0f;
+  lb_left_ = static_cast<int>(std::round(lb_pad_x_ - 0.1f));
+  lb_top_ = static_cast<int>(std::round(lb_pad_y_ - 0.1f));
+  direct_input_ = in_u8_ && img_w == in_w_ && img_h == in_h_;
+
+  const size_t img_bytes = static_cast<size_t>(img_w) * img_h * 3;
+  const size_t ids_bytes = static_cast<size_t>(img_w) * img_h;
+  if (!direct_input_) {
+    check_cuda(cudaMalloc(&d_img_, img_bytes), "cudaMalloc img");
+  }
+  if (has_masks()) {
+    check_cuda(cudaMalloc(&d_ids_, ids_bytes), "cudaMalloc ids");
+  }
+  for (auto & s : slots_) {
+    check_cuda(cudaMallocHost(&s->h_img, img_bytes), "cudaMallocHost img");
+    if (end2end_) {
+      check_cuda(cudaMallocHost(&s->h_block, sizeof(gpu::DetBlock)), "cudaMallocHost dets");
+      s->h_block->count = 0;
+    } else {
+      check_cuda(cudaMallocHost(&s->h_out, out_elems_ * sizeof(float)), "cudaMallocHost out");
+    }
+    if (has_masks()) {
+      check_cuda(cudaMallocHost(&s->h_ids, ids_bytes), "cudaMallocHost ids");
+    }
+  }
+
+  // 한 번 그대로 돌려 TensorRT 가 준비를 끝내게 한 뒤(그래프에 담기 전 필요), 슬롯마다 그래프에 담는다
+  std::memset(slots_[0]->h_img, 114, img_bytes);
+  enqueue(*slots_[0]);
+  check_cuda(cudaStreamSynchronize(st), "warmup");
+  if (!use_graph_) {
+    return;
+  }
+  for (auto & s : slots_) {
+    cudaGraph_t graph = nullptr;
+    bool ok = cudaStreamBeginCapture(st, cudaStreamCaptureModeThreadLocal) == cudaSuccess;
+    if (ok) {
+      try {
+        enqueue(*s);
+      } catch (const std::exception & e) {
+        std::cerr << "[TrtYolo] 그래프 담기 중 오류: " << e.what() << std::endl;
+        ok = false;
+      }
+      ok = cudaStreamEndCapture(st, &graph) == cudaSuccess && ok;
+    }
+    ok = ok && cudaGraphInstantiate(&s->exec, graph, 0) == cudaSuccess;
+    if (graph) {cudaGraphDestroy(graph);}
+    if (!ok) {
+      cudaGetLastError();
+      std::cerr << "[TrtYolo] CUDA 그래프를 못 만들어 매번 따로 띄운다" << std::endl;
+      use_graph_ = false;
+      for (auto & t : slots_) {
+        if (t->exec) {cudaGraphExecDestroy(t->exec); t->exec = nullptr;}
+      }
+      return;
+    }
+  }
+}
+
+void TrtYolo::enqueue(Slot & s)
+{
+  auto st = static_cast<cudaStream_t>(stream_);
+  const size_t img_bytes = static_cast<size_t>(img_w_) * img_h_ * 3;
+  const gpu::Letterbox lb{lb_scale_, lb_pad_x_, lb_pad_y_, img_w_, img_h_, in_w_, in_h_,
+    lb_nw_, lb_nh_, lb_left_, lb_top_};
+  if (direct_input_) {
+    check_cuda(cudaMemcpyAsync(d_in_, s.h_img, img_bytes, cudaMemcpyHostToDevice, st), "H2D");
+  } else {
+    check_cuda(cudaMemcpyAsync(d_img_, s.h_img, img_bytes, cudaMemcpyHostToDevice, st), "H2D");
+    gpu::letterbox(static_cast<const uint8_t *>(d_img_), d_in_, !in_u8_, lb, st);
+  }
   if (!context_->enqueueV3(st)) {
     throw std::runtime_error("enqueueV3 실패");
   }
-  check_cuda(cudaMemcpyAsync(h_out_.data(), d_out_, h_out_.size() * sizeof(float), cudaMemcpyDeviceToHost, st), "D2H");
-  if (d_proto_) {
-    check_cuda(cudaMemcpyAsync(h_proto_.data(), d_proto_, h_proto_.size() * sizeof(float), cudaMemcpyDeviceToHost, st),
-      "D2H proto");
+  if (end2end_) {
+    auto * block = static_cast<gpu::DetBlock *>(d_block_);
+    gpu::decode_end2end(static_cast<const float *>(d_out_), out_rows_, out_cols_, conf_, lb, block, st);
+    check_cuda(cudaMemcpyAsync(s.h_block, block, sizeof(gpu::DetBlock), cudaMemcpyDeviceToHost, st), "D2H dets");
+    if (has_masks()) {
+      gpu::paint_masks(static_cast<const float *>(d_out_), out_cols_, static_cast<const float *>(d_proto_),
+        nm_, ph_, pw_, block, lb, static_cast<uint8_t *>(d_ids_), st);
+      check_cuda(cudaMemcpyAsync(s.h_ids, d_ids_, static_cast<size_t>(img_w_) * img_h_, cudaMemcpyDeviceToHost, st),
+        "D2H ids");
+    }
+  } else {
+    check_cuda(cudaMemcpyAsync(s.h_out, d_out_, out_elems_ * sizeof(float), cudaMemcpyDeviceToHost, st), "D2H");
   }
-  check_cuda(cudaStreamSynchronize(st), "sync");
-  return end2end_ ? decode_end2end(lb, bgr.cols, bgr.rows) : decode_raw(lb, bgr.cols, bgr.rows);
+  check_cuda(cudaGetLastError(), "kernel launch");
 }
 
-namespace
+int TrtYolo::submit(const cv::Mat & rgb)
 {
-cv::Rect2f unletterbox(float x1, float y1, float x2, float y2, float s, float px, float py, int w, int h)
-{
-  x1 = std::clamp((x1 - px) / s, 0.0f, static_cast<float>(w));
-  x2 = std::clamp((x2 - px) / s, 0.0f, static_cast<float>(w));
-  y1 = std::clamp((y1 - py) / s, 0.0f, static_cast<float>(h));
-  y2 = std::clamp((y2 - py) / s, 0.0f, static_cast<float>(h));
-  return {x1, y1, x2 - x1, y2 - y1};
-}
-}  // namespace
-
-std::vector<Detection> TrtYolo::decode_end2end(const Letterbox & lb, int img_w, int img_h) const
-{
-  std::vector<Detection> out;
-  for (int r = 0; r < out_rows_; ++r) {
-    const float * p = &h_out_[static_cast<size_t>(r) * out_cols_];
-    if (p[4] < conf_) {
-      continue;
-    }
-    out.push_back({unletterbox(p[0], p[1], p[2], p[3], lb.scale, lb.pad_x, lb.pad_y, img_w, img_h),
-        p[4], static_cast<int>(p[5]), {}, {}});
-    if (nm_ > 0) {
-      decode_mask(p + 6, lb, img_w, img_h, out.back());
+  if (rgb.type() != CV_8UC3 || rgb.empty()) {
+    throw std::runtime_error("submit: RGB CV_8UC3 영상이어야 함");
+  }
+  const int idx = next_slot_;
+  Slot & s = *slots_[idx];
+  if (s.busy) {
+    throw std::runtime_error("submit: 이 슬롯의 결과를 아직 collect 하지 않음");
+  }
+  if (rgb.cols != img_w_ || rgb.rows != img_h_) {
+    configure(rgb.cols, rgb.rows);
+  }
+  const size_t row = static_cast<size_t>(rgb.cols) * 3;
+  if (rgb.isContinuous()) {
+    std::memcpy(s.h_img, rgb.data, row * rgb.rows);
+  } else {
+    for (int y = 0; y < rgb.rows; ++y) {
+      std::memcpy(s.h_img + row * y, rgb.ptr(y), row);
     }
   }
-  return out;
-}
-
-void TrtYolo::decode_mask(const float * coeffs, const Letterbox & lb, int img_w, int img_h, Detection & det) const
-{
-  // Ultralytics process_mask 와 같은 순서: 계수 · 원형 → 상자 밖 버림 → 원본 크기로 키움 → 0.5 문턱
-  // 상자 부분만 계산한다: 원본 상자 → 입력(640) 좌표 → 원형(160) 좌표
-  det.mask_roi = cv::Rect(det.box) & cv::Rect(0, 0, img_w, img_h);
-  if (det.mask_roi.empty()) {
-    return;
+  auto st = static_cast<cudaStream_t>(stream_);
+  if (s.exec) {
+    check_cuda(cudaGraphLaunch(s.exec, st), "cudaGraphLaunch");
+  } else {
+    enqueue(s);
   }
-  const float kx = static_cast<float>(pw_) / in_w_, ky = static_cast<float>(ph_) / in_h_;
-  const float px0 = (det.mask_roi.x * lb.scale + lb.pad_x) * kx;
-  const float py0 = (det.mask_roi.y * lb.scale + lb.pad_y) * ky;
-  const float px1 = (det.mask_roi.br().x * lb.scale + lb.pad_x) * kx;
-  const float py1 = (det.mask_roi.br().y * lb.scale + lb.pad_y) * ky;
-  const int gx0 = std::clamp(static_cast<int>(std::floor(px0)), 0, pw_ - 1);
-  const int gy0 = std::clamp(static_cast<int>(std::floor(py0)), 0, ph_ - 1);
-  const int gx1 = std::clamp(static_cast<int>(std::ceil(px1)), gx0 + 1, pw_);
-  const int gy1 = std::clamp(static_cast<int>(std::ceil(py1)), gy0 + 1, ph_);
-
-  // 원형 칸마다 로짓 = Σ 계수 × 원형
-  cv::Mat logit(gy1 - gy0, gx1 - gx0, CV_32F, cv::Scalar(0));
-  const size_t plane = static_cast<size_t>(ph_) * pw_;
-  for (int k = 0; k < nm_; ++k) {
-    const float c = coeffs[k];
-    const float * pk = &h_proto_[k * plane];
-    for (int y = gy0; y < gy1; ++y) {
-      float * row = logit.ptr<float>(y - gy0);
-      const float * src = pk + static_cast<size_t>(y) * pw_;
-      for (int x = gx0; x < gx1; ++x) {
-        row[x - gx0] += c * src[x];
-      }
-    }
-  }
-  // 원본 픽셀 (u, v) 의 원형 좌표 = (u·s + pad)·k - 0.5 (칸 가운데 기준). 그 자리를 쌍선형으로 읽는다
-  cv::Mat map_x(det.mask_roi.size(), CV_32F), map_y(det.mask_roi.size(), CV_32F);
-  for (int v = 0; v < det.mask_roi.height; ++v) {
-    const float gy = ((det.mask_roi.y + v + 0.5f) * lb.scale + lb.pad_y) * ky - 0.5f - gy0;
-    float * mx = map_x.ptr<float>(v);
-    float * my = map_y.ptr<float>(v);
-    for (int u = 0; u < det.mask_roi.width; ++u) {
-      mx[u] = ((det.mask_roi.x + u + 0.5f) * lb.scale + lb.pad_x) * kx - 0.5f - gx0;
-      my[u] = gy;
-    }
-  }
-  cv::Mat up;
-  cv::remap(logit, up, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
-  // 시그모이드 > 0.5 ⇔ 로짓 > 0
-  cv::compare(up, 0.0, det.mask, cv::CMP_GT);
+  check_cuda(cudaEventRecord(s.done, st), "cudaEventRecord");
+  s.busy = true;
+  next_slot_ = (next_slot_ + 1) % kSlots;
+  return idx;
 }
 
-std::vector<Detection> TrtYolo::decode_raw(const Letterbox & lb, int img_w, int img_h) const
+YoloResult TrtYolo::collect(int slot)
 {
+  Slot & s = *slots_.at(slot);
+  if (!s.busy) {
+    throw std::runtime_error("collect: submit 하지 않은 슬롯");
+  }
+  check_cuda(cudaEventSynchronize(s.done), "cudaEventSynchronize");
+  s.busy = false;
+
+  YoloResult r;
+  if (!end2end_) {
+    r.dets = decode_raw(s.h_out);
+    return r;
+  }
+  const gpu::DetBlock & b = *s.h_block;
+  r.dets.reserve(b.count);
+  for (int k = 0; k < b.count; ++k) {
+    const gpu::Det & d = b.dets[k];
+    r.dets.push_back({cv::Rect2f(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1), d.score, d.cls,
+        cv::Rect(d.rx, d.ry, d.rw, d.rh)});
+  }
+  if (has_masks()) {
+    r.ids = cv::Mat(img_h_, img_w_, CV_8UC1, s.h_ids);
+  }
+  return r;
+}
+
+std::vector<Detection> TrtYolo::decode_raw(const float * out) const
+{
+  const auto unletterbox = [this](float x1, float y1, float x2, float y2) {
+      x1 = std::clamp((x1 - lb_pad_x_) / lb_scale_, 0.0f, static_cast<float>(img_w_));
+      x2 = std::clamp((x2 - lb_pad_x_) / lb_scale_, 0.0f, static_cast<float>(img_w_));
+      y1 = std::clamp((y1 - lb_pad_y_) / lb_scale_, 0.0f, static_cast<float>(img_h_));
+      y2 = std::clamp((y2 - lb_pad_y_) / lb_scale_, 0.0f, static_cast<float>(img_h_));
+      return cv::Rect2f(x1, y1, x2 - x1, y2 - y1);
+    };
   std::vector<cv::Rect> boxes;
+  std::vector<cv::Rect2f> boxes_f;
   std::vector<float> scores;
   std::vector<int> classes;
   const int n = out_cols_;
@@ -263,25 +386,28 @@ std::vector<Detection> TrtYolo::decode_raw(const Letterbox & lb, int img_w, int 
     int best = 0;
     float best_s = 0.0f;
     for (int c = 0; c < num_classes_; ++c) {
-      const float s = h_out_[static_cast<size_t>(4 + c) * n + a];
+      const float s = out[static_cast<size_t>(4 + c) * n + a];
       if (s > best_s) {best_s = s; best = c;}
     }
     if (best_s < conf_) {
       continue;
     }
-    const float cx = h_out_[a], cy = h_out_[n + a], w = h_out_[2 * n + a], h = h_out_[3 * n + a];
-    const cv::Rect2f r = unletterbox(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, lb.scale, lb.pad_x, lb.pad_y, img_w, img_h);
-    boxes.emplace_back(r);
+    const float cx = out[a], cy = out[n + a], w = out[2 * n + a], h = out[3 * n + a];
+    boxes_f.push_back(unletterbox(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2));
+    boxes.emplace_back(boxes_f.back());
     scores.push_back(best_s);
     classes.push_back(best);
   }
   std::vector<int> keep;
   cv::dnn::NMSBoxesBatched(boxes, scores, classes, conf_, nms_iou_, keep);
-  std::vector<Detection> out;
+  std::vector<Detection> dets;
   for (int i : keep) {
-    out.push_back({cv::Rect2f(boxes[i]), scores[i], classes[i], {}, {}});
+    const cv::Rect2f & b = boxes_f[i];
+    const cv::Point tl(static_cast<int>(std::ceil(b.x)), static_cast<int>(std::ceil(b.y)));
+    const cv::Point br(static_cast<int>(std::ceil(b.br().x)), static_cast<int>(std::ceil(b.br().y)));
+    dets.push_back({b, scores[i], classes[i], cv::Rect(tl, br)});
   }
-  return out;
+  return dets;
 }
 
 }  // namespace limo_fire_perception

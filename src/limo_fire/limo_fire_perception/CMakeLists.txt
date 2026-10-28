@@ -1,10 +1,17 @@
 cmake_minimum_required(VERSION 3.8)
-project(limo_fire_perception LANGUAGES CXX)
+# GPU 커널(전처리·출력 해석·마스크)용 nvcc. JetPack 은 PATH 에 없을 수 있다
+if(NOT DEFINED CMAKE_CUDA_COMPILER AND EXISTS /usr/local/cuda/bin/nvcc)
+  set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
+endif()
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES 87)  # Jetson Orin
+endif()
+project(limo_fire_perception LANGUAGES CXX CUDA)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
-add_compile_options(-Wall -Wextra -Wpedantic)
+add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall> $<$<COMPILE_LANGUAGE:CXX>:-Wextra> $<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -27,7 +34,7 @@ if(NOT TENSORRT_INCLUDE_DIR OR NOT NVINFER_LIB)
   message(FATAL_ERROR "TensorRT(NvInfer.h, libnvinfer) 를 찾지 못함")
 endif()
 
-add_library(trt_yolo src/trt_yolo.cpp)
+add_library(trt_yolo src/trt_yolo.cpp src/trt_yolo_kernels.cu)
 target_include_directories(trt_yolo PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> ${TENSORRT_INCLUDE_DIR})
 target_link_libraries(trt_yolo PUBLIC ${NVINFER_LIB} CUDA::cudart opencv_core opencv_imgproc opencv_dnn)

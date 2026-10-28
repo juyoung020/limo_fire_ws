@@ -1,8 +1,8 @@
 # 우리 YOLO26s-seg (train/detect, 7 클래스, 탐지 + 분할). 엔진은 이 기기에서 trtexec 로 만든다 (README)
-# 상자만 내는 이전 모델은 yolo26s_fire.engine — 그 엔진을 쓰면 마스크 없이 상자로만 동작
+# 입력 480x640 uint8 RGB(전처리를 엔진 안에 넣음). 이전 엔진(float 640x640, yolo26s_seg_fire.engine · 상자만 내는 yolo26s_fire.engine)도 그대로 돈다
 yolo_detector:
   ros__parameters:
-    engine_path: /home/wego/limo_fire_ws/src/limo_fire/limo_fire_perception/models/yolo26s_seg_fire.engine
+    engine_path: /home/wego/limo_fire_ws/src/limo_fire/limo_fire_perception/models/yolo26s_seg_fire_u8_480.engine
     conf_threshold: 0.35
     nms_iou: 0.5
     image_topic: /camera/color/image_raw

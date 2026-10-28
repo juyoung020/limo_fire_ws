@@ -6,19 +6,70 @@
 ros2 launch limo_fire_perception yolo.launch.xml          # 탐지 + rqt_image_view
 ```
 
-- 입력: `/camera/color/image_raw` (rgb8·bgr8)
-- 출력: `/yolo_detector/detections` (`vision_msgs/Detection2DArray`), 상자 그린 영상 `/yolo_detector/image`
-- 분할(-seg) 엔진이면 물체 번호 영상 `/yolo_detector/mask` (mono8, 값 = `detections` 안 순서 + 1, 0 = 배경, 겹치면 작은 물체가 위)도 같은 시각으로 내고, 탐지 영상에 마스크를 반투명하게 칠한다
+- 입력: `/camera/color/image_raw` (rgb8·bgr8·rgba8·bgra8, 크기 무관)
+- 출력: `/yolo_detector/detections` (`vision_msgs/Detection2DArray`), 상자 그린 영상 `/yolo_detector/image` (rgb8)
+- 분할(-seg) 엔진이면 물체 번호 영상 `/yolo_detector/mask` (mono8, 값 = `detections` 안 순서 + 1, 0 = 배경, 겹치면 상자가 작은 물체가 위)도 같은 시각으로 내고, 탐지 영상에 마스크를 반투명하게 칠한다
 - 파라미터: `config/yolo_fire.yaml` (엔진 경로·문턱·클래스 이름)
-- 출력 형식을 알아서 구분: YOLO26 end2end `[1, 300, 6]`(NMS 없음), YOLO26-seg end2end `[1, 300, 38]` + 원형 마스크 `[1, 32, 160, 160]`, YOLOv8/11 raw `[1, 4+클래스, 앵커]`(+NMS)
+- 출력 형식을 알아서 구분: YOLO26 end2end `[1, 300, 6]`(NMS 없음), YOLO26-seg end2end `[1, 300, 38]` + 원형 마스크 `[1, 32, ph, pw]`, YOLOv8/11 raw `[1, 4+클래스, 앵커]`(+NMS)
+- 입력 형식도 알아서 구분: uint8 RGB `[1, H, W, 3]` (전처리를 엔진에 넣은 것, 기본) 또는 float `[1, 3, H, W]` (/255 RGB, Ultralytics 기본 내보내기)
 - `cv_bridge` 는 쓰지 않는다: ROS 의 cv_bridge 는 Ubuntu OpenCV 4.5, Jetson 은 OpenCV 4.8 이라 한 프로세스에 섞이면 위험
+
+### 한 장 처리 (전부 GPU, CUDA 그래프 하나)
+
+```
+카메라 영상 ─memcpy→ 고정(pinned) 메모리 ─H2D→ [letterbox 커널: 크기·형식이 엔진과 다를 때만]
+  → TensorRT → [end2end 해석 커널: 문턱·상자 되돌리기] → [마스크 커널: 물체 번호 영상] ─D2H→ 탐지 목록 + 마스크
+```
+
+- 영상 크기가 정해지면 위 전체를 슬롯(2 개)마다 CUDA 그래프로 담아, 한 장에 `cudaGraphLaunch` 한 번만 한다 (TensorRT 를 그냥 띄우면 CPU 가 일을 거는 데만 4.6 ms)
+- GPU 를 기다릴 때 CPU 는 잠든다 (`cudaEventBlockingSync`, 바쁜 대기 없음)
+- 구독 콜백은 가장 최근 영상만 남기고 바로 돌아오고, 작업 스레드가 결과를 받자마자 다음 영상을 GPU 에 건 뒤 앞 장을 발행한다. 밀리면 오래된 영상은 버린다
+- 마스크: 원형을 입력 크기로 쌍선형 확대(align_corners=False) → 계수와 내적 → 상자(`x1 <= u < x2`) 밖 버림 → 로짓 > 0. Ultralytics `process_mask(upsample=True)` 와 같은 셈이라, 같은 엔진 출력으로 만든 Ultralytics 결과와 물체 번호 영상이 픽셀까지 같다 (307,200 중 다른 픽셀 0)
+- 원형 마스크(2.4 MB)는 CPU 로 가져오지 않는다
 
 ## 엔진 만들기 (기기마다 한 번)
 
-기본 엔진은 탐지 + 분할 모델 `models/yolo26s_seg_fire.engine` (Release [detect-y26s-seg](https://github.com/juyoung020/limo_fire_ws/releases/tag/detect-y26s-seg) `yolo26s-seg_fire7.safetensors`). 아래 순서에서 다음만 바꾼다:
-`DetectionModel('yolo26s.yaml', …)` → `SegmentationModel('yolo26s-seg.yaml', …)`, `dm.args['task'] = 'segment'`, `YOLO(…, task='segment')`, 파일 이름 `yolo26s-seg_fire7.*`, `--saveEngine=…/models/yolo26s_seg_fire.engine`.
-출력은 `(1, 300, 38)` + `(1, 32, 160, 160)`. trtexec FP16 GPU 시간 중앙값 14.4 ms (Webots 와 같이 돌 때, 탐지만 하는 모델은 10.4 ms).
-마스크 계산은 Ultralytics `process_mask` + `scale_masks` 와 같다 (같은 ONNX 출력에서 마스크 IoU 1.000 확인).
+기본 엔진은 탐지 + 분할 모델, 입력 480×640 uint8 RGB `models/yolo26s_seg_fire_u8_480.engine` (Release [detect-y26s-seg](https://github.com/juyoung020/limo_fire_ws/releases/tag/detect-y26s-seg) `yolo26s-seg_fire7.safetensors`).
+카메라(실물 Orbbec·Webots)가 640×480 rgb8 이라 그대로 엔진에 들어간다: 덧대기(letterbox) 없음, 전처리(형 변환·/255·HWC→CHW)는 엔진 안 첫 세 노드.
+
+1. 아래 "상자만 내는 이전 모델" 순서로 `.pt` 를 만들되 다음만 바꾼다: `DetectionModel('yolo26s.yaml', …)` → `SegmentationModel('yolo26s-seg.yaml', …)`, `dm.args['task'] = 'segment'`, 파일 이름 `yolo26s-seg_fire7.*`. 마지막 `export(...)` 줄은 빼고 2 로.
+2. 480×640 으로 내보내고 uint8 입력 노드를 앞에 붙인 뒤 엔진을 만든다:
+
+```bash
+cd ~/limo_fire_ws/train/detect/data/runs/y26s_seg
+env -u PYTHONPATH ~/venvs/yolo_export/bin/python - <<'PY'
+import onnx, numpy as np
+from onnx import helper, TensorProto, numpy_helper
+from ultralytics import YOLO
+YOLO('yolo26s-seg_fire7.pt', task='segment').export(format='onnx', imgsz=(480, 640), opset=17, simplify=True, nms=False)
+m = onnx.load('yolo26s-seg_fire7.onnx'); g = m.graph; old = g.input[0]
+_, c, h, w = [d.dim_value for d in old.type.tensor_type.shape.dim]
+g.initializer.append(numpy_helper.from_array(np.array(255.0, dtype=np.float32), 'k255'))
+for i, n in enumerate([helper.make_node('Cast', ['rgb_u8'], ['rgb_f'], to=TensorProto.FLOAT),
+                       helper.make_node('Transpose', ['rgb_f'], ['rgb_chw'], perm=[0, 3, 1, 2]),
+                       helper.make_node('Div', ['rgb_chw', 'k255'], [old.name])]):
+    g.node.insert(i, n)
+g.input.remove(old); g.input.insert(0, helper.make_tensor_value_info('rgb_u8', TensorProto.UINT8, [1, h, w, 3]))
+onnx.checker.check_model(m); onnx.save(m, 'yolo26s-seg_fire7_u8_480.onnx')   # 출력 (1,300,38) + (1,32,120,160)
+PY
+/usr/src/tensorrt/bin/trtexec --onnx=yolo26s-seg_fire7_u8_480.onnx --fp16 \
+  --saveEngine=$HOME/limo_fire_ws/src/limo_fire/limo_fire_perception/models/yolo26s_seg_fire_u8_480.engine
+```
+
+엔진 빌드는 Webots 가 같이 돌면 15 분 넘게 걸린다 (Webots 를 `kill -STOP` 으로 잠시 멈추면 빠르다).
+이전 엔진(640×640 float: `yolo26s_seg_fire.engine`, 상자만 내는 `yolo26s_fire.engine`)도 노드가 그대로 돌린다 (덧대기·/255 는 GPU 커널이 한다).
+
+### 속도 (2026-10-28, Jetson 15W, Webots 멈춤, 노드 없이 TrtYolo 만 같은 영상 300 장)
+
+| 엔진 | GPU 계산 (trtexec, CUDA 그래프) | 한 장 전체 (영상 넣기 → 탐지·마스크 받기) | CPU 시간/장 |
+|---|---|---|---|
+| **seg uint8 480×640 (기본)** | 9.8 ms | **10.7 ms** | 0.36 ms |
+| seg float 640×640 (이전) | 13.1 ms | 14.1 ms | 0.39 ms |
+| 상자만 float 640×640 | — | 9.9 ms | 0.35 ms |
+
+바꾸기 전 노드(CPU 전처리 12 ms + 매번 TensorRT 띄우기 + 원형 마스크 D2H + CPU 마스크)는 Webots 없이 약 30 ms 로 추정했었다.
+Webots 와 같이 돌 때는 Webots 가 GPU 를 같이 써서 노드 25 ms 안팎 (같은 때 trtexec 만 돌려도 22 ms). 실물에서는 위 표 값이 나와야 한다.
+두 장 겹치기(다음 장을 먼저 걸고 앞 장 발행)는 0.2 ms 정도만 줄인다: GPU 가 병목이고 CPU 일은 0.4 ms 뿐이라서.
 
 상자만 내는 이전 모델 (Release detect-y26s-clean):
 
@@ -94,3 +145,14 @@ ros2 launch limo_fire_perception yolo.launch.xml use_sim_time:=true viewer:=fals
 
 틀린 것: 사람(person_1) → 소화기(위치는 0.14 m), 북쪽 벽 → 문 1 개. 탁자 → 계단, 불 근처 → 유도등 오류는 없어짐. 사람·유도등·촛불·연기는 여전히 못 잡음.
 노드 전체 추론(전처리·마스크 포함) 약 47 ms (Webots 와 같이 돌 때).
+
+### GPU 로 옮긴 뒤 다시 확인 (2026-10-28, uint8 480×640 엔진, 같은 방·같은 웨이포인트)
+
+| 정답 물체 | 지도 위치 오차 (이전 마스크 → 지금) |
+|---|---|
+| 불(바닥) · 불(작은 것) | 0.17 · 0.07 → 0.19 · 0.12 m |
+| 소화기 동 · 서 · 남서 | 0.14 · 0.02 · 0.33 → 0.14 · 0.03 · 0.28 m |
+| 문 | 0.19 → 0.26 m |
+| 계단 | 0.52 → 0.44 m |
+
+틀린 것: 이전과 같은 사람(person_1) → 소화기, 북쪽 벽 → 문에 더해 작은 불 자리에 연기 1 개. 노드 25 ms 안팎 (Webots 와 같이 돌 때).
