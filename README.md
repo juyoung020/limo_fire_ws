@@ -14,7 +14,8 @@
 <a href="docs/parts.md">부품 목록</a> &nbsp;·&nbsp;
 <a href="docs/detect.md">인식 모델(YOLO26s-seg)</a> &nbsp;·&nbsp;
 <a href="docs/progress.md">진행 기록</a> &nbsp;·&nbsp;
-<a href="docs/backlog.md">프로덕트 백로그</a>
+<a href="docs/backlog.md">프로덕트 백로그</a> &nbsp;·&nbsp;
+<a href="CHANGELOG.md">변경 기록</a>
 
 <br><br>
 
