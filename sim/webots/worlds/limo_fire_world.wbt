@@ -30,7 +30,7 @@ EXTERNPROTO "../protos/ExitSign.proto"
 WorldInfo {
   info [
     "AgileX LIMO in the Cyberbotics webots_ros2_turtlebot apartment world."
-    "limo_fire: 교수님 limo_world.wbt 에 YOLO 7 클래스 물체를 놓은 판 (sim/webots/README.md, objects.yaml)"
+    "limo_fire: 교수님 limo_world.wbt 에 YOLO 7 클래스 물체를 놓은 판 (sim/webots/README.md, limo_fire_world.yaml)"
   ]
   title "ROS2 simulation of the AgileX LIMO robot"
   basicTimeStep 10
@@ -238,7 +238,7 @@ BunchOfSunFlowers {
   rotation 0 0 1 1.5708
 }
 
-# ---------------- limo_fire: YOLO 7 클래스 물체 (위치·크기 정답은 ../objects.yaml) ----------------
+# ---------------- limo_fire: YOLO 7 클래스 물체 (위치·크기 정답은 limo_fire_world.yaml) ----------------
 # fire: 바닥 불 + 촛불 + 작은 불
 FireBillboard {
   translation 8.0 -2.3 0
@@ -323,4 +323,11 @@ StraightStairs {
   stepSize 0.3 1.0 0.03
   stepRise 0.15
   nSteps 4
+}
+
+# /clock 을 내는 ROS 2 supervisor. sim_robot.launch.xml 의 ros2_supervisor.py 가 붙는다
+Robot {
+  name "Ros2Supervisor"
+  controller "<extern>"
+  supervisor TRUE
 }

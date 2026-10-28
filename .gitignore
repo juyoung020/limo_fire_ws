@@ -50,3 +50,6 @@ train/detect/teacher/ref/
 train/detect/teacher/ref_src
 train/detect/trainer/build/
 train/detect/trainer/ref/
+
+# Webots 가 월드마다 만드는 창 배치 상태
+*.wbproj

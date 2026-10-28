@@ -10,10 +10,12 @@
   <executable cmd="sudo -n /usr/bin/jetson_clocks" name="jetson_clocks" output="screen" if="$(var max_clocks)"/>
 
   <!-- 로봇 모델: 센서 장착 위치는 전부 URDF 에. camera_link 아래 color·depth 프레임은 Orbbec 드라이버가 낸다(publish_tf) -->
-  <node pkg="joint_state_publisher" exec="joint_state_publisher"/>
-  <node pkg="robot_state_publisher" exec="robot_state_publisher">
-    <param name="robot_description" value="$(command 'xacro $(find-pkg-share limo_fire_description)/urdf/limo_fire.urdf.xacro camera_pitch:=$(var camera_pitch) camera_driver_tf:=true')" type="str"/>
-  </node>
+  <include file="$(find-pkg-share limo_fire_description)/launch/description.launch.xml">
+    <arg name="platform" value="real"/>
+    <arg name="camera_pitch" value="$(var camera_pitch)"/>
+    <arg name="camera_driver_tf" value="true"/>
+    <arg name="joint_states" value="true"/>
+  </include>
 
   <!-- 베이스: 바퀴 오도메트리 /odom, IMU /imu, /cmd_vel 받음. odom TF 는 EKF 가 낸다 -->
   <node pkg="limo_base" exec="limo_base" namespace="limo" output="screen" emulate_tty="true">

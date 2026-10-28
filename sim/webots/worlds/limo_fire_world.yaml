@@ -1,8 +1,6 @@
-# limo_fire_world.wbt 에 놓은 YOLO 정답 물체 (Webots 세계 좌표, m). YOLO 벤치마크에서 카메라에 투영해 2D 정답 상자를 만든다.
-# center: 물체 가운데, size: [x 폭, y 폭, 높이] (회전 전, 물체 자기 축). approx: true 면 Webots 모델 크기를 눈대중으로 적은 값 — Webots 에서 재서 고칠 것
-# 클래스 번호는 train/detect 와 같다: 0 fire · 1 smoke · 2 fire_extinguisher · 3 exit_sign · 4 person · 5 door · 6 stairs
-world: worlds/limo_fire_world.wbt
+# limo_fire_world.wbt 의 정답 데이터 (Webots 세계 좌표, m). 형식은 ../README.md "월드 데이터 파일"
 robot_start: {x: 6.36, y: 0.0, yaw: 0.0}
+patrol: [[6.4, 2.2], [7.8, 4.0], [9.0, 1.9], [6.6, -1.5], [7.4, -3.2], [6.36, 0.0]]
 objects:
   - {name: fire_floor,             cls: 0, center: [8.00, -2.30, 0.20],  size: [0.70, 0.70, 0.40], yaw: 0.0}
   - {name: fire_candle,            cls: 0, center: [7.45, -0.65, 0.655], size: [0.06, 0.06, 0.07], yaw: 0.0, note: "촛불 불꽃만. 초는 z 0.50~0.62"}

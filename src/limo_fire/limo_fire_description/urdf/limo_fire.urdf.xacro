@@ -1,11 +1,13 @@
 <?xml version="1.0"?>
 <!-- 화재 대응 LIMO Pro 조립. 모듈마다 xacro 하나, 장착 위치는 여기 한 곳에만 둔다.
      열화상·레이더·초음파·노즐(팬·틸트)은 배치가 정해지면 모듈 xacro 를 더하고 여기서 부른다.
-     xacro limo_fire.urdf.xacro camera_pitch:=0.0 camera_driver_tf:=false -->
+     xacro limo_fire.urdf.xacro platform:=real camera_pitch:=0.0 camera_driver_tf:=false -->
 <robot name="limo_fire" xmlns:xacro="http://ros.org/wiki/xacro">
+  <!-- real: 실물 LIMO, webots: 교수님 Webots 모델(webots_ros2_limo LimoFourDiff.proto). 둘이 다른 장착 위치만 여기서 고른다 -->
+  <xacro:arg name="platform" default="real"/>
   <!-- 카메라 마운트 틸트(라디안, 아래로 숙이면 +). 손으로 고정하는 마운트라 관절이 아니라 인자로 받는다 -->
   <xacro:arg name="camera_pitch" default="0.0"/>
-  <!-- true: 실물 — camera_link 아래 color·depth 프레임은 Orbbec 드라이버가 낸다 -->
+  <!-- true: camera_link 아래 color·depth 프레임은 카메라 드라이버가 낸다 (실물 Orbbec 드라이버, Webots limo_sensors 플러그인 둘 다) -->
   <xacro:arg name="camera_driver_tf" default="false"/>
 
   <xacro:include filename="$(find limo_fire_description)/urdf/limo_pro_base.xacro"/>
@@ -13,8 +15,10 @@
 
   <xacro:limo_pro_base/>
 
-  <!-- base_link → camera_link. x·y 는 실물 실측(약 0.15, −0.005), z 는 WeGo 틸트 TF 값 그대로(실측 필요).
-       이전 값: WeGo static TF (0.23, 0.05, 0.06), Webots (0.096, 0.015, 0.03) -->
-  <xacro:orbbec_dabai parent="base_link" name="camera" xyz="0.15 -0.005 0.06"
+  <!-- base_link → camera_link
+       real:   x·y 는 실물 실측(약 0.15, −0.005), z 는 WeGo 틸트 TF 값 그대로(실측 필요). 이전 값: WeGo static TF (0.23, 0.05, 0.06)
+       webots: Webots 모델의 깊이 렌즈 자리 (LimoFourDiff.proto 주석) -->
+  <xacro:property name="camera_xyz" value="${dict(real='0.15 -0.005 0.06', webots='0.096 0.015 0.03')['$(arg platform)']}"/>
+  <xacro:orbbec_dabai parent="base_link" name="camera" xyz="${camera_xyz}"
                       pitch="$(arg camera_pitch)" driver_tf="$(arg camera_driver_tf)"/>
 </robot>

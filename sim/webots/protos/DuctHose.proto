@@ -1,0 +1,49 @@
+#VRML_SIM R2025a utf8
+# 시연장 미로 벽으로 쓰는 알루미늄 주름 덕트호스 한 토막. 바닥(z=0)에 눕고 로컬 x 방향으로 뻗는다. translation 은 토막 가운데.
+# 라이다(높이 0.111 m)에 잡히려면 diameter 가 0.111 m 보다 커야 한다(docs/spec.md "덕트호스가 LIMO 라이다 높이에 걸리는지").
+# 충돌은 되고(boundingObject) 물리는 없다(움직이지 않음). 꺾인 통로는 토막 여러 개로 만든다.
+# template language: javascript
+
+PROTO DuctHose [
+  field SFVec3f    translation 0 0 0
+  field SFRotation rotation    0 0 1 0
+  field SFString   name        "duct hose"
+  field SFFloat    length      2.0     # 길이(m)
+  field SFFloat    diameter    0.15    # 바깥 지름(m)
+  field SFInt32    ribs        0       # 0 보다 크면 1 m 마다 이만큼 주름 고리를 그린다 (렌더링 비용이 늘어 기본은 끔)
+]
+{
+  %<
+    const L = fields.length.value;
+    const r = fields.diameter.value / 2;
+    const n = Math.max(0, Math.round(fields.ribs.value * L));
+  >%
+  Solid {
+    translation IS translation
+    rotation IS rotation
+    name IS name
+    children [
+      Pose {
+        translation 0 0 %<= r >%
+        rotation 0 1 0 1.5708
+        children [
+          Shape {
+            appearance DEF DUCT_SKIN PBRAppearance { baseColor 0.78 0.78 0.80 roughness 0.35 metalness 0.9 }
+            geometry Cylinder { height %<= L >% radius %<= r >% subdivision 16 }
+          }
+          %< for (let i = 0; i < n; ++i) { const z = -L / 2 + (i + 0.5) * L / n; >%
+          Pose {
+            translation 0 0 %<= z >%
+            children [ Shape { appearance USE DUCT_SKIN geometry Cylinder { height 0.01 radius %<= r * 1.04 >% subdivision 16 } } ]
+          }
+          %< } >%
+        ]
+      }
+    ]
+    boundingObject Pose {
+      translation 0 0 %<= r >%
+      rotation 0 1 0 1.5708
+      children [ Cylinder { height %<= L >% radius %<= r >% } ]
+    }
+  }
+}

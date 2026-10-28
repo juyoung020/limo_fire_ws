@@ -1,0 +1,275 @@
+#VRML_SIM R2025a utf8
+# limo_fire_office: 복도 + 방 셋 + 계단실이 있는 사무실 층 (12×8 m). 정답 물체·시작·순찰점은 limo_fire_office.yaml
+# 복도 y -1~1 (동서로 김, 동쪽 끝 비상구 문). 북쪽 방 N1(x -6~0)·N2(0~6), 남쪽 방 S(x -2~6), 남서쪽 계단실(x -6~-2, 복도로 트임)
+
+EXTERNPROTO "webots://projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "../../../src/external/webots_ros2_limo/protos/LimoFourDiff.proto"
+EXTERNPROTO "webots://projects/objects/floors/protos/Floor.proto"
+EXTERNPROTO "webots://projects/appearances/protos/MarbleTiles.proto"
+EXTERNPROTO "webots://projects/objects/apartment_structure/protos/Wall.proto"
+EXTERNPROTO "webots://projects/objects/apartment_structure/protos/Door.proto"
+EXTERNPROTO "webots://projects/objects/tables/protos/Table.proto"
+EXTERNPROTO "webots://projects/objects/tables/protos/Desk.proto"
+EXTERNPROTO "webots://projects/objects/chairs/protos/OfficeChair.proto"
+EXTERNPROTO "webots://projects/objects/cabinet/protos/Cabinet.proto"
+EXTERNPROTO "webots://projects/objects/plants/protos/PottedTree.proto"
+EXTERNPROTO "webots://projects/objects/factory/containers/protos/CardboardBox.proto"
+EXTERNPROTO "webots://projects/objects/factory/fire_extinguisher/protos/FireExtinguisher.proto"
+EXTERNPROTO "webots://projects/humans/pedestrian/protos/Pedestrian.proto"
+EXTERNPROTO "webots://projects/objects/stairs/protos/StraightStairs.proto"
+EXTERNPROTO "../protos/FireBillboard.proto"
+EXTERNPROTO "../protos/Candle.proto"
+EXTERNPROTO "../protos/ExitSign.proto"
+
+WorldInfo {
+  info [
+    "limo_fire: 복도·방·계단실이 있는 사무실 층 (sim/webots/README.md, limo_fire_office.yaml)"
+  ]
+  title "limo_fire office"
+  basicTimeStep 10
+  contactProperties [
+    ContactProperties {
+      material1 "wheel"
+      material2 "default"
+      coulombFriction 1.0
+      forceDependentSlip 0.01
+      bounce 0
+    }
+  ]
+}
+Viewpoint {
+  orientation 0.25 0.25 -0.93 1.64
+  position 0 9 12
+  follow "LIMO"
+}
+TexturedBackground {
+  texture "empty_office"
+  skybox FALSE
+}
+LimoFourDiff {
+  translation -5 0 0.145
+  name "LIMO"
+  controller "<extern>"
+}
+Floor {
+  size 12 8
+  tileSize 1 1
+  appearance MarbleTiles {
+  }
+}
+
+# ---------------- 바깥 벽 ----------------
+Wall {
+  translation 0 4.1 0
+  name "wall_north"
+  size 12.4 0.2 2.4
+}
+Wall {
+  translation 0 -4.1 0
+  name "wall_south"
+  size 12.4 0.2 2.4
+}
+Wall {
+  translation -6.1 0 0
+  name "wall_west"
+  size 0.2 8 2.4
+}
+Wall {
+  translation 6.1 -2.25 0
+  name "wall_east_south"
+  size 0.2 3.5 2.4
+}
+Wall {
+  translation 6.1 2.25 0
+  name "wall_east_north"
+  size 0.2 3.5 2.4
+}
+Door {
+  translation 6.1 0 0
+  name "door_exit"
+  position 0
+}
+
+# ---------------- 복도 북쪽 벽 (방 N1·N2 문) ----------------
+# Door 는 position 이 양수일 때 로컬 +x 쪽으로 열린다(음수는 경첩 한계로 안 열림). 방 안쪽으로 열리게 회전을 고르고, 끝까지(1.57, 경첩 한계) 열어 문짝을 벽에 붙인다
+Wall {
+  translation -4.75 1.1 0
+  name "wall_corridor_n1"
+  size 2.5 0.2 2.4
+}
+Wall {
+  translation 0 1.1 0
+  name "wall_corridor_n2"
+  size 5 0.2 2.4
+}
+Wall {
+  translation 4.75 1.1 0
+  name "wall_corridor_n3"
+  size 2.5 0.2 2.4
+}
+Door {
+  translation -3 1.1 0
+  rotation 0 0 1 1.5708
+  name "door_n1"
+  position 1.57
+}
+Door {
+  translation 3 1.1 0
+  rotation 0 0 1 1.5708
+  name "door_n2"
+  position 1.57
+}
+Wall {
+  translation 0 2.6 0
+  name "wall_n1_n2"
+  size 0.2 2.8 2.4
+}
+
+# ---------------- 복도 남쪽 벽 (방 S 문) + 계단실 벽 ----------------
+Wall {
+  translation -0.25 -1.1 0
+  name "wall_corridor_s1"
+  size 3.5 0.2 2.4
+}
+Wall {
+  translation 4.25 -1.1 0
+  name "wall_corridor_s2"
+  size 3.5 0.2 2.4
+}
+Door {
+  translation 2 -1.1 0
+  rotation 0 0 1 -1.5708
+  name "door_s"
+  position 1.57
+}
+Wall {
+  translation -2.1 -2.6 0
+  name "wall_stairwell"
+  size 0.2 2.8 2.4
+}
+
+# ---------------- 가구 ----------------
+Table {
+  translation -4.6 2.9 0
+  name "table_n1"
+  size 1.2 0.7 0.5
+}
+Desk {
+  translation 2 3.4 0
+  name "desk_n2"
+}
+OfficeChair {
+  translation 2 2.8 0
+  rotation 0 0 1 1.5708
+  name "chair_n2"
+}
+Cabinet {
+  translation -0.35 -3.9 0
+  rotation 0 0 1 1.5708
+  name "cabinet_s"
+}
+PottedTree {
+  translation 5.6 0.75 0
+  name "tree_corridor"
+}
+CardboardBox {
+  translation 5.6 -3.6 0.3
+  name "box_s1"
+}
+CardboardBox {
+  translation 4.9 -3.6 0.3
+  name "box_s2"
+}
+
+# ---------------- YOLO 7 클래스 물체 (위치·크기 정답은 limo_fire_office.yaml) ----------------
+# fire / smoke: N2 방 바닥 불 + 연기, N1 탁자 위 촛불, S 방 작은 불
+FireBillboard {
+  translation 4.5 3 0
+  name "fire_floor"
+  texture "flame_bonfire"
+  width 0.7
+  height 0.4
+  emissiveIntensity 1.5
+  lightIntensity 1.5
+}
+FireBillboard {
+  translation 4.5 3 0.35
+  name "smoke_floor"
+  texture "smoke"
+  width 1.1
+  height 0.9
+  emissiveIntensity 0
+}
+Candle {
+  translation -4.6 2.75 0.5
+  name "fire_candle"
+}
+FireBillboard {
+  translation 0 -3.2 0
+  name "fire_small"
+  texture "flame_single"
+  width 0.3
+  height 0.4
+  emissiveIntensity 1.5
+  lightIntensity 0.8
+}
+# fire_extinguisher: 복도 양쪽 + S 방
+FireExtinguisher {
+  translation -1 0.85 0
+  name "extinguisher_corridor_n"
+  enablePhysics FALSE
+}
+FireExtinguisher {
+  translation 4 -0.85 0
+  name "extinguisher_corridor_s"
+  enablePhysics FALSE
+}
+FireExtinguisher {
+  translation 5.75 -1.5 0
+  name "extinguisher_s"
+  enablePhysics FALSE
+}
+# exit_sign: 비상구 문 위(-x 를 봄), 복도 서쪽 끝(+x), 복도 북쪽 벽(-y)
+ExitSign {
+  translation 5.97 0 2.15
+  rotation 0 0 1 3.14159
+  name "exit_sign_door"
+}
+ExitSign {
+  translation -5.97 0 2
+  name "exit_sign_west"
+}
+ExitSign {
+  translation 1 0.98 2
+  rotation 0 0 1 -1.5708
+  name "exit_sign_corridor"
+}
+# person
+Pedestrian {
+  translation -1.5 2.6 1.27
+  rotation 0 0 1 3.14159
+  name "person_n1"
+  controller "<none>"
+}
+Pedestrian {
+  translation 3.5 -2.6 1.27
+  rotation 0 0 1 1.5708
+  name "person_s"
+  shirtColor 0.7 0.1 0.1
+  controller "<none>"
+}
+# stairs: 계단실, +x 로 올라감
+StraightStairs {
+  translation -5.6 -3 0
+  name "stairs"
+  stepSize 0.3 1.0 0.03
+  stepRise 0.15
+  nSteps 5
+}
+
+# /clock 을 내는 ROS 2 supervisor. sim_robot.launch.xml 의 ros2_supervisor.py 가 붙는다
+Robot {
+  name "Ros2Supervisor"
+  controller "<extern>"
+  supervisor TRUE
+}

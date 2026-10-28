@@ -11,10 +11,18 @@
 
 - 변경 기록 `CHANGELOG.md`.
 - 센서 토픽 문서 `docs/sensor_topics.md`: 센서마다 토픽·타입·실측 주기·frame·발행/구독 노드, 시뮬과의 차이, 포인트 클라우드를 끄면 깊이 정렬도 꺼지는 문제 기록.
+- Webots 맵 3 개: 시연장 모양 덕트호스 미로(`limo_fire_maze`), 복도·방·계단실 사무실(`limo_fire_office`), 팔레트 창고(`limo_fire_warehouse`). 맵마다 YOLO 7 클래스 물체를 놓고, 정답 물체·시작 자리·순찰점을 같은 이름의 월드 데이터 파일(`worlds/<맵>.yaml`)에 둔다. 덕트호스 proto `DuctHose.proto`.
+- 시뮬 한 번에 띄우기 `sim.launch.xml world:=<맵> [slam:=true] [perception:=true]`: 실물과 같은 지도 만들기·Nav2·인식 launch 에 시뮬 차이(`nav2_sim.yaml`)만 덮는다. 맵 4 개의 시뮬 지도(`maps/sim/`), 4 맵 모두 저장 지도 + AMCL 로 순찰점 전부 도착.
+- 시뮬 로봇 켜기 `sim_robot.launch.xml`(실물 `robot.launch.xml` 의 시뮬 판): 교수님 `robot_launch.py` 대신 Webots·드라이버를 직접 띄우고 TF 는 우리 URDF 로 낸다. 교수님 launch 에서 두 번에 한 번꼴로 TF 가 안 나오던 URDF 경쟁과 Nav2 시작 지연 타이머가 없다.
 
 ### Changed
 
 - 실물 `robot.launch.xml` 이 WeGo URDF + 카메라 틸트 `static_transform_publisher` 3 개 대신 우리 `limo_fire.urdf.xacro` 하나로 TF 를 낸다. 카메라는 모듈 xacro `orbbec_dabai.xacro` 로 분리하고 장착 위치를 실측 (0.15, −0.005, 0.06) 으로 고침(이전 0.23, 0.05, 0.06). color·depth 프레임은 Orbbec 드라이버만 낸다. 틸트 인자 `degree` → `camera_pitch`.
+
+### Fixed
+
+- Nav2 costmap 팽창 반경을 0.05·0.13 m 에서 0.45 m 로. 로봇 반경(0.2 m)보다 작아 Nav2 가 오류를 내고 경로가 벽·문틀에 붙어 부딪혔다(Webots 사무실 맵에서 확인). 실물 확인 필요.
+- `yolo.launch.xml` 의 `mapper:=false` 가 무시되던 것.
 
 ## [0.5.0] - 2026-10-28
 

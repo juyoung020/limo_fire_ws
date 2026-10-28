@@ -25,13 +25,16 @@
       <extra_arg name="use_intra_process_comms" value="true"/>
     </composable_node>
   </load_composable_node>
-  <load_composable_node target="$(var container)" if="$(var mapper)">
-    <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectMapperNode" name="object_mapper" namespace="">
-      <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
-      <param name="use_sim_time" value="$(var use_sim_time)"/>
-      <extra_arg name="use_intra_process_comms" value="true"/>
-    </composable_node>
-  </load_composable_node>
+  <!-- load_composable_node 는 if 를 무시하므로 group 으로 조건을 건다 -->
+  <group if="$(var mapper)">
+    <load_composable_node target="$(var container)">
+      <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectMapperNode" name="object_mapper" namespace="">
+        <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
+        <param name="use_sim_time" value="$(var use_sim_time)"/>
+        <extra_arg name="use_intra_process_comms" value="true"/>
+      </composable_node>
+    </load_composable_node>
+  </group>
 
   <node pkg="rqt_image_view" exec="rqt_image_view" name="yolo_viewer" args="/yolo_detector/image" if="$(var viewer)"/>
   <node pkg="rviz2" exec="rviz2" name="object_map_rviz" if="$(var rviz)"

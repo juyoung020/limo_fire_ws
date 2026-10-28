@@ -115,12 +115,11 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 | 강화학습 (탐사·조준) | 직접 만드는 2.5D GPU 환경 — 수천 개 병렬 | `train/` |
 | 실제와 비슷한 검증 (센서·물리) | Isaac Sim 4.5 + WeGo LIMO USD | `sim/wego_LimoIsaacSIM` |
 | (공통) 맵 | AWS 병원·창고·서점·집, ProcTHOR-10K, HouseExpo | `sim/maps` ([목록](sim/maps/README.md)) |
-| Nav2·SLAM·BT 통합 검증 | Webots (교수님 환경, 실제 LIMO 와 같은 토픽·프레임) | `src/external/webots_ros2_limo` |
+| Nav2·SLAM·BT 통합 검증 | Webots (교수님 LIMO 모델, 실제 LIMO 와 같은 토픽·프레임) + 우리 맵 4 개 | `sim/webots` ([맵·실행](sim/webots/README.md)) |
 
 ```bash
 source ~/limo_fire_ws/env.sh
-ros2 launch webots_ros2_limo robot_launch.py            # Webots + LIMO
-ros2 launch webots_ros2_limo nav2_launch.py             # 다른 터미널: Nav2
+ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze     # Webots + 저장 지도 + Nav2 (slam:=true · perception:=true)
 ```
 
 ## 시작하기

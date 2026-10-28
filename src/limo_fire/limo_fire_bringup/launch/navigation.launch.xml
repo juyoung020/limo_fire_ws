@@ -1,71 +1,91 @@
 <!-- 저장한 지도에서 AMCL 위치 추정 + Nav2 주행 (대시보드 "네비게이션" = WeGo wego/navigation_diff_launch.py 와 같은 구성)
      먼저 robot.launch.xml 을 켜 둔다. RViz 에서 2D Pose Estimate 로 처음 위치를 찍고 Nav2 Goal 로 목표를 준다
-     ros2 launch limo_fire_bringup navigation.launch.xml [map:=/경로/map.yaml] [rviz:=false] -->
+     ros2 launch limo_fire_bringup navigation.launch.xml [map:=/경로/map.yaml] [rviz:=false]
+     시뮬은 sim.launch.xml 이 이 파일을 그대로 쓰고, 다른 점만 params_override(nav2_sim.yaml)로 덮는다.
+     localization:=false 면 지도·AMCL 없이 주행만 (SLAM 이 map 과 map → odom 을 낼 때) -->
 <launch>
   <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/map.yaml"/>
   <arg name="params_file" default="$(find-pkg-share limo_fire_navigation)/config/nav2_params.yaml"/>
+  <arg name="params_override" default="$(var params_file)" description="params_file 위에 덮어쓸 파라미터 (시뮬: nav2_sim.yaml)"/>
+  <arg name="use_sim_time" default="false"/>
+  <arg name="localization" default="true" description="false 면 map_server·AMCL 을 띄우지 않는다 (SLAM 과 같이 쓸 때)"/>
   <arg name="rviz" default="true"/>
 
   <!-- Nav2 노드는 전부 이 컨테이너 한 프로세스에 올린다 -->
   <node_container pkg="rclcpp_components" exec="component_container_isolated" name="nav2_container" namespace=""
                   ros_args="--log-level info" output="screen">
     <param from="$(var params_file)"/>
+    <param from="$(var params_override)"/>
     <param name="autostart" value="true"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
     <remap from="/tf" to="tf"/>
     <remap from="/tf_static" to="tf_static"/>
   </node_container>
 
   <!-- 위치 추정: 지도 + AMCL (WeGo wego_2d_nav/localization_launch.py) -->
-  <load_composable_node target="nav2_container">
-    <composable_node pkg="nav2_map_server" plugin="nav2_map_server::MapServer" name="map_server">
-      <param name="yaml_filename" value="$(var map)"/>
-      <remap from="/tf" to="tf"/>
-      <remap from="/tf_static" to="tf_static"/>
-    </composable_node>
-    <composable_node pkg="nav2_amcl" plugin="nav2_amcl::AmclNode" name="amcl">
-      <param from="$(var params_file)"/>
-    </composable_node>
-    <composable_node pkg="nav2_lifecycle_manager" plugin="nav2_lifecycle_manager::LifecycleManager" name="lifecycle_manager_localization">
-      <param name="autostart" value="true"/>
-      <param name="node_names" value="map_server,amcl" value-sep=","/>
-    </composable_node>
-  </load_composable_node>
+  <!-- load_composable_node 는 if 를 무시하므로 group 으로 조건을 건다 -->
+  <group if="$(var localization)">
+    <load_composable_node target="nav2_container">
+      <composable_node pkg="nav2_map_server" plugin="nav2_map_server::MapServer" name="map_server">
+        <param name="yaml_filename" value="$(var map)"/>
+        <param name="use_sim_time" value="$(var use_sim_time)"/>
+        <remap from="/tf" to="tf"/>
+        <remap from="/tf_static" to="tf_static"/>
+      </composable_node>
+      <composable_node pkg="nav2_amcl" plugin="nav2_amcl::AmclNode" name="amcl">
+        <param from="$(var params_file)"/>
+        <param from="$(var params_override)"/>
+      </composable_node>
+      <composable_node pkg="nav2_lifecycle_manager" plugin="nav2_lifecycle_manager::LifecycleManager" name="lifecycle_manager_localization">
+        <param name="autostart" value="true"/>
+        <param name="use_sim_time" value="$(var use_sim_time)"/>
+        <param name="node_names" value="map_server,amcl" value-sep=","/>
+      </composable_node>
+    </load_composable_node>
+  </group>
 
   <!-- 주행 (WeGo wego_2d_nav/navigation_only_launch.py). 컨트롤러 → cmd_vel_nav → 속도 평활 → cmd_vel -->
   <load_composable_node target="nav2_container">
     <composable_node pkg="nav2_controller" plugin="nav2_controller::ControllerServer" name="controller_server">
       <param from="$(var params_file)"/>
+      <param from="$(var params_override)"/>
       <remap from="/tf" to="tf"/>
       <remap from="/tf_static" to="tf_static"/>
       <remap from="cmd_vel" to="cmd_vel_nav"/>
     </composable_node>
     <composable_node pkg="nav2_smoother" plugin="nav2_smoother::SmootherServer" name="smoother_server">
       <param from="$(var params_file)"/>
+      <param from="$(var params_override)"/>
       <remap from="/tf" to="tf"/>
       <remap from="/tf_static" to="tf_static"/>
     </composable_node>
     <composable_node pkg="nav2_planner" plugin="nav2_planner::PlannerServer" name="planner_server">
       <param from="$(var params_file)"/>
+      <param from="$(var params_override)"/>
       <remap from="/tf" to="tf"/>
       <remap from="/tf_static" to="tf_static"/>
     </composable_node>
     <composable_node pkg="nav2_behaviors" plugin="behavior_server::BehaviorServer" name="behavior_server">
       <param from="$(var params_file)"/>
+      <param from="$(var params_override)"/>
       <remap from="/tf" to="tf"/>
       <remap from="/tf_static" to="tf_static"/>
     </composable_node>
     <composable_node pkg="nav2_bt_navigator" plugin="nav2_bt_navigator::BtNavigator" name="bt_navigator">
       <param from="$(var params_file)"/>
+      <param from="$(var params_override)"/>
       <remap from="/tf" to="tf"/>
       <remap from="/tf_static" to="tf_static"/>
     </composable_node>
     <composable_node pkg="nav2_waypoint_follower" plugin="nav2_waypoint_follower::WaypointFollower" name="waypoint_follower">
       <param from="$(var params_file)"/>
+      <param from="$(var params_override)"/>
       <remap from="/tf" to="tf"/>
       <remap from="/tf_static" to="tf_static"/>
     </composable_node>
     <composable_node pkg="nav2_velocity_smoother" plugin="nav2_velocity_smoother::VelocitySmoother" name="velocity_smoother">
       <param from="$(var params_file)"/>
+      <param from="$(var params_override)"/>
       <remap from="/tf" to="tf"/>
       <remap from="/tf_static" to="tf_static"/>
       <remap from="cmd_vel" to="cmd_vel_nav"/>
@@ -73,10 +93,13 @@
     </composable_node>
     <composable_node pkg="nav2_lifecycle_manager" plugin="nav2_lifecycle_manager::LifecycleManager" name="lifecycle_manager_navigation">
       <param name="autostart" value="true"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
       <param name="node_names" value="controller_server,smoother_server,planner_server,behavior_server,bt_navigator,waypoint_follower,velocity_smoother" value-sep=","/>
     </composable_node>
   </load_composable_node>
 
   <node pkg="rviz2" exec="rviz2" name="rviz2" output="screen" if="$(var rviz)"
-        args="-d $(find-pkg-share limo_fire_description)/rviz/navigation.rviz"/>
+        args="-d $(find-pkg-share limo_fire_description)/rviz/navigation.rviz">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
 </launch>

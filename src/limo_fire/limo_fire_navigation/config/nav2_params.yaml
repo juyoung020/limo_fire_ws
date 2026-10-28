@@ -208,10 +208,12 @@ global_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
+      # 팽창 반경: WeGo 값 0.05 는 로봇 반경(0.2)보다 작아서 Nav2 가 오류를 내고, 경로가 벽·문틀에 붙어 부딪혔다(Webots 사무실 맵).
+      # Nav2 기본(0.55)보다 좁은 통로(덕트호스 미로 약 1.2 m)를 고려해 0.45. 실물에서 확인 필요
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.05
+        inflation_radius: 0.45
       always_send_full_costmap: True
 
 local_costmap:
@@ -232,7 +234,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.13
+        inflation_radius: 0.45
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True

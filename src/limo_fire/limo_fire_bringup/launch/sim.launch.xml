@@ -1,0 +1,53 @@
+<!-- Webots 시뮬을 한 번에: 로봇 + (Cartographer 지도 만들기 또는 저장 지도·AMCL) + Nav2 [+ YOLO·물체 지도]
+     실물과 같은 launch(mapping · navigation · yolo)에 시뮬 차이만 인자로 준다. 로봇 켜기만 sim_robot.launch.xml 로 다르다.
+     맵은 이름 하나로 고른다. 새 맵은 같은 이름으로 파일만 넣으면 되고 이 파일은 고치지 않는다 (sim/webots/README.md):
+       월드  sim/webots/worlds/<world>.wbt        (정답 물체·순찰점은 같은 자리 <world>.yaml)
+       지도  limo_fire_navigation/maps/sim/<world>.yaml
+     주행:        ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze
+     지도 만들기: ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze slam:=true
+                  → 다 돌았으면 ros2 launch limo_fire_bringup save_map.launch.xml name:=sim/limo_fire_maze
+     Nav2 는 TF·/clock·지도가 준비될 때까지 스스로 기다리므로 시간 지연을 두지 않는다 -->
+<launch>
+  <arg name="world" default="limo_fire_world" description="sim/webots/worlds/ 안 월드 이름 (확장자 없이)"/>
+  <arg name="world_dir" default="$(env HOME)/limo_fire_ws/sim/webots/worlds"/>
+  <arg name="slam" default="false" description="true: 저장 지도·AMCL 대신 Cartographer 로 지도를 만들며 주행"/>
+  <arg name="nav" default="true" description="Nav2 를 띄운다"/>
+  <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/sim/$(var world).yaml" description="slam:=false 일 때 쓰는 지도"/>
+  <arg name="perception" default="false" description="YOLO 탐지 + 물체 지도 (limo_fire_perception yolo.launch.xml)"/>
+  <arg name="rviz" default="true"/>
+  <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
+
+  <!-- include 에 준 인자는 Humble 에서 바깥으로 새어 나와 다음 include 의 값을 바꾸므로 하나씩 group 으로 가둔다 -->
+  <group>
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/sim_robot.launch.xml">
+      <arg name="world_file" value="$(var world_dir)/$(var world).wbt"/>
+      <arg name="mode" value="$(var mode)"/>
+    </include>
+  </group>
+
+  <group if="$(var slam)">
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/mapping.launch.xml">
+      <arg name="odom_topic" value="/odom"/>
+      <arg name="use_sim_time" value="true"/>
+      <arg name="rviz" value="$(and $(var rviz) $(not $(var nav)))"/>
+    </include>
+  </group>
+
+  <group if="$(var nav)">
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/navigation.launch.xml">
+      <arg name="map" value="$(var map)"/>
+      <arg name="params_override" value="$(find-pkg-share limo_fire_navigation)/config/nav2_sim.yaml"/>
+      <arg name="use_sim_time" value="true"/>
+      <arg name="localization" value="$(not $(var slam))"/>
+      <arg name="rviz" value="$(var rviz)"/>
+    </include>
+  </group>
+
+  <group if="$(var perception)">
+    <include file="$(find-pkg-share limo_fire_perception)/launch/yolo.launch.xml">
+      <arg name="use_sim_time" value="true"/>
+      <arg name="rviz" value="false"/>
+      <arg name="viewer" value="true"/>
+    </include>
+  </group>
+</launch>
