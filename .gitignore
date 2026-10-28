@@ -2,6 +2,8 @@
 build/
 install/
 log/
+# Orbbec SDK 로그
+Log/
 
 # Isaac Sim USD (WeGo 가이드에서 직접 받음, README 참고)
 sim/wego_LimoIsaacSIM/USD/WegoLimo/
