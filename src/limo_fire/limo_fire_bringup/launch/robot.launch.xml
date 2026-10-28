@@ -4,6 +4,10 @@
 <launch>
   <arg name="degree" default="0.0" description="카메라 틸트 pitch (WeGo 와 같은 이름, 값은 라디안으로 들어간다)"/>
   <arg name="viz" default="false"/>
+  <arg name="max_clocks" default="true" description="jetson_clocks 로 CPU·GPU·메모리 클럭을 최대로 고정 (재부팅하면 풀림, sudo 암호 없이 될 때만)"/>
+
+  <!-- 클럭 고정: 카메라처럼 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려가 YOLO 가 21 ms → 고정하면 11 ms -->
+  <executable cmd="sudo -n /usr/bin/jetson_clocks" name="jetson_clocks" output="screen" if="$(var max_clocks)"/>
 
   <!-- 로봇 모델: WeGo limo_description 의 limo_four_diff.xacro (카메라는 여기 없고 아래 틸트 TF 로) -->
   <node pkg="joint_state_publisher" exec="joint_state_publisher"/>
@@ -35,6 +39,7 @@
     <node_container pkg="rclcpp_components" exec="component_container" name="camera_container" namespace="" output="screen">
       <composable_node pkg="orbbec_camera" plugin="orbbec_camera::OBCameraNodeDriver" name="camera" namespace="">
         <param from="$(find-pkg-share limo_fire_bringup)/config/orbbec_dabai_dc1.yaml"/>
+        <!-- 프로세스 안 전달(use_intra_process_comms)은 못 켠다: 드라이버가 transient_local 발행자(depth_to_color 등)를 만들어 rclcpp 가 거부 -->
       </composable_node>
     </node_container>
   </group>

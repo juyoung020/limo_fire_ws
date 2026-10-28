@@ -43,7 +43,12 @@ ros2 launch limo_fire_bringup navigation.launch.xml            # 2-b. 저장한 
 | `limo_fire_description/rviz/{sensors,mapping,navigation}.rviz` | `wego/rviz/{display,cartographer,navigation}.rviz` |
 | `limo_fire_navigation/maps/map.*` | 2026-10-26 실험실에서 만든 지도 (9.4 × 6.1 m) |
 
-WeGo 와 다른 점은 하나: `save_map.launch.xml` 의 지도 대기 시간을 2 초 → 10 초로 늘렸다. 2 초로는 `/map`(1 초마다 발행)을 못 받고 실패하는 일이 있었다 — 대시보드 "맵 저장"이 파일을 안 바꾼 원인으로 보인다. 저장 위치는 WeGo 처럼 src 와 install 두 곳이라 다시 빌드하지 않아도 네비게이션이 새 지도를 연다.
+WeGo 와 다른 점 (성능 측정은 limo_fire_perception README·2026-10-28 측정):
+- `robot.launch.xml` 이 시작할 때 `sudo -n jetson_clocks` 로 CPU·GPU·메모리 클럭을 최대로 고정한다 (`max_clocks:=false` 로 끔, 재부팅하면 풀림).
+  카메라처럼 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려가 YOLO 가 21 ms 걸리고, 고정하면 11 ms. 대신 대기 전력이 는다
+- `orbbec_dabai_dc1.yaml`: 아무도 안 쓰는 포인트 클라우드 2 개·IR 영상을 껐다. 드라이버 CPU 42 → 35 %, 깊이 영상 19 → 30 Hz (카메라만 띄워 30 초씩 잼)
+- `cartographer_2d.lua`: 회전 움직임 필터 0.1° → 0.5° (CPU -20 %, 궤적 차 1.5~1.8 cm), 자세 발행 5 → 20 ms (TF 트래픽). 파일 머리 주석에 비교 방법
+- `save_map.launch.xml` 의 지도 대기 시간을 2 초 → 10 초로 늘렸다. 2 초로는 `/map`(1 초마다 발행)을 못 받고 실패하는 일이 있었다 — 대시보드 "맵 저장"이 파일을 안 바꾼 원인으로 보인다. 저장 위치는 WeGo 처럼 src 와 install 두 곳이라 다시 빌드하지 않아도 네비게이션이 새 지도를 연다.
 
 드라이버(`limo_base`, `orbbec_camera`, `ydlidar_ros2_driver`, `robot_localization`, `limo_description`)는 로봇의 `~/wego_ws` 에 빌드된 것을 쓴다. 대시보드로 켠 것과 동시에 켜면 같은 장치를 두 번 열어 실패하니 한쪽만 쓴다.
 
