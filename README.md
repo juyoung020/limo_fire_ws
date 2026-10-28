@@ -11,6 +11,7 @@
 <a href="docs/idea.md">아이디어</a> &nbsp;·&nbsp;
 <a href="docs/spec.md">스펙·구현 방향</a> &nbsp;·&nbsp;
 <a href="docs/hardware.md">하드웨어 스펙</a> &nbsp;·&nbsp;
+<a href="docs/sensor_topics.md">센서 토픽</a> &nbsp;·&nbsp;
 <a href="docs/parts.md">부품 목록</a> &nbsp;·&nbsp;
 <a href="docs/detect.md">인식 모델(YOLO26s-seg)</a> &nbsp;·&nbsp;
 <a href="docs/progress.md">진행 기록</a> &nbsp;·&nbsp;
