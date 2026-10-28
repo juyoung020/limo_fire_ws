@@ -15,6 +15,7 @@
 #include <message_filters/synchronizer.h>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_components/register_node_macro.hpp>
 #include <rviz_2d_overlay_msgs/msg/overlay_text.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -81,8 +82,8 @@ std::string hex(const Style & s)
 class ObjectMapperNode : public rclcpp::Node
 {
 public:
-  ObjectMapperNode()
-  : Node("object_mapper"), tf_buffer_(get_clock()), tf_listener_(tf_buffer_)
+  explicit ObjectMapperNode(const rclcpp::NodeOptions & options)
+  : Node("object_mapper", options), tf_buffer_(get_clock()), tf_listener_(tf_buffer_)
   {
     map_frame_ = declare_parameter<std::string>("map_frame", "map");
     robot_frame_ = declare_parameter<std::string>("robot_frame", "base_link");
@@ -104,10 +105,13 @@ public:
     merge_radii_ = declare_parameter<std::vector<double>>("merge_radii", std::vector<double>{});
     merge_radii_.resize(class_names_.size(), merge_radius_);
 
+    // 늦게 켠 RViz 도 받게 transient_local. 프로세스 안 전달(intra-process)은 volatile 만 되므로 이 둘은 끈다
+    rclcpp::PublisherOptions latched;
+    latched.use_intra_process_comm = rclcpp::IntraProcessSetting::Disable;
     marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
-      "~/markers", rclcpp::QoS(1).transient_local());
+      "~/markers", rclcpp::QoS(1).transient_local(), latched);
     overlay_pub_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>(
-      "~/summary", rclcpp::QoS(1).transient_local());
+      "~/summary", rclcpp::QoS(1).transient_local(), latched);
     info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
       declare_parameter<std::string>("camera_info_topic", "/camera/depth/camera_info"), rclcpp::SensorDataQoS(),
       [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {info_ = msg;});
@@ -494,10 +498,4 @@ private:
 
 }  // namespace limo_fire_perception
 
-int main(int argc, char ** argv)
-{
-  rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<limo_fire_perception::ObjectMapperNode>());
-  rclcpp::shutdown();
-  return 0;
-}
+RCLCPP_COMPONENTS_REGISTER_NODE(limo_fire_perception::ObjectMapperNode)

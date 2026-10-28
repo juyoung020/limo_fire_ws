@@ -1,7 +1,7 @@
-// TrtYolo 안에서만 쓰는 GPU 커널 (전처리·end2end 해석·마스크 칠하기)
+// TrtYolo 안에서만 쓰는 GPU 커널 (전처리·end2end 해석·마스크·결과 영상)
 #pragma once
 
-#include <cuda_runtime_api.h>
+#include <cuda_runtime.h>
 
 #include <cstdint>
 
@@ -10,6 +10,10 @@ namespace limo_fire_perception::gpu
 
 // 마스크 영상 값이 1 바이트(물체 번호 + 1)라 한 장에 물체는 255 개까지
 constexpr int kMaxDets = 255;
+// 마스크를 만드는 물체 수 상한 (원형 해상도 로짓 버퍼 크기). 이보다 뒤 번호 물체는 상자만
+constexpr int kMaxMaskDets = 64;
+// 마스크 계수 수 상한 (YOLO 분할 모델은 32)
+constexpr int kMaxNm = 32;
 
 // 원본 이미지 ↔ 엔진 입력 좌표 (Ultralytics LetterBox 와 같은 규칙)
 struct Letterbox
@@ -23,6 +27,14 @@ struct Letterbox
   int left, top;   // 줄인 이미지를 놓는 정수 위치
 };
 
+// 원형 마스크 [nm, ph, pw] 와 그 자료형
+struct Proto
+{
+  const void * data;
+  bool half;       // true = fp16, false = fp32
+  int nm, ph, pw;
+};
+
 struct Det
 {
   float x1, y1, x2, y2;  // 원본 픽셀
@@ -30,6 +42,7 @@ struct Det
   int cls;
   int rx, ry, rw, rh;    // 마스크가 있을 수 있는 정수 픽셀 범위 (x1 <= u < x2, 이미지 안)
   int row;               // 엔진 출력의 몇 번째 줄인지 (마스크 계수 위치)
+  int gx0, gy0, gx1, gy1;  // 그 픽셀들을 쌍선형으로 읽을 때 필요한 원형 칸 범위 (끝 포함)
 };
 
 // 한 번의 D2H 로 가져오도록 개수와 목록을 붙여 둔다
@@ -42,12 +55,22 @@ struct DetBlock
 // 원본 RGB(uint8, 빈틈 없이 W×H×3) → 엔진 입력. nchw_float 이면 [1,3,H,W] float /255, 아니면 [1,H,W,3] uint8
 void letterbox(const uint8_t * img, void * dst, bool nchw_float, const Letterbox & lb, cudaStream_t st);
 
-// end2end 출력 [rows, cols] (x1 y1 x2 y2 score cls [계수…]) → 문턱 넘은 줄만 순서대로 DetBlock 에
-void decode_end2end(const float * out, int rows, int cols, float conf, const Letterbox & lb,
-  DetBlock * block, cudaStream_t st);
+// end2end 출력 [rows, cols] (x1 y1 x2 y2 score cls [계수…]) → 문턱 넘은 줄만 순서대로 DetBlock 에.
+// set_cond 이면 CUDA 그래프 조건 노드 cond 를 "물체가 하나라도 있음" 으로 켠다 (그래프 안에서만)
+void decode_end2end(const float * out, int rows, int cols, float conf, const Letterbox & lb, int ph, int pw,
+  DetBlock * block, bool set_cond, cudaGraphConditionalHandle cond, cudaStream_t st);
 
-// 물체 번호 영상 (img_h × img_w, 0 = 배경, k+1 = block->dets[k]). 겹치면 상자가 작은 물체가 위
-void paint_masks(const float * out, int cols, const float * proto, int nm, int ph, int pw,
-  const DetBlock * block, const Letterbox & lb, uint8_t * ids, cudaStream_t st);
+// 1 단계: 물체마다 원형 해상도 로짓 = 계수 · 원형 (Ultralytics process_mask 의 masks_in @ protos). logits [kMaxMaskDets, ph, pw]
+void mask_logits(const float * out, int cols, const Proto & proto, const DetBlock * block, float * logits,
+  cudaStream_t st);
+
+// 2 단계: 물체 번호 영상 (img_h × img_w, 0 = 배경, k+1 = block->dets[k]). 로짓을 쌍선형(align_corners=False)으로 읽어 > 0,
+// 상자(x1 <= u < x2) 밖은 버림. 겹치면 상자가 작은 물체가 위. ids 는 미리 0 이어야 한다
+void paint_masks(const DetBlock * block, const float * logits, int ph, int pw, const Letterbox & lb, uint8_t * ids,
+  cudaStream_t st);
+
+// 결과 영상: 원본 RGB 에 물체 픽셀만 클래스 색을 반투명(0.55 원본 + 0.45 색)하게 덧칠. colors = RGB × 256 클래스
+void draw_masks(const uint8_t * img, const uint8_t * ids, const DetBlock * block, const uint8_t * colors,
+  int img_w, int img_h, uint8_t * vis, cudaStream_t st);
 
 }  // namespace limo_fire_perception::gpu

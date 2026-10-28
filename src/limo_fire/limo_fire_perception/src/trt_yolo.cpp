@@ -47,16 +47,18 @@ void free_host(T *& p)
 }
 }  // namespace
 
-// 슬롯마다 따로 가지는 것: CPU 쪽 고정(pinned) 메모리, 끝났음을 알리는 이벤트, 그 슬롯 주소로 담은 그래프
+// 슬롯마다 따로 가지는 것: CPU 쪽 고정(pinned) 메모리, 끝났음을 알리는 이벤트, 그 슬롯 주소로 담은 그래프(결과 영상 없음·있음)
 struct TrtYolo::Slot
 {
   uint8_t * h_img = nullptr;
   gpu::DetBlock * h_block = nullptr;
   uint8_t * h_ids = nullptr;
+  uint8_t * h_vis = nullptr;
   float * h_out = nullptr;
   cudaEvent_t done = nullptr;
-  cudaGraphExec_t exec = nullptr;
+  cudaGraphExec_t exec[2] = {nullptr, nullptr};
   bool busy = false;
+  bool vis = false;
 };
 
 void TrtYolo::Logger::log(Severity severity, const char * msg) noexcept
@@ -78,7 +80,6 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
     throw std::runtime_error("엔진 파일을 열 수 없음: " + engine_path);
   }
   std::vector<char> blob((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-
   runtime_.reset(nvinfer1::createInferRuntime(logger_));
   engine_.reset(runtime_->deserializeCudaEngine(blob.data(), blob.size()));
   if (!engine_) {
@@ -86,6 +87,7 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
   }
   context_.reset(engine_->createExecutionContext());
 
+  nvinfer1::DataType proto_type = nvinfer1::DataType::kFLOAT;
   for (int i = 0; i < engine_->getNbIOTensors(); ++i) {
     const char * name = engine_->getIOTensorName(i);
     const auto type = engine_->getTensorDataType(name);
@@ -96,14 +98,13 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
       } else if (type != nvinfer1::DataType::kFLOAT) {
         throw std::runtime_error(std::string("입력은 uint8 [1,H,W,3] 또는 float32 [1,3,H,W] 여야 함: ") + name);
       }
-      continue;
-    }
-    if (type != nvinfer1::DataType::kFLOAT) {
-      throw std::runtime_error(std::string("출력은 float32 여야 함 (trtexec 기본값): ") + name);
-    }
-    if (engine_->getTensorShape(name).nbDims == 4) {
+    } else if (engine_->getTensorShape(name).nbDims == 4) {
       proto_name_ = name;   // 분할 모델의 원형 마스크 [1, nm, ph, pw]
+      proto_type = type;
     } else if (out_name_.empty()) {
+      if (type != nvinfer1::DataType::kFLOAT) {
+        throw std::runtime_error(std::string("탐지 출력은 float32 여야 함: ") + name);
+      }
       out_name_ = name;
     }
   }
@@ -132,10 +133,14 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
     nm_ = pd.d[1];
     ph_ = pd.d[2];
     pw_ = pd.d[3];
+    if (proto_type != nvinfer1::DataType::kFLOAT && proto_type != nvinfer1::DataType::kHALF) {
+      throw std::runtime_error("원형 마스크는 float32 또는 fp16 이어야 함");
+    }
+    proto_half_ = proto_type == nvinfer1::DataType::kHALF;
     if (out_dims.d[2] != 6 + nm_) {
       throw std::runtime_error("분할 모델은 end2end 출력 [1, N, 6 + 마스크 계수] 여야 함");
     }
-    if (nm_ > 32) {
+    if (nm_ > gpu::kMaxNm) {
       throw std::runtime_error("마스크 계수는 32 개까지");
     }
   }
@@ -153,15 +158,21 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
 
   check_cuda(cudaStreamCreateWithFlags(reinterpret_cast<cudaStream_t *>(&stream_), cudaStreamNonBlocking),
     "cudaStreamCreate");
+  check_cuda(cudaStreamCreateWithFlags(reinterpret_cast<cudaStream_t *>(&mask_stream_), cudaStreamNonBlocking),
+    "cudaStreamCreate");
   const size_t in_bytes = static_cast<size_t>(in_w_) * in_h_ * 3 * (in_u8_ ? 1 : sizeof(float));
   check_cuda(cudaMalloc(&d_in_, in_bytes), "cudaMalloc in");
   check_cuda(cudaMalloc(&d_out_, out_elems_ * sizeof(float)), "cudaMalloc out");
   check_cuda(cudaMalloc(&d_block_, sizeof(gpu::DetBlock)), "cudaMalloc dets");
+  check_cuda(cudaMalloc(&d_colors_, 256 * 3), "cudaMalloc colors");
+  check_cuda(cudaMemset(d_colors_, 160, 256 * 3), "cudaMemset colors");
   context_->setTensorAddress(in_name_.c_str(), d_in_);
   context_->setTensorAddress(out_name_.c_str(), d_out_);
-  if (!proto_name_.empty()) {
-    check_cuda(cudaMalloc(&d_proto_, static_cast<size_t>(nm_) * ph_ * pw_ * sizeof(float)), "cudaMalloc proto");
+  if (has_masks()) {
+    check_cuda(cudaMalloc(&d_proto_, static_cast<size_t>(nm_) * ph_ * pw_ * (proto_half_ ? 2 : 4)), "cudaMalloc proto");
     context_->setTensorAddress(proto_name_.c_str(), d_proto_);
+    check_cuda(cudaMalloc(&d_logits_, static_cast<size_t>(gpu::kMaxMaskDets) * ph_ * pw_ * sizeof(float)),
+      "cudaMalloc logits");
   }
   for (int i = 0; i < kSlots; ++i) {
     slots_.push_back(std::make_unique<Slot>());
@@ -184,20 +195,42 @@ TrtYolo::~TrtYolo()
   free_device(d_out_);
   free_device(d_proto_);
   free_device(d_block_);
+  free_device(d_logits_);
+  free_device(d_colors_);
   if (stream_) {cudaStreamDestroy(static_cast<cudaStream_t>(stream_));}
+  if (mask_stream_) {cudaStreamDestroy(static_cast<cudaStream_t>(mask_stream_));}
+}
+
+void TrtYolo::set_class_colors(const std::vector<cv::Vec3b> & rgb)
+{
+  if (rgb.empty()) {
+    return;
+  }
+  std::vector<uint8_t> table(256 * 3);
+  for (size_t c = 0; c < 256; ++c) {
+    const cv::Vec3b & v = rgb[c % rgb.size()];
+    table[c * 3] = v[0];
+    table[c * 3 + 1] = v[1];
+    table[c * 3 + 2] = v[2];
+  }
+  check_cuda(cudaMemcpy(d_colors_, table.data(), table.size(), cudaMemcpyHostToDevice), "colors");
 }
 
 void TrtYolo::release_image_buffers()
 {
   for (auto & s : slots_) {
-    if (s->exec) {cudaGraphExecDestroy(s->exec); s->exec = nullptr;}
+    for (auto & e : s->exec) {
+      if (e) {cudaGraphExecDestroy(e); e = nullptr;}
+    }
     free_host(s->h_img);
     free_host(s->h_block);
     free_host(s->h_ids);
+    free_host(s->h_vis);
     free_host(s->h_out);
   }
   free_device(d_img_);
   free_device(d_ids_);
+  free_device(d_vis_);
 }
 
 void TrtYolo::configure(int img_w, int img_h)
@@ -230,6 +263,7 @@ void TrtYolo::configure(int img_w, int img_h)
   }
   if (has_masks()) {
     check_cuda(cudaMalloc(&d_ids_, ids_bytes), "cudaMalloc ids");
+    check_cuda(cudaMalloc(&d_vis_, img_bytes), "cudaMalloc vis");
   }
   for (auto & s : slots_) {
     check_cuda(cudaMallocHost(&s->h_img, img_bytes), "cudaMallocHost img");
@@ -241,48 +275,111 @@ void TrtYolo::configure(int img_w, int img_h)
     }
     if (has_masks()) {
       check_cuda(cudaMallocHost(&s->h_ids, ids_bytes), "cudaMallocHost ids");
+      check_cuda(cudaMallocHost(&s->h_vis, img_bytes), "cudaMallocHost vis");
     }
   }
 
-  // 한 번 그대로 돌려 TensorRT 가 준비를 끝내게 한 뒤(그래프에 담기 전 필요), 슬롯마다 그래프에 담는다
+  // 한 번 그대로 돌려 TensorRT 가 준비를 끝내게 한 뒤(그래프에 담기 전 필요), 슬롯·결과 영상 유무마다 그래프에 담는다.
+  // 조건 노드 그래프 → 일반 그래프 → 그래프 없음 순으로 되는 것을 쓴다
   std::memset(slots_[0]->h_img, 114, img_bytes);
-  enqueue(*slots_[0]);
+  enqueue_front(*slots_[0], false, 0);
+  if (has_masks()) {enqueue_masks(stream_);}
+  enqueue_back(*slots_[0], has_masks());
   check_cuda(cudaStreamSynchronize(st), "warmup");
-  if (!use_graph_) {
-    return;
-  }
-  for (auto & s : slots_) {
-    cudaGraph_t graph = nullptr;
-    bool ok = cudaStreamBeginCapture(st, cudaStreamCaptureModeThreadLocal) == cudaSuccess;
-    if (ok) {
-      try {
-        enqueue(*s);
-      } catch (const std::exception & e) {
-        std::cerr << "[TrtYolo] 그래프 담기 중 오류: " << e.what() << std::endl;
-        ok = false;
-      }
-      ok = cudaStreamEndCapture(st, &graph) == cudaSuccess && ok;
+
+  for (int mode : {2, 1}) {
+    if (mode == 2 && !(end2end_ && has_masks())) {
+      continue;
     }
-    ok = ok && cudaGraphInstantiate(&s->exec, graph, 0) == cudaSuccess;
-    if (graph) {cudaGraphDestroy(graph);}
-    if (!ok) {
-      cudaGetLastError();
-      std::cerr << "[TrtYolo] CUDA 그래프를 못 만들어 매번 따로 띄운다" << std::endl;
-      use_graph_ = false;
-      for (auto & t : slots_) {
-        if (t->exec) {cudaGraphExecDestroy(t->exec); t->exec = nullptr;}
+    bool ok = true;
+    for (auto & s : slots_) {
+      for (int v = 0; v < (has_masks() ? 2 : 1) && ok; ++v) {
+        ok = capture(*s, v == 1, mode == 2, s->exec[v]);
       }
+    }
+    if (ok) {
+      graph_mode_ = mode;
       return;
     }
+    for (auto & s : slots_) {
+      for (auto & e : s->exec) {
+        if (e) {cudaGraphExecDestroy(e); e = nullptr;}
+      }
+    }
+    std::cerr << "[TrtYolo] " << (mode == 2 ? "조건 노드 그래프" : "CUDA 그래프") << "를 못 만들어 다음 방식으로" << std::endl;
   }
+  graph_mode_ = 0;
 }
 
-void TrtYolo::enqueue(Slot & s)
+bool TrtYolo::capture(Slot & s, bool vis, bool conditional, cudaGraphExec_t & exec)
+{
+  auto st = static_cast<cudaStream_t>(stream_);
+  auto ms = static_cast<cudaStream_t>(mask_stream_);
+  cudaGraph_t graph = nullptr;
+  if (cudaStreamBeginCapture(st, cudaStreamCaptureModeThreadLocal) != cudaSuccess) {
+    cudaGetLastError();
+    return false;
+  }
+  bool ok = true;
+  try {
+    if (conditional) {
+      // 탐지 → 조건 노드(물체가 있으면 마스크 커널) → 결과 영상·D2H. 조건 값은 해석 커널이 장치에서 정한다
+      cudaStreamCaptureStatus cs;
+      cudaGraph_t g = nullptr;
+      check_cuda(cudaStreamGetCaptureInfo(st, &cs, nullptr, &g, nullptr, nullptr), "capture info");
+      cudaGraphConditionalHandle cond;
+      check_cuda(cudaGraphConditionalHandleCreate(&cond, g, 0, cudaGraphCondAssignDefault), "conditional handle");
+      enqueue_front(s, true, cond);
+      const cudaGraphNode_t * deps = nullptr;
+      size_t n_deps = 0;
+      check_cuda(cudaStreamGetCaptureInfo(st, &cs, nullptr, &g, &deps, &n_deps), "capture info");
+      cudaGraphNodeParams p = {};
+      p.type = cudaGraphNodeTypeConditional;
+      p.conditional.handle = cond;
+      p.conditional.type = cudaGraphCondTypeIf;
+      p.conditional.size = 1;
+      cudaGraphNode_t node;
+      check_cuda(cudaGraphAddNode(&node, g, deps, n_deps, &p), "conditional node");
+      check_cuda(cudaStreamUpdateCaptureDependencies(st, &node, 1, cudaStreamSetCaptureDependencies), "deps");
+      check_cuda(cudaStreamBeginCaptureToGraph(ms, p.conditional.phGraph_out[0], nullptr, nullptr, 0,
+        cudaStreamCaptureModeThreadLocal), "capture body");
+      cudaGraph_t body;
+      try {
+        enqueue_masks(ms);
+      } catch (...) {
+        cudaStreamEndCapture(ms, &body);
+        throw;
+      }
+      check_cuda(cudaStreamEndCapture(ms, &body), "end body");
+    } else {
+      enqueue_front(s, false, 0);
+      if (has_masks()) {enqueue_masks(stream_);}
+    }
+    enqueue_back(s, vis);
+  } catch (const std::exception & e) {
+    std::cerr << "[TrtYolo] 그래프 담기 중 오류: " << e.what() << std::endl;
+    ok = false;
+  }
+  ok = cudaStreamEndCapture(st, &graph) == cudaSuccess && ok;
+  ok = ok && cudaGraphInstantiate(&exec, graph, 0) == cudaSuccess;
+  if (graph) {cudaGraphDestroy(graph);}
+  if (!ok) {
+    cudaGetLastError();
+    if (exec) {cudaGraphExecDestroy(exec); exec = nullptr;}
+  }
+  return ok;
+}
+
+gpu::Letterbox TrtYolo::letterbox_params() const
+{
+  return {lb_scale_, lb_pad_x_, lb_pad_y_, img_w_, img_h_, in_w_, in_h_, lb_nw_, lb_nh_, lb_left_, lb_top_};
+}
+
+void TrtYolo::enqueue_front(Slot & s, bool set_cond, unsigned long long cond)
 {
   auto st = static_cast<cudaStream_t>(stream_);
   const size_t img_bytes = static_cast<size_t>(img_w_) * img_h_ * 3;
-  const gpu::Letterbox lb{lb_scale_, lb_pad_x_, lb_pad_y_, img_w_, img_h_, in_w_, in_h_,
-    lb_nw_, lb_nh_, lb_left_, lb_top_};
+  const gpu::Letterbox lb = letterbox_params();
   if (direct_input_) {
     check_cuda(cudaMemcpyAsync(d_in_, s.h_img, img_bytes, cudaMemcpyHostToDevice, st), "H2D");
   } else {
@@ -294,13 +391,11 @@ void TrtYolo::enqueue(Slot & s)
   }
   if (end2end_) {
     auto * block = static_cast<gpu::DetBlock *>(d_block_);
-    gpu::decode_end2end(static_cast<const float *>(d_out_), out_rows_, out_cols_, conf_, lb, block, st);
+    gpu::decode_end2end(static_cast<const float *>(d_out_), out_rows_, out_cols_, conf_, lb, ph_, pw_, block,
+      set_cond, cond, st);
     check_cuda(cudaMemcpyAsync(s.h_block, block, sizeof(gpu::DetBlock), cudaMemcpyDeviceToHost, st), "D2H dets");
     if (has_masks()) {
-      gpu::paint_masks(static_cast<const float *>(d_out_), out_cols_, static_cast<const float *>(d_proto_),
-        nm_, ph_, pw_, block, lb, static_cast<uint8_t *>(d_ids_), st);
-      check_cuda(cudaMemcpyAsync(s.h_ids, d_ids_, static_cast<size_t>(img_w_) * img_h_, cudaMemcpyDeviceToHost, st),
-        "D2H ids");
+      check_cuda(cudaMemsetAsync(d_ids_, 0, static_cast<size_t>(img_w_) * img_h_, st), "memset ids");
     }
   } else {
     check_cuda(cudaMemcpyAsync(s.h_out, d_out_, out_elems_ * sizeof(float), cudaMemcpyDeviceToHost, st), "D2H");
@@ -308,7 +403,35 @@ void TrtYolo::enqueue(Slot & s)
   check_cuda(cudaGetLastError(), "kernel launch");
 }
 
-int TrtYolo::submit(const cv::Mat & rgb)
+void TrtYolo::enqueue_masks(void * stream)
+{
+  auto st = static_cast<cudaStream_t>(stream);
+  const auto * block = static_cast<const gpu::DetBlock *>(d_block_);
+  auto * logits = static_cast<float *>(d_logits_);
+  gpu::mask_logits(static_cast<const float *>(d_out_), out_cols_, gpu::Proto{d_proto_, proto_half_, nm_, ph_, pw_},
+    block, logits, st);
+  gpu::paint_masks(block, logits, ph_, pw_, letterbox_params(), static_cast<uint8_t *>(d_ids_), st);
+  check_cuda(cudaGetLastError(), "kernel launch");
+}
+
+void TrtYolo::enqueue_back(Slot & s, bool vis)
+{
+  if (!has_masks()) {
+    return;
+  }
+  auto st = static_cast<cudaStream_t>(stream_);
+  const size_t n = static_cast<size_t>(img_w_) * img_h_;
+  if (vis) {
+    const auto * src = static_cast<const uint8_t *>(direct_input_ ? d_in_ : d_img_);
+    gpu::draw_masks(src, static_cast<const uint8_t *>(d_ids_), static_cast<const gpu::DetBlock *>(d_block_),
+      static_cast<const uint8_t *>(d_colors_), img_w_, img_h_, static_cast<uint8_t *>(d_vis_), st);
+    check_cuda(cudaMemcpyAsync(s.h_vis, d_vis_, n * 3, cudaMemcpyDeviceToHost, st), "D2H vis");
+  }
+  check_cuda(cudaMemcpyAsync(s.h_ids, d_ids_, n, cudaMemcpyDeviceToHost, st), "D2H ids");
+  check_cuda(cudaGetLastError(), "kernel launch");
+}
+
+int TrtYolo::submit(const cv::Mat & rgb, bool want_vis)
 {
   if (rgb.type() != CV_8UC3 || rgb.empty()) {
     throw std::runtime_error("submit: RGB CV_8UC3 영상이어야 함");
@@ -329,11 +452,14 @@ int TrtYolo::submit(const cv::Mat & rgb)
       std::memcpy(s.h_img + row * y, rgb.ptr(y), row);
     }
   }
+  s.vis = want_vis && has_masks();
   auto st = static_cast<cudaStream_t>(stream_);
-  if (s.exec) {
-    check_cuda(cudaGraphLaunch(s.exec, st), "cudaGraphLaunch");
+  if (s.exec[s.vis ? 1 : 0]) {
+    check_cuda(cudaGraphLaunch(s.exec[s.vis ? 1 : 0], st), "cudaGraphLaunch");
   } else {
-    enqueue(s);
+    enqueue_front(s, false, 0);
+    if (has_masks()) {enqueue_masks(stream_);}
+    enqueue_back(s, s.vis);
   }
   check_cuda(cudaEventRecord(s.done, st), "cudaEventRecord");
   s.busy = true;
@@ -364,6 +490,9 @@ YoloResult TrtYolo::collect(int slot)
   }
   if (has_masks()) {
     r.ids = cv::Mat(img_h_, img_w_, CV_8UC1, s.h_ids);
+    if (s.vis) {
+      r.vis = cv::Mat(img_h_, img_w_, CV_8UC3, s.h_vis);
+    }
   }
   return r;
 }
