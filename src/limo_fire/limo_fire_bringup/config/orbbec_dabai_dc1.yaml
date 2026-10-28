@@ -1,5 +1,7 @@
 # Orbbec Dabai DC1 깊이 카메라. WeGo 가 쓰는 orbbec_camera astra_stereo_u3.launch.py 의 기본값 그대로
 # (그 launch 는 값을 launch 인자로만 갖고 있어서 여기 파일로 옮겼다)
+# 바꾼 것 (2026-10-28): 아무도 안 쓰는 포인트 클라우드 2 개·IR 영상은 끈다 (드라이버 CPU).
+#   Nav2 는 라이다 /scan 만, YOLO·object_mapper 는 컬러·깊이 영상만 쓴다
 /**:
   ros__parameters:
     camera_name: camera
@@ -9,8 +11,8 @@
     device_num: 1
     vendor_id: "0x2bc5"
     product_id: ""
-    enable_point_cloud: true
-    enable_colored_point_cloud: true
+    enable_point_cloud: false
+    enable_colored_point_cloud: false
     point_cloud_qos: default
     connection_delay: 100
     color_width: 640
@@ -38,7 +40,7 @@
     ir_height: 400
     ir_fps: 30
     ir_format: Y10
-    enable_ir: true
+    enable_ir: false
     flip_ir: false
     ir_qos: default
     ir_camera_info_qos: default
