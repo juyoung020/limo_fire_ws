@@ -12,6 +12,21 @@ ros2 launch limo_fire_bringup navigation.launch.xml            # 2-b. 저장한 
 
 매핑과 네비게이션은 동시에 켜지 않는다(둘 다 `/map` 을 낸다). 네비게이션은 RViz 에서 **2D Pose Estimate** 로 처음 위치를 찍어야 시작한다.
 
+## 키보드로 조종 (teleop)
+
+바퀴만 움직이면 되면 `limo_base` 만 켠다. 센서도 필요하면 대신 `robot.launch.xml` 을 켠다(둘 다 `/dev/ttylimo` 를 열어서 같이 켜면 안 된다).
+
+```bash
+source ~/limo_fire_ws/env.sh
+ros2 launch limo_base limo_base.launch.py      # 구동 드라이버 (/cmd_vel 받음)
+
+# 새 터미널 — 키 입력을 받으므로 이 창이 선택돼 있어야 한다
+source ~/limo_fire_ws/env.sh
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.2 -p turn:=0.5
+```
+
+기본 속도(0.5 m/s, 1.0 rad/s)는 실내에서 빨라 낮춰 시작한다. `i`/`,` 앞뒤, `j`/`l` 제자리 회전, `u` `o` `m` `.` 대각선, **`k` 정지**, `q`/`z` 속도 ±10 %, `Ctrl+C` 종료. 다른 창을 누르면 마지막 명령이 남을 수 있으니 먼저 `k`.
+
 ## WeGo 와 대응
 
 | 대시보드 버튼 | WeGo | 우리 |
