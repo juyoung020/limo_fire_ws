@@ -65,6 +65,7 @@
 | 장착 (base_link → camera_link) | (0.23, 0.05, 0.06) m, 회전 0 | `tf2_echo` |
 | 장착 (base_link → camera_color_optical_frame) | (0.23, 0.02, 0.06) m, RPY (−89.9°, −0.2°, −90.3°) | `tf2_echo` |
 
+- 위 "깊이 (발행) 640×480, 컬러에 정렬" 은 포인트 클라우드를 켠 10-26 설정 기준이다. 10-28 에 포인트 클라우드를 끄면서 정렬도 같이 꺼져 640×400 이 된다 → [sensor_topics.md](sensor_topics.md#주의-1-깊이가-컬러에-정렬되지-않게-바뀐다)
 - 내부 파라미터는 공장 값이다. 우리가 다시 캘리브레이션한 적은 없다.
 - 기동 때 `Failed to setup devices: ... unknown error` 가 한 번 찍히지만 스트림은 정상으로 나온다. 원인 확인 필요.
 
