@@ -14,6 +14,9 @@
   <arg name="nav" default="true" description="Nav2 를 띄운다"/>
   <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/sim/$(var world).yaml" description="slam:=false 일 때 쓰는 지도"/>
   <arg name="perception" default="false" description="YOLO 탐지 + 물체 지도 (limo_fire_perception yolo.launch.xml)"/>
+  <arg name="benchmark" default="false"
+       description="인식 벤치마크: 인식을 켜고 정답(/gt/*)과 비교해 끝낼 때 docs/benchmarks/ 에 표를 쓴다. 로봇은 따로 움직인다(RViz 목표·순찰)"/>
+  <arg name="report_dir" default="$(env HOME)/limo_fire_ws/docs/benchmarks"/>
   <arg name="rviz" default="true"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
 
@@ -43,12 +46,20 @@
     </include>
   </group>
 
-  <group if="$(var perception)">
+  <group if="$(or $(var perception) $(var benchmark))">
     <include file="$(find-pkg-share limo_fire_perception)/launch/yolo.launch.xml">
       <arg name="use_sim_time" value="true"/>
       <arg name="rviz" value="false"/>
+      <arg name="params_override" value="$(find-pkg-share limo_fire_perception)/config/$(if $(var benchmark) benchmark.yaml yolo_fire.yaml)"/>
     </include>
   </group>
+
+  <node pkg="limo_fire_perception" exec="perception_benchmark" name="perception_benchmark" output="screen" if="$(var benchmark)">
+    <param from="$(find-pkg-share limo_fire_perception)/config/yolo_fire.yaml"/>
+    <param name="world_file" value="$(var world_dir)/$(var world).yaml"/>
+    <param name="report_dir" value="$(var report_dir)"/>
+    <param name="use_sim_time" value="true"/>
+  </node>
 
   <!-- 화면은 하나: 지도·Nav2·물체·YOLO 를 같이 본다 -->
   <group if="$(var rviz)">
