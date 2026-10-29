@@ -22,8 +22,7 @@
     <param name="use_sim_time" value="$(var use_sim_time)"/>
   </node>
 
-  <node pkg="rviz2" exec="rviz2" name="rviz2" output="screen" if="$(var rviz)"
-        args="-d $(find-pkg-share limo_fire_description)/rviz/mapping.rviz">
-    <param name="use_sim_time" value="$(var use_sim_time)"/>
-  </node>
+  <include file="$(find-pkg-share limo_fire_description)/launch/viewer.launch.xml" if="$(var rviz)">
+    <arg name="use_sim_time" value="$(var use_sim_time)"/>
+  </include>
 </launch>

@@ -69,7 +69,7 @@ void mask_logits(const float * out, int cols, const Proto & proto, const DetBloc
 void paint_masks(const DetBlock * block, const float * logits, int ph, int pw, const Letterbox & lb, uint8_t * ids,
   cudaStream_t st);
 
-// 결과 영상: 원본 RGB 에 물체 픽셀만 클래스 색을 반투명(0.55 원본 + 0.45 색)하게 덧칠. colors = RGB × 256 클래스
+// 결과 영상: 원본 RGB 에 물체 픽셀만 클래스 색을 반투명(0.55 원본 + 0.45 색)하게 덧칠하고 마스크 테두리(흰색 + 클래스 색)를 그림. colors = RGB × 256 클래스
 void draw_masks(const uint8_t * img, const uint8_t * ids, const DetBlock * block, const uint8_t * colors,
   int img_w, int img_h, uint8_t * vis, cudaStream_t st);
 

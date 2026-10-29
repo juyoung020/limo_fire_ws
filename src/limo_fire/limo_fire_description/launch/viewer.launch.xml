@@ -1,0 +1,11 @@
+<!-- 운용 화면 하나 (rviz/limo_fire.rviz): 지도·로봇·라이다, Nav2 경로·costmap·AMCL, 물체 지도·현황판, YOLO 영상.
+     도구: 2D Pose Estimate(/initialpose), 2D Goal Pose(/goal_pose → Nav2), Publish Point(/clicked_point → 누른 물체 사진). 받는 토픽이 없는 표시는 비어 있을 뿐이라
+     지도 만들기·주행·인식 어느 조합에서나 이 화면을 쓴다 (mapping · navigation · yolo · sim launch 가 include)
+     ros2 launch limo_fire_description viewer.launch.xml [use_sim_time:=true] -->
+<launch>
+  <arg name="use_sim_time" default="false"/>
+  <node pkg="rviz2" exec="rviz2" name="limo_fire_rviz" output="screen"
+        args="-d $(find-pkg-share limo_fire_description)/rviz/limo_fire.rviz">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+</launch>

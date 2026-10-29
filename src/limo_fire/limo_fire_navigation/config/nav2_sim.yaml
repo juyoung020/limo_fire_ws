@@ -3,6 +3,8 @@
 #
 # use_sim_time: nav2_params.yaml 은 실물용이라 여러 노드가 False 이고 costmap 은 값이 없다.
 #   시뮬에서 그대로 쓰면 costmap 이 /clock 시각의 스캔을 "너무 오래됨"으로 버린다.
+# odom_topic: 실물은 EKF 출력(/odometry/filtered). Webots 는 플러그인이 EKF 자리에서 /odom 을 낸다(sim_robot.launch.xml).
+#   틀린 토픽이면 컨트롤러가 현재 속도를 0 으로 보고 가속 한도 탓에 한 주기 0.125 m/s 까지만 내서, 느리고 좁은 곳에서 진행 없음으로 멈췄다.
 # AMCL 처음 위치: 시뮬 지도는 로봇이 시작 자리에 있을 때 Cartographer 로 만들어서 시작 자리가 지도 원점 (0, 0, 0) 이다.
 #   그래서 로봇을 다시 시작 자리에 띄우면 2D Pose Estimate 없이 바로 주행할 수 있다.
 amcl:
@@ -13,12 +15,14 @@ amcl:
 bt_navigator:
   ros__parameters:
     use_sim_time: True
+    odom_topic: /odom
 planner_server:
   ros__parameters:
     use_sim_time: True
 controller_server:
   ros__parameters:
     use_sim_time: True
+    odom_topic: /odom
 global_costmap:
   global_costmap:
     ros__parameters:
@@ -36,6 +40,7 @@ smoother_server:
 velocity_smoother:
   ros__parameters:
     use_sim_time: True
+    odom_topic: /odom
 waypoint_follower:
   ros__parameters:
     use_sim_time: True

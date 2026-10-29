@@ -22,9 +22,6 @@
   <depend>rviz_2d_overlay_msgs</depend>
   <depend>libopencv-dev</depend>
 
-  <exec_depend>rqt_image_view</exec_depend>
-  <exec_depend>rviz2</exec_depend>
-  <exec_depend>rviz_2d_overlay_plugins</exec_depend>
   <exec_depend>limo_fire_description</exec_depend>
 
   <export>

@@ -29,7 +29,7 @@
     <include file="$(find-pkg-share limo_fire_bringup)/launch/mapping.launch.xml">
       <arg name="odom_topic" value="/odom"/>
       <arg name="use_sim_time" value="true"/>
-      <arg name="rviz" value="$(and $(var rviz) $(not $(var nav)))"/>
+      <arg name="rviz" value="false"/>
     </include>
   </group>
 
@@ -39,7 +39,7 @@
       <arg name="params_override" value="$(find-pkg-share limo_fire_navigation)/config/nav2_sim.yaml"/>
       <arg name="use_sim_time" value="true"/>
       <arg name="localization" value="$(not $(var slam))"/>
-      <arg name="rviz" value="$(var rviz)"/>
+      <arg name="rviz" value="false"/>
     </include>
   </group>
 
@@ -47,7 +47,13 @@
     <include file="$(find-pkg-share limo_fire_perception)/launch/yolo.launch.xml">
       <arg name="use_sim_time" value="true"/>
       <arg name="rviz" value="false"/>
-      <arg name="viewer" value="true"/>
+    </include>
+  </group>
+
+  <!-- 화면은 하나: 지도·Nav2·물체·YOLO 를 같이 본다 -->
+  <group if="$(var rviz)">
+    <include file="$(find-pkg-share limo_fire_description)/launch/viewer.launch.xml">
+      <arg name="use_sim_time" value="true"/>
     </include>
   </group>
 </launch>

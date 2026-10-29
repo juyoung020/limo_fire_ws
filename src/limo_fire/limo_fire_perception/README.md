@@ -3,7 +3,7 @@
 카메라 영상에서 불·연기·소화기·유도등·사람·문·계단을 찾는 C++ TensorRT YOLO 노드. 실물 Orbbec 카메라와 Webots 시뮬 카메라에 똑같이 쓴다.
 
 ```bash
-ros2 launch limo_fire_perception yolo.launch.xml          # 탐지 + rqt_image_view
+ros2 launch limo_fire_perception yolo.launch.xml          # 탐지 + 물체 지도 + 운용 화면 (이미 화면을 띄웠으면 rviz:=false)
 ```
 
 - `yolo_detector`·`object_mapper` 는 컴포넌트(`limo_fire_perception::YoloDetectorNode`, `::ObjectMapperNode`). 같은 이름의 실행 파일도 있다
@@ -27,7 +27,7 @@ ros2 launch limo_fire_perception yolo.launch.xml          # 탐지 + rqt_image_v
 카메라 영상 ─memcpy→ 고정(pinned) 메모리 ─H2D→ [letterbox 커널: 크기·형식이 엔진과 다를 때만]
   → TensorRT → [end2end 해석 커널: 문턱·상자 되돌리기, 조건 값 = 물체 있음] ─D2H→ 탐지 목록
   → IF 조건 노드 { [로짓 커널: 원형 해상도에서 계수 · 원형] → [칠하기 커널: 4 칸 쌍선형 > 0 → 물체 번호 영상] }
-  → [결과 영상 커널: 원본에 마스크 반투명 덧칠, 구독자 있을 때만] ─D2H→ 마스크 + 결과 영상
+  → [결과 영상 커널: 원본에 마스크 반투명 덧칠 + 테두리, 구독자 있을 때만] ─D2H→ 마스크 + 결과 영상
 ```
 
 - 영상 크기가 정해지면 위 전체를 슬롯(2 개) × 결과 영상 유무마다 CUDA 그래프로 담아, 한 장에 `cudaGraphLaunch` 한 번만 한다 (TensorRT 를 그냥 띄우면 CPU 가 일을 거는 데만 4.6 ms)
@@ -37,7 +37,7 @@ ros2 launch limo_fire_perception yolo.launch.xml          # 탐지 + rqt_image_v
 - 마스크: 원형 해상도(120×160)에서 계수와 내적(로짓) → 입력 크기로 쌍선형(align_corners=False) → 상자(`x1 <= u < x2`) 밖 버림 → 로짓 > 0.
   Ultralytics `process_mask(upsample=True)` 와 같은 순서라, 같은 엔진 출력으로 만든 Ultralytics 결과와 물체 번호 영상이 픽셀까지 같다 (시뮬 영상 4 장, 물체 1~3 개, 307,200 중 다른 픽셀 0)
 - 원형 마스크(2.4 MB)는 CPU 로 가져오지 않는다
-- 결과 영상의 마스크 덧칠도 GPU 커널(0.1 ms). CPU 는 상자·글자만 그린다
+- 결과 영상의 마스크 덧칠·테두리(바깥 흰색 1 px + 안쪽 클래스 색 1 px)도 GPU 커널(0.1 ms). CPU 는 상자·글자만 그린다. 덧칠만 하면 소화기처럼 클래스 색과 같은 색 물체는 모양이 안 보였다
 
 원형(proto) 가지를 엔진 둘로 나눠 물체가 없을 때 건너뛰는 것도 재 봤다 (2026-10-28, Webots 멈춤, trtexec 중앙값):
 한 엔진 9.53 ms, 나누면 물체 없는 장 7.97 ms · 물체 있는 장 7.97 + 2.08 = 10.05 ms. 물체 없는 장이 25 % 넘어야 평균으로 이기고,
@@ -133,16 +133,18 @@ PY
 마스크가 없으면(탐지 전용 엔진) 상자 가운데 50 % 깊이의 하위 30 % 값을 거리로 쓴다(얇은 소화기 뒤 벽 무시). 같은 클래스가 0.8 m 안이면 같은 물체로 합치며, 5 번 이상 본 것만 올린다. 값은 `config/yolo_fire.yaml`.
 `map` 프레임이 있어야 하므로 SLAM(Cartographer) 또는 AMCL 과 같이 돌린다.
 
-`rviz:=true` 화면 (`limo_fire_description/rviz/object_map.rviz`):
-- 왼쪽: YOLO 탐지 영상. 오른쪽: 지도 + 물체 + 로봇(축)
+운용 화면 (`limo_fire_description` 의 `viewer.launch.xml` · `rviz/limo_fire.rviz`, 지도 만들기·Nav2 와 같은 화면):
+- 왼쪽: YOLO 탐지 영상. 오른쪽: 지도 + 물체 + 로봇(축) + Nav2 경로(전역·지역), costmap 은 Displays 에서 켠다
+- 도구: 2D Pose Estimate, 2D Goal Pose(Nav2 목표), Publish Point(물체 고르기)
+- 물체 모양 보기: 툴바 **Publish Point** 를 누르고 지도 위 아이콘을 누르면, 그 물체가 가장 크고 확실하게 찍힌 장면(분할 마스크 덧칠·테두리가 있는 탐지 영상을 물체 둘레만 자른 것)이 왼쪽 아래 **Selected** 패널에 뜬다. 고른 아이콘은 흰 고리, 현황판 맨 아래에 종류·번호·신뢰도·본 횟수. 빈 곳을 누르면 선택 해제 (`/clicked_point` → `/object_mapper/selected`)
 - 왼쪽 위 현황판(`/object_mapper/summary`, `rviz_2d_overlay_plugins`): 화재 경고, 종류별 개수, 로봇에서 가장 가까운 것과 거리
 - 물체마다 원형 아이콘 배지(`icons/`, Material Symbols) + 번호 라벨(`EXT-1` …). 불은 위험 반경(`fire_zone_radius`)이 깜빡인다
 - 표시 켜고 끄기: 메뉴 Panels → Displays. 지도 물체 모두 지우기: `ros2 service call /object_mapper/clear std_srvs/srv/Trigger`
-- 필요한 apt 패키지: `ros-humble-rviz-2d-overlay-plugins`
+- 필요한 apt 패키지: `ros-humble-rviz-2d-overlay-plugins`, `ros-humble-nav2-rviz-plugins`
 
 ```bash
-# Webots (slam:=true 로 켠 뒤)
-ros2 launch limo_fire_perception yolo.launch.xml use_sim_time:=true viewer:=false rviz:=true
+# Webots: 로봇 + 저장 지도 + Nav2 + 인식 + 운용 화면 한 번에
+ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=true
 ```
 
 ### 확인 (2026-10-27, Webots 방 한 바퀴 + 웨이포인트 4 곳에서 제자리 회전)

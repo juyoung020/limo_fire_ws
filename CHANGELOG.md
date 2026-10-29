@@ -19,10 +19,17 @@
 
 - 실물 `robot.launch.xml` 이 WeGo URDF + 카메라 틸트 `static_transform_publisher` 3 개 대신 우리 `limo_fire.urdf.xacro` 하나로 TF 를 낸다. 카메라는 모듈 xacro `orbbec_dabai.xacro` 로 분리하고 장착 위치를 실측 (0.15, −0.005, 0.06) 으로 고침(이전 0.23, 0.05, 0.06). color·depth 프레임은 Orbbec 드라이버만 낸다. 틸트 인자 `degree` → `camera_pitch`.
 
+- 운용 화면을 하나로: `limo_fire_description` 의 `viewer.launch.xml`·`rviz/limo_fire.rviz`(YOLO 영상, 지도, 물체·현황판, Nav2 경로·costmap·AMCL, 2D Pose Estimate·2D Goal Pose 도구)를 지도 만들기·Nav2·인식·시뮬 launch 가 같이 쓴다. `navigation.rviz`·`mapping.rviz`·`object_map.rviz` 와 YOLO 의 rqt 뷰어는 없앰.
+- 지도 위 물체 아이콘을 누르면 모양을 본다: RViz Publish Point 로 아이콘을 누르면 그 물체가 가장 크고 확실하게 찍힌 장면(분할 마스크가 그려진 탐지 영상을 물체 둘레만 자른 것)이 Selected 패널에 뜨고, 아이콘에 흰 고리·현황판에 종류·신뢰도·본 횟수.
+- 탐지 영상의 분할 마스크에 테두리(흰색 + 클래스 색)를 그림. 반투명 덧칠만으로는 소화기처럼 클래스 색과 같은 색 물체의 모양이 안 보였다.
+- Nav2 를 단순하게: 경로 추종 DWB(궤적 수백 개 평가 + 비평 7 개 손튜닝) → Regulated Pure Pursuit, 전역 경로 NavFn → Smac 2D, 속도 평활 5 → 20 Hz. 덕트호스 미로 시작점에서 반대편 끝(U 자 두 번)까지 DWB·NavFn 은 멈추거나 경로를 못 냈고, 바꾼 뒤 93 초에 도착. 실물 확인 필요.
+- README 표지에 Webots 미로 데모 GIF(2D Pose Estimate → 2D Goal Pose → 주행하며 탐지를 지도에 올림), 위 링크는 팀 노션·변경 기록만.
+
 ### Fixed
 
 - Nav2 costmap 팽창 반경을 0.05·0.13 m 에서 0.45 m 로. 로봇 반경(0.2 m)보다 작아 Nav2 가 오류를 내고 경로가 벽·문틀에 붙어 부딪혔다(Webots 사무실 맵에서 확인). 실물 확인 필요.
 - `yolo.launch.xml` 의 `mapper:=false` 가 무시되던 것.
+- 시뮬에서 Nav2 가 실물 EKF 토픽(`/odometry/filtered`)을 기다려 현재 속도를 0 으로 보던 것(`nav2_sim.yaml` 에서 `/odom`). 한 주기 0.125 m/s 까지만 내서 느리고 좁은 곳에서 멈췄다.
 
 ## [0.5.0] - 2026-10-28
 
