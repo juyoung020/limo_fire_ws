@@ -3,7 +3,7 @@
 # 방 x -4~4, y -3~3. 덕트호스 두 줄이 통로 셋을 만든다: 남(y -3~-1.5) → 동쪽 끝으로 꺾어 가운데(-1.5~0.5) → 서쪽 끝으로 꺾어 북(0.5~3)
 
 EXTERNPROTO "webots://projects/objects/backgrounds/protos/TexturedBackground.proto"
-EXTERNPROTO "../../../src/external/webots_ros2_limo/protos/LimoFourDiff.proto"
+EXTERNPROTO "../protos/LimoFire.proto"
 EXTERNPROTO "webots://projects/objects/floors/protos/Floor.proto"
 EXTERNPROTO "webots://projects/appearances/protos/CementTiles.proto"
 EXTERNPROTO "webots://projects/objects/apartment_structure/protos/Wall.proto"
@@ -43,7 +43,7 @@ TexturedBackground {
   texture "empty_office"
   skybox FALSE
 }
-LimoFourDiff {
+LimoFire {
   translation -3.3 -2.25 0.145
   name "LIMO"
   controller "<extern>"
@@ -84,10 +84,16 @@ Wall {
   name "wall_west_north"
   size 0.2 1 2.4
 }
-Door {
-  translation -4.1 1.5 0
-  name "door_west"
-  position 0
+Solid {
+  name "gt_door_west"
+  recognitionColors [ 0.023529 0.050980 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    Door {
+      translation -4.1 1.5 0
+      name "door_west"
+      position 0
+    }
+  ]
 }
 
 # ---------------- 덕트호스 미로 ----------------
@@ -129,6 +135,7 @@ TrafficCone {
 FireBillboard {
   translation 3.3 2.3 0
   name "fire_floor"
+  recognitionColors [ 0.003922 0.003922 1 ]
   texture "flame_bonfire"
   width 0.6
   height 0.4
@@ -138,6 +145,7 @@ FireBillboard {
 FireBillboard {
   translation 3.3 2.3 0.35
   name "smoke_floor"
+  recognitionColors [ 0.007843 0.015686 1 ]
   texture "smoke"
   width 1.0
   height 0.9
@@ -146,6 +154,7 @@ FireBillboard {
 FireBillboard {
   translation -1 0.2 0
   name "fire_small"
+  recognitionColors [ 0.003922 0.007843 1 ]
   texture "flame_single"
   width 0.3
   height 0.4
@@ -155,58 +164,87 @@ FireBillboard {
 Candle {
   translation -3.65 2.65 0.6
   name "fire_candle"
+  recognitionColors [ 0.003922 0.011765 1 ]
 }
 # fire_extinguisher
-FireExtinguisher {
-  translation 3.85 -0.3 0
-  name "extinguisher_east"
-  enablePhysics FALSE
+Solid {
+  name "gt_extinguisher_east"
+  recognitionColors [ 0.011765 0.019608 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    FireExtinguisher {
+      translation 3.85 -0.3 0
+      name "extinguisher_east"
+      enablePhysics FALSE
+    }
+  ]
 }
-FireExtinguisher {
-  translation -1.5 2.85 0
-  name "extinguisher_north"
-  enablePhysics FALSE
+Solid {
+  name "gt_extinguisher_north"
+  recognitionColors [ 0.011765 0.023529 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    FireExtinguisher {
+      translation -1.5 2.85 0
+      name "extinguisher_north"
+      enablePhysics FALSE
+    }
+  ]
 }
-FireExtinguisher {
-  translation 0 -2.85 0
-  name "extinguisher_south"
-  enablePhysics FALSE
+Solid {
+  name "gt_extinguisher_south"
+  recognitionColors [ 0.011765 0.027451 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    FireExtinguisher {
+      translation 0 -2.85 0
+      name "extinguisher_south"
+      enablePhysics FALSE
+    }
+  ]
 }
 # exit_sign: 서쪽 문 위(+x 를 봄), 동쪽 벽(-x), 남쪽 벽(+y)
 ExitSign {
   translation -3.97 1.5 2.15
   name "exit_sign_door"
+  recognitionColors [ 0.015686 0.031373 1 ]
 }
 ExitSign {
   translation 3.98 1.8 2
   rotation 0 0 1 3.14159
   name "exit_sign_east"
+  recognitionColors [ 0.015686 0.035294 1 ]
 }
 ExitSign {
   translation -1 -2.98 2
   rotation 0 0 1 1.5708
   name "exit_sign_south"
+  recognitionColors [ 0.015686 0.039216 1 ]
 }
 # person
 Pedestrian {
   translation 2 -0.3 1.27
   name "person_1"
+  shirtColor 0.019608 0.043137 1  # 정답 색: Pedestrian 은 셔츠 색을 recognitionColors 로 쓴다
   controller "<none>"
 }
 Pedestrian {
   translation 0 2.3 1.27
   rotation 0 0 1 3.14159
   name "person_2"
-  shirtColor 0.7 0.1 0.1
+  shirtColor 0.019608 0.047059 1  # 정답 색: Pedestrian 은 셔츠 색을 recognitionColors 로 쓴다
   controller "<none>"
 }
 # stairs: 북쪽 벽에 붙어 +x 로 올라감
-StraightStairs {
-  translation 1 2.45 0
-  name "stairs"
-  stepSize 0.3 1.0 0.03
-  stepRise 0.15
-  nSteps 4
+Solid {
+  name "gt_stairs"
+  recognitionColors [ 0.027451 0.054902 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    StraightStairs {
+      translation 1 2.45 0
+      name "stairs"
+      stepSize 0.3 1.0 0.03
+      stepRise 0.15
+      nSteps 4
+    }
+  ]
 }
 
 # /clock 을 내는 ROS 2 supervisor. sim_robot.launch.xml 의 ros2_supervisor.py 가 붙는다

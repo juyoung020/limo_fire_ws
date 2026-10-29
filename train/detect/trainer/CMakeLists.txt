@@ -16,7 +16,9 @@ add_library(ytnet STATIC ${NET_SRC})
 add_library(ytnet32 STATIC ${NET_SRC})
 target_compile_definitions(ytnet32 PUBLIC YT_FP32)
 foreach(t ytnet ytnet32)
-  target_include_directories(${t} PUBLIC src third_party/cudnn_frontend/include)
+  # det_metrics.hpp (짝짓기·AP): 인식 벤치마크와 같이 쓰는 헤더
+  target_include_directories(${t} PUBLIC src third_party/cudnn_frontend/include
+                             ${CMAKE_CURRENT_SOURCE_DIR}/../../../src/limo_fire/limo_fire_perception/include)
   set_source_files_properties(src/net.cpp src/conv.cpp src/data.cpp src/cache.cpp src/evalmap.cpp PROPERTIES LANGUAGE CUDA)
   target_link_libraries(${t} PUBLIC CUDA::cudart CUDA::cublas cudnn turbojpeg nlohmann_json::nlohmann_json CUDA::nvrtc CUDA::cuda_driver)
 endforeach()

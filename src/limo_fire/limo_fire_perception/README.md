@@ -180,3 +180,12 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
 | 계단 | 0.52 → 0.44 m |
 
 틀린 것: 이전과 같은 사람(person_1) → 소화기, 북쪽 벽 → 문에 더해 작은 불 자리에 연기 1 개. 노드 25 ms 안팎 (Webots 와 같이 돌 때).
+
+## 인식 벤치마크 (`perception_benchmark`)
+
+Webots 정답(같은 카메라의 Recognition 분할, `limo_fire_sim`)과 장마다 비교해 상자·마스크 P·R·F1·mAP50·mAP50-95·IoU, 크기별 재현율, 속도, 물체 지도 P·R·F1·위치 오차를 표로 낸다.
+짝짓기·AP 는 학습기와 같은 `include/limo_fire_perception/det_metrics.hpp`. 실행·지표 정의·결과는 [docs/benchmarks](../../../docs/benchmarks/README.md).
+
+```bash
+ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze benchmark:=true
+```

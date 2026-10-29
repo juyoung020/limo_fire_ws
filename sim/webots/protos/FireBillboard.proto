@@ -13,6 +13,7 @@ PROTO FireBillboard [
   field SFFloat    height            0.4     # 판 높이(m)
   field SFFloat    emissiveIntensity 1.5     # 불은 스스로 빛나게. 연기는 0
   field SFFloat    lightIntensity    0.0     # 0 보다 크면 주황 점광원(불빛)
+  field MFColor    recognitionColors []      # 인식 벤치마크 정답 색 (sim/webots/README.md "인식 정답")
 ]
 {
   %<
@@ -25,6 +26,7 @@ PROTO FireBillboard [
     translation IS translation
     rotation IS rotation
     name IS name
+    recognitionColors IS recognitionColors
     children [
       Shape {
         castShadows FALSE
