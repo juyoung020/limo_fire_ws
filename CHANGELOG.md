@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 인식 벤치마크(`sim.launch.xml benchmark:=true`): Webots 정답과 장마다 비교해 P·R·F1·mAP·IoU·속도·물체 지도 정확도를 `docs/benchmarks/` 에 표로.
+
 ## [0.6.0] - 2026-10-29
 
 ### Added

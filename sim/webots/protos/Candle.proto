@@ -11,6 +11,7 @@ PROTO Candle [
   field SFFloat    radius       0.025   # 초 반지름(m)
   field SFFloat    candleHeight 0.12    # 초 높이(m)
   field SFFloat    flameHeight  0.07    # 불꽃 높이(m)
+  field MFColor    recognitionColors []    # 인식 벤치마크 정답 색 — 불꽃(fire)에만 붙는다
 ]
 {
   %< const ch = fields.candleHeight.value; const fh = fields.flameHeight.value; >%
@@ -31,6 +32,7 @@ PROTO Candle [
       FireBillboard {
         translation 0 0 %<= ch >%
         name "flame"
+        recognitionColors IS recognitionColors
         texture "flame_single"
         width %<= fh * 0.8 >%
         height %<= fh >%

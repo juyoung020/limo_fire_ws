@@ -1,0 +1,6 @@
+# 인식 벤치마크 때만 yolo_fire.yaml 위에 덮어쓰는 값 (yolo.launch.xml params_override, sim.launch.xml benchmark:=true)
+# mAP 는 PR 곡선을 끝까지 그려야 하므로 탐지기가 낮은 신뢰도까지 낸다. P·R·F1 은 측정기가 운용 문턱(0.35)으로 다시 거른다.
+# 물체 지도는 object_mapper 의 min_score(0.5)로 걸러서 운용 때와 같다
+yolo_detector:
+  ros__parameters:
+    conf_threshold: 0.01

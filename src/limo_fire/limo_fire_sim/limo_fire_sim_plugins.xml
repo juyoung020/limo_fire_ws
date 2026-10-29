@@ -1,0 +1,5 @@
+<library path="gt_camera">
+  <class type="limo_fire_sim::GtCamera" base_class_type="webots_ros2_driver::PluginInterface">
+    <description>Webots 카메라 Recognition(분할)으로 물체별 정답 상자·물체 번호 영상을 낸다 (인식 벤치마크)</description>
+  </class>
+</library>

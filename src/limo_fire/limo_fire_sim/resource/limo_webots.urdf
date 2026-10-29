@@ -1,0 +1,61 @@
+<?xml version="1.0" ?>
+<!-- limo_fire 판: 교수님 webots_ros2_limo/resource/limo.urdf 에 인식 벤치마크 정답 카메라 플러그인만 더함 (sim_robot.launch.xml 이 씀) -->
+<robot name="LIMO">
+    <webots>
+        <!-- Turn off the driver's automatic /LIMO/<device> topics: the plugin below
+             publishes the real robot's topics instead. -->
+        <device reference="laser"><ros><enabled>false</enabled></ros></device>
+        <device reference="rgb_camera"><ros><enabled>false</enabled></ros></device>
+        <device reference="depth_camera"><ros><enabled>false</enabled></ros></device>
+        <device reference="ir_camera"><ros><enabled>false</enabled></ros></device>
+        <device reference="imu compass"><ros><enabled>false</enabled></ros></device>
+
+        <!-- /scan, /imu and all /camera/* topics, published with the same names, types,
+             frames, rates and QoS as the real LIMO (see webots_ros2_limo/limo_sensors.py). -->
+        <plugin type="webots_ros2_limo.limo_sensors.LimoSensors" />
+
+        <plugin type="webots_ros2_control::Ros2Control" />
+
+        <!-- limo_fire: 인식 벤치마크 정답 (limo_fire_sim GtCamera). /gt/* 를 받는 쪽이 있을 때만 켠다.
+             자르기·크기는 limo_sensors.py 의 COLOR_CROP (44, 4) · 640×480 과 같게, 클래스는 train/detect 순서 -->
+        <plugin type="limo_fire_sim::GtCamera">
+            <cameraName>rgb_camera</cameraName>
+            <topicName>/gt</topicName>
+            <periodMs>30</periodMs>
+            <cropTop>44</cropTop>
+            <cropLeft>4</cropLeft>
+            <width>640</width>
+            <height>480</height>
+            <minPixels>30</minPixels>
+            <frameId>camera_color_optical_frame</frameId>
+            <syncTopic>/camera/color/camera_info</syncTopic>
+            <classNames>fire,smoke,fire_extinguisher,exit_sign,person,door,stairs</classNames>
+        </plugin>
+    </webots>
+
+    <ros2_control name="WebotsControl" type="system">
+        <hardware>
+            <plugin>webots_ros2_control::Ros2ControlSystem</plugin>
+        </hardware>
+        <joint name="front_left_wheel">
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+            <command_interface name="velocity"/>
+        </joint>
+        <joint name="front_right_wheel">
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+            <command_interface name="velocity"/>
+        </joint>
+        <joint name="rear_left_wheel">
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+            <command_interface name="velocity"/>
+        </joint>
+        <joint name="rear_right_wheel">
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+            <command_interface name="velocity"/>
+        </joint>
+    </ros2_control>
+</robot>

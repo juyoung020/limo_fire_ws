@@ -25,7 +25,7 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
 ### 맵 더하기
 같은 이름으로 파일만 넣으면 된다. launch 는 고치지 않는다.
 
-1. `worlds/<이름>.wbt` — 다른 월드를 복사해 시작. 끝에 있는 `Ros2Supervisor` 로봇(`/clock` 을 냄)은 지우지 않는다.
+1. `worlds/<이름>.wbt` — 다른 월드를 복사해 시작. 끝에 있는 `Ros2Supervisor` 로봇(`/clock` 을 냄)은 지우지 않는다. 정답 물체에는 정답 색을 준다 (아래 "인식 정답").
 2. `worlds/<이름>.yaml` — 월드 데이터 파일 (아래 형식)
 3. `ros2 launch limo_fire_bringup sim.launch.xml world:=<이름> slam:=true` 로 순찰점을 돌고 `save_map.launch.xml name:=sim/<이름>` → `limo_fire_navigation/maps/sim/<이름>.yaml`
 
@@ -40,6 +40,17 @@ objects:                       # YOLO 정답 물체. 벤치마크에서 카메�
 ```
 - `cls` 는 train/detect 와 같다: 0 fire · 1 smoke · 2 fire_extinguisher · 3 exit_sign · 4 person · 5 door · 6 stairs
 - `size` 는 회전 전 물체 자기 축 기준. `approx: true` 는 Webots 모델 크기를 눈대중으로 적은 값
+
+### 인식 정답
+
+인식 벤치마크([docs/benchmarks](../../docs/benchmarks/README.md))의 정답은 카메라 Recognition 분할 영상에서 나온다. 그래서 월드의 정답 물체마다 정답 색을 준다.
+
+- 색 코드: `recognitionColors [ (클래스+1)/255  (월드 데이터 파일 objects 의 몇 번째, 1 부터)/255  1 ]`. 클래스 번호는 train/detect 와 같다.
+- 우리 proto(`FireBillboard` · `ExitSign` · `Candle`(불꽃에만))는 `recognitionColors` 필드에 바로 쓴다.
+- Webots 기본 모델(`FireExtinguisher` · `StraightStairs` · `Door`)은 그 필드가 없어 `Solid { name "gt_<이름>" recognitionColors [...] children [ <모델> ] }` 로 감싼다 (안쪽 모양 전체가 이 색으로 분할된다).
+- `Pedestrian` 은 셔츠 색을 recognitionColors 로 쓰므로 `shirtColor` 에 색 코드를 넣는다(셔츠가 파랗게 보임).
+- 로봇은 `LimoFire`(`protos/LimoFire.proto`, 교수님 `LimoFourDiff` 에 카메라 Recognition 만 더한 판).
+- 물체를 더하거나 순서를 바꾸면 월드 데이터 파일의 순서와 색 코드 두 번째 값을 같이 맞춘다.
 
 ### 월드를 만들 때 알아둘 것
 - Webots 기본 물체는 `webots://projects/...` 로 설치본 안의 것을 쓴다(인터넷 필요 없음). 교수님 원본 월드는 GitHub 주소를 쓰는데, Jetson 에서 빌드한 Webots(Qt 6.2)는 HTTP/2 다운로드가 17 % 에서 멈춘다.

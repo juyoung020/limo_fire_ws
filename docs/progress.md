@@ -1,6 +1,6 @@
 # 진행 기록
 
-지금까지 한 일, 왜 그렇게 정했는지, 다음에 할 일. 마지막 갱신 2026-10-23(SAM 3 포팅 후).
+지금까지 한 일, 왜 그렇게 정했는지, 다음에 할 일. 마지막 갱신 2026-10-29(시뮬 통합·인식 벤치마크 후).
 
 아이디어는 [idea.md](idea.md), 설계는 [spec.md](spec.md), 부품은 [parts.md](parts.md).
 
@@ -16,7 +16,10 @@
 | YOLO 데이터 모으기 | 공개 데이터·크롤링 됨, 직접 찍기 남음 | `train/detect/data` |
 | 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 6.8 만 장 라벨, YOLO 데이터셋(8:1:1) 만듦 | `train/detect/teacher`, `tools/yolods` |
 | YOLO26s(-seg) 학습기 (C++/CUDA) | 됨 — 탐지 + 분할 모델 학습 끝(시험 상자 0.651 · 마스크 0.521), [정리](detect.md) | `train/detect/trainer` |
-| ROS 노드 (BT·인식·연기 모드·보고) | 할 일 | `src/limo_fire` |
+| 인식 노드 (YOLO TensorRT 10 ms · 물체 지도) | 됨 | `limo_fire_perception` |
+| 시뮬 통합 (Webots 맵 4 · 실물과 같은 지도·Nav2·인식 launch · 운용 화면) | 됨 — Nav2 설정은 실물 확인 남음 | [simulation.md](simulation.md) |
+| 인식 벤치마크 (상자·마스크 P·R·F1·mAP·IoU · 속도 · 물체 지도) | 됨 | [benchmarks](benchmarks/README.md) |
+| ROS 노드 (BT·연기 모드·보고) | 할 일 | `src/limo_fire` |
 | ESP32 모듈 | 부품 오면 | `firmware/` |
 
 ## 1. 워크스페이스
@@ -193,4 +196,15 @@ best: `train/detect/data/runs/y26s_clean/best.safetensors` (지금 쓸 모델).
 | 마스크 mAP50-95 | — | 0.521 |
 
 상자 성능은 같고(±0.003) 마스크를 얻었다. 마스크가 약한 것: 불 0.369 · 연기 0.442(경계가 흐림).
+
+## 시뮬 통합 · Nav2 · 인식 벤치마크 (2026-10-28~29)
+
+전체 정리는 [simulation.md](simulation.md) 와 [benchmarks](benchmarks/README.md).
+
+- Webots 맵 3 개를 새로 만듦: 시연장 추정 모양 덕트호스 미로, 사무실(복도·방·계단실), 창고. 맵마다 YOLO 7 클래스를 놓고 정답 위치·순찰점을 파일로 둠.
+- 시뮬도 실물과 같은 URDF·지도 만들기·Nav2·인식 launch 를 쓰고, 로봇 켜기만 다르게(`sim_robot.launch.xml`). 교수님 launch 에서 두 번에 한 번 TF 가 안 나오던 문제가 없어짐.
+- Nav2 를 단순하게(RPP · Smac 2D · 팽창 0.45 m · 20 Hz): WeGo 설정은 덕트호스 미로 U 자 구간에서 멈췄다. 맵 4 개 순찰 전부 도착.
+- 운용 화면 하나(RViz): YOLO 영상·물체 지도·Nav2, 물체 아이콘을 누르면 사진.
+- 인식 벤치마크: 같은 카메라의 Webots 분할 영상으로 장마다 정답을 만들어 비교. 소화기·유도등은 AP50 0.72~0.97 로 잘 잡고 잡으면 IoU 0.9 로 잘 덮는다. 시뮬 불·연기는 거의 못 잡는다(사진 그림판이라 실물과 달라서). 물체 지도 위치 오차 평균 0.18~0.33 m, 문을 잘못 올리는 것이 가장 많다.
+- 다음: 덕트호스·벽을 문으로 잘못 보는 것과 지도 중복 줄이기(벤치마크로 전후 비교), Nav2 설정 실물 확인.
 

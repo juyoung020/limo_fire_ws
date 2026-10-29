@@ -35,3 +35,11 @@ object_mapper:
     robot_frame: base_link
     min_hits: 5          # 이만큼 본 것만 지도에 올림 (잘못 탐지 한두 번은 무시)
     class_names: [fire, smoke, fire_extinguisher, exit_sign, person, door, stairs]
+
+# 인식 벤치마크 (perception_benchmark, sim.launch.xml benchmark:=true). 정답은 Webots /gt/* (limo_fire_sim)
+perception_benchmark:
+  ros__parameters:
+    class_names: [fire, smoke, fire_extinguisher, exit_sign, person, door, stairs]
+    operating_conf: 0.35     # P·R·F1·IoU 를 잴 운용 문턱 = 위 yolo_detector conf_threshold
+    mask_exclude: [fire, smoke]  # 마스크 지표에서 뺄 클래스 (시뮬 정답이 그림판 사각형이라 부정확)
+    map_match_radius: 1.5    # m, 지도 물체를 같은 클래스 정답과 짝지을 거리 한도

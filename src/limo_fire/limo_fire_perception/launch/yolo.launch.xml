@@ -7,6 +7,7 @@
      navigation.launch.xml 처럼 운용 화면을 이미 띄운 launch 와 같이 켤 때는 rviz:=false -->
 <launch>
   <arg name="config" default="yolo_fire.yaml"/>
+  <arg name="params_override" default="$(find-pkg-share limo_fire_perception)/config/$(var config)" description="config 위에 덮어쓸 파라미터 (벤치마크: benchmark.yaml)"/>
   <arg name="mapper" default="true" description="탐지한 물체를 지도 좌표로 (map 프레임 TF 필요: SLAM 또는 AMCL)"/>
   <arg name="rviz" default="true" description="운용 화면(탐지 영상 + 지도 위 물체 + Nav2)"/>
   <arg name="use_sim_time" default="false"/>
@@ -21,6 +22,7 @@
   <load_composable_node target="$(var container)">
     <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::YoloDetectorNode" name="yolo_detector" namespace="">
       <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
+      <param from="$(var params_override)"/>
       <param name="use_sim_time" value="$(var use_sim_time)"/>
       <extra_arg name="use_intra_process_comms" value="true"/>
     </composable_node>

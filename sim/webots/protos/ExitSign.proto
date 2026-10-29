@@ -10,6 +10,7 @@ PROTO ExitSign [
   field SFFloat    width       0.36    # 판 폭(m)
   field SFFloat    height      0.18    # 판 높이(m)
   field SFFloat    depth       0.04    # 두께(m)
+  field MFColor    recognitionColors []      # 인식 벤치마크 정답 색 (sim/webots/README.md "인식 정답")
 ]
 {
   %< const w = fields.width.value / 2; const h = fields.height.value / 2; const d = fields.depth.value / 2 + 0.001; >%
@@ -17,6 +18,7 @@ PROTO ExitSign [
     translation IS translation
     rotation IS rotation
     name IS name
+    recognitionColors IS recognitionColors
     children [
       Shape {
         appearance PBRAppearance { baseColor 0.85 0.85 0.85 roughness 0.5 metalness 0 }

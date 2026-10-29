@@ -11,7 +11,9 @@
   <arg name="world_file"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
   <arg name="port" default="1234"/>
-  <arg name="limo_share" default="$(find-pkg-share webots_ros2_limo)" description="교수님 Webots LIMO 패키지 (드라이버 플러그인·ros2_control 설정)"/>
+  <arg name="limo_share" default="$(find-pkg-share webots_ros2_limo)" description="교수님 Webots LIMO 패키지 (ros2_control 설정)"/>
+  <arg name="driver_urdf" default="$(find-pkg-share limo_fire_sim)/resource/limo_webots.urdf"
+       description="드라이버 설정: 교수님 limo.urdf 에 인식 벤치마크 정답 카메라(/gt/*)를 더한 우리 판"/>
 
   <!-- Webots. 창을 닫으면 launch 전체가 끝난다 -->
   <executable cmd="$(env WEBOTS_HOME)/webots --port=$(var port) --batch --mode=$(var mode) $(var world_file)"
@@ -27,7 +29,7 @@
   <!-- LIMO 컨트롤러: 센서 플러그인 + ros2_control(바퀴). Webots 가 월드를 다 읽을 때까지 스스로 기다린다 -->
   <executable name="webots_controller_LIMO" output="screen" respawn="true"
               cmd="$(find-pkg-share webots_ros2_driver)/scripts/webots-controller --robot-name=LIMO --protocol=ipc --port=$(var port) ros2 --ros-args
-                   -p robot_description:=$(var limo_share)/resource/limo.urdf -p use_sim_time:=true -p set_robot_state_publisher:=false
+                   -p robot_description:=$(var driver_urdf) -p use_sim_time:=true -p set_robot_state_publisher:=false
                    -r /diffdrive_controller/cmd_vel_unstamped:=/cmd_vel --params-file $(var limo_share)/resource/diff/ros2control.yaml">
     <env name="WEBOTS_HOME" value="$(find-pkg-prefix webots_ros2_driver)"/>
   </executable>

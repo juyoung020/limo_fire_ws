@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>limo_fire_sim</name>
+  <version>0.1.0</version>
+  <description>Webots 시뮬 우리 판: LIMO 드라이버 설정(교수님 webots_ros2_limo 기반)과 인식 벤치마크용 정답 카메라 플러그인</description>
+  <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>pluginlib</depend>
+  <depend>sensor_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>webots_ros2_driver</depend>
+  <exec_depend>webots_ros2_limo</exec_depend>
+  <exec_depend>webots_ros2_control</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

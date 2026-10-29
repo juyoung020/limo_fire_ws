@@ -25,6 +25,7 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(rviz_2d_overlay_msgs REQUIRED)
+find_package(yaml_cpp_vendor REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc dnn)
 find_package(CUDAToolkit REQUIRED)
 
@@ -56,7 +57,16 @@ ament_target_dependencies(object_mapper_component rclcpp rclcpp_components senso
 rclcpp_components_register_node(object_mapper_component
   PLUGIN "limo_fire_perception::ObjectMapperNode" EXECUTABLE object_mapper)
 
-install(TARGETS trt_yolo yolo_detector_component object_mapper_component
+# 인식 벤치마크: 시뮬 정답(/gt/*) vs 탐지 → P·R·F1·mAP·IoU·속도·물체 지도 표 (지표는 det_metrics.hpp, 학습기와 같이 씀)
+add_library(perception_benchmark_component SHARED src/perception_benchmark_node.cpp)
+target_include_directories(perception_benchmark_component PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+ament_target_dependencies(perception_benchmark_component rclcpp rclcpp_components sensor_msgs vision_msgs
+  visualization_msgs std_srvs yaml_cpp_vendor)
+target_link_libraries(perception_benchmark_component yaml-cpp)
+rclcpp_components_register_node(perception_benchmark_component
+  PLUGIN "limo_fire_perception::PerceptionBenchmarkNode" EXECUTABLE perception_benchmark)
+
+install(TARGETS trt_yolo yolo_detector_component object_mapper_component perception_benchmark_component
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY launch config icons DESTINATION share/${PROJECT_NAME})
 

@@ -1,0 +1,395 @@
+#VRML_SIM R2025a utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# This is a proto file for Webots for the LimoFourDiff (four-wheel differential drive AgileX LIMO).
+# Assets adopted from py_bt_ros scenario (correct colors and hinge axes),
+# with the rear_left_wheel boundingObject bug fixed.
+
+# limo_fire 판: 교수님 webots_ros2_limo/protos/LimoFourDiff.proto 복사본. 다른 점은 둘뿐
+#   1. rgb_camera 에 Recognition(분할) — 인식 벤치마크 정답 (limo_fire_sim GtCamera, sim/webots/README.md "인식 정답")
+#   2. 메시 경로를 원본 자리로
+# 원본이 바뀌면 같이 맞춘다: diff src/external/webots_ros2_limo/protos/LimoFourDiff.proto sim/webots/protos/LimoFire.proto
+PROTO LimoFire [
+  field  SFVec3f     translation     0 0 0
+  field  SFRotation  rotation        0 0 1 0
+  field  SFString    name            "LimoFourDiff"  # Is `Robot.name`.
+  field  SFString    controller      "<extern>"      # Is `Robot.controller`.
+  field  MFString    controllerArgs  []              # Is `Robot.controllerArgs`.
+  field  SFString    customData      ""              # Is `Robot.customData`.
+  field  SFBool      supervisor      FALSE           # Is `Robot.supervisor`.
+  field  SFBool      synchronization TRUE            # Is `Robot.synchronization`.
+  field  SFBool      selfCollision   FALSE           # Is `Robot.selfCollision`.
+]
+{
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    controller IS controller
+    controllerArgs IS controllerArgs
+    customData IS customData
+    supervisor IS supervisor
+    synchronization IS synchronization
+    selfCollision IS selfCollision
+    children [
+      # Base body visual mesh
+      Pose {
+        translation 0.000000 0.000000 -0.150000
+        rotation 0.000000 0.000000 1.000000 1.570000
+        children [
+          DEF limo_base_visual CadShape {
+            url "../../../src/external/webots_ros2_limo/protos/meshes/limo_base.dae"
+          }
+        ]
+      }
+      # Lidar sensor (height matches AgileX official limo_four_diff.xacro: 0.111 m above ground)
+      Solid {
+        translation 0.103000 0.000000 -0.034000
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.500000 0.500000 0.500000
+              roughness 1.000000
+              metalness 0
+            }
+            geometry Cylinder {
+              radius 0.02
+              height 0.01
+            }
+          }
+          Lidar {
+            # Real LIMO: YDLIDAR (ydlidar_ros2_driver, 10 Hz, 405 beams/turn) cropped by the
+            # driver to +-110 deg = 248 beams. One Webots ray per published beam;
+            # the limo_sensors plugin turns this into the exact /scan of the robot.
+            name "laser"
+            fieldOfView 3.839724
+            horizontalResolution 248
+            numberOfLayers 1
+            near 0.1
+            minRange 0.1
+            maxRange 12.000000
+            noise 0.003000
+            resolution 0.015000
+          }
+        ]
+        name "laser_link"
+        boundingObject Cylinder {
+          radius 0.032
+          height 0.016
+        }
+        physics Physics {
+          density -1
+          mass 0.100000
+          centerOfMass [ 0.000000 0.000000 0.000000 ]
+          inertiaMatrix [
+            1.000000e-06 1.000000e-06 1.000000e-06
+            0.000000e+00 0.000000e+00 0.000000e+00
+          ]
+        }
+      }
+      # Orbbec DaBai DC1 depth camera (body, collision and mass unchanged). The camera mount
+      # TFs in robot_launch.py put camera_link on the depth/IR lens below.
+      # Color + aligned depth share the color intrinsics (fx = fy = 490.9 px). Each stream is
+      # rendered a bit larger than published and cropped by the limo_sensors plugin so that the
+      # principal point lands where the real camera_info has it (cx 317.5, cy 217.4):
+      #   FOV = 2 * atan(322 / 490.8955) for a 644 px wide render.
+      Solid {
+        translation 0.084000 0.000000 0.030000
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.500000 0.500000 0.500000
+              roughness 1.000000
+              metalness 0
+            }
+            geometry Box {
+              size 0.020000 0.060000 0.015000
+            }
+          }
+          Pose {
+            # Lens positions on the front face of the box (x 0.094 m from base_link).
+            # camera_link (depth/IR lens) = (0.096, 0.015, 0.03) from base_link.
+            translation 0.012000 0.015000 0.000000
+            children [
+              Pose {
+                # camera_color_frame, 3 cm to the right of camera_link (as on the robot)
+                translation 0.000150 -0.030000 0.000020
+                children [
+                  Camera {
+                    name "rgb_camera"
+                    fieldOfView 1.161085
+                    width 644
+                    height 524
+                    # limo_fire: 인식 벤치마크 정답 (분할 영상). limo_fire_sim GtCamera 가 받는 쪽이 있을 때만 켠다
+                    recognition Recognition {
+                      segmentation TRUE
+                      frameThickness 0
+                    }
+                  }
+                  RangeFinder {
+                    name "depth_camera"
+                    fieldOfView 1.161085
+                    width 644
+                    height 524
+                    near 0.010000
+                    minRange 0.010000
+                    maxRange 3.000000
+                  }
+                ]
+              }
+              Camera {
+                name "ir_camera"
+                fieldOfView 1.161085
+                width 644
+                height 436
+              }
+            ]
+          }
+        ]
+        name "depth_camera_link"
+        boundingObject Box {
+          size 0.020000 0.060000 0.015000
+        }
+        physics Physics {
+          density -1
+          mass 0.100000
+          centerOfMass [ 0.000000 0.000000 0.000000 ]
+          inertiaMatrix [
+            1.000000e-06 1.000000e-06 1.000000e-06
+            0.000000e+00 0.000000e+00 0.000000e+00
+          ]
+        }
+      }
+      # IMU sensor block
+      Solid {
+        translation 0.000000 0.000000 -0.100000
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0.500000 0.500000 0.500000
+              roughness 1.000000
+              metalness 0
+            }
+            geometry Box {
+              size 0.001000 0.001000 0.001000
+            }
+          }
+          InertialUnit {
+            name "imu inertial"
+          }
+          Accelerometer {
+            name "imu accelerometer"
+          }
+          Gyro {
+            name "imu gyro"
+          }
+          Compass {
+            name "imu compass"
+          }
+        ]
+        name "imu_link"
+        boundingObject Box {
+          size 0.001000 0.001000 0.001000
+        }
+        physics Physics {
+          density -1
+          mass 0.010000
+          centerOfMass [ 0.000000 0.000000 0.000000 ]
+          inertiaMatrix [
+            1.000000e-07 1.000000e-07 1.000000e-07
+            0.000000e+00 0.000000e+00 0.000000e+00
+          ]
+        }
+      }
+      # Front left wheel
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor 0.100000 0.065000 -0.100000
+        }
+        device [
+          RotationalMotor {
+            name "front_left_wheel"
+            maxTorque 10000
+          }
+          PositionSensor {
+            name "front_left_wheel_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation 0.100000 0.065000 -0.100000
+          children [
+            DEF limo_wheel_visual CadShape {
+              url "../../../src/external/webots_ros2_limo/protos/meshes/limo_wheel.dae"
+            }
+          ]
+          name "front_left_wheel_link"
+          contactMaterial "wheel"
+          boundingObject Pose {
+            translation 0.000000 0.022500 0.000000
+            rotation 1.000000 0.000000 0.000000 1.570000
+            children [
+              Cylinder {
+                radius 0.045
+                height 0.045
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 0.500000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              1.055000e-02 7.500000e-04 1.055000e-02
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      # Front right wheel
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 -0.000003
+          anchor 0.100000 -0.065000 -0.100000
+        }
+        device [
+          RotationalMotor {
+            name "front_right_wheel"
+            maxTorque 10000
+          }
+          PositionSensor {
+            name "front_right_wheel_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation 0.100000 -0.065000 -0.100000
+          rotation 1.000000 0.000000 0.000000 3.141590
+          children [
+            USE limo_wheel_visual
+          ]
+          name "front_right_wheel_link"
+          contactMaterial "wheel"
+          boundingObject Pose {
+            translation 0.000000 0.022500 0.000000
+            rotation 1.000000 0.000000 0.000000 1.570000
+            children [
+              Cylinder {
+                radius 0.045
+                height 0.045
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 0.500000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              1.055000e-02 7.500000e-04 1.055000e-02
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      # Rear left wheel (boundingObject Pose opening was missing in source; fixed here)
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor -0.100000 0.065000 -0.100000
+        }
+        device [
+          RotationalMotor {
+            name "rear_left_wheel"
+            maxTorque 10000
+          }
+          PositionSensor {
+            name "rear_left_wheel_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation -0.100000 0.065000 -0.100000
+          children [
+            USE limo_wheel_visual
+          ]
+          name "rear_left_wheel_link"
+          contactMaterial "wheel"
+          boundingObject Pose {
+            translation 0.000000 0.022500 0.000000
+            rotation 1.000000 0.000000 0.000000 1.570000
+            children [
+              Cylinder {
+                radius 0.045
+                height 0.045
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 0.500000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              1.055000e-02 7.500000e-04 1.055000e-02
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      # Rear right wheel
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 -0.000003
+          anchor -0.100000 -0.065000 -0.100000
+        }
+        device [
+          RotationalMotor {
+            name "rear_right_wheel"
+            maxTorque 10000
+          }
+          PositionSensor {
+            name "rear_right_wheel_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation -0.100000 -0.065000 -0.100000
+          rotation 1.000000 0.000000 0.000000 3.141590
+          children [
+            USE limo_wheel_visual
+          ]
+          name "rear_right_wheel_link"
+          contactMaterial "wheel"
+          boundingObject Pose {
+            translation 0.000000 0.022500 0.000000
+            rotation 1.000000 0.000000 0.000000 1.570000
+            children [
+              Cylinder {
+                radius 0.045
+                height 0.045
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 0.500000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              1.055000e-02 7.500000e-04 1.055000e-02
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+    ]
+    name IS name
+    model "LimoFourDiff"  # tells the limo_sensors plugin which wheel kinematics to use
+    boundingObject Box {
+      size 0.130000 0.120000 0.100000
+    }
+    physics Physics {
+      density -1
+      mass 2.155700
+      centerOfMass [ 0.000000 0.000000 0.000000 ]
+      inertiaMatrix [
+        2.400000e-01 9.600000e-01 9.600000e-01
+        0.000000e+00 0.000000e+00 0.000000e+00
+      ]
+    }
+  }
+}

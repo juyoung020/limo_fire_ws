@@ -3,7 +3,7 @@
 # 복도 y -1~1 (동서로 김, 동쪽 끝 비상구 문). 북쪽 방 N1(x -6~0)·N2(0~6), 남쪽 방 S(x -2~6), 남서쪽 계단실(x -6~-2, 복도로 트임)
 
 EXTERNPROTO "webots://projects/objects/backgrounds/protos/TexturedBackground.proto"
-EXTERNPROTO "../../../src/external/webots_ros2_limo/protos/LimoFourDiff.proto"
+EXTERNPROTO "../protos/LimoFire.proto"
 EXTERNPROTO "webots://projects/objects/floors/protos/Floor.proto"
 EXTERNPROTO "webots://projects/appearances/protos/MarbleTiles.proto"
 EXTERNPROTO "webots://projects/objects/apartment_structure/protos/Wall.proto"
@@ -46,7 +46,7 @@ TexturedBackground {
   texture "empty_office"
   skybox FALSE
 }
-LimoFourDiff {
+LimoFire {
   translation -5 0 0.145
   name "LIMO"
   controller "<extern>"
@@ -84,10 +84,16 @@ Wall {
   name "wall_east_north"
   size 0.2 3.5 2.4
 }
-Door {
-  translation 6.1 0 0
-  name "door_exit"
-  position 0
+Solid {
+  name "gt_door_exit"
+  recognitionColors [ 0.023529 0.050980 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    Door {
+      translation 6.1 0 0
+      name "door_exit"
+      position 0
+    }
+  ]
 }
 
 # ---------------- 복도 북쪽 벽 (방 N1·N2 문) ----------------
@@ -107,17 +113,29 @@ Wall {
   name "wall_corridor_n3"
   size 2.5 0.2 2.4
 }
-Door {
-  translation -3 1.1 0
-  rotation 0 0 1 1.5708
-  name "door_n1"
-  position 1.57
+Solid {
+  name "gt_door_n1"
+  recognitionColors [ 0.023529 0.054902 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    Door {
+      translation -3 1.1 0
+      rotation 0 0 1 1.5708
+      name "door_n1"
+      position 1.57
+    }
+  ]
 }
-Door {
-  translation 3 1.1 0
-  rotation 0 0 1 1.5708
-  name "door_n2"
-  position 1.57
+Solid {
+  name "gt_door_n2"
+  recognitionColors [ 0.023529 0.058824 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    Door {
+      translation 3 1.1 0
+      rotation 0 0 1 1.5708
+      name "door_n2"
+      position 1.57
+    }
+  ]
 }
 Wall {
   translation 0 2.6 0
@@ -136,11 +154,17 @@ Wall {
   name "wall_corridor_s2"
   size 3.5 0.2 2.4
 }
-Door {
-  translation 2 -1.1 0
-  rotation 0 0 1 -1.5708
-  name "door_s"
-  position 1.57
+Solid {
+  name "gt_door_s"
+  recognitionColors [ 0.023529 0.062745 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    Door {
+      translation 2 -1.1 0
+      rotation 0 0 1 -1.5708
+      name "door_s"
+      position 1.57
+    }
+  ]
 }
 Wall {
   translation -2.1 -2.6 0
@@ -186,6 +210,7 @@ CardboardBox {
 FireBillboard {
   translation 4.5 3 0
   name "fire_floor"
+  recognitionColors [ 0.003922 0.003922 1 ]
   texture "flame_bonfire"
   width 0.7
   height 0.4
@@ -195,6 +220,7 @@ FireBillboard {
 FireBillboard {
   translation 4.5 3 0.35
   name "smoke_floor"
+  recognitionColors [ 0.007843 0.015686 1 ]
   texture "smoke"
   width 1.1
   height 0.9
@@ -203,10 +229,12 @@ FireBillboard {
 Candle {
   translation -4.6 2.75 0.5
   name "fire_candle"
+  recognitionColors [ 0.003922 0.007843 1 ]
 }
 FireBillboard {
   translation 0 -3.2 0
   name "fire_small"
+  recognitionColors [ 0.003922 0.011765 1 ]
   texture "flame_single"
   width 0.3
   height 0.4
@@ -214,57 +242,85 @@ FireBillboard {
   lightIntensity 0.8
 }
 # fire_extinguisher: 복도 양쪽 + S 방
-FireExtinguisher {
-  translation -1 0.85 0
-  name "extinguisher_corridor_n"
-  enablePhysics FALSE
+Solid {
+  name "gt_extinguisher_corridor_n"
+  recognitionColors [ 0.011765 0.019608 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    FireExtinguisher {
+      translation -1 0.85 0
+      name "extinguisher_corridor_n"
+      enablePhysics FALSE
+    }
+  ]
 }
-FireExtinguisher {
-  translation 4 -0.85 0
-  name "extinguisher_corridor_s"
-  enablePhysics FALSE
+Solid {
+  name "gt_extinguisher_corridor_s"
+  recognitionColors [ 0.011765 0.023529 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    FireExtinguisher {
+      translation 4 -0.85 0
+      name "extinguisher_corridor_s"
+      enablePhysics FALSE
+    }
+  ]
 }
-FireExtinguisher {
-  translation 5.75 -1.5 0
-  name "extinguisher_s"
-  enablePhysics FALSE
+Solid {
+  name "gt_extinguisher_s"
+  recognitionColors [ 0.011765 0.027451 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    FireExtinguisher {
+      translation 5.75 -1.5 0
+      name "extinguisher_s"
+      enablePhysics FALSE
+    }
+  ]
 }
 # exit_sign: 비상구 문 위(-x 를 봄), 복도 서쪽 끝(+x), 복도 북쪽 벽(-y)
 ExitSign {
   translation 5.97 0 2.15
   rotation 0 0 1 3.14159
   name "exit_sign_door"
+  recognitionColors [ 0.015686 0.031373 1 ]
 }
 ExitSign {
   translation -5.97 0 2
   name "exit_sign_west"
+  recognitionColors [ 0.015686 0.035294 1 ]
 }
 ExitSign {
   translation 1 0.98 2
   rotation 0 0 1 -1.5708
   name "exit_sign_corridor"
+  recognitionColors [ 0.015686 0.039216 1 ]
 }
 # person
 Pedestrian {
   translation -1.5 2.6 1.27
   rotation 0 0 1 3.14159
   name "person_n1"
+  shirtColor 0.019608 0.043137 1  # 정답 색: Pedestrian 은 셔츠 색을 recognitionColors 로 쓴다
   controller "<none>"
 }
 Pedestrian {
   translation 3.5 -2.6 1.27
   rotation 0 0 1 1.5708
   name "person_s"
-  shirtColor 0.7 0.1 0.1
+  shirtColor 0.019608 0.047059 1  # 정답 색: Pedestrian 은 셔츠 색을 recognitionColors 로 쓴다
   controller "<none>"
 }
 # stairs: 계단실, +x 로 올라감
-StraightStairs {
-  translation -5.6 -3 0
-  name "stairs"
-  stepSize 0.3 1.0 0.03
-  stepRise 0.15
-  nSteps 5
+Solid {
+  name "gt_stairs"
+  recognitionColors [ 0.027451 0.066667 1 ]  # 정답 색: 안쪽 모델 전체가 이 색으로 분할된다
+  children [
+    StraightStairs {
+      translation -5.6 -3 0
+      name "stairs"
+      stepSize 0.3 1.0 0.03
+      stepRise 0.15
+      nSteps 5
+    }
+  ]
 }
 
 # /clock 을 내는 ROS 2 supervisor. sim_robot.launch.xml 의 ros2_supervisor.py 가 붙는다

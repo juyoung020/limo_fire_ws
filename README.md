@@ -119,6 +119,8 @@ source ~/limo_fire_ws/env.sh
 ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze     # Webots + 저장 지도 + Nav2 (slam:=true · perception:=true)
 ```
 
+시뮬 구조·Nav2 설정·운용 화면은 [simulation.md](docs/simulation.md), 인식 성능은 [benchmarks](docs/benchmarks/README.md).
+
 ## 시작하기
 
 ```bash

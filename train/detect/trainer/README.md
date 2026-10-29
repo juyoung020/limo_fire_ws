@@ -16,7 +16,7 @@ Ultralytics `yolo detect train model=yolo26s.pt`(8.4.170) 과 같은 규칙을 P
 | `src/optim.cu` | MuSGD(합성곱 = Muon(Newton–Schulz 5, bf16) 0.2 + SGD 1.0, BN·편향 = SGD), 분류 머리 lr ×3, 워밍업·선형 lr, 기울기 자르기 10, 동적 loss scale, EMA — 모두 장치에서 |
 | `src/cache.cpp`, `tools/build_cache.cpp` | 학습 캐시: 긴 변 640 JPEG(q95, 4:4:4) 한 파일 → 고정 메모리. 마스크가 있으면 288×288 번호 지도 런 길이 부호도(YCACHE02) |
 | `src/data.cpp`, `src/augment.cu` | 로더: CPU 스레드(libjpeg-turbo 풀기, 증강 난수·라벨 변환) → 고정 메모리 슬롯 → 복사 스트림 비동기 H2D → GPU 증강(Mosaic + affine + HSV + 뒤집기). 장치 버퍼 두 벌을 번갈아 써서 학습과 겹친다. 마스크 정답: 번호 지도를 같은 변환으로 따라가 출력 160×160(화소 4×4 가운데)에서 최근접으로 읽음 |
-| `src/evalmap.cpp`, `src/evalmask.cu` | 검증 mAP(one2one 상위 300, NMS 없음, Ultralytics 짝짓기·101 점 AP). 마스크 mAP: 예측 마스크(로짓 > 0, 상자로 자름)와 정답의 IoU 를 160×160 에서(Ultralytics process_mask) |
+| `src/evalmap.cpp`, `src/evalmask.cu` | 검증 mAP(one2one 상위 300, NMS 없음, Ultralytics 짝짓기·101 점 AP — 짝짓기·AP 는 인식 벤치마크와 같이 쓰는 `src/limo_fire/limo_fire_perception/include/limo_fire_perception/det_metrics.hpp`). 마스크 mAP: 예측 마스크(로짓 > 0, 상자로 자름)와 정답의 IoU 를 160×160 에서(Ultralytics process_mask) |
 | `tools/train.cpp` | 학습 도구(이어 하기 `--resume`) |
 | `tools/*_parity.cpp`, `tools/aug_dump.cpp` | 정합성 시험, 증강 그림 |
 

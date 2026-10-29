@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "core.h"
+#include "limo_fire_perception/det_metrics.hpp"
 
 struct Det {
   float x1, y1, x2, y2, conf;
@@ -18,7 +19,7 @@ struct GtBox {
 
 class MapEval {
  public:
-  explicit MapEval(int nc) : nc_(nc) {}
+  explicit MapEval(int nc) : ev_(nc) {}
   // 한 영상: 예측(제한 300)과 정답
   void add(const std::vector<Det>& pred, const std::vector<GtBox>& gt);
   // IoU 를 따로 잰 경우(마스크): iou[p · ngt + g]
@@ -31,14 +32,7 @@ class MapEval {
   Result compute() const;
 
  private:
-  int nc_;
-  struct P {
-    float conf;
-    int cls;
-    unsigned tp;  // 10 비트: IoU 문턱별 맞음
-  };
-  std::vector<P> preds_;
-  std::vector<int> ngt_ = std::vector<int>(64, 0);
+  det_metrics::ApEval ev_;
 };
 
 // 머리 출력(호스트, float)에서 영상 하나의 예측: box[l] [h,w,4] ltrb(격자), cls[l] [h,w,nc] 로짓
