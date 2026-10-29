@@ -7,14 +7,26 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-29
+
 ### Added
 
-- 변경 기록 `CHANGELOG.md`.
-- 센서 토픽 문서 `docs/sensor_topics.md`: 센서마다 토픽·타입·실측 주기·frame·발행/구독 노드, 시뮬과의 차이, 포인트 클라우드를 끄면 깊이 정렬도 꺼지는 문제 기록.
+- 변경 기록 `CHANGELOG.md`, 센서 토픽 문서 `docs/sensor_topics.md`.
+- Webots 맵 3 개(덕트호스 미로·사무실·창고)와 맵별 정답 물체·순찰점 파일. `sim.launch.xml world:=<맵>` 하나로 시뮬·지도·Nav2·인식을 띄움.
+- RViz 에서 지도 위 물체 아이콘을 누르면 그 물체 사진(분할 마스크 포함)을 봄.
+- README 표지 데모 GIF.
 
 ### Changed
 
-- 실물 `robot.launch.xml` 이 WeGo URDF + 카메라 틸트 `static_transform_publisher` 3 개 대신 우리 `limo_fire.urdf.xacro` 하나로 TF 를 낸다. 카메라는 모듈 xacro `orbbec_dabai.xacro` 로 분리하고 장착 위치를 실측 (0.15, −0.005, 0.06) 으로 고침(이전 0.23, 0.05, 0.06). color·depth 프레임은 Orbbec 드라이버만 낸다. 틸트 인자 `degree` → `camera_pitch`.
+- 실물 TF 를 우리 URDF 하나로 내고, 카메라 장착 위치를 실측값 (0.15, −0.005, 0.06) 으로 고침.
+- 시뮬도 실물과 같은 URDF·지도 만들기·Nav2·인식 launch 를 씀. 교수님 launch 에서 가끔 TF 가 안 나오던 문제가 없어짐.
+- 운용 화면을 RViz 하나(`viewer.launch.xml`)로 합침: 지도·Nav2 경로·물체·YOLO 영상.
+- Nav2 를 단순하게: Regulated Pure Pursuit·Smac 2D, 팽창 반경 0.45 m, 속도 명령 20 Hz. 덕트호스 미로 끝까지 주행함. 실물 확인 필요.
+- 탐지 영상에 분할 마스크 테두리를 그림.
+
+### Fixed
+
+- `yolo.launch.xml` 의 `mapper:=false` 가 무시되던 문제.
 
 ## [0.5.0] - 2026-10-28
 
@@ -93,7 +105,8 @@
 
 - WeGo 패키지 fetch 스크립트. 저장소에 직접 포함했으므로 필요 없음.
 
-[unreleased]: https://github.com/juyoung020/limo_fire_ws/compare/v0.5.0...HEAD
+[unreleased]: https://github.com/juyoung020/limo_fire_ws/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.2.0...v0.3.0

@@ -1,0 +1,277 @@
+#VRML_SIM R2025a utf8
+# limo_fire_warehouse: 팔레트 줄 사이 통로가 있는 창고 (10×10 m). 정답 물체·시작·순찰점은 limo_fire_warehouse.yaml
+# 팔레트 두 줄(x -2, 1)이 통로 셋(서 x -5~-2.6, 가운데 -1.4~0.4, 동 1.6~5)을 만들고, 줄 가운데(y -1~1.4)가 가로로 트였다
+
+EXTERNPROTO "webots://projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "../../../src/external/webots_ros2_limo/protos/LimoFourDiff.proto"
+EXTERNPROTO "webots://projects/objects/floors/protos/Floor.proto"
+EXTERNPROTO "webots://projects/appearances/protos/FormedConcrete.proto"
+EXTERNPROTO "webots://projects/objects/apartment_structure/protos/Wall.proto"
+EXTERNPROTO "webots://projects/objects/apartment_structure/protos/Door.proto"
+EXTERNPROTO "webots://projects/objects/factory/pallet/protos/WoodenPalletStack.proto"
+EXTERNPROTO "webots://projects/objects/factory/containers/protos/PlasticCrate.proto"
+EXTERNPROTO "webots://projects/objects/obstacles/protos/OilBarrel.proto"
+EXTERNPROTO "webots://projects/objects/traffic/protos/TrafficCone.proto"
+EXTERNPROTO "webots://projects/objects/factory/fire_extinguisher/protos/FireExtinguisher.proto"
+EXTERNPROTO "webots://projects/humans/pedestrian/protos/Pedestrian.proto"
+EXTERNPROTO "webots://projects/objects/stairs/protos/StraightStairs.proto"
+EXTERNPROTO "../protos/FireBillboard.proto"
+EXTERNPROTO "../protos/ExitSign.proto"
+
+WorldInfo {
+  info [
+    "limo_fire: 팔레트 통로가 있는 창고 (sim/webots/README.md, limo_fire_warehouse.yaml)"
+  ]
+  title "limo_fire warehouse"
+  basicTimeStep 10
+  contactProperties [
+    ContactProperties {
+      material1 "wheel"
+      material2 "default"
+      coulombFriction 1.0
+      forceDependentSlip 0.01
+      bounce 0
+    }
+  ]
+}
+Viewpoint {
+  orientation 0.25 0.25 -0.93 1.64
+  position 0 8 11
+  follow "LIMO"
+}
+TexturedBackground {
+  texture "empty_office"
+  skybox FALSE
+}
+LimoFourDiff {
+  translation -4 -4.2 0.145
+  rotation 0 0 1 1.5708
+  name "LIMO"
+  controller "<extern>"
+}
+Floor {
+  size 10 10
+  tileSize 2 2
+  appearance FormedConcrete {
+  }
+}
+
+# ---------------- 바깥 벽 (서쪽·남쪽에 닫힌 문) ----------------
+Wall {
+  translation 0 5.1 0
+  name "wall_north"
+  size 10.4 0.2 2.4
+}
+Wall {
+  translation 5.1 0 0
+  name "wall_east"
+  size 0.2 10 2.4
+}
+Wall {
+  translation -1.35 -5.1 0
+  name "wall_south_west"
+  size 7.7 0.2 2.4
+}
+Wall {
+  translation 4.35 -5.1 0
+  name "wall_south_east"
+  size 1.7 0.2 2.4
+}
+Door {
+  translation 3 -5.1 0
+  rotation 0 0 1 1.5708
+  name "door_south"
+  position 0
+}
+Wall {
+  translation -5.1 -4.25 0
+  name "wall_west_south"
+  size 0.2 1.5 2.4
+}
+Wall {
+  translation -5.1 1.25 0
+  name "wall_west_north"
+  size 0.2 7.5 2.4
+}
+Door {
+  translation -5.1 -3 0
+  name "door_west"
+  position 0
+}
+
+# ---------------- 팔레트 줄 (팔레트 1.2×0.8 m, 6 단 높이 약 0.84 m) ----------------
+WoodenPalletStack {
+  translation -2 2.6 0
+  name "pallet_a1"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation -2 1.8 0
+  name "pallet_a2"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation -2 -1.4 0
+  name "pallet_a3"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation -2 -2.2 0
+  name "pallet_a4"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation -2 -3 0
+  name "pallet_a5"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation 1 2.6 0
+  name "pallet_b1"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation 1 1.8 0
+  name "pallet_b2"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation 1 -1.4 0
+  name "pallet_b3"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation 1 -2.2 0
+  name "pallet_b4"
+  palletNumber 6
+}
+WoodenPalletStack {
+  translation 1 -3 0
+  name "pallet_b5"
+  palletNumber 6
+}
+
+# ---------------- 장애물 ----------------
+OilBarrel {
+  translation 4.4 0.8 0.44
+  name "barrel_1"
+}
+OilBarrel {
+  translation 4.4 0.1 0.44
+  name "barrel_2"
+}
+PlasticCrate {
+  translation 1 -4.3 0
+  name "crate_1"
+}
+PlasticCrate {
+  translation -0.2 -4.3 0
+  name "crate_2"
+  color 0.2 0.4 0.8
+}
+TrafficCone {
+  translation 2.8 1.6 0
+  name "cone_1"
+}
+TrafficCone {
+  translation 4.4 1.6 0
+  name "cone_2"
+}
+
+# ---------------- YOLO 7 클래스 물체 (위치·크기 정답은 limo_fire_warehouse.yaml) ----------------
+# fire / smoke: 동쪽 바닥 불 + 큰 연기, 가운데 통로 작은 불, 드럼통 옆 작은 불
+FireBillboard {
+  translation 3.6 2.4 0
+  name "fire_floor"
+  texture "flame_bonfire"
+  width 0.8
+  height 0.5
+  emissiveIntensity 1.5
+  lightIntensity 2
+}
+FireBillboard {
+  translation 3.6 2.4 0.4
+  name "smoke_floor"
+  texture "smoke"
+  width 1.4
+  height 1.3
+  emissiveIntensity 0
+}
+FireBillboard {
+  translation -0.9 2.2 0
+  name "fire_small_aisle"
+  texture "flame_single"
+  width 0.3
+  height 0.4
+  emissiveIntensity 1.5
+  lightIntensity 0.8
+}
+FireBillboard {
+  translation 4.3 -1.5 0
+  name "fire_small_barrel"
+  texture "flame_single"
+  width 0.3
+  height 0.4
+  emissiveIntensity 1.5
+  lightIntensity 0.8
+}
+# fire_extinguisher: 벽 옆
+FireExtinguisher {
+  translation -4.85 0.5 0
+  name "extinguisher_west"
+  enablePhysics FALSE
+}
+FireExtinguisher {
+  translation 4.85 -3 0
+  name "extinguisher_east"
+  enablePhysics FALSE
+}
+FireExtinguisher {
+  translation -0.5 4.85 0
+  name "extinguisher_north"
+  enablePhysics FALSE
+}
+# exit_sign: 서쪽 문 위(+x), 남쪽 문 위(+y), 동쪽 벽(-x)
+ExitSign {
+  translation -4.97 -3 2.15
+  name "exit_sign_door_west"
+}
+ExitSign {
+  translation 3 -4.97 2.15
+  rotation 0 0 1 1.5708
+  name "exit_sign_door_south"
+}
+ExitSign {
+  translation 4.97 3.5 2.2
+  rotation 0 0 1 3.14159
+  name "exit_sign_east"
+}
+# person
+Pedestrian {
+  translation 0.1 -2.2 1.27
+  rotation 0 0 1 -1.5708
+  name "person_aisle"
+  controller "<none>"
+}
+Pedestrian {
+  translation 2.3 -0.8 1.27
+  rotation 0 0 1 3.14159
+  name "person_east"
+  shirtColor 0.7 0.1 0.1
+  controller "<none>"
+}
+# stairs: 북동쪽, +x 로 올라감
+StraightStairs {
+  translation 3 4.3 0
+  name "stairs"
+  stepSize 0.3 1.0 0.03
+  stepRise 0.15
+  nSteps 5
+}
+
+# /clock 을 내는 ROS 2 supervisor. sim_robot.launch.xml 의 ros2_supervisor.py 가 붙는다
+Robot {
+  name "Ros2Supervisor"
+  controller "<extern>"
+  supervisor TRUE
+}

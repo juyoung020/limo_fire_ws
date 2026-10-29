@@ -1,0 +1,18 @@
+<!-- 로봇 모델(URDF) → TF. 실물(robot.launch.xml)과 시뮬(sim_robot.launch.xml)이 같이 쓴다
+     ros2 launch limo_fire_description description.launch.xml platform:=real|webots -->
+<launch>
+  <arg name="platform" default="real" description="real: 실물 LIMO, webots: Webots 모델 (장착 위치가 다른 것만 URDF 안에서 고름)"/>
+  <arg name="camera_pitch" default="0.0" description="카메라 마운트 틸트 pitch (라디안, 아래로 숙이면 +)"/>
+  <arg name="camera_driver_tf" default="true" description="camera_link 아래 color·depth 프레임을 카메라 드라이버가 낸다 (실물·Webots 둘 다 그렇다)"/>
+  <arg name="joint_states" default="true" description="바퀴 관절 상태를 낼 노드가 없을 때(실물) joint_state_publisher 로 0 을 낸다. Webots 는 ros2_control 이 낸다"/>
+  <arg name="use_sim_time" default="false"/>
+
+  <node pkg="robot_state_publisher" exec="robot_state_publisher">
+    <param name="robot_description" type="str"
+           value="$(command 'xacro $(find-pkg-share limo_fire_description)/urdf/limo_fire.urdf.xacro platform:=$(var platform) camera_pitch:=$(var camera_pitch) camera_driver_tf:=$(var camera_driver_tf)')"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+  <node pkg="joint_state_publisher" exec="joint_state_publisher" if="$(var joint_states)">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+</launch>

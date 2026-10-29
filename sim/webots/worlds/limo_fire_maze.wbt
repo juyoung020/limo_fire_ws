@@ -1,0 +1,217 @@
+#VRML_SIM R2025a utf8
+# limo_fire_maze: 시연장(약 6×8 m 추정, docs/spec.md) 모양 덕트호스 미로. 정답 물체·시작·순찰점은 limo_fire_maze.yaml
+# 방 x -4~4, y -3~3. 덕트호스 두 줄이 통로 셋을 만든다: 남(y -3~-1.5) → 동쪽 끝으로 꺾어 가운데(-1.5~0.5) → 서쪽 끝으로 꺾어 북(0.5~3)
+
+EXTERNPROTO "webots://projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "../../../src/external/webots_ros2_limo/protos/LimoFourDiff.proto"
+EXTERNPROTO "webots://projects/objects/floors/protos/Floor.proto"
+EXTERNPROTO "webots://projects/appearances/protos/CementTiles.proto"
+EXTERNPROTO "webots://projects/objects/apartment_structure/protos/Wall.proto"
+EXTERNPROTO "webots://projects/objects/apartment_structure/protos/Door.proto"
+EXTERNPROTO "webots://projects/objects/factory/containers/protos/CardboardBox.proto"
+EXTERNPROTO "webots://projects/objects/traffic/protos/TrafficCone.proto"
+EXTERNPROTO "webots://projects/objects/factory/fire_extinguisher/protos/FireExtinguisher.proto"
+EXTERNPROTO "webots://projects/humans/pedestrian/protos/Pedestrian.proto"
+EXTERNPROTO "webots://projects/objects/stairs/protos/StraightStairs.proto"
+EXTERNPROTO "../protos/DuctHose.proto"
+EXTERNPROTO "../protos/FireBillboard.proto"
+EXTERNPROTO "../protos/Candle.proto"
+EXTERNPROTO "../protos/ExitSign.proto"
+
+WorldInfo {
+  info [
+    "limo_fire: 시연장 모양 덕트호스 미로 (sim/webots/README.md, limo_fire_maze.yaml)"
+  ]
+  title "limo_fire maze"
+  basicTimeStep 10
+  contactProperties [
+    ContactProperties {
+      material1 "wheel"
+      material2 "default"
+      coulombFriction 1.0
+      forceDependentSlip 0.01
+      bounce 0
+    }
+  ]
+}
+Viewpoint {
+  orientation 0.25 0.25 -0.93 1.64
+  position 0 6.5 9
+  follow "LIMO"
+}
+TexturedBackground {
+  texture "empty_office"
+  skybox FALSE
+}
+LimoFourDiff {
+  translation -3.3 -2.25 0.145
+  name "LIMO"
+  controller "<extern>"
+}
+Floor {
+  size 8 6
+  tileSize 2 2
+  appearance CementTiles {
+    textureTransform TextureTransform {
+      scale 0.6 0.6
+    }
+  }
+}
+
+# ---------------- 방 벽 (높이 2.4 m, 두께 0.2 m, 안쪽 면이 방 경계) ----------------
+Wall {
+  translation 0 3.1 0
+  name "wall_north"
+  size 8.4 0.2 2.4
+}
+Wall {
+  translation 0 -3.1 0
+  name "wall_south"
+  size 8.4 0.2 2.4
+}
+Wall {
+  translation 4.1 0 0
+  name "wall_east"
+  size 0.2 6 2.4
+}
+Wall {
+  translation -4.1 -1 0
+  name "wall_west_south"
+  size 0.2 4 2.4
+}
+Wall {
+  translation -4.1 2.5 0
+  name "wall_west_north"
+  size 0.2 1 2.4
+}
+Door {
+  translation -4.1 1.5 0
+  name "door_west"
+  position 0
+}
+
+# ---------------- 덕트호스 미로 ----------------
+DuctHose {
+  translation -0.6 -1.5 0
+  name "duct_south"
+  length 6.8
+}
+DuctHose {
+  translation 0.6 0.5 0
+  name "duct_north"
+  length 6.8
+}
+
+# ---------------- 장애물 ----------------
+CardboardBox {
+  translation -1 -2.65 0.3
+  name "box_south"
+}
+CardboardBox {
+  translation -3.65 2.65 0.3
+  name "box_candle"
+}
+TrafficCone {
+  translation 1.2 -1.05 0
+  name "cone_1"
+}
+TrafficCone {
+  translation -2 -1.05 0
+  name "cone_2"
+}
+TrafficCone {
+  translation 0.2 0.1 0
+  name "cone_3"
+}
+
+# ---------------- YOLO 7 클래스 물체 (위치·크기 정답은 limo_fire_maze.yaml) ----------------
+# fire / smoke
+FireBillboard {
+  translation 3.3 2.3 0
+  name "fire_floor"
+  texture "flame_bonfire"
+  width 0.6
+  height 0.4
+  emissiveIntensity 1.5
+  lightIntensity 1.5
+}
+FireBillboard {
+  translation 3.3 2.3 0.35
+  name "smoke_floor"
+  texture "smoke"
+  width 1.0
+  height 0.9
+  emissiveIntensity 0
+}
+FireBillboard {
+  translation -1 0.2 0
+  name "fire_small"
+  texture "flame_single"
+  width 0.3
+  height 0.4
+  emissiveIntensity 1.5
+  lightIntensity 0.8
+}
+Candle {
+  translation -3.65 2.65 0.6
+  name "fire_candle"
+}
+# fire_extinguisher
+FireExtinguisher {
+  translation 3.85 -0.3 0
+  name "extinguisher_east"
+  enablePhysics FALSE
+}
+FireExtinguisher {
+  translation -1.5 2.85 0
+  name "extinguisher_north"
+  enablePhysics FALSE
+}
+FireExtinguisher {
+  translation 0 -2.85 0
+  name "extinguisher_south"
+  enablePhysics FALSE
+}
+# exit_sign: 서쪽 문 위(+x 를 봄), 동쪽 벽(-x), 남쪽 벽(+y)
+ExitSign {
+  translation -3.97 1.5 2.15
+  name "exit_sign_door"
+}
+ExitSign {
+  translation 3.98 1.8 2
+  rotation 0 0 1 3.14159
+  name "exit_sign_east"
+}
+ExitSign {
+  translation -1 -2.98 2
+  rotation 0 0 1 1.5708
+  name "exit_sign_south"
+}
+# person
+Pedestrian {
+  translation 2 -0.3 1.27
+  name "person_1"
+  controller "<none>"
+}
+Pedestrian {
+  translation 0 2.3 1.27
+  rotation 0 0 1 3.14159
+  name "person_2"
+  shirtColor 0.7 0.1 0.1
+  controller "<none>"
+}
+# stairs: 북쪽 벽에 붙어 +x 로 올라감
+StraightStairs {
+  translation 1 2.45 0
+  name "stairs"
+  stepSize 0.3 1.0 0.03
+  stepRise 0.15
+  nSteps 4
+}
+
+# /clock 을 내는 ROS 2 supervisor. sim_robot.launch.xml 의 ros2_supervisor.py 가 붙는다
+Robot {
+  name "Ros2Supervisor"
+  controller "<extern>"
+  supervisor TRUE
+}

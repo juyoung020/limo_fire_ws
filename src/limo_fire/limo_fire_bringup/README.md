@@ -8,6 +8,7 @@ ros2 launch limo_fire_bringup robot.launch.xml [viz:=true]     # 1. 센서·구�
 ros2 launch limo_fire_bringup mapping.launch.xml               # 2-a. 지도 만들기 (Cartographer + RViz)
 ros2 launch limo_fire_bringup save_map.launch.xml [name:=map]  #      지도 저장
 ros2 launch limo_fire_bringup navigation.launch.xml            # 2-b. 저장한 지도로 주행 (AMCL + Nav2 + RViz)
+ros2 launch limo_fire_bringup sim.launch.xml world:=<맵>        # 시뮬: 1(sim_robot.launch.xml) + 2-a 또는 2-b 를 한 번에 (sim/webots/README.md)
 ```
 
 매핑과 네비게이션은 동시에 켜지 않는다(둘 다 `/map` 을 낸다). 네비게이션은 RViz 에서 **2D Pose Estimate** 로 처음 위치를 찍어야 시작한다.
