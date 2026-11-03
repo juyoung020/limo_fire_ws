@@ -12,6 +12,8 @@
   - 종류는 Added · Changed · Deprecated · Removed · Fixed · Security, 이 순서로.
   - 항목은 사람이 읽는 한 줄(100 자 이내): 무엇이 생기거나 바뀌었는지. 경로·파일 이름 나열·수치·원인·디버깅 이야기는 커밋 메시지와 docs 에.
   - 커밋 메시지를 옮겨 적지 않는다. 같은 기능의 여러 변경은 항목 하나로.
+  - 읽는 사람은 이 저장소를 쓰는 팀원이다: "무엇을 할 수 있게 됐나 / 무엇이 달라졌나 / 내가 할 일(새로 필요한 것)" 만. 구현 방법(커널·라이브러리·알고리즘 이름)과 내부 용어는 쓰지 않는다.
+  - 새로 쓰기 전에 기존 항목(지난 버전들)의 말투·길이와 맞는지 한 번 읽고 맞춘다.
   - 릴리스 때 `## [x.y.z] - YYYY-MM-DD` 로 묶고 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 - 위 규칙은 `tools/repo_check` 가 검사한다. Claude Code 는 `.claude/settings.json` 훅으로 `git commit`·`git push` 전에 자동으로 돌리고,
   어기면 막는다(CHANGELOG 형식, 아직 안 올린 커밋 여러 개가 같은 영역을 건드림, 기여자 표기). 사람은 `tools/repo_check/target/release/repo_check push` 로 직접.
