@@ -4,7 +4,7 @@
 
 **조사 방법 (2026-10-28)**
 - 코드: 드라이버 소스(`src/external/wego_limo_pro`)와 우리 launch·config(`src/limo_fire`)에서 발행·구독 토픽 이름을 찾았다.
-- 실측: 돌고 있던 `limo_base` 의 토픽을 읽었고, 카메라·라이다 드라이버만 따로 30 초 남짓 띄워 `ros2 topic list/hz/echo/info` 로 쟀다(로봇은 움직이지 않음). 라이다·EKF 주기는 10-26 녹화 bag(`~/limo_bags/mapping_1026_1900`, 200 초)으로도 맞춰 봤다.
+- 실측: 돌고 있던 WeGo `limo_base` 의 토픽을 읽었고(11-03 부터 우리 판 `limo_fire_base`, 새 토픽 주기는 그날 잼), 카메라·라이다 드라이버만 따로 30 초 남짓 띄워 `ros2 topic list/hz/echo/info` 로 쟀다(로봇은 움직이지 않음). 라이다·EKF 주기는 10-26 녹화 bag(`~/limo_bags/mapping_1026_1900`, 200 초)으로도 맞춰 봤다.
 - 실측에서 확인 못 한 것은 "코드 기준"이라고 적었다.
 
 ## 한눈에
@@ -14,23 +14,26 @@
 | 센서 | 토픽 | 타입 | 주기 (실측) | frame_id | 발행 노드 | 읽는 노드 |
 |---|---|---|---|---|---|---|
 | 라이다 | `/scan` | `sensor_msgs/LaserScan` | 10.0 Hz | `laser_link` | `/ydlidar_ros2_driver_node` | Cartographer, AMCL, 전역·지역 costmap |
-| IMU | `/imu` | `sensor_msgs/Imu` | 99.9 Hz | `imu_link` | `/limo/limo_base` | EKF, Cartographer |
-| 바퀴 오도메트리 | `/odom` | `nav_msgs/Odometry` | 49.9 Hz | `odom` → `base_link` | `/limo/limo_base` | EKF |
+| IMU | `/imu` | `sensor_msgs/Imu` | 99.9 Hz | `imu_link` | `/limo/limo_fire_base` | EKF, Cartographer |
+| 바퀴 오도메트리 | `/odom` | `nav_msgs/Odometry` | 49.9 Hz | `odom` → `base_link` | `/limo/limo_fire_base` | EKF |
 | 융합 오도메트리 | `/odometry/filtered` | `nav_msgs/Odometry` | 30.0 Hz (bag) | `odom` → `base_link` | `/ekf_filter_node_odom` | Cartographer, Nav2(bt_navigator·controller·velocity_smoother) |
-| 베이스 상태 | `/limo_status` | `limo_msgs/LimoStatus` | 2.0 Hz | — | `/limo/limo_base` | 없음 |
+| 베이스 상태 | `/limo_status` | `limo_msgs/LimoStatus` | 2.0 Hz | — | `/limo/limo_fire_base` | 녹화 |
+| 리모컨 | `/rc_state` | `sensor_msgs/Joy` (axes 오른 가로·세로, 왼 세로·가로, 다이얼 −1~1 · buttons SWA~SWD) | 40 Hz | — | `/limo/limo_fire_base` | 녹화 |
+| 모터 1~4 | `/motor_states` | `sensor_msgs/JointState` (velocity rad/s, effort A, position = 엔코더 펄스 원값) | 20 Hz | — | `/limo/limo_fire_base` | 녹화 |
+| 바퀴 거리 | `/wheel_odometry` | `sensor_msgs/JointState` (left_wheel·right_wheel 누적 m) | 50 Hz | — | `/limo/limo_fire_base` | 녹화 |
 | 컬러 영상 | `/camera/color/image_raw` | `sensor_msgs/Image` (rgb8, 640×480) | 29.4~29.7 Hz | `camera_color_optical_frame` | `/camera/camera` | `yolo_detector` |
 | 컬러 내부 파라미터 | `/camera/color/camera_info` | `sensor_msgs/CameraInfo` | 29.9 Hz | `camera_color_optical_frame` | `/camera/camera` | 없음 |
 | 깊이 영상 | `/camera/depth/image_raw` | `sensor_msgs/Image` (16UC1, mm) | 28.4~29.9 Hz | [주의 1](#주의-1-깊이가-컬러에-정렬되지-않게-바뀐다) | `/camera/camera` | `object_mapper` |
 | 깊이 내부 파라미터 | `/camera/depth/camera_info` | `sensor_msgs/CameraInfo` | 30.2 Hz | 위와 같음 | `/camera/camera` | `object_mapper` |
 
-로봇이 받는 쪽: `/cmd_vel` (`geometry_msgs/Twist`) 은 `limo_base` 가 구독한다. Nav2 에서는 controller → `cmd_vel_nav` → velocity_smoother → `/cmd_vel` 순으로 들어온다.
+로봇이 받는 쪽: `/cmd_vel` (`geometry_msgs/Twist`) 은 `limo_fire_base` 가 구독한다. Nav2 에서는 controller → `cmd_vel_nav` → velocity_smoother → `/cmd_vel` 순으로 들어온다.
 
 ## 데이터 흐름
 
 ```mermaid
 flowchart LR
   subgraph drivers["센서 드라이버"]
-    LB["/limo/limo_base<br>(UART ttylimo)"]
+    LB["/limo/limo_fire_base<br>(UART ttylimo)"]
     YD["/ydlidar_ros2_driver_node<br>(USB /dev/ydlidar)"]
     OB["/camera/camera<br>(Orbbec Dabai DC1)"]
   end
@@ -49,7 +52,7 @@ flowchart LR
 ```
 
 - 맵을 만들 때(`mapping.launch.xml`)는 Cartographer, 주행할 때(`navigation.launch.xml`)는 AMCL + Nav2 가 붙는다. 둘을 같이 띄우지 않는다.
-- TF `odom → base_link` 는 EKF 만 낸다(`limo_base` 의 `pub_odom_tf: false`).
+- TF `odom → base_link` 는 EKF 만 낸다(`limo_fire_base` 의 `publish_odom_tf: false`).
 
 ## 센서별 자세히
 
@@ -77,10 +80,11 @@ flowchart LR
 
 | 항목 | 값 | 근거 |
 |---|---|---|
-| 발행 | `"/odom"`, `"/imu"`, `"/limo_status"` 를 **절대 이름**으로 만든다 | `limo_ros2/limo_base/src/limo_driver.cpp:66-68` |
-| 네임스페이스 | launch 는 `namespace="limo"` 로 띄우지만(노드 이름 `/limo/limo_base`), 토픽은 절대 이름이라 `/limo/odom` 이 아니라 **`/odom`** 이다 | 실측 `ros2 topic list` |
-| 구독 | `"/cmd_vel"` (`geometry_msgs/Twist`) | `limo_driver.cpp:70` |
-| frame | `/imu` → `imu_link` (코드에 고정), `/odom` → `odom` / `base_link` (파라미터) | `limo_driver.cpp:472, 602-603`, 실측 |
+| 발행 | `"/odom"`, `"/imu"`, `"/limo_status"` (WeGo `limo_base` 그대로) + `"/rc_state"`, `"/motor_states"`, `"/wheel_odometry"` (우리가 더함) 를 **절대 이름**으로 만든다 | `limo_fire_base/src/limo_driver.cpp` ("limo_fire" 표시 줄) |
+| 네임스페이스 | launch 는 `namespace="limo"` 로 띄우지만(노드 이름 `/limo/limo_fire_base`), 토픽은 절대 이름이라 `/limo/odom` 이 아니라 **`/odom`** 이다 | 실측 `ros2 topic list` |
+| 구독 | `"/cmd_vel"` (`geometry_msgs/Twist`) | `limo_driver.cpp` |
+| frame | `/imu` → `imu_link` (코드에 고정), `/odom` → `odom` / `base_link` (파라미터) | `limo_driver.cpp`, `config/limo_base.yaml` |
+| 원본 버그 (그대로 둠) | `/limo_status` stamp 가 1970 년(초를 나노초로 넣음), IMU 자세 `setRPY(pitch, roll, yaw)` 롤·피치 뒤바뀜, 아커만 모드에서 `/odom` 안 나옴 | `limo_driver.cpp` `publishLimoState` · `publishIMUData` · `publishOdometry` |
 | QoS | 셋 다 RELIABLE, VOLATILE | `ros2 topic info -v` |
 
 EKF(`limo_fire_bringup/config/ekf.yaml`)가 쓰는 값:
@@ -147,9 +151,9 @@ Cartographer 는 `/imu` 를 직접 받고(`use_imu_data = true`, `tracking_frame
 
 `install/limo_fire_bringup` 은 10-26 19:30 빌드다. 10-28 의 카메라 설정 변경이 아직 안 들어가 있어서, 지금 `robot.launch.xml` 을 켜면 포인트 클라우드·IR 이 다 나온다. `colcon build --packages-select limo_fire_bringup` 을 하면 반영되고, 그때부터 주의 1 이 생긴다.
 
-### 주의 3. `limo_base` 의 네임스페이스는 토픽에 안 붙는다
+### 주의 3. 바닥판 드라이버의 네임스페이스는 토픽에 안 붙는다
 
-노드 이름은 `/limo/limo_base` 지만 토픽은 `/odom`, `/imu`, `/cmd_vel` 이다. remap 하거나 로봇을 여러 대 띄울 때 `/limo/...` 로 찾으면 안 나온다.
+노드 이름은 `/limo/limo_fire_base` 지만 토픽은 `/odom`, `/imu`, `/cmd_vel` 이다. remap 하거나 로봇을 여러 대 띄울 때 `/limo/...` 로 찾으면 안 나온다.
 
 ## 시뮬레이션(Webots)
 
@@ -184,5 +188,5 @@ ros2 topic echo --once --no-arr /camera/depth/image_raw # 해상도·frame_id (�
 ros2 topic echo --once --field k /camera/depth/camera_info
 ```
 
-- `limo_base` 가 이미 떠 있으면(대시보드·teleop) `robot.launch.xml` 을 또 켜지 않는다. 같은 시리얼 포트 `ttylimo` 를 두고 부딪친다.
+- 바닥판 드라이버(대시보드의 `limo_base`, 따로 켠 `limo_fire_base`)가 이미 떠 있으면 `robot.launch.xml` 을 또 켜지 않는다. 같은 시리얼 포트 `ttylimo` 를 두고 부딪친다.
 - `ros2 topic hz` 를 `timeout` 으로 끊을 때는 `timeout -s INT` 를 써야 평균값이 찍힌다.

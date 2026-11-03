@@ -10,6 +10,12 @@
 ### Added
 
 - 인식 벤치마크(`sim.launch.xml benchmark:=true`): Webots 정답과 장마다 비교해 P·R·F1·mAP·IoU·속도·물체 지도 정확도를 `docs/benchmarks/` 에 표로.
+- 바닥판 리모컨 조종 값·모터 상태·바퀴 거리 토픽(`/rc_state`, `/motor_states`, `/wheel_odometry`).
+- `robot.launch.xml base:=false`: 바닥판 없이 센서만 켜기(충전 중·세워 두고 잴 때).
+
+### Changed
+
+- 바닥판 드라이버를 `limo_fire_base` 로 바꿈(WeGo `limo_base` 그대로 + 위 토픽).
 
 ## [0.6.0] - 2026-10-29
 

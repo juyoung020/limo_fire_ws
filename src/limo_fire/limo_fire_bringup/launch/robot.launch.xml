@@ -1,9 +1,11 @@
 <!-- 실물 LIMO Pro 센서·구동 켜기 (대시보드 "센서" = WeGo wego/teleop_launch.py 와 같은 구성)
-     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [camera_pitch:=0.0]
-     URDF(limo_fire_description, 카메라 장착 포함) + 베이스(바퀴·IMU) + 깊이 카메라 + 라이다 + EKF -->
+     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [camera_pitch:=0.0] [base:=false]
+     URDF(limo_fire_description, 카메라 장착 포함) + 바닥판(limo_fire_base: 바퀴·IMU·리모컨) + 깊이 카메라 + 라이다 + EKF
+     base:=false 는 센서만(베이스·EKF 끔): 충전 중이나 세워 두고 센서 오차를 잴 때 — 바퀴가 명령을 받지 않는다 -->
 <launch>
   <arg name="camera_pitch" default="0.0" description="카메라 마운트 틸트 pitch (라디안, 아래로 숙이면 +). WeGo 의 degree 인자"/>
   <arg name="viz" default="false"/>
+  <arg name="base" default="true" description="false 면 베이스(바퀴·IMU)·EKF 를 켜지 않고 센서만"/>
   <arg name="max_clocks" default="true" description="jetson_clocks 로 CPU·GPU·메모리 클럭을 최대로 고정 (재부팅하면 풀림, sudo 암호 없이 될 때만)"/>
 
   <!-- 클럭 고정: 카메라처럼 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려가 YOLO 가 21 ms → 고정하면 11 ms -->
@@ -17,14 +19,10 @@
     <arg name="joint_states" value="true"/>
   </include>
 
-  <!-- 베이스: 바퀴 오도메트리 /odom, IMU /imu, /cmd_vel 받음. odom TF 는 EKF 가 낸다 -->
-  <node pkg="limo_base" exec="limo_base" namespace="limo" output="screen" emulate_tty="true">
-    <param name="port_name" value="ttylimo"/>
-    <param name="odom_frame" value="odom"/>
-    <param name="base_frame" value="base_link"/>
-    <param name="odom_topic_name" value="odom"/>
-    <param name="pub_odom_tf" value="false"/>
-    <param name="control_rate" value="50"/>
+  <!-- 바닥판: /cmd_vel 받음, 바퀴 오도메트리 /odom, IMU /imu, 상태 /limo_status, 리모컨 /rc_state, 모터 /motor_states, 바퀴 거리 /wheel_odometry.
+       odom TF 는 EKF 가 낸다. limo_fire_base = WeGo limo_base 그대로 + 버리던 리모컨·모터·바퀴 거리 -->
+  <node pkg="limo_fire_base" exec="limo_fire_base" name="limo_fire_base" namespace="limo" output="screen" emulate_tty="true" if="$(var base)">
+    <param from="$(find-pkg-share limo_fire_bringup)/config/limo_base.yaml"/>
   </node>
 
   <!-- 깊이 카메라 Orbbec Dabai DC1 -->
@@ -44,7 +42,7 @@
   </node>
 
   <!-- EKF: /odom + /imu → /odometry/filtered, odom → base_link -->
-  <node pkg="robot_localization" exec="ekf_node" name="ekf_filter_node_odom" output="screen">
+  <node pkg="robot_localization" exec="ekf_node" name="ekf_filter_node_odom" output="screen" if="$(var base)">
     <param from="$(find-pkg-share limo_fire_bringup)/config/ekf.yaml"/>
   </node>
 

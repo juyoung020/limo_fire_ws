@@ -5,7 +5,7 @@ GitHub [WeGo-Robotics/limo_pro](https://github.com/WeGo-Robotics/limo_pro) `7ef3
 
 | 폴더 | 내용 | 비고 |
 |---|---|---|
-| `limo_ros2` | `limo_base`(바퀴·IMU 시리얼 드라이버), `limo_description`(URDF), `limo_msgs` | |
+| `limo_ros2` | `limo_description`(URDF), `limo_msgs` (`limo_base` 바닥판 드라이버는 `archive/limo_base` 로 옮김) | 우리 판: `limo_fire_base` |
 | `ydlidar_ros2_driver` | YDLIDAR T-mini Plus 드라이버 | |
 | `OrbbecSDK_ROS2` | Orbbec Dabai DC1 드라이버(`orbbec_camera`) | [orbbec/OrbbecSDK_ROS2](https://github.com/orbbec/OrbbecSDK_ROS2) `0b2b33d` 에 WeGo 가 손댄 것 |
 | `robot_localization` | EKF (`params/limo_ekf.yaml`) | |
