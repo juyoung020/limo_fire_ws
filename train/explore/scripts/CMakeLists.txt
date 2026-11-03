@@ -1,0 +1,21 @@
+# 탐사 RL 학습 러너(train): 시뮬(limo_sim) + 신경망·PPO(explore_ppo) + 실행 폴더 쓰개(viewer/include/runfolder.h).
+#   cmake -S train/explore/scripts -B <빌드> -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.0/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=86
+#   cmake --build <빌드> -j8 --target train
+cmake_minimum_required(VERSION 3.22)
+project(limo_fire_explore_train LANGUAGES CXX CUDA)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CUDA_STANDARD 20)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES 86)  # RTX 3060
+endif()
+set(EXPLORE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_subdirectory(${EXPLORE}/sim ${CMAKE_CURRENT_BINARY_DIR}/sim)
+add_subdirectory(${EXPLORE}/ppo ${CMAKE_CURRENT_BINARY_DIR}/ppo)
+
+add_executable(train train.cpp)
+set_source_files_properties(train.cpp PROPERTIES LANGUAGE CUDA)   # done 매핑 커널 하나
+target_include_directories(train PRIVATE ${EXPLORE}/viewer/include)
+target_link_libraries(train limo_sim explore_ppo)

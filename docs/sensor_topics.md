@@ -84,7 +84,7 @@ flowchart LR
 | 네임스페이스 | launch 는 `namespace="limo"` 로 띄우지만(노드 이름 `/limo/limo_fire_base`), 토픽은 절대 이름이라 `/limo/odom` 이 아니라 **`/odom`** 이다 | 실측 `ros2 topic list` |
 | 구독 | `"/cmd_vel"` (`geometry_msgs/Twist`) | `limo_driver.cpp` |
 | frame | `/imu` → `imu_link` (코드에 고정), `/odom` → `odom` / `base_link` (파라미터) | `limo_driver.cpp`, `config/limo_base.yaml` |
-| 원본 버그 (그대로 둠) | `/limo_status` stamp 가 1970 년(초를 나노초로 넣음), IMU 자세 `setRPY(pitch, roll, yaw)` 롤·피치 뒤바뀜, 아커만 모드에서 `/odom` 안 나옴 | `limo_driver.cpp` `publishLimoState` · `publishIMUData` · `publishOdometry` |
+| 원본 버그 (그대로 둠) | `/limo_status` stamp 가 1970 년(초를 나노초로 넣음), 아커만 모드에서 `/odom` 안 나옴. IMU 자세는 바이트 필드 이름이 roll·pitch 뒤바뀌어 있고 `setRPY(pitch, roll, yaw)` 로 다시 뒤바꿔 넣어 **나오는 쿼터니언은 REP-103 대로**다 — 실측 8 녹화 정지 평균 roll = atan2(ay, az)·pitch = −atan2(ax, az) 가 1 mrad 안 (`train/explore/sim/analysis/real_limo.md` IMU 절) | `limo_driver.cpp` `publishLimoState` · `publishIMUData` · `publishOdometry` |
 | QoS | 셋 다 RELIABLE, VOLATILE | `ros2 topic info -v` |
 
 EKF(`limo_fire_bringup/config/ekf.yaml`)가 쓰는 값:

@@ -29,12 +29,13 @@
 | 라이다 흔들림 σ, 표면마다 차이 | R1 · R2 | `scan_stats_bag` | ✅ (두 장소) |
 | 라이다 거리 치우침 (줄자 대비) | R2 | (만들 것) 벽 평면 맞추기 | ❌ |
 | 라이다 재질별 빠짐·σ (안 보임·약한 반사 비율) | R3 · D3 | `scan_stats_bag` 재질별 | 🟡 (실험실 비율만) |
+| 라이다 세기 (거리·입사각·물체 차) | R1 | `intensity_stats_bag` → `intensity_check` | 🟡 정지 3 곳 fit · spot3 validate (10 중 8: 비스듬한 면 어둡게 미달). 재질별 ❌ |
 | 라이다 비스듬함·모서리 | R1 · R2 | `scan_stats_bag` | ✅ (모서리 흔들림 절반만 맞음) |
 | 라이다 스캔 중 움직임 (빔 순서 = 시각, 방향) | M3 | `bag_export` → `replay_check` | ❌ |
 | 라이다 지연 (stamp → 받음) | 아무 녹화 | bag 받은 시각 − stamp | ✅ 0.10 s |
-| 깊이 σ(z), 구멍(거리·각도·재질), 최소 거리 | R2 · R3 | (만들 것) `depth_stats_bag` | ❌ (R1 녹화 1 개만) |
-| 깊이 움직일 때 구멍·번짐 | M1 · M2 | 〃 | ❌ |
-| IMU 자이로 노이즈·바이어스 | R0 | (만들 것) `imu_stats_bag` | ✅ 정지 114 s (짧음) |
+| 깊이 σ(z), 구멍(거리·각도·재질), 최소 거리, 카메라 자세 | R2 · R3 | `depth_stats_bag` → `depth_check` | 🟡 static_1103_floor fit · 1103_M_drive1 validate (23 중 18 통과: σ 2 구간·모서리 2 구간 미달). 재질별 ❌ |
+| 깊이 움직일 때 구멍·번짐 | M1 · M2 | 〃 | 🟡 구멍은 drive1 장마다 통계로 확인, 번짐 ❌ |
+| IMU 가속도·자이로 x·y·z·roll·pitch 잡음·바이어스·주행 진동·배율 | R0 · M | `motion_export` → `imu_check` | ✅ fit spot1·2·mapping·cmd2·drive3, validate spot3·cmd1·drive1 (35 중 31 통과, 미달은 시뮬이 더 시끄러운 쪽) |
 | IMU 바이어스 걸음 (분 단위) | R0 (10 분 이상) | 〃 | ❌ |
 | IMU 자이로 배율 (회전 중) | M2 | 라이다 스캔 맞추기로 구한 회전과 비교 | ❌ |
 | 바퀴 오도메트리 거리·회전 배율, 좌우 차 | M1 · M2 · M4 | 줄자 참값 + 라이다 벽 거리 | 🟡 회전 ✅ (일정 1.02, 가속 때 헛돎, 리모컨 1.2), 직진·좌우 ❌ |
@@ -42,6 +43,7 @@
 | 모터 응답: 지연·두 갈래 응답·가속·최고 속도 (`env.yaml drive`) | 명령 계단(약하게·세게) · 리모컨 주행 | `motion_export` → `motion_check` | ✅ ROS 명령 경로 (계단 R² 0.98·0.995·자이로 0.99, 세게 0.96·0.98·0.95). 저전압 ❌ |
 | 배터리 전압에 따른 응답 차이 | M5 를 완충·저전압에서 | 〃 | ❌ |
 | EKF·Cartographer 자세 오차 (`pose_error`) | M4 · M6 | 출발점 복귀 오차, `replay_check` | 🟡 |
+| 지도 속도 (지도 자세 0.1 s 미분, map → odom 보정 통계) | 아무 Cartographer 녹화 | `motion_export` → `mapvel_check` | 🟡 실측은 잼, 후보 모델 확인 15 중 9 — 학습 환경엔 안 넣음 |
 | 지도 모양 (벽 두께·구멍·안 본 곳) | M6 | `replay_check` 지도 비교 (V4) | ❌ |
 | 시연장 형상·재질 (덕트호스 지름·높이·색) | M6 · R3 | 사진·줄자 + `scan_stats_bag` | ❌ |
 | 몸통 크기·센서 장착 | — | URDF·줄자 | ✅ |

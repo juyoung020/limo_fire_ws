@@ -15,7 +15,7 @@ GPU 학습 환경·검증에 쓰는 실내 맵. 받은 날짜 2026-10-22.
 
 | 용도 | 맵 |
 |---|---|
-| 학습 | houseexpo + procthor_10k + 덕트호스 절차 생성기(만들 예정) |
+| 학습 | procthor_10k + 절차 생성 방 → `train/explore/scenes` (HouseExpo 는 로컬 전용이라 안 넣음) |
 | 처음 보는 맵 시험 | aws_robomaker 4 종 — 학습에 넣지 않는다 |
 | 시연 리허설 | 덕트호스 시연장(만들 예정) |
 

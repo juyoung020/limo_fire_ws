@@ -24,7 +24,7 @@ struct Scene {
   std::vector<std::string> obj_names;
   float start[2] = {0.f, 0.f};   // 출발점 (세계 x, y) — 위 형식 설명
   std::vector<float> obj_size;   // 파일에 없음 — load_scene 이 삼각형으로 계산 (compute_obj_size)
-  SceneView view() const { return SceneView{nodes.data(), tris.data(), obj.data(), obj_size.data()}; }
+  SceneView view() const { return SceneView{nodes.data(), tris.data(), obj.data(), obj_size.data(), nullptr, 0}; }
 };
 
 // 물체마다 바닥 투영(x, y) 상자의 긴 쪽 길이

@@ -2,10 +2,13 @@
 // 칸 확률의 등고선(occupied 문턱, marching squares — 칸 가운데 값 사이를 선형으로)을 따라 바닥부터 height 까지 벽면을 세운다.
 // 칸 상자로 세우면 비스듬한 벽이 5 cm 계단이 되어 라이다가 가짜 모서리를 본다 — 등고선 벽은 매끈하고 진짜 모서리만 남는다.
 // 붙어 있는 막힌 칸 덩어리(4 이웃)가 물체 하나 — 라이다 재질이 물체마다 정해지므로(lidar_real.h) 실물 물체 단위와 가깝게.
-//   map2scene <지도.yaml> <출력.scene> [--height 2.4] [--occupied 128] [--start 0 0]   (PGM 값 < occupied 를 막힘으로: scale 지도면 확률 > 50 %)
+//   map2scene <지도.yaml> <출력.scene> [--height 2.4] [--occupied 128] [--start 0 0] [--heights <높이.pgm>]   (PGM 값 < occupied 를 막힘으로: scale 지도면 확률 > 50 %)
+// --heights: 지도와 같은 크기의 8 비트 PGM, 칸 값 = 그 칸 물체 높이(cm), 0 = --height. 덩어리 높이 = 덩어리 칸 값 중 가장 큰 것.
+//   높이가 정해진 덩어리는 이름이 "furniture_<번호>" (scenes 학습 맵의 절차 가구 — scene_list 가 이 이름으로 가구 판을 가림), 나머지는 "map_blob_<번호>".
 // 출발점(--start, 지도 좌표 m): 기본 지도 원점 (0, 0) — SLAM(Cartographer·slam_toolbox)은 map 틀을 처음 자세에 둔다. 그 칸이 막힘이면 실패
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -69,10 +72,12 @@ void add_box(sim::Scene& s, uint16_t obj, sim::V3 lo, sim::V3 hi) {
 int main(int argc, char** argv) {
   if (argc < 3) { std::fprintf(stderr, "map2scene <지도.yaml> <출력.scene> [--height 2.4] [--occupied 128] [--start 0 0]\n"); return 2; }
   float height = 2.4f, start[2] = {0.f, 0.f};
+  std::string heights_path;
   int occ_thr = 128;
   for (int i = 3; i + 1 < argc; i += 2) {
     if (!std::strcmp(argv[i], "--height")) height = std::stof(argv[i + 1]);
     else if (!std::strcmp(argv[i], "--occupied")) occ_thr = std::stoi(argv[i + 1]);
+    else if (!std::strcmp(argv[i], "--heights")) heights_path = argv[i + 1];
     else if (!std::strcmp(argv[i], "--start") && i + 2 < argc) { start[0] = std::stof(argv[i + 1]); start[1] = std::stof(argv[++i + 1]); }
     else { std::fprintf(stderr, "모르는 인자 %s\n", argv[i]); return 2; }
   }
@@ -112,11 +117,23 @@ int main(int argc, char** argv) {
       }
       ++n_comp;
     }
+  // 덩어리 높이
+  std::vector<float> comp_h((size_t)n_comp, 0.f);
+  if (!heights_path.empty()) {
+    int hw, hh;
+    const std::vector<uint8_t> hp = read_pgm(heights_path, hw, hh);
+    if (hw != w || hh != h) throw std::runtime_error(heights_path + ": 지도와 크기가 다름");
+    for (int cy = 0; cy < h; ++cy)
+      for (int cx = 0; cx < w; ++cx) {
+        const int c = comp[(size_t)cy * w + cx];
+        if (c >= 0) comp_h[c] = std::max(comp_h[c], 0.01f * (float)hp[(size_t)(h - 1 - cy) * w + cx]);
+      }
+  }
   if (n_comp > 65000) throw std::runtime_error("막힌 덩어리가 너무 많음");
   sim::Scene s;
   s.start[0] = start[0];
   s.start[1] = start[1];
-  for (int i = 0; i < n_comp; ++i) s.obj_names.push_back("map_blob_" + std::to_string(i));
+  for (int i = 0; i < n_comp; ++i) s.obj_names.push_back((comp_h[i] > 0.f ? "furniture_" : "map_blob_") + std::to_string(i));
   // 바닥 (라이다·깊이가 바닥을 맞힐 때) — 덩어리와 다른 물체
   s.obj_names.push_back("floor");
   const uint16_t floor_id = (uint16_t)n_comp;
@@ -158,7 +175,8 @@ int main(int argc, char** argv) {
       if (id < 0) continue;
       for (int k = 0; k < ns; k += 2) {
         const sim::V3 a = e[seg[k]], b = e[seg[k + 1]];
-        const sim::V3 a1{a.x, a.y, height}, b1{b.x, b.y, height};
+        const float top = comp_h[id] > 0.f ? comp_h[id] : height;
+        const sim::V3 a1{a.x, a.y, top}, b1{b.x, b.y, top};
         s.tris.push_back(sim::Tri{a, b, b1});
         s.tris.push_back(sim::Tri{a, b1, a1});
         s.obj.push_back((uint16_t)id);

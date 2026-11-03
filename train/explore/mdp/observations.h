@@ -1,0 +1,300 @@
+// 탐사 RL 관측 만들기: 시뮬 상태 → 정책 입력 (mdp/obs_layout.h 배치 그대로) + 가치 전용 참값. 호스트·장치 공용.
+// sim/include/env.h 끝에서 include 된다(EnvState·EnvBatch·Shared 를 씀). GPU 커널(env_kernel.cu)과 CPU 참조판(env_ref.cpp)이
+// 같은 두 단계를 부른다 — obs_cells(모든 스레드: 칸마다 따로) → obs_finish(스레드 0: 합치기·숫자). 합치기는 정수만(결정적).
+//
+// 정규화 상수 (관측 만들 때 곱함, 신경망은 그대로 받음)
+//   kRangeNorm 8 m   : 라이다 거리·없음 = 1. 지도와 같은 최대 거리(env.yaml map.max_range = Cartographer max_range 8 m) → [0, 1]
+//   kPosNorm 12.8 m  : 시작점 기준 위치·시작점 거리. 먼 지도 창(25.6 m)의 반 → 창 안이면 [−1, 1], 지도 한도(25.6 m) 안이면 |·| ≤ 2
+//   kFrontNorm 25.6 m: 가장 가까운 프론티어 거리. 지도 한 변 → 대각선이라도 ≤ 1.42
+//   kSpeedNorm 1 m/s : 바퀴·EKF·바퀴 4 개 속도. 데이터시트 최고 속도 1 m/s (실측 1.11 → 1.11)
+//   kRateNorm 3.14 rad/s: 자이로·EKF ω·헛돎. drive.max ω 실측 3.14 → [−1, 1] (헛돎은 순간 더 클 수 있음)
+//   지난 시간 / 안전 시간(1200 s) → [0, 1]. 안 넓이 / 655.36 m²(지도 25.6²) → [0, 1].
+//   프론티어 칸 수 / 4000 (자름 1) — 집 하나 프론티어는 수백~수천 칸(5 cm).
+//   새로 안 칸(최근 2 s) 넓이 / 20 m² (자름 2) — 1 m/s 로 8 m 시야가 새 곳을 쓸면 2 s 에 수십 m².
+//   마지막 새 칸 뒤 시간 / 60 s (자름 1).
+//   가치 전용: 자세 오차 / (0.1 m, 0.1 m, 0.05 rad) — env.yaml pose_error σ(0.03 m, 0.017 rad)의 약 3 배 → 대개 [−1, 1].
+//              남은 벽 면 칸 / 5000 (작은 집 2594·서점 3206 칸).
+//
+// 2D (uint8)
+//   가까운 지도 6 × 64 × 64, 칸 10 cm, 로봇(지도 자세) 중심·로봇 방향, 앞 = 위 행: 0 확률(0 모름, 1~255 로그 오즈 낮음→높음),
+//     1 지나간 곳(255), 2~5 물체 4 (📏 0). 칸 가운데 점의 지도 칸(5 cm) 하나를 읽는다.
+//   먼 지도 7 × 32 × 32, 칸 0.8 m, 시작 자세 기준(시작점 가운데, 시작 방향 = 위 행) 25.6 m 창:
+//     0 확률(칸 안 8 × 8 점(0.1 m) 중 아는 점의 최댓값 — 벽이 칸 평균에 묻히지 않게), 1 지나간 곳(아무 점이라도), 2 지금 위치(255), 3~6 물체 (📏 0).
+//     실물: Cartographer map 틀 = 첫 자세 → 같은 창.
+//   깊이 1 × 40 × 64 (env.h depth: 0 = 구멍, 1~255 = min_z→max_z).
+// 1D (float): 라이다 4 장(지금 → 직전 3 장, 지연 반영) · 세기(지금 장, 칸마다 가장 가까운 빔 — 지연은 아직 안 넣음) · 숫자 VEC (obs_layout.h 오프셋)
+// 관측 지연: 판마다 e.delay 걸음(0 또는 1, reset_state) — 라이다 장과 숫자(직전 행동·지난 시간 빼고)를 그만큼 늦은 것으로.
+//   지도·깊이는 지연 안 함(지도는 실물도 쌓는 데 시간이 걸려 늦지만 그 몫은 📏).
+#pragma once
+#include "env.h"
+
+namespace mdp::obsgen {
+
+constexpr float kRangeNorm = 8.f, kPosNorm = 12.8f, kFrontNorm = 25.6f, kSpeedNorm = 1.f, kRateNorm = 3.14f;
+constexpr float kAreaNorm = 655.36f, kFrontCountNorm = 4000.f, kProgAreaNorm = 20.f, kSinceNorm = 60.f;
+constexpr float kErrXyNorm = 0.1f, kErrThNorm = 0.05f, kRemainNorm = 5000.f;
+// IMU·세기 (S1 실측 맞춤, sensor_model.yaml imu·lidar.intensity)
+//   가속도 / 10 m/s²: 몸통 가속 ≲ 5 m/s²(구동 가속 한도) + 주행 진동 σ ≤ 1.3 m/s² → 대개 ±0.6. az 는 중력 9.81 을 빼고 (실측 g 10.03 이라 +0.02 치우침)
+//   roll·pitch / 0.1 rad: 실측 바닥 기울기 σ 0.0025, 주행 몫 ≲ 0.03 rad → 대개 ±0.3
+//   자이로 x·y / 0.2 rad/s: 주행 진동 σ 0.01~0.06 rad/s → 대개 ±0.3
+//   세기 / 100: 실측 평균 15~53 (0.75 m 에서 가장 밝음), 물체마다 σ 6 → [0, 1] 안
+constexpr float kAccNorm = 10.f, kGravity = 9.81f, kTiltNorm = 0.1f, kGyroXyNorm = 0.2f, kIntensityNorm = 100.f;
+constexpr float kNearCell = 0.10f, kFarCell = 0.8f;
+constexpr int kFarSub = 8;   // 먼 지도 칸 안 점 8 × 8 (0.1 m)
+// 메카넘 바퀴 4 개 (바퀴 선속도 = v ∓ vy ∓ k·ω): k = (축간 0.2 + 윤거 0.13) / 2 m — limo_fire_description urdf/limo_pro_base.xacro:12-13
+constexpr float kWheelK = 0.165f;
+
+using sim::EnvBatch;
+using sim::EnvState;
+using sim::Shared;
+
+DEV uint8_t prob_u8(const sim::EnvCfg& c, int16_t l) {
+  return l == sim::kUnknown ? (uint8_t)0 : (uint8_t)(1 + ((int)l - c.l_min) * 254 / (c.l_max - c.l_min));
+}
+DEV bool visited(const uint32_t* M, int ci) { return ((M[ci >> 2] >> (8 * (ci & 3))) & 32u) != 0u; }
+
+// 모든 스레드: 2D 관측·라이다 장 복사·프론티어 칸 (sh.part[tid] = 프론티어 칸 수, sh.fr_min = 가장 가까운 키 — 스레드 0 이 미리 kNoFrontier)
+// 먼 지도 확률·지나간 곳 채널을 다시 그릴 곳: all 이면 전부, 아니면 칸 가운데가 세계 상자 [x0, x1] × [y0, y1] 안인 칸만
+// (나머지 칸은 지난 걸음 값 그대로 — 그 칸이 읽는 지도 칸이 안 바뀌었으므로 같은 값. GPU 가 쓴다, CPU 참조판은 늘 전부)
+struct FarDirty {
+  int all;
+  float x0, y0, x1, y1;
+};
+
+DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int tid, const FarDirty& fd) {
+  using namespace mdp::obs;
+  const sim::EnvCfg& c = b.cfg;
+  const sim::MapDev& m = b.maps[e.map];
+  const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
+  const uint32_t* M = b.marks + (size_t)env * (c.size * c.size / 4);
+  uint8_t* I = b.obs_img + (size_t)env * IMG_SIZE;
+  const float px = e.x + e.ex, py = e.y + e.ey;
+  float s, co;
+  dm::sincosf_d(e.th + e.eth, &s, &co);
+  // 가까운 지도
+  for (int i = tid; i < NEAR_H * NEAR_W; i += sim::kThreads) {
+    const int row = i / NEAR_W, col = i % NEAR_W;
+    const float fwd = ((float)(NEAR_H / 2 - row) - 0.5f) * kNearCell, left = ((float)(NEAR_W / 2 - col) - 0.5f) * kNearCell;
+    const float wx = (px + co * fwd) - s * left, wy = (py + s * fwd) + co * left;
+    int cx, cy;
+    const int ci = sim::cell_of(c, m, wx, wy, &cx, &cy);
+    I[i] = ci >= 0 ? prob_u8(c, L[ci]) : (uint8_t)0;
+    I[NEAR_H * NEAR_W + i] = ci >= 0 && visited(M, ci) ? (uint8_t)255 : (uint8_t)0;
+    for (int ch = 2; ch < NEAR_C; ++ch) I[ch * NEAR_H * NEAR_W + i] = 0;   // 물체 📏
+  }
+  // 먼 지도 (시작 자세 기준)
+  {
+    uint8_t* F = I + NEAR_SIZE;
+    float s0, c0;
+    dm::sincosf_d(e.th0, &s0, &c0);
+    // 지금 위치 칸
+    const float dx = px - e.x0, dy = py - e.y0;
+    const float rf = c0 * dx + s0 * dy, rl = -s0 * dx + c0 * dy;
+    const float half = 0.5f * (float)FAR_H * kFarCell;
+    const int prow = (int)floorf((half - rf) / kFarCell), pcol = (int)floorf((half - rl) / kFarCell);
+    for (int i = tid; i < FAR_H * FAR_W; i += sim::kThreads) {
+      const int row = i / FAR_W, col = i % FAR_W;
+      F[2 * FAR_H * FAR_W + i] = (row == prow && col == pcol) ? (uint8_t)255 : (uint8_t)0;
+      for (int ch = 3; ch < FAR_C; ++ch) F[ch * FAR_H * FAR_W + i] = 0;   // 물체 📏
+      if (!fd.all) {
+        // 칸 가운데 (점 64 개는 가운데에서 앞·옆 0.35 m 안 → 반지름 0.5 m 안, fd 상자는 0.6 m 넓혀 둠)
+        const float fwd_c = half - ((float)row + 0.5f) * kFarCell, left_c = half - ((float)col + 0.5f) * kFarCell;
+        const float wcx = (e.x0 + c0 * fwd_c) - s0 * left_c, wcy = (e.y0 + s0 * fwd_c) + c0 * left_c;
+        if (!(wcx >= fd.x0 && wcx <= fd.x1 && wcy >= fd.y0 && wcy <= fd.y1)) continue;
+      }
+      // 확률 칸 값 = 아는 점의 prob_u8 최댓값. prob_u8 은 로그 오즈에 단조(모름 = kUnknown 이 가장 작음)라 로그 오즈 최댓값 하나만 바꾼다
+      int lmax = sim::kUnknown, vis = 0;
+      for (int kr = 0; kr < kFarSub; ++kr) {
+        const float fwd = half - ((float)row + ((float)kr + 0.5f) / (float)kFarSub) * kFarCell;
+        const float ax = e.x0 + c0 * fwd, ay = e.y0 + s0 * fwd;
+        for (int kc = 0; kc < kFarSub; ++kc) {
+          const float left = half - ((float)col + ((float)kc + 0.5f) / (float)kFarSub) * kFarCell;
+          const float wx = ax - s0 * left, wy = ay + c0 * left;
+          int cx, cy;
+          const int ci = sim::cell_of(c, m, wx, wy, &cx, &cy);
+          if (ci < 0) continue;
+          const int l = L[ci];
+          lmax = l > lmax ? l : lmax;
+          vis |= visited(M, ci) ? 1 : 0;
+        }
+      }
+      F[i] = prob_u8(c, (int16_t)lmax);
+      F[FAR_H * FAR_W + i] = vis ? (uint8_t)255 : (uint8_t)0;
+    }
+  }
+  // 깊이는 픽셀마다 따로 (obs_depth — GPU 는 픽셀 하나 = 스레드 하나인 커널)
+  // 라이다 4 장 (지연 반영) + 세기
+  {
+    float* O = b.obs_1d + (size_t)env * POLICY_1D;
+    const float* R = b.lidar_ring + (size_t)env * sim::kLidarRing * LIDAR_BINS;
+    const float* IT = b.lidar_int + (size_t)env * LIDAR_BINS;
+    for (int i = tid; i < LIDAR + INTENSITY; i += sim::kThreads) {
+      if (i >= LIDAR) { O[i] = IT[i - LIDAR] / kIntensityNorm; continue; }   // 세기: 지금 장 (지연 안 함 — 아래 주석)
+      const int f = i / LIDAR_BINS, k = i % LIDAR_BINS;
+      const int slot = ((e.lid_head - e.delay - f) % sim::kLidarRing + sim::kLidarRing) % sim::kLidarRing;
+      O[i] = R[slot * LIDAR_BINS + k] / kRangeNorm;
+    }
+  }
+  // 프론티어 칸 (지도에서 건드린 칸 범위 안)
+  {
+    int n = 0;
+    if (e.kb_x1 >= 0) {
+      const mdp::MapView mv{L, c.size, m.gw, m.gh};
+      int rx, ry;
+      sim::cell_of(c, m, px, py, &rx, &ry);
+      const int x0 = e.kb_x0, y0 = e.kb_y0, w = e.kb_x1 - e.kb_x0 + 1, h = e.kb_y1 - e.kb_y0 + 1;
+      unsigned long long best = mdp::kNoFrontier;
+      for (int k = tid; k < w * h; k += sim::kThreads) {
+        const int x = x0 + k % w, y = y0 + k / w;
+        const unsigned long long key = mdp::summary_key(mv, x, y, rx, ry);
+        if (key != mdp::kNoFrontier) {
+          ++n;
+          best = key < best ? key : best;
+        }
+      }
+      if (best != mdp::kNoFrontier) {
+#ifdef __CUDA_ARCH__
+        atomicMin(&sh.fr_min, best);
+#else
+        if (best < sh.fr_min) sh.fr_min = best;
+#endif
+      }
+    }
+    sh.part[tid] = n;
+  }
+}
+
+// 깊이 픽셀 하나 (i = 행 · DEPTH_W + 열): 참값 자세의 카메라에서 (실물도 카메라는 실제 자리에서 본다). 픽셀끼리 독립 — CPU 참조판은 obs_depth 로
+// 차례로, GPU 는 같은 단계 함수(depth_camera·depth_uv·depth_seed·sensor_model.h 의 depth_*)로 광선을 묶어 쏜다. 판 끝 리셋 뒤 상태(새 판)로 그린다
+// 몸통 방향(z 축 yaw) · 카메라 숙임(y 축 pitch, 아래로 +, env.yaml body.camera_pitch 실측)
+DEV sim::Pose depth_camera(const sim::EnvCfg& c, const EnvState& e) {
+  float ts, tc;
+  dm::sincosf_d(e.th, &ts, &tc);
+  return sim::Pose{{tc * c.cam_cp, -ts, tc * c.cam_sp, ts * c.cam_cp, tc, ts * c.cam_sp, -c.cam_sp, 0.f, c.cam_cp},
+                   sim::V3{(e.x + tc * c.cam_x) - ts * c.cam_y, (e.y + ts * c.cam_x) + tc * c.cam_y, c.cam_z}};
+}
+// 관측 해상도(64 × 40)에서만 그린다: 원본 640 × 400 칸을 고르게 건너뛴 가운데 광선 하나씩 (모서리 판정 광선 2 개 포함 = 픽셀당 최대 3 광선)
+DEV void depth_uv(const sim::DepthModel& DM, int i, float* u, float* v) {
+  using namespace mdp::obs;
+  const float su = (float)DM.spec.w / (float)DEPTH_W, sv = (float)DM.spec.h / (float)DEPTH_H;
+  *u = ((float)(i % DEPTH_W) + 0.5f) * su - 0.5f;
+  *v = ((float)(i / DEPTH_W) + 0.5f) * sv - 0.5f;
+}
+DEV uint64_t depth_seed(const EnvState& e, int i) {
+  return e.rng ^ ((uint64_t)(i + 1) * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)(e.tick + 1) * 0xD1B54A32D192ED03ull);
+}
+DEV uint8_t depth_u8(const sim::DepthModel& DM, float z) {
+  return z <= 0.f ? (uint8_t)0 : (uint8_t)(1 + (int)((z - DM.spec.min_z) * 254.f / (DM.spec.max_z - DM.spec.min_z)));
+}
+DEV uint8_t* depth_out(const EnvBatch& b, int env) { return b.obs_img + (size_t)env * mdp::obs::IMG_SIZE + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE; }
+
+DEV void obs_depth(const EnvBatch& b, const EnvState& e, int env, int i) {
+  const sim::EnvCfg& c = b.cfg;
+  const sim::MapDev& m = b.maps[e.map];
+  float u, v;
+  depth_uv(c.depth, i, &u, &v);
+  const float z = sim::depth_pixel_real(sim::with_people(m.scene, e.people), c.depth, depth_camera(c, e), u, v, depth_seed(e, i));   // 사람 원기둥도 보임
+  depth_out(b, env)[i] = depth_u8(c.depth, z);
+}
+
+// 스레드 0: 숫자 관측(지연 반영)·가치 전용 참값
+DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh) {
+  using namespace mdp::obs;
+  const sim::EnvCfg& c = b.cfg;
+  const sim::MapDev& m = b.maps[e.map];
+  int n_front = 0;
+  for (int i = 0; i < sim::kThreads; ++i) n_front += sh.part[i];
+  float* V = sh.vec;
+  for (int i = 0; i < VEC; ++i) V[i] = 0.f;
+  const float px = e.x + e.ex, py = e.y + e.ey, pth = e.th + e.eth;
+  float s, co, s0, c0;
+  dm::sincosf_d(pth, &s, &co);
+  dm::sincosf_d(e.th0, &s0, &c0);
+  const float dx = px - e.x0, dy = py - e.y0;
+  V[POSE + 0] = (c0 * dx + s0 * dy) / kPosNorm;
+  V[POSE + 1] = (-s0 * dx + c0 * dy) / kPosNorm;
+  {
+    float a, b2;
+    dm::sincosf_d(pth - e.th0, &a, &b2);
+    V[POSE + 2] = a;
+    V[POSE + 3] = b2;
+  }
+  // MAP_VEL 3 칸 📏 0
+  V[WHEEL_V] = e.drive.wv / kSpeedNorm;
+  V[GYRO_Z] = e.gyro / kRateNorm;
+  V[SLIP] = (e.drive.ww - e.gyro) / kRateNorm;
+  V[EKF + 0] = e.ekf_v / kSpeedNorm;
+  V[EKF + 1] = e.ekf_w / kRateNorm;
+  // IMU (imu.h, 실측 맞춤 ✅ — imu_check): e.imu.out = ax, ay, az, gx, gy, roll, pitch
+  V[ACCEL + 0] = e.imu.out[0] / kAccNorm;
+  V[ACCEL + 1] = e.imu.out[1] / kAccNorm;
+  V[ACCEL + 2] = (e.imu.out[2] - kGravity) / kAccNorm;
+  V[IMU_TILT + 0] = e.imu.out[5] / kTiltNorm;
+  V[IMU_TILT + 1] = e.imu.out[6] / kTiltNorm;
+  V[IMU_TILT + 2] = e.imu.out[3] / kGyroXyNorm;
+  V[IMU_TILT + 3] = e.imu.out[4] / kGyroXyNorm;
+  {
+    const float v = e.drive.wv, vy = e.drive.wvy, w = kWheelK * e.drive.ww;
+    V[WHEELS4 + 0] = ((v - vy) - w) / kSpeedNorm;   // 앞 왼
+    V[WHEELS4 + 1] = ((v + vy) + w) / kSpeedNorm;   // 앞 오른
+    V[WHEELS4 + 2] = ((v + vy) - w) / kSpeedNorm;   // 뒤 왼
+    V[WHEELS4 + 3] = ((v - vy) + w) / kSpeedNorm;   // 뒤 오른
+  }
+  const float dt_act = (float)c.substeps * c.dt;
+  V[KNOWN_AREA] = (float)e.known_free * (c.res * c.res) / kAreaNorm;
+  if (n_front > 0 && sh.fr_min != mdp::kNoFrontier) {
+    const int k = (int)(sh.fr_min & 0xffffffffull);
+    const float fx = m.ox + ((float)(k % m.gw) + 0.5f) * c.res, fy = m.oy + ((float)(k / m.gw) + 0.5f) * c.res;
+    const float ddx = fx - px, ddy = fy - py;
+    const float d = sqrtf(ddx * ddx + ddy * ddy);
+    V[FRONTIER + 0] = d / kFrontNorm;
+    if (d > 1e-6f) {
+      V[FRONTIER + 1] = dm::clampf((co * ddy - s * ddx) / d, -1.f, 1.f);   // 로봇 기준 sin
+      V[FRONTIER + 2] = dm::clampf((co * ddx + s * ddy) / d, -1.f, 1.f);   // cos
+    }
+    V[FRONTIER + 3] = dm::minf(1.f, (float)n_front / kFrontCountNorm);
+  }
+  V[PROGRESS + 0] = dm::minf(2.f, (float)e.prog_sum * (c.res * c.res) / kProgAreaNorm);
+  V[PROGRESS + 1] = dm::minf(1.f, (float)e.since_new * dt_act / kSinceNorm);
+  {
+    const float hx = e.x0 - px, hy = e.y0 - py;
+    const float d = sqrtf(hx * hx + hy * hy);
+    V[HOME + 0] = d / kPosNorm;
+    if (d > 1e-6f) {
+      V[HOME + 1] = dm::clampf((co * hy - s * hx) / d, -1.f, 1.f);
+      V[HOME + 2] = dm::clampf((co * hx + s * hy) / d, -1.f, 1.f);
+    }
+  }
+  // 지연: 직전 걸음 숫자 (판 첫 걸음은 지금 것). 직전 행동·지난 시간은 정책·시계가 아는 값이라 지연 안 함
+  float* O = b.obs_1d + (size_t)env * POLICY_1D + LIDAR + INTENSITY;
+  float* P = b.vec_prev + (size_t)env * VEC;
+  const bool late = e.delay > 0 && e.step > 0;
+  for (int i = 0; i < VEC; ++i) {
+    const float now = V[i];
+    O[i] = late ? P[i] : now;
+    P[i] = now;
+  }
+  for (int i = 0; i < mdp::act::DIM * 4; ++i) O[LAST_ACT + i] = e.last_act[i];
+  O[ELAPSED] = (float)e.step * dt_act / mdp::rew::kSafeTime;
+  // 가치 전용 참값
+  float* Q = b.priv + (size_t)env * PRIV;
+  for (int i = 0; i < PRIV; ++i) Q[i] = 0.f;
+  {
+    const float tx = e.x - e.x0, ty = e.y - e.y0;
+    Q[PRIV_TRUE_POSE + 0] = (c0 * tx + s0 * ty) / kPosNorm;
+    Q[PRIV_TRUE_POSE + 1] = (-s0 * tx + c0 * ty) / kPosNorm;
+    float a, b2;
+    dm::sincosf_d(e.th - e.th0, &a, &b2);
+    Q[PRIV_TRUE_POSE + 2] = a;
+    Q[PRIV_TRUE_POSE + 3] = b2;
+    Q[PRIV_POSE_ERR + 0] = e.ex / kErrXyNorm;
+    Q[PRIV_POSE_ERR + 1] = e.ey / kErrXyNorm;
+    Q[PRIV_POSE_ERR + 2] = e.eth / kErrThNorm;
+    Q[PRIV_COVERAGE] = e.coverage;
+    Q[PRIV_REMAIN] = (float)(m.n_wall - e.seen_wall) / kRemainNorm;
+    // PRIV_RESERVED: 몸통~가장 가까운 사람 간격 / 5 m (자름 1, 사람 없으면 1, 겹치면 음수 그대로) — people.h near_d
+    Q[PRIV_RESERVED] = dm::minf(1.f, e.people.near_d / 5.f);
+  }
+}
+
+}  // namespace mdp::obsgen

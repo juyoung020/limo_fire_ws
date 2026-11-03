@@ -83,8 +83,11 @@ rf::Json params_json(const fb::Params& p) {
 int run_mode(const Args& a, const std::string& mode) {
   sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
   const fb::Params P = fb::load_params(a.frontier, a.env, mode);
-  // 시뮬 판 끝 덮어쓰기: 자동 성공 끝(success_coverage)을 끄고(기준선은 끝을 스스로 선언), 안전 시간은 기준선 t_safe 보다 넉넉히
-  hc.cfg.success_cov = 2.f;
+  // 시뮬 판 끝: 시뮬은 덮음으로 저절로 끝내지 않는다(선언 행동만 — 기준선은 선언을 시뮬에 안 보내고 스스로 끝냄), 안전 시간은 기준선 t_safe 보다 넉넉히.
+  // 행동은 물리 단위(기준선 v, ω), 안전층·커리큘럼 끔 (기준선은 Nav2 감속을 스스로 함, 맵은 고르게·오차 배율 1)
+  hc.cfg.act_raw = 1;
+  hc.cfg.safety = 0;
+  hc.cfg.curriculum = 0;
   hc.cfg.max_steps = (int)std::ceil(P.t_safe / P.ctrl_dt) + 100;
   const sim::LidarModel lidar = sim::load_lidar_model(a.model);
   const sim::EnvCfg& c = hc.cfg;
@@ -113,7 +116,7 @@ int run_mode(const Args& a, const std::string& mode) {
       .set("floor_coverage_def", "빔이 한 번이라도 지나간(지도 자세 Bresenham) 갈 수 있는 바닥 칸 비율 — 보조 지표")
       .set("end_def", "지도 닫힘(mdp/frontier.h closed): 모름 = 안 건드린 칸, 막힘 = p > 0.65, 막힘을 robot_radius 만큼 팽창하고 설 수 있는 칸 flood fill 이 "
                        "프론티어(모름에 닿은 갈 수 있는 칸)에 안 닿음")
-      .set("sim_overrides", "env.yaml episode.success_coverage 끔(2.0), max_steps = t_safe + 10 s — 판 끝은 기준선 선언·충돌·t_safe")
+      .set("sim_overrides", "시뮬은 선언 행동으로만 끝냄(기준선은 선언을 안 보냄), 물리 단위 행동·안전층 끔·커리큘럼 끔, max_steps = t_safe + 10 s — 판 끝은 기준선 선언·충돌·t_safe")
       .set("known_area_def", "known_m2: 지도에서 갈 수 있는 칸(mdp/frontier.h cell_class == kFree: 건드렸고 막힘 아님) 넓이")
       .set("replay_lidar", "참 자세에서 정적 장면에 다시 쏜 깨끗한 광선(248 빔 ±110°) — 시뮬 내부의 오차 스캔은 env_api 로 안 나옴")
       .set("sources", "m-explore 712bdd41 explore/src/frontier_search.cpp·explore.cpp·launch/explore.launch; navigation2 humble 3c3db59d "
@@ -154,11 +157,11 @@ int run_mode(const Args& a, const std::string& mode) {
       eps[i].rw = rws.back().get();
     }
     float* d_act = nullptr;
-    if (!a.cpu) cudaMalloc(&d_act, sizeof(float) * 2 * N);
+    if (!a.cpu) cudaMalloc(&d_act, sizeof(float) * mdp::act::DIM * N);
     std::vector<sim::EnvState> st;
     std::vector<int16_t> L;
     std::vector<uint8_t> seen;
-    std::vector<float> reward, act(2 * N);
+    std::vector<float> reward, act((size_t)mdp::act::DIM * N);
     std::vector<int32_t> done;
     std::vector<int8_t> obs((size_t)W.gw * W.gh);
     std::vector<uint8_t> cov((size_t)W.gw * W.gh);
@@ -230,10 +233,12 @@ int run_mode(const Args& a, const std::string& mode) {
           if (ac.declare) { e.declared = true; e.cov_at_declare = s.coverage; evb |= rf::ev::DECLARE; }
           else { e.truncated = true; evb |= rf::ev::TRUNCATED; }
         }
-        act[2 * i] = end ? 0.f : ac.v;
-        act[2 * i + 1] = end ? 0.f : ac.w;
+        act[mdp::act::DIM * i] = end ? 0.f : ac.v;
+        act[mdp::act::DIM * i + 1] = 0.f;
+        act[mdp::act::DIM * i + 2] = end ? 0.f : ac.w;
+        act[mdp::act::DIM * i + 3] = 0.f;
         // 재생 프레임
-        const float row[] = {t, s.x, s.y, s.th, px, py, pth, s.drive.wv, s.drive.ww, act[2 * i], act[2 * i + 1], s.coverage, e.known_m2, (float)evb};
+        const float row[] = {t, s.x, s.y, s.th, px, py, pth, s.drive.wv, s.drive.ww, act[mdp::act::DIM * i], act[mdp::act::DIM * i + 2], s.coverage, e.known_m2, (float)evb};
         e.rw->frame(row);
         if (step % a.obs_every == 0 || end) {
           if (step % a.obs_every != 0)
@@ -262,7 +267,7 @@ int run_mode(const Args& a, const std::string& mode) {
       if (n_active == 0) break;
       if (a.cpu) env.step(act.data());
       else {
-        cudaMemcpy(d_act, act.data(), sizeof(float) * 2 * N, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_act, act.data(), sizeof(float) * mdp::act::DIM * N, cudaMemcpyHostToDevice);
         env.step(d_act);
       }
       env.sync();
@@ -279,7 +284,7 @@ int run_mode(const Args& a, const std::string& mode) {
           float bd = 1e9f; int bk = -1;
           for (int k = 0; k < W.gw * W.gh; ++k) if (W.grid[k] & 1) { const float dx = W.ox + (k % W.gw + 0.5f) * c.res - s.x, dy = W.oy + (k / W.gw + 0.5f) * c.res - s.y; const float d = std::hypot(dx, dy); if (d < bd) { bd = d; bk = k; } }
           std::fprintf(stderr, "    충돌 직전: 참 (%.2f %.2f %.2f) 오차 (%.3f %.3f %.3f) 행동 (%.2f %.2f) 바퀴 (%.2f %.2f) 목표 (%.2f %.2f) 가장 가까운 정답 벽 %.3f m, 그 칸 지도 l %d\n", s.x, s.y, s.th, s.ex, s.ey, s.eth,
-                       act[2 * i], act[2 * i + 1], s.drive.wv, s.drive.ww, ex[i].goal_x(), ex[i].goal_y(), bd, (int)Li[(size_t)(bk / W.gw) * S + bk % W.gw]);
+                       act[mdp::act::DIM * i], act[mdp::act::DIM * i + 2], s.drive.wv, s.drive.ww, ex[i].goal_x(), ex[i].goal_y(), bd, (int)Li[(size_t)(bk / W.gw) * S + bk % W.gw]);
         }
         if (done[i] == 2) { e.collided = true; e.reason = "collision"; finish(e, rf::outcome::COLLISION); }
         else { e.truncated = true; e.reason = "sim_done_" + std::to_string(done[i]); finish(e, rf::outcome::TRUNCATED); }

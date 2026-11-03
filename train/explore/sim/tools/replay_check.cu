@@ -225,14 +225,14 @@ void run_job(const Job& job, const sim::EnvHostCfg& hc_in, const sim::LidarModel
     sim::drive_reset(e.drive);
     env.set_state(0, e);
     float* d_act;
-    cudaMalloc(&d_act, sizeof(float) * 2);
+    cudaMalloc(&d_act, sizeof(float) * mdp::act::DIM);
     double ev = 0, ew = 0, eg = 0, sv = 0, mv = 0, sw = 0, mw = 0, sg = 0, mg = 0;
     size_t n = 0;
     struct P { double stamp; float x, y, th; };
     std::vector<P> path;
     bool collided = false;
     for (size_t i = i0; i < rows.size() && rows[i].t <= job.to; ++i) {
-      const float act[2] = {rows[i].cmd_v, rows[i].cmd_w};
+      const float act[mdp::act::DIM] = {rows[i].cmd_v, 0.f, rows[i].cmd_w, 0.f};
       cudaMemcpy(d_act, act, sizeof(act), cudaMemcpyHostToDevice);
       env.step(d_act);
       env.sync();
@@ -395,7 +395,11 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "replay_check --set calibration.yaml fit|validate [--fit-dropout] | <장면.scene> <구동.csv>[@뺄 구간] <녹화.lfrec> [--map 지도.yaml] …\n");
     return 2;
   }
-  const sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
+  sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
+  // 실물 /cmd_vel 을 그대로: 물리 단위 행동, 안전층·커리큘럼 끔 (녹화 재현이 목적)
+  hc.cfg.act_raw = 1;
+  hc.cfg.safety = 0;
+  hc.cfg.curriculum = 0;
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   const YAML::Node floors = YAML::LoadFile(env_path)["floors"];
   std::vector<Feat> feats;

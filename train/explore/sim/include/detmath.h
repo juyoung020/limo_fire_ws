@@ -111,6 +111,18 @@ DEV float lnf_d(float y) {
   return (float)e * 0.69314718f + lm;
 }
 
+// (int)floorf(num / den) 과 늘 같은 값을 나눗셈 없이 (inv ≈ 1/den 이면 아무 값이나 — 맞는지는 아래 검사가 정한다).
+// q = num·inv 는 참 몫 Q 에서 |Q|·2^-23 안, 바르게 반올림한 몫 RN(Q) 는 Q 에서 |Q|·2^-24 안이다. q 가 정수에서 |q|·1.2e-6(≈ 2^-19.7) 넘게
+// 떨어져 있으면 그 사이에 정수가 없어 내림이 같다. 아니면(정수 가까이·0 가까이) 나눗셈 그대로. |q| < 2^22 에서만 쓴다(칸 번호)
+DEV int floor_div(float num, float den, float inv) {
+  const float q = num * inv;
+  const float f = floorf(q);
+  const float r = q - f;
+  const float tol = absf(q) * 1.2e-6f + 1e-30f;
+  if (r > tol && r < 1.f - tol && absf(q) < 4194304.f) return (int)f;
+  return (int)floorf(num / den);
+}
+
 DEV float wrap_pi(float a) {   // to (-pi, pi]
   const float k = a * kInv2Pi;
   const float n = (float)(int)(k < 0.f ? k - 0.5f : k + 0.5f);

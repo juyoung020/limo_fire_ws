@@ -36,12 +36,16 @@ struct DriveState {
   float wv, ww;                // 바퀴 속도 (오도메트리가 내는 값)
   float fv, fw, sv, sw;        // 빠른·느린 갈래
   float bv, bw;                // 몸통 속도
+  // 옆 방향 (메카넘 vy) — 맞춘 녹화가 없어 앞뒤(v) 와 같은 응답으로 잠정 📏 (vy 명령 계단 녹화로 맞춤, mdp/README "행동")
+  float buf_vy[kDelayMax];
+  float wvy, fvy, svy, bvy;
 };
 
 DEV void drive_reset(DriveState& s) {
-  for (int i = 0; i < kDelayMax; ++i) { s.buf_v[i] = 0.f; s.buf_w[i] = 0.f; }
+  for (int i = 0; i < kDelayMax; ++i) { s.buf_v[i] = 0.f; s.buf_w[i] = 0.f; s.buf_vy[i] = 0.f; }
   s.head = 0;
   s.wv = s.ww = s.bv = s.bw = s.fv = s.fw = s.sv = s.sw = 0.f;
+  s.wvy = s.fvy = s.svy = s.bvy = 0.f;
 }
 
 // 리모컨 스틱 → 목표 속도 (표 사이 선형)
@@ -62,6 +66,17 @@ DEV float follow(float cur, float target, float tau, float acc, float dt) {
 }
 
 // 한 걸음: 명령을 넣고 바퀴 속도를 갱신, 몸통은 바닥 마찰 한도 안에서 바퀴를 따라감
+// 옆 방향 한 걸음 (drive_step 보다 먼저 부른다 — 같은 head 칸을 씀). 앞뒤 v 와 같은 지연·시간상수·가속 한도·바닥 비 (잠정 📏)
+DEV float drive_lat(const DriveModel& m, DriveState& s, float cmd_vy, float dt, const Floor& f) {
+  s.buf_vy[s.head] = dm::maxf(-m.v_max, dm::minf(m.v_max, cmd_vy));
+  const int kv = (s.head - m.delay_v + kDelayMax) % kDelayMax;
+  s.fvy = follow(s.fvy, s.buf_vy[kv], m.tau_v, m.acc_v, dt);
+  s.svy = follow(s.svy, s.buf_vy[kv], m.tau_slow_v, m.acc_v, dt);
+  s.wvy = (1.f - m.slow_v) * s.fvy + m.slow_v * s.svy;
+  s.bvy = follow(s.bvy, s.wvy / f.slip_v, f.tau_v, f.trac_v, dt);
+  return s.bvy;
+}
+
 DEV void drive_step(const DriveModel& m, DriveState& s, float cmd_v, float cmd_w, float dt, const Floor& f, float* body_v,
                     float* body_w) {
   s.buf_v[s.head] = dm::maxf(-m.v_max, dm::minf(m.v_max, cmd_v));

@@ -27,3 +27,7 @@ target_compile_options(frontier_run PRIVATE -Wall -Wextra)
 # mdp/frontier.h CPU == GPU 비트 비교
 add_executable(frontier_check tools/frontier_check.cu)
 target_link_libraries(frontier_check frontier_explorer)
+
+# 보상 해킹 시험 (mdp/tools/reward_probe): 정해진 행동·프론티어 기준선을 따라 판 합 보상을 잼
+add_executable(reward_probe ${EXPLORE}/mdp/tools/reward_probe.cu)
+target_link_libraries(reward_probe frontier_explorer)

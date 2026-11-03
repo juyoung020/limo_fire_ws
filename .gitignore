@@ -55,6 +55,10 @@ train/detect/trainer/ref/
 # Webots 가 월드마다 만드는 창 배치 상태
 *.wbproj
 train/explore/runs/
-train/explore/scenes/
+train/explore/scenes/*
+!train/explore/scenes/README.md
 train/explore/viewer/target/
 train/explore/viewer/build/
+
+# OptiX 헤더 (train/explore/third_party/README.md 대로 받음, NVIDIA 라이선스 — 저장소에 안 넣음)
+train/explore/third_party/optix-dev/

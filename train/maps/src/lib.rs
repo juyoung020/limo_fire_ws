@@ -20,8 +20,10 @@ use std::collections::VecDeque;
 use std::io::{self, Write};
 
 pub mod duct;
+pub mod furnish;
 pub mod houseexpo;
 pub mod procthor;
+pub mod rooms;
 
 pub const OUTSIDE: u8 = 0;
 pub const FREE: u8 = 1;

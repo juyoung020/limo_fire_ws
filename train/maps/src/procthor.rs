@@ -27,6 +27,8 @@ pub fn load(v: &Value) -> Option<FMap> {
         polys.push((RoomType::from_name(r["roomType"].as_str().unwrap_or("")), poly));
     }
     if polys.is_empty() { return None; }
+    // 받은 데이터는 믿지 않는다: 터무니없는 좌표면 격자를 만들지 않음 (100 m 넘는 집은 ProcTHOR 에 없음)
+    if !(x1 - x0).is_finite() || !(y1 - y0).is_finite() || x1 - x0 > 100.0 || y1 - y0 > 100.0 { return None; }
     let mut m = FMap::new(x0, y0, x1, y1, 0.5);
     for (kind, poly) in &polys {
         m.rooms.push(Room { kind: *kind, area: 0.0 });

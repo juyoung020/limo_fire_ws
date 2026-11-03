@@ -9,6 +9,14 @@ void reset_env(const EnvBatch& b, EnvState& e, int env) {
   reset_state(b, e);
 }
 
+void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh) {
+  sh.fr_min = mdp::kNoFrontier;
+  const mdp::obsgen::FarDirty all{1, 0.f, 0.f, 0.f, 0.f};
+  for (int tid = 0; tid < kThreads; ++tid) mdp::obsgen::obs_cells(b, e, env, sh, tid, all);
+  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) mdp::obsgen::obs_depth(b, e, env, i);
+  mdp::obsgen::obs_finish(b, e, env, sh);
+}
+
 }  // namespace
 
 void env_step_cpu(const EnvBatch& b, const float* actions) {
@@ -17,8 +25,9 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
   for (int env = 0; env < b.n_env; ++env) {
     EnvState e = b.st[env];
     e.collided = 0;
-    apply_action(b, e, actions + 2 * env);
-    int new_wall = 0, new_floor = 0;
+    apply_action(b, e, env, actions + mdp::act::DIM * env);
+    int new_wall = 0, new_floor = 0, d_known = 0, n_new = 0;
+    sh.scanned = 0;
     const int tick0 = e.tick;
     for (int k = 0; k < c.substeps; ++k) {
       if (!e.collided) physics_step(b, e);
@@ -26,29 +35,42 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
       if ((tick0 + k + 1) % c.lidar_every != 0) continue;
       scan_begin(b, e, sh);
       for (int j = 0; j < sh.n_beams; ++j) scan_beam(b, e, env, sh, j);
-      for (int tid = 0; tid < kThreads; ++tid) scan_apply(b, e, env, sh, tid);
-      int s = 0, f = 0;
-      for (int i = 0; i < kThreads; ++i) { s += sh.part[i]; f += sh.part_floor[i]; }
+      int s = 0, f = 0, kn = 0, nn = 0;
+      for (int tid = 0; tid < kThreads; ++tid) {
+        const ApplyCount a = scan_apply(b, e, env, sh, tid, kThreads);
+        s += a.wall;
+        f += a.floor;
+        kn += a.known;
+        nn += a.fresh;
+      }
       new_wall += s;
       new_floor += f;
+      d_known += kn;
+      n_new += nn;
+      known_box(b, e, sh);
     }
-    finish_step(b, e, new_wall, new_floor);
+    finish_step(b, e, env, new_wall, new_floor, d_known, n_new);
     b.reward[env] = e.reward;
     b.done[env] = e.done;
+    if (sh.scanned) e.lid_head = (e.lid_head + 1) % kLidarRing;
+    if (sh.scanned)
+      for (int tid = 0; tid < kThreads; ++tid) push_bins(b, e, env, sh, tid);
     if (e.done) reset_env(b, e, env);
-    for (int tid = 0; tid < kThreads; ++tid) write_obs(b, e, env, tid);
+    write_obs(b, e, env, sh);
     b.st[env] = e;
   }
 }
 
 void env_reset_cpu(const EnvBatch& b) {
+  Shared sh;
   for (int env = 0; env < b.n_env; ++env) {
     EnvState e = b.st[env];
     reset_env(b, e, env);
-    for (int tid = 0; tid < kThreads; ++tid) write_obs(b, e, env, tid);
+    write_obs(b, e, env, sh);
     b.st[env] = e;
     b.reward[env] = 0.f;
     b.done[env] = 0;
+    for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = 0.f;
   }
 }
 

@@ -29,18 +29,55 @@ lidar:                      # YDLIDAR T-mini Plus + ydlidar_ros2_driver (lidar_r
     p_drop: 1.0            # 모서리 빠짐 최대 (반반 걸칠 때). 실측 두 장소 모서리 빔 빠짐 63 %
     p_mix: 0.40             # 남은 것 중 두 거리 사이 값 (실측 남는 모서리 빔 중 σ > 3 cm 24 %)
   latency: 0.10             # 스캔 시작 시각(stamp) → 받는 시각 (실측 중앙 0.100 s)
+  intensity:                # 빔 세기 (lidar_real.h lidar_intensity). 맞춤: tools/intensity_check --fit (정지 static_1103_floor·spot1·spot2,
+                            # 표면 빔 521), 확인: spot3 (analysis/calibration.yaml intensity:)
+    range_table: [48.48, 53.47, 42.68, 33.38, 15.13]   # 거리 0.25 · 0.75 · 1.5 · 3 · 6 m 마디의 평균 세기 (사이 선형) — 0.75 m 가 가장 밝고 멀수록 어두움 (6 m 는 빔 2 개 — 잠정)
+    cos_slope: 15.572       # + c·(입사 cos − 0.8) — 정면일수록 밝음
+    object_sigma: 5.981     # 물체마다 차 σ (같은 거리·각 구간 빔 사이 σ)
+    sigma: 0.468            # 장마다 흔들림 σ (빔별 시간 σ 중앙)
+    dropped: 25.98          # 빠진 빔(거리 0)도 드라이버가 세기를 냄 — 실측 평균
   # 판마다 무작위로 곱하는 배율 [최소, 최대] (계획 3.6 도메인 무작위화)
   randomize:
     sigma: [0.5, 2.0]
     dropout: [0.5, 2.0]     # random·dark·mid 비율·비스듬함 기울기·안 보이는 점
     edge_drop: [0.7, 1.3]
 
-depth:                      # Orbbec Dabai DC1, 지금 실물 설정(정렬 안 함). 값은 실물 /camera/depth/camera_info 와 공개 자료
+depth:                      # Orbbec Dabai DC1, 지금 실물 설정(정렬 안 함). 값은 실물 /camera/depth/camera_info 와 공개 자료, 오차·구멍은 실물 녹화
+                            # (sensor_model.h depth_pixel_real). 맞춤: tools/depth_check --fit (static_1103_floor), 확인: 1103_M_drive1 (analysis/calibration.yaml depth:)
   size: [640, 400]
   intrinsics: [478.02396, 478.02396, 323.43732, 199.33777]   # fx, fy, cx, cy → 67.6° × 45.4° (자료 67.9° × 45.3°)
-  range: [0.3, 3.0]         # 자료 0.3~3 m
-  sigma_at_1m: 0.006        # σ(z) = 이 값 · z² (스테레오: 거리 제곱에 비례, 자료 1 m 에서 6 mm). 구멍·모서리는 아직 — 주행 녹화 깊이로
+  range: [0.3, 3.0]         # 자료 0.3~3 m. 실측 유효 값 0.01 % 분위 0.27 m (drive1) · 0.36 m — 0.3 아래는 드묾
+  valid_rect: [8, 396, 10, 638]   # [row0, row1, col0, col1) — 실물은 가장자리 띠(위 8 · 아래 4 행, 왼 10 · 오른 2 열)가 늘 0 (두 녹화 같음)
+  sigma_at_1m: 0.0030       # 시간 σ(z) = 이 값 · z² — 세워 둔 픽셀별 σ 를 거리 구간 가운데로 최소제곱 (자료 1 m 6 mm 보다 작음)
   quantum: 0.001            # mm
+  holes:                    # 구멍(0) 확률 — 실측은 덩어리로 나오지만 관측(10 칸마다 한 픽셀)에서는 픽셀마다 따로 뽑아도 된다고 봄 (잠정)
+    floor_cos: [0.00, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 1.00]   # 바닥(수평 면) 입사 cos 구간 — 비스듬할수록 구멍
+    floor: [0.0, 0.4883, 0.3307, 0.1728, 0.1124, 0.1070, 0.1354]   # cos 0~0.1 은 표본 없음 (3 m 밖 바닥)
+    other: 0.0014           # 벽·물체 (바닥·모서리 아님)
+    edge_z: [0.30, 0.50, 0.80, 1.20, 1.80, 2.50, 3.20]   # 모서리 (좌우 edge_px 옆 깊이가 0.05·z + 0.02 넘게 끊김) 거리 구간
+    edge: [0.0, 0.2382, 0.2202, 0.1170, 0.0894, 0.2262]   # 0.3~0.5 m 는 표본 없음
+    edge_px: 3
+  mount_check: [0.1881, 0.1152]   # 바닥 면으로 잰 카메라 광축 높이 (m)·숙인 각 (rad) — env.yaml body.camera_mount[2]·camera_pitch 와 같게 (depth_check 가 확인)
+
+imu:                        # 바닥판 IMU /imu (include/imu.h). 맞춤: tools/imu_check --fit (analysis/calibration.yaml imu: fit 녹화 —
+                            # 정지 1103_R1_spot1·spot2·mapping_1026_1900, 주행 1103_M_cmd2·1103_M_drive3), 확인: 1103_R1_spot3·1103_M_cmd1·1103_M_drive1
+                            # roll·pitch 는 REP-103 (실물 쿼터니언도 그대로 REP-103 — analysis/real_limo.md IMU 절)
+  g: 10.0337                # 정지 가속도 크기 (m/s², 9.80 보다 2.4 % 큼 — 장치 배율)
+  k: [1.054, 1.057]         # ax = k[0]·몸통 가속, ay = k[1]·v·ω (원심) — 바퀴 v 미분·자이로 z 와 회귀
+  tilt: [-0.00033, -0.00998]   # pitch += tilt[0]·a, roll += tilt[1]·v·ω (rad per m/s²) — 자세 추정이 가속에 기우는 몫 (작음)
+  tilt_sigma: 0.0025        # 판마다 바닥 기울기 roll0·pitch0 σ (rad) — 정지 세 자리 roll·pitch 평균의 RMS
+  gyro_bias: 0.00010        # 판마다 자이로 x·y 바이어스 ± (rad/s) — 실측 녹화별 정지 평균 |값| 최대
+  # 통로마다 [정지 σ, 움직일 때 분산 q1 + qv·|v| + qw·|ω| 의 q1, qv, qw, 상관 시간 tau (s, 0 = 흰 잡음)]
+  # 주행 진동: 가속도 σ 정지 0.03~0.09 → 움직이면 0.3~1.3 m/s² (바퀴가 돌기만 해도 큼), 자이로 x·y 0.0015~0.002 → 0.01~0.04 rad/s.
+  # roll·pitch 는 자세 추정 필터라 느리게 흔들림 (0.1 s 자기상관 0.98·0.92). 가속도·자이로는 0.1 s 에 상관 없음
+  noise:
+    ax: [0.08759, 6.5003e-01, 1.1195e+00, 0.0, 0.000]
+    ay: [0.03300, 2.0018e-01, 8.3080e-02, 6.0105e-03, 0.000]
+    az: [0.02828, 0.0, 2.6802e+00, 5.1025e-01, 0.034]
+    gx: [0.00153, 2.2918e-05, 2.5020e-03, 5.1022e-04, 0.000]
+    gy: [0.00207, 1.3258e-04, 2.0154e-03, 4.5004e-04, 0.000]
+    roll: [0.00154, 4.4816e-05, 4.2088e-04, 7.2016e-05, 6.154]
+    pitch: [0.00269, 2.2207e-04, 1.1972e-03, 0.0, 1.137]
 
 # V3: noise_check 가 시뮬 통계를 실측과 비교할 때 허용 차이.
 # 센서 물리(재질과 무관한 것)만 통과 기준이다. 재질 섞임(빔별 유효율 분포·표면 빠짐·입사각·거리별 빠짐)은 장소마다 달라 참고로만 낸다.
@@ -50,3 +87,21 @@ check:
   edge_drop: 0.15
   edge_noisy: 0.10
   graze_rise: 0.15          # 입사 60~90° − 0~30° 빠짐률 — 정지 실측 표본이 작아(52 빔) 넉넉히. 주행 녹화(1 만 빔)는 차 0
+  # IMU (imu_check, 실물 같은 움직임을 시뮬 IMU 에 넣어 비교) — 확인 녹화를 돌리기 전에 정함
+  imu_sigma_ratio: 0.30     # 잔차 σ (정지·느림·빠름) |시뮬/실측 − 1|
+  imu_acf: 0.20             # 0.1 s 자기상관 차
+  imu_raw_ratio: 0.30       # 움직이는 줄 원값 σ (결정적 몫 포함)
+  # 깊이 (depth_check, 모델 vs 확인 녹화). 주의: drive1 통계를 한 번 본 뒤에 정함 (analysis/real_limo.md 깊이 절)
+  depth_sigma_ratio: 0.30   # 시간 σ(z) |모델/실측 − 1| (픽셀 5 천 넘는 거리 구간)
+  depth_hole: 0.05          # 바닥 구멍(입사 cos 구간)·벽 구멍 비율 차
+  depth_edge_hole: 0.08     # 모서리 구멍 비율 차 (거리 구간)
+  depth_mount_h: 0.01       # 바닥 면으로 잰 카메라 광축 높이 차 (m)
+  depth_mount_pitch: 0.01   # 숙인 각 차 (rad)
+  depth_rect_px: 2           # 유효 영역 경계 차 (픽셀)
+  # 지도 속도 (mapvel_check) — 확인 녹화를 돌리기 전에 정함
+  mapvel_sigma_ratio: 0.30  # 0.1 s 미분 잔차 σ (정지·느림·빠름) |시뮬/실측 − 1|
+  mapvel_tail: 0.05         # 움직일 때 큰 잔차 비율 차
+  mapvel_acf: 0.20          # 0.1 s 자기상관 차
+  # 라이다 세기 (intensity_check). 주의: spot3 통계를 한 번 본 뒤에 정함
+  intensity_mean: 5.0       # 구간 평균 세기 차 (세기 단위, 실측 빔 사이 σ ≈ 5)
+  intensity_sigma_ratio: 0.30   # 빔 사이 σ · 장마다 σ |모델/실측 − 1|

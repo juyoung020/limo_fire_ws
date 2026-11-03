@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
     sim::Env env(hc, worlds, lidar, n_env, 11, true);
     env.reset();
     float* d_act;
-    need(cudaMalloc(&d_act, sizeof(float) * 2 * n_env), "malloc");
+    need(cudaMalloc(&d_act, sizeof(float) * mdp::act::DIM * n_env), "malloc");
     int16_t* dL;
     uint8_t *dmask, *dflag;
     int32_t *dqa, *dqb;
@@ -99,9 +99,9 @@ int main(int argc, char** argv) {
     std::vector<sim::EnvState> st;
     std::vector<int16_t> L;
     for (int t = 1; t <= n_steps; ++t) {
-      std::vector<float> act(2 * n_env);
-      for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[2 * i]);
-      cudaMemcpy(d_act, act.data(), sizeof(float) * 2 * n_env, cudaMemcpyHostToDevice);
+      std::vector<float> act((size_t)mdp::act::DIM * n_env);
+      for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)mdp::act::DIM * i]);
+      cudaMemcpy(d_act, act.data(), sizeof(float) * mdp::act::DIM * n_env, cudaMemcpyHostToDevice);
       env.step(d_act);
       env.sync();
       if (t % every != 0) continue;
