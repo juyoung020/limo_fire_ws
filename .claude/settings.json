@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "b=\"$CLAUDE_PROJECT_DIR/tools/repo_check/target/release/repo_check\"; [ -x \"$b\" ] || cargo build -q --release --manifest-path \"$CLAUDE_PROJECT_DIR/tools/repo_check/Cargo.toml\" >&2 || exit 0; \"$b\" hook",
+            "timeout": 120,
+            "statusMessage": "repo_check: 커밋·푸시 규칙 검사"
+          }
+        ]
+      }
+    ]
+  }
+}
