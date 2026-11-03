@@ -12,10 +12,23 @@
 - 인식 벤치마크(`sim.launch.xml benchmark:=true`): Webots 정답과 장마다 비교해 P·R·F1·mAP·IoU·속도·물체 지도 정확도를 `docs/benchmarks/` 에 표로.
 - 바닥판 리모컨 조종 값·모터 상태·바퀴 거리 토픽(`/rc_state`, `/motor_states`, `/wheel_odometry`).
 - `robot.launch.xml base:=false`: 바닥판 없이 센서만 켜기(충전 중·세워 두고 잴 때).
+- 탐사 강화학습용 GPU 시뮬레이터(`train/explore/sim`): 구동·라이다·IMU·깊이를 실물 LIMO 녹화로 맞추고 다른 녹화로 확인.
+- 실물 녹화 `record.launch.xml` 과 보정 녹화 목록(`train/explore/sim/analysis`).
+- 탐사 RL 학습 뷰어 `train/explore/viewer`(trainview 를 가져와 탐사용으로 고침): 곡선·건강 검사·표·비교, 판 하나 2D 재생, C++ 러너가 쓰는 실행 폴더 헤더 `runfolder.h`, 가짜 실행 `fake_run`, 규약 검사 `runcheck`.
+- 탐사 RL 프론티어 탐사 기준선 `train/explore/baselines/frontier`(explore_lite 식 고르기 + Nav2 식 A*·RPP 추종, nav2·fast 두 속도)과 실행 도구 `frontier_run`, CPU·GPU 공용 프론티어 찾기 `train/explore/mdp/frontier.h`.
 
 ### Changed
 
 - 바닥판 드라이버를 `limo_fire_base` 로 바꿈(WeGo `limo_base` 그대로 + 위 토픽).
+- 탐사 학습 시뮬 지도를 512 × 512 칸(25.6 m)으로 키움(12.8 m 보다 큰 맵도 씀).
+
+### Fixed
+
+- `map2scene` 이 주석 줄이 있는 PGM(Nav2 `map_saver` 가 저장한 지도)을 읽음.
+
+### Removed
+
+- 옛 탐사 학습 환경 `train/explore/env` 를 `archive/explore_env` 로 옮김(실물에 맞춘 `train/explore/sim` 이 대체).
 
 ## [0.6.0] - 2026-10-29
 

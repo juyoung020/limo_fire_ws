@@ -1,0 +1,31 @@
+# 프론티어 탐사 기준선 (baselines/frontier). 추종기·경로 계획·팽창 값은 여기 두지 않고 시뮬 env.yaml 이 가리키는
+# nav2_params.yaml 을 그대로 읽는다(같은 값을 두 곳에 두지 않음). 여기에는 explore_lite 값과 두 속도 판만.
+explore_lite:               # m-explore(hrnr/m-explore) 712bdd41027b645c9c876a4c0071478f090825ea explore/launch/explore.launch
+  planner_frequency: 0.33   # 프론티어 다시 고르기 (Hz). 목표 도착·실패 때는 바로 다시 고름(explore.cpp:264-281)
+  progress_timeout: 30.0    # 같은 목표에 이만큼 진척 없으면 블랙리스트 (s, explore.cpp:212-226)
+  potential_scale: 3.0      # 비용 = potential × 거리 × 해상도 − gain × 크기 × 해상도 (frontier_search.cpp:191-196)
+  gain_scale: 1.0
+  min_frontier_size: 0.75   # m — 크기(칸 수) × 해상도가 이보다 작은 덩어리는 버림 (frontier_search.cpp:78)
+  blacklist_tolerance: 5    # 칸 — 블랙리스트 목표와 x·y 가 이만큼 안이면 같은 목표 (explore.cpp:249, 원본 상수)
+nav2:
+  replan_period: 1.0        # 같은 목표로 경로 다시 짜기 (s): Nav2 기본 BT navigate_to_pose_w_replanning_and_recovery.xml:11 RateController hz 1.0
+  # 경로 추종 실패(RPP 충돌 검사) 때 BT 복구: 같은 BT 파일의 RecoveryNode number_of_retries 6, RoundRobin
+  # [비용 지도 비우기, Spin spin_dist 1.57, Wait wait_duration 5, BackUp backup_dist 0.30 backup_speed 0.05] (navigation2 humble 3c3db59d)
+  bt_retries: 6
+  spin_dist: 1.57
+  wait_duration: 5.0
+  backup_dist: 0.30
+  backup_speed: 0.05
+  behavior_time_allowance: 10.0   # nav2_behaviors 기본 time_allowance (s)
+  # 아래 하나는 Nav2 에 없는 우리 몫: 시작 칸이 팽창 안(내접 반경)이라 Smac 2D 가 시작 칸을 못 쓸 때, Nav2 는 복구 동작(후진·회전)을 한다.
+  # 여기서는 그 칸들을 정규 비용 이만큼으로 지나가게 해 빠져나온다(막힌 칸은 늘 못 지남). 잠정
+  inscribed_escape_cost: 20.0
+start:
+  # explore_lite 는 지도가 생긴 뒤 켠다는 전제(프론티어가 없으면 곧바로 멈춤, explore.cpp:190-193). 시작 직후에는 아는 빈 칸에서 이어진
+  # 크기 문턱 넘는 프론티어가 하나 생길 때까지 제자리에서 돈다(rotate_to_heading_angular_vel). 이 시간 안에 안 생기면 끝(no_frontier_at_start)
+  wait_timeout: 30.0        # s
+modes:                      # 판 이름 → 직진 속도. v_des = RPP desired_linear_vel, v_max = velocity_smoother max_velocity[0]
+  nav2: {v: nav2}           # nav2_params 그대로 (0.26 m/s)
+  fast: {v: 1.0}            # LIMO 데이터시트 최고 속도 1 m/s (mdp/README 행동 표 근거). 회전·가속 한도는 nav2 값 그대로
+episode:
+  t_safe: 1800.0            # 안전 시간(s, 끊김). 시뮬 env.yaml episode.max_time(300 s)·success_coverage(자동 성공 끝)는 이 실행에서 덮어씀

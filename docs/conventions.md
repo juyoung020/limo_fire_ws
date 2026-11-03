@@ -26,7 +26,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 ├── sim/                       Isaac Sim 확장·USD, Webots 월드, maps/  [COLCON_IGNORE]
 ├── train/                     학습 (C++/CUDA/Rust, ROS 아님)  [COLCON_IGNORE]
 │   ├── maps/                  맵 변환기 — 탐사·조준 공용
-│   ├── explore/               탐사 RL: env/ ppo/ viewer/
+│   ├── explore/               탐사 RL: sim/ mdp/ network/ ppo/ scripts/ viewer/ runs/(git 제외)
 │   ├── aim/                   조준 RL
 │   └── detect/                YOLO 탐지: trainer/ tools/ data/(git 제외)
 ├── firmware/                  ESP32 코드

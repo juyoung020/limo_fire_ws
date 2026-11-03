@@ -10,7 +10,7 @@
 | 2D 라이다 | YDLIDAR T-mini Plus | USB(CP210x) `/dev/ydlidar` | `/scan` | 장착 · 동작 확인 |
 | 깊이 카메라 | Orbbec Dabai DC1 | USB | `/camera/color/*`, `/camera/depth/*`, `/camera/ir/*` | 장착 · 동작 확인 |
 | IMU | LIMO 본체 보드 내장 | UART `/dev/ttylimo`(→ `ttyTHS1`) | `/imu` | 장착 · 동작 확인 |
-| 바퀴 오도메트리 | LIMO 본체 (차동 구동) | UART `/dev/ttylimo` | `/odom`, EKF → `/odometry/filtered` | 장착 · 동작 확인 |
+| 바퀴 오도메트리 | LIMO 본체 (파랑 메카넘 모드) | UART `/dev/ttylimo` | `/odom`, EKF → `/odometry/filtered` | 장착 · 동작 확인 |
 | 카메라 틸트 | LIMO Pro 카메라 마운트 (손으로 고정) | — | URDF 인자 `camera_pitch` (`limo_fire.urdf.xacro`) | 장착 |
 | 오디오 | USB PnP Audio (JMTek 0c76:161f) | USB | — | 장착, 스피커·마이크 여부 확인 필요 |
 | 열화상 | GY-MCU90640 (MLX90640 BAB 55°, 32×24) | ESP32 UART | 예정 | 부품 대기 |
@@ -88,7 +88,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 구동 | 차동(diff) 모드. `limo_fire_base`(WeGo `limo_base` 의 우리 판), 포트 `ttylimo`. 모드는 바닥판이 정함: 앞 불 노랑 4 륜 차동 · 초록 아커만 · 파랑 메카넘(앱) |
+| 구동 | **파랑(메카넘) 모드로 운용**(바퀴: 메카넘 4 개, LIMO Pro 기본 구성). 구동 모델도 이 모드 녹화로 맞춤. 예전 표기 "차동(diff) 모드"는 잘못. `limo_fire_base`(WeGo `limo_base` 의 우리 판), 포트 `ttylimo`. 모드는 바닥판이 정함: 앞 불 노랑 4 륜 차동 · 초록 아커만 · 파랑 메카넘(앱) |
 | `/odom` | 50 Hz (실측 49.9 Hz) |
 | 정지 드리프트 | 20 초 동안 0.1 mm |
 | EKF | `robot_localization` `ekf_filter_node_odom` → `/odometry/filtered` 30 Hz. 기동 때 `odom0_differential` 과 `odom0_relative` 가 둘 다 true 라는 오류가 찍힌다(차동 모드로 동작) — 설정 정리 필요 |
@@ -110,7 +110,7 @@
 
 ## 시뮬레이션에 넣을 센서 모델
 
-위 실측값으로 맞춘다. GPU 학습 환경(`train/explore/env`)과 Isaac Sim 이 같은 값을 쓴다.
+위 실측값으로 맞춘다. GPU 학습 시뮬(`train/explore/sim`)과 Isaac Sim 이 같은 값을 쓴다.
 
 | 센서 | 시뮬 모델 |
 |---|---|
@@ -118,7 +118,7 @@
 | 깊이 카메라 | 핀홀 640×480, fx = fy = 489.4, 가로 66.4° · 세로 52.3°, 30 Hz. 2.5D 환경은 열마다 광선 근사 |
 | 컬러 → YOLO | 2.5D 환경에서는 사진을 만들지 않고, 화각 안에 보이는 소화기·불 등을 의미 채널로 바로 넣는다 |
 | IMU | 100 Hz, 자이로 std 0.002 rad/s + 0.1 °/s 양자화, 가속도 스케일 ×1.023 |
-| 오도메트리 | 50 Hz 차동 구동. 주행 오차는 주행 시험 뒤 넣는다 |
+| 오도메트리 | 50 Hz, 파랑(메카넘) 모드. 주행 오차는 주행 시험 뒤 넣는다 |
 
 ## 확인할 것
 

@@ -1,0 +1,8 @@
+[package]
+name = "trainfmt"
+version = "0.2.0"
+edition = "2021"
+description = "탐사 RL 실행 폴더 규약: run.json · progress.jsonl · episodes.jsonl · evals · replays/*.xrp. 쓰는 쪽은 include/runfolder.h(C++), 읽는 쪽은 trainview."
+
+[dependencies]
+serde_json = "1"

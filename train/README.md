@@ -5,9 +5,8 @@ GPU 학습 환경(C++/CUDA/Rust). ROS 패키지가 아니라 빌드에서 빠진
 | 폴더 | 내용 | 상태 |
 |---|---|---|
 | `maps/` | 맵 변환기 `fmap` (Rust): HouseExpo·ProcTHOR·덕트호스 생성기 → 공통 점유 격자 `.fmap` + 소화기·비상구·화재 감지기 배치. 탐사·조준 공용 | 됨 |
-| `explore/env/` | 탐사 RL — LIMO GPU 환경 커널(CUDA): 차동 구동 + 목표점 추종기, 라이다 248 빔 DDA, 덮음 보상, 판마다 불 무작위 생성. CPU 참조판과 비트 동일 | 됨(관측 만들기는 PPO 와 함께) |
-| `explore/ppo/` | 탐사 RL — PPO 학습기 (object-memory-robot `training/RL` 에서 옮김) | 할 일 |
-| `explore/viewer/` | 탐사 RL — 학습 뷰어 trainview (Rust) | 할 일 |
+| `explore/sim/` | 탐사 RL — GPU 학습 시뮬(CUDA): 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, 확률 지도, 보상, 로봇 중심 관측. CPU 참조판과 비트 동일 | 됨(맵 읽기·속도 남음) |
+| `explore/mdp/` · `network/` · `ppo/` · `scripts/` | 탐사 RL — 관측·보상·커리큘럼, MLP 정책·가치, PPO, 실행기 ([구조](explore/README.md)) | 할 일 |
 | `aim/` | 조준 RL | 나중 |
 | `detect/` | YOLO 탐지(불·연기·소화기·비상구·사람·문), C++/CUDA 학습기 | 할 일 |
 
@@ -34,25 +33,19 @@ M=../../sim/maps
 
 로봇 중심이 벽에서 0.15 m 이상 떨어진 빈 칸의 가장 큰 연결 영역만 도달 영역(FREE)으로 남긴다. 광선은 바깥(0)과 벽(2)에서 모두 막힌다.
 
-## 탐사 환경 (`explore/env/`)
+## 탐사 학습 시뮬 (`explore/sim/`) — 새 판, 실물에 맞춘 센서
+
+환경 하나 = CUDA 블록 하나, 커널 한 번 = 행동 하나(속도 행동 0.1 s · 목표점 행동 0.5 s). 그 안에서 (목표점이면 Nav2 RPP 추종기) → 실물로 맞춘 바닥판 구동(지연·가속·바닥 미끄러짐)·몸통 충돌·실물 오차 라이다(`lidar_real.h`)·Cartographer 식 확률 지도·보상·리셋을 다 한다. 설정 `config/env.yaml`, 센서 오차 `config/sensor_model.yaml`, 근거 `analysis/`.
 
 ```bash
-cd train/explore/env && cmake -S . -B build && cmake --build build -j
-./build/fenv_verify ../../maps/out 300 512 400            # GPU == CPU 비트 동일이어야 통과
-./build/fenv_verify ../../maps/out 300 512 400 --negative # 일부러 어긋나게 해서 잡히는지(음성 대조)
-./build/fenv_bench  ../../maps/out 1000 16384 200         # 처리량
+cd train/explore/sim && cmake -S . -B build && cmake --build build -j
+./build/env_verify <장면.scene> …            # GPU == CPU 비트 동일 (상태·보상·지도·관측)
+./build/env_verify <장면.scene> … --negative # 음성 대조
+./build/env_bench  <장면.scene> … --envs 1024
 ```
 
-| 항목 | 값 (`include/fenv.h` 의 `K`) |
-|---|---|
-| 행동 | 48 = 로봇 기준 방향 16 × 거리 {0.5, 1, 2} m. 0.5 s 동안 추종기가 목표점으로(벽 너머면 벽 앞에서 자름) |
-| 구동 | v ≤ 0.5 m/s, ω ≤ 1.5 rad/s, 가속 1.0 m/s² · 3.0 rad/s² (가정), 충돌 원 0.13 m |
-| 라이다 | 248 빔 / 220° / 12 m (교수님 Webots 모델과 같음), 칸 DDA |
-| 덮기 | 빈 곳과 맞닿은 벽 칸(표면)이 3 m 안에서 3 번 맞으면 덮음. 95 % 면 성공 |
-| 불 | 판마다 1 개(80 %) 또는 2 개, 도달 영역 무작위 칸, 시작에서 2 m 이상. 작은 불 r 0.05–0.15 m(70 %), 큰 불 0.3–0.8 m. 카메라 66.5° · 5 m 안 · 가리지 않으면 "봄" |
-| 보상 | 덮은 비율 × 10, 성공 +5, 행동마다 −0.005, 재방문 −0.01, 제자리 −0.01, 충돌 −2(끝), 불 처음 봄 +1, 목표점 잘림 −0.005 |
-| 시간 | 판당 행동 수 = 도달 넓이(m²) × 4, 200–2000 |
-
-검증 결과(2026-10-23, RTX 5070 Ti, 맵 300 개 = 세 소스 고루): 512 환경 × 400 행동 **비트 동일**, 음성 대조는 행동 200·아는 지도 14,786 칸 불일치로 잡힘.
-무작위 행동 기준 끝난 판 2,049: 성공 31 / 충돌 1,903 / 시간초과 115, 평균 덮은 비율 0.22, 불 본 비율 0.34.
-처리량: 16,384 환경 3.5e5 env-step/s(시뮬 0.5 s 씩 → 실시간의 약 17 만 배), 아는 지도 0.65 GB.
+장면은 Webots 월드를 띄워 `/Ros2Supervisor/animation_start_recording` 로 `.w3d` 를 받고 `w3d2scene` 으로 바꾼다.
+구동은 실물 녹화로 맞추고 확인한다: `motion_export`(limo_fire_sim) → `./build/motion_check <구동.csv> [--fit]`.
+GPU 환경 전체를 실물 녹화로 다시 돌린다: `bag_export <녹화> <x.lfrec>`(지도 `.map.yaml` 도) → `./build/map2scene x.lfrec.map.yaml x.scene` → `./build/replay_check x.scene <구동.csv> x.lfrec`.
+보정 녹화는 [analysis/calibration.yaml](explore/sim/analysis/calibration.yaml) 에 역할(fit·validate)과 뺄 구간을 적고 `--set analysis/calibration.yaml fit|validate` 로 돌린다 (`motion_check --fit`, `replay_check --fit-dropout`).
+아직: IMU·오도메트리 자세 추정, 카메라, `train/maps` 맵 읽기, 속도(젯슨 1,024 환경 3,600 행동/초 — 라이다 평면 자르기로 올릴 것). 옛 초안 환경(`.fmap` 맵 읽기 포함)은 `archive/explore_env`.
