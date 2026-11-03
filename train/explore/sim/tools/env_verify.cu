@@ -1,4 +1,4 @@
-// V0·V1 (환경): 같은 맵·씨앗·행동열이면 GPU 커널과 CPU 참조판의 상태·보상·지도·관측이 걸음마다 비트까지 같은지.
+// V0·V1 (환경): 같은 맵·씨앗·행동열이면 GPU 커널과 CPU 참조판의 상태·보상·지도·덮음 표시·관측이 걸음마다 비트까지 같은지.
 // env_verify <장면.scene> [장면 …] [--envs 8] [--steps 80] [--negative] [--env config/env.yaml] [--model config/sensor_model.yaml]
 //            [--dump 지도.pgm]   (env 0 의 마지막 지도: 0 모름 128, 빈 칸 흼, 막힘 검음)
 //   --negative: GPU 쪽 행동 하나를 바꿔 일부러 어긋나게 한다 (검사가 틀림을 잡는지)
@@ -29,10 +29,15 @@ int main(int argc, char** argv) {
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   std::vector<sim::World> worlds;
   for (const auto& p : scenes) {
-    worlds.push_back(sim::build_world(p, sim::load_scene(p), hc));
+    try {
+      worlds.push_back(sim::build_world(p, sim::load_scene(p), hc));
+    } catch (const std::exception& ex) {
+      std::fprintf(stderr, "env_verify: %s\n", ex.what());
+      return 1;
+    }
     const auto& w = worlds.back();
-    std::printf("맵 %s: %d×%d 칸, 덮을 빈 칸 %d (%.1f m²), 시작 후보 %zu\n", p.c_str(), w.gw, w.gh, w.n_gt,
-                w.n_gt * hc.cfg.res * hc.cfg.res, w.spawn.size());
+    std::printf("맵 %s: %d×%d 칸, 벽 면 칸(덮음 분모) %d (%.2f m²), 갈 수 있는 바닥 %d (%.1f m²), 시작 후보 %zu, %s\n", p.c_str(), w.gw, w.gh,
+                w.n_wall, w.n_wall * hc.cfg.res * hc.cfg.res, w.n_floor, w.n_floor * hc.cfg.res * hc.cfg.res, w.spawn.size(), w.closed ? "닫힘" : w.leak.c_str());
   }
   sim::Env gpu(hc, worlds, lidar, n_env, 7, true), cpu(hc, worlds, lidar, n_env, 7, false);
   gpu.reset();
@@ -75,6 +80,11 @@ int main(int argc, char** argv) {
   cpu.get_map(mc);
   size_t bad_map = 0, known = 0;
   for (size_t i = 0; i < mg.size(); ++i) { bad_map += mg[i] != mc[i]; known += mc[i] != sim::kUnknown; }
+  std::vector<uint8_t> seen_g, seen_c;
+  gpu.get_seen(seen_g);
+  cpu.get_seen(seen_c);
+  size_t bad_seen = 0, seen_wall = 0;
+  for (size_t i = 0; i < seen_g.size(); ++i) { bad_seen += seen_g[i] != seen_c[i]; seen_wall += seen_c[i] & 1; }
   std::vector<uint8_t> og, oc, dep_g, dcp;
   std::vector<float> ng, nc;
   gpu.get_obs(og, ng, &dep_g);
@@ -88,10 +98,10 @@ int main(int argc, char** argv) {
   cudaGetDeviceProperties(&prop, 0);
   std::printf("GPU %s (sm_%d%d), 환경 %d × 행동 %d%s\n", prop.name, prop.major, prop.minor, n_env, n_steps,
               negative ? " (일부러 어긋나게)" : "");
-  std::printf("판 끝: 성공 %d · 충돌 %d · 시간 %d, 행동당 평균 보상 %.4f, 지도에서 아는 칸 %zu\n", ends[1], ends[2], ends[3],
-              reward_sum / (n_env * n_steps), known);
-  std::printf("상태 다름 %zu, 보상·끝 다름 %zu (처음 걸음 %d), 지도 칸 다름 %zu, 관측 다름 %zu (깊이 관측 값 있음 %.1f %%)\n", bad_state,
-              bad_reward, first_bad, bad_map, bad_obs, 100.0 * depth_valid / std::max<size_t>(1, dcp.size()));
+  std::printf("판 끝: 성공 %d · 충돌 %d · 시간 %d, 행동당 평균 보상 %.4f, 지도에서 아는 칸 %zu, 지금 판들이 본 벽 면 칸 %zu\n", ends[1], ends[2],
+              ends[3], reward_sum / (n_env * n_steps), known, seen_wall);
+  std::printf("상태 다름 %zu, 보상·끝 다름 %zu (처음 걸음 %d), 지도 칸 다름 %zu, 덮음 표시 다름 %zu, 관측 다름 %zu (깊이 관측 값 있음 %.1f %%)\n", bad_state,
+              bad_reward, first_bad, bad_map, bad_seen, bad_obs, 100.0 * depth_valid / std::max<size_t>(1, dcp.size()));
   if (!dump.empty()) {
     const int S = hc.cfg.size;
     FILE* f = std::fopen(dump.c_str(), "wb");
@@ -104,7 +114,7 @@ int main(int argc, char** argv) {
       }
     std::fclose(f);
   }
-  const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_obs == 0;
+  const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_obs == 0;
   std::printf("%s\n", same ? "환경 V0 통과: GPU == CPU (비트 같음)" : "다름");
   return negative ? (same ? 1 : 0) : (same ? 0 : 1);
 }

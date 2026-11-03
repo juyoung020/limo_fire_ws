@@ -18,7 +18,7 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
     EnvState e = b.st[env];
     e.collided = 0;
     apply_action(b, e, actions + 2 * env);
-    int new_known = 0;
+    int new_wall = 0, new_floor = 0;
     const int tick0 = e.tick;
     for (int k = 0; k < c.substeps; ++k) {
       if (!e.collided) physics_step(b, e);
@@ -27,11 +27,12 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
       scan_begin(b, e, sh);
       for (int j = 0; j < sh.n_beams; ++j) scan_beam(b, e, env, sh, j);
       for (int tid = 0; tid < kThreads; ++tid) scan_apply(b, e, env, sh, tid);
-      int s = 0;
-      for (int i = 0; i < kThreads; ++i) s += sh.part[i];
-      new_known += s;
+      int s = 0, f = 0;
+      for (int i = 0; i < kThreads; ++i) { s += sh.part[i]; f += sh.part_floor[i]; }
+      new_wall += s;
+      new_floor += f;
     }
-    finish_step(b, e, sh, new_known);
+    finish_step(b, e, new_wall, new_floor);
     b.reward[env] = e.reward;
     b.done[env] = e.done;
     if (e.done) reset_env(b, e, env);

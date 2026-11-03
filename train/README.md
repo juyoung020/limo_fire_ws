@@ -44,7 +44,7 @@ cd train/explore/sim && cmake -S . -B build && cmake --build build -j
 ./build/env_bench  <장면.scene> … --envs 1024
 ```
 
-장면은 Webots 월드를 띄워 `/Ros2Supervisor/animation_start_recording` 로 `.w3d` 를 받고 `w3d2scene` 으로 바꾼다.
+장면은 Webots 월드를 띄워 `/Ros2Supervisor/animation_start_recording` 로 `.w3d` 를 받고 `w3d2scene` 으로 바꾼다. 장면 파일(버전 2)엔 출발점이 들어 있어(`w3d2scene` 은 뺀 로봇 자리, `map2scene` 은 지도 원점 또는 `--start x y`) 덮음 분모를 거기서 정한다 — 옛 버전 1 장면은 다시 만든다.
 구동은 실물 녹화로 맞추고 확인한다: `motion_export`(limo_fire_sim) → `./build/motion_check <구동.csv> [--fit]`.
 GPU 환경 전체를 실물 녹화로 다시 돌린다: `bag_export <녹화> <x.lfrec>`(지도 `.map.yaml` 도) → `./build/map2scene x.lfrec.map.yaml x.scene` → `./build/replay_check x.scene <구동.csv> x.lfrec`.
 보정 녹화는 [analysis/calibration.yaml](explore/sim/analysis/calibration.yaml) 에 역할(fit·validate)과 뺄 구간을 적고 `--set analysis/calibration.yaml fit|validate` 로 돌린다 (`motion_check --fit`, `replay_check --fit-dropout`).

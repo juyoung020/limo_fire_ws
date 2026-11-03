@@ -207,7 +207,9 @@ void run_job(const Job& job, const sim::EnvHostCfg& hc_in, const sim::LidarModel
     };
     float x0, y0, th0;
     if (!pose_at(rows[i0].stamp, &x0, &y0, &th0)) throw std::runtime_error(job.name + ": 시작 시각에 Cartographer 자세 없음 (replay_from)");
-    const std::vector<sim::World> worlds{sim::build_world(job.scene, scene, hc)};
+    // 실물 녹화 지도는 일부만 그려 닫히지 않을 수 있다 — 여기선 덮음을 안 쓰므로 열린 지도도 받는다(알리기만)
+    const std::vector<sim::World> worlds{sim::build_world(job.scene, scene, hc, false)};
+    if (!worlds[0].closed) std::printf("(덮음 안 씀) %s\n", worlds[0].leak.c_str());
     sim::Env env(hc, worlds, lidar, 1, 3, true);
     env.reset();
     env.sync();

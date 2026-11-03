@@ -21,11 +21,15 @@ nav2:
   # 여기서는 그 칸들을 정규 비용 이만큼으로 지나가게 해 빠져나온다(막힌 칸은 늘 못 지남). 잠정
   inscribed_escape_cost: 20.0
 start:
-  # explore_lite 는 지도가 생긴 뒤 켠다는 전제(프론티어가 없으면 곧바로 멈춤, explore.cpp:190-193). 시작 직후에는 아는 빈 칸에서 이어진
-  # 크기 문턱 넘는 프론티어가 하나 생길 때까지 제자리에서 돈다(rotate_to_heading_angular_vel). 이 시간 안에 안 생기면 끝(no_frontier_at_start)
+  # explore_lite 는 지도가 생긴 뒤 켠다는 전제(프론티어가 없으면 곧바로 멈춤, explore.cpp:190-193). 시작 직후에는 설 수 있는 칸에서 번져
+  # 프론티어 칸(mdp/frontier.h)이 하나 보일 때까지 제자리에서 돈다(rotate_to_heading_angular_vel). 이 시간 안에 안 생기면 끝(no_frontier_at_start)
   wait_timeout: 30.0        # s
 modes:                      # 판 이름 → 직진 속도. v_des = RPP desired_linear_vel, v_max = velocity_smoother max_velocity[0]
   nav2: {v: nav2}           # nav2_params 그대로 (0.26 m/s)
-  fast: {v: 1.0}            # LIMO 데이터시트 최고 속도 1 m/s (mdp/README 행동 표 근거). 회전·가속 한도는 nav2 값 그대로
+  # fast: LIMO 데이터시트 최고 속도 1 m/s (mdp/README 행동 표 근거). 회전·가속·lookahead·팽창은 nav2 값 그대로.
+  # 1 m/s 에선 제동 거리가 0.32 m (구동 모델, smoother 2.5 m/s² 거쳐 — 0.26 m/s 는 0.04 m)라 RPP 충돌 검사(발자국 여유 0.02 m)로 멈춰도
+  # 벽에 닿았다(2026-11-04, 판 48 개에 아는 벽 충돌 5). Nav2 RPP 의 장애물 근접 감속(use_cost_regulated_linear_velocity_scaling, 기본
+  # cost_scaling_dist 0.6 · gain 1.0)을 켜면 0 (판 48 개). 속도 비례 lookahead 는 안 줄었다(2) — 안 씀
+  fast: {v: 1.0, use_cost_regulated_linear_velocity_scaling: true}
 episode:
   t_safe: 1800.0            # 안전 시간(s, 끊김). 시뮬 env.yaml episode.max_time(300 s)·success_coverage(자동 성공 끝)는 이 실행에서 덮어씀

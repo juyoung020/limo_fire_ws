@@ -19,18 +19,22 @@ struct EnvHostCfg {
 // env.yaml + 그 안에서 가리키는 nav2_params.yaml
 EnvHostCfg load_env_cfg(const std::string& env_yaml);
 
-// 맵 하나: 장면 + 칸 격자 (bit0 막힘, bit1 덮어야 할 빈 칸) + 시작 칸
+// 맵 하나: 장면 + 칸 격자 + 시작 칸
 struct World {
   std::string name;
   Scene scene;
-  std::vector<uint8_t> grid;
+  std::vector<uint8_t> grid;            // kCell* 비트 (env.h)
   std::vector<int32_t> spawn;
-  int gw = 0, gh = 0, n_gt = 0;
+  int gw = 0, gh = 0;
+  int n_wall = 0, n_floor = 0;          // 덮음 분모 (벽 면 칸), 바닥 덮음 분모 (갈 수 있는 바닥 칸)
+  bool closed = true;                   // 갈 수 있는 바닥이 맵 테두리에 안 닿음 (집이 닫힘)
+  std::string leak;                     // 닫히지 않았으면 어디서 새는지 (좌표)
   float ox = 0, oy = 0;
 };
 
-// 몸통 높이(band)에 걸린 삼각형을 칸에 찍고, 시작 칸들과 이어진 가장 큰 빈 칸 덩어리를 "덮어야 할 칸" 으로
-World build_world(const std::string& name, Scene scene, const EnvHostCfg& hc);
+// 장면 → 칸 격자 (env_host.cpp 위 설명). 집이 닫히지 않으면(갈 수 있는 바닥이 맵 테두리에 닿음) require_closed 면 예외,
+// 아니면 closed = false·leak 에 적고 돌려줌 (덮음을 안 쓰는 도구 — 실물 녹화 다시 돌리기처럼 일부만 그린 지도)
+World build_world(const std::string& name, Scene scene, const EnvHostCfg& hc, bool require_closed = true);
 
 class Env {
  public:
@@ -48,6 +52,8 @@ class Env {
   void get_state(std::vector<EnvState>& out) const;
   void set_state(int env, const EnvState& s);   // 시험용: 한 환경 상태를 바꿔 넣음 (실물 녹화 다시 돌리기 등)
   void get_map(std::vector<int16_t>& out) const;
+  // 판 동안 덮은 칸 [env · size² + cy · size + cx]: bit0 본 벽 면 칸(덮음 분자), bit1 빔이 지나간 바닥 칸 (env.h marks bit3·4)
+  void get_seen(std::vector<uint8_t>& out) const;
   void get_obs(std::vector<uint8_t>& obs, std::vector<float>& num, std::vector<uint8_t>* depth = nullptr) const;
   void get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const;
 

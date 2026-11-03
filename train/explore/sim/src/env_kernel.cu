@@ -14,13 +14,14 @@ __global__ void env_step_kernel(EnvBatch b, const float* actions) {
   const int env = blockIdx.x, tid = threadIdx.x;
   __shared__ EnvState e;
   __shared__ Shared sh;
-  __shared__ int new_known;
+  __shared__ int new_wall, new_floor;
   const EnvCfg& c = b.cfg;
   if (tid == 0) {
     e = b.st[env];
     e.collided = 0;
     apply_action(b, e, actions + 2 * env);
-    new_known = 0;
+    new_wall = 0;
+    new_floor = 0;
   }
   __syncthreads();
   const int tick0 = e.tick;   // 모든 스레드가 같은 값으로 라이다 걸음을 정한다 (스레드 0 이 e.tick 을 바꾸는 중에 읽지 않게)
@@ -38,14 +39,15 @@ __global__ void env_step_kernel(EnvBatch b, const float* actions) {
     scan_apply(b, e, env, sh, tid);
     __syncthreads();
     if (tid == 0) {
-      int s = 0;
-      for (int i = 0; i < kThreads; ++i) s += sh.part[i];
-      new_known += s;
+      int s = 0, f = 0;
+      for (int i = 0; i < kThreads; ++i) { s += sh.part[i]; f += sh.part_floor[i]; }
+      new_wall += s;
+      new_floor += f;
     }
     __syncthreads();
   }
   if (tid == 0) {
-    finish_step(b, e, sh, new_known);
+    finish_step(b, e, new_wall, new_floor);
     b.reward[env] = e.reward;
     b.done[env] = e.done;
   }

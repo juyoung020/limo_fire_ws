@@ -193,14 +193,19 @@ DEV float expected_drop(const LidarNoise& N, const BeamGeom& g, float obj_size) 
   return pe + (1.f - pe) * (1.f - (1.f - N.p_random) * (1.f - ps) * (1.f - pm) * (1.f - pg));
 }
 
-// ROS 순서 j 번째 빔 (m, 0 = 없음). j ≥ scan_beams 면 0
-DEV float lidar_beam_real(const SceneView& s, const LidarNoise& N, const ScanIn& in, int j) {
+// ROS 순서 j 번째 빔 (m, 0 = 없음). j ≥ scan_beams 면 0. ray 가 있으면 이 빔의 참 광선(원점·방향, 스캔 중 움직임 포함)을 넣는다 —
+// 끝점 = o + d · 돌려준 거리 (학습 환경의 벽 덮음, env.h scan_beam)
+struct BeamRay {
+  V3 o, d;
+};
+DEV float lidar_beam_real(const SceneView& s, const LidarNoise& N, const ScanIn& in, int j, BeamRay* ray = nullptr) {
   const int n = scan_beams(N, in.n_rev);
   if (j >= n) return 0.f;
   uint64_t rs = in.seed ^ ((uint64_t)(j + 1) * 0x9E3779B97F4A7C15ull);
   const float u_edge = dm::rand01(rs), u_mix = dm::rand01(rs), u_at = dm::rand01(rs), u_drop = dm::rand01(rs), g = gauss(rs);
   const BeamGeom geo = beam_geom(s, N, in, j);
   if (!geo.hit) return 0.f;
+  if (ray) { ray->o = geo.o; ray->d = geo.d; }
   float r = geo.r;
   if (geo.edge) {
     // 반반일수록 잘 빠지고, 남으면 두 거리 사이 값이 섞여 나온다

@@ -1,5 +1,8 @@
 // 장면(호스트): 삼각형 목록 → BVH 만들기, .scene 파일 읽기·쓰기. 결정적(같은 삼각형이면 같은 BVH).
-// .scene 형식(리틀 엔디언): "LFSC" u32 버전 | u32 삼각형 수 | Tri[] | u16 물체[] | u32 마디 수 | Node[] |
+// .scene 형식(리틀 엔디언): "LFSC" u32 버전(2) | u32 삼각형 수 | Tri[] | u16 물체[] | u32 마디 수 | Node[] |
+//                          u32 물체 이름 수 | (u32 길이, 바이트)[] | f32 출발점 x, y
+// 출발점: 로봇이 이 장면에서 처음 선 자리(세계 x, y). 덮음 분모(로봇이 갈 수 있는 바닥·그에 맞닿은 벽)를 여기서 flood fill 로 정한다
+// (env_host.cpp build_world). map2scene 은 지도 원점(SLAM 이 시작한 자세), w3d2scene 은 뺀 로봇의 자리를 넣는다.| u32 삼각형 수 | Tri[] | u16 물체[] | u32 마디 수 | Node[] |
 //                          u32 물체 이름 수 | (u32 길이, 바이트)[]
 #pragma once
 #include <algorithm>
@@ -19,6 +22,7 @@ struct Scene {
   std::vector<uint16_t> obj;
   std::vector<Node> nodes;
   std::vector<std::string> obj_names;
+  float start[2] = {0.f, 0.f};   // 출발점 (세계 x, y) — 위 형식 설명
   std::vector<float> obj_size;   // 파일에 없음 — load_scene 이 삼각형으로 계산 (compute_obj_size)
   SceneView view() const { return SceneView{nodes.data(), tris.data(), obj.data(), obj_size.data()}; }
 };
@@ -111,12 +115,13 @@ inline void save_scene(const Scene& s, const std::string& path) {
   FILE* f = std::fopen(path.c_str(), "wb");
   if (!f) throw std::runtime_error("못 씀: " + path);
   auto w = [&](const void* p, size_t n) { std::fwrite(p, 1, n, f); };
-  const uint32_t ver = 1, nt = (uint32_t)s.tris.size(), nn = (uint32_t)s.nodes.size(), no = (uint32_t)s.obj_names.size();
+  const uint32_t ver = 2, nt = (uint32_t)s.tris.size(), nn = (uint32_t)s.nodes.size(), no = (uint32_t)s.obj_names.size();
   w("LFSC", 4); w(&ver, 4);
   w(&nt, 4); w(s.tris.data(), nt * sizeof(Tri)); w(s.obj.data(), nt * sizeof(uint16_t));
   w(&nn, 4); w(s.nodes.data(), nn * sizeof(Node));
   w(&no, 4);
   for (const auto& name : s.obj_names) { const uint32_t l = (uint32_t)name.size(); w(&l, 4); w(name.data(), l); }
+  w(s.start, 8);
   std::fclose(f);
 }
 
@@ -127,13 +132,16 @@ inline Scene load_scene(const std::string& path) {
   char magic[4];
   uint32_t ver, nt, nn, no;
   r(magic, 4); r(&ver, 4);
-  if (std::memcmp(magic, "LFSC", 4) != 0 || ver != 1) throw std::runtime_error(".scene 형식 아님: " + path);
+  if (std::memcmp(magic, "LFSC", 4) != 0) throw std::runtime_error(".scene 형식 아님: " + path);
+  if (ver != 2)
+    throw std::runtime_error(path + ": .scene 버전 " + std::to_string(ver) + " — 출발점이 든 버전 2 로 map2scene·w3d2scene 을 다시 돌려 만들 것");
   Scene s;
   r(&nt, 4); s.tris.resize(nt); s.obj.resize(nt);
   r(s.tris.data(), nt * sizeof(Tri)); r(s.obj.data(), nt * sizeof(uint16_t));
   r(&nn, 4); s.nodes.resize(nn); r(s.nodes.data(), nn * sizeof(Node));
   r(&no, 4); s.obj_names.resize(no);
   for (auto& name : s.obj_names) { uint32_t l; r(&l, 4); name.resize(l); r(&name[0], l); }
+  r(s.start, 8);
   std::fclose(f);
   compute_obj_size(s);
   return s;

@@ -110,7 +110,15 @@ class Builder {
       return;
     const char* name = e->Attribute("name");
     if (tag == "Robot" && name) {
-      for (const auto& x : exclude_) if (x == name) { ++excluded_; return; }
+      for (const auto& x : exclude_)
+        if (x == name) {
+          if (excluded_++ == 0) {   // 첫 로봇 자리 = 장면 출발점
+            const M4 R = T * local_transform(e);
+            robot_xy_[0] = R.m[3];
+            robot_xy_[1] = R.m[7];
+          }
+          return;
+        }
     }
     if (name && (tag == "Solid" || tag == "Robot")) obj = object(name);
     if (tag == "Shape") { shape(e, T, obj); return; }
@@ -120,6 +128,7 @@ class Builder {
   }
 
   int excluded() const { return excluded_; }
+  double robot_xy_[2] = {0, 0};
 
  private:
   int object(const std::string& name) {
@@ -293,6 +302,8 @@ W3dReport load_w3d(const std::string& path, const std::vector<std::string>& excl
   for (const auto* e = scene->FirstChildElement(); e; e = e->NextSiblingElement()) b.walk(e, M4::id(), 0);
   W3dReport r;
   r.excluded_robots = b.excluded();
+  r.robot_x = b.robot_xy_[0];
+  r.robot_y = b.robot_xy_[1];
   r.skipped = b.skipped_;
   return r;
 }

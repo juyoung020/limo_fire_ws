@@ -67,6 +67,19 @@ Params load_params(const std::string& fy, const std::string& env_yaml, const std
     p.fp_half_len = mx + pad;
     p.fp_half_wid = my + pad;
   }
+  {
+    const YAML::Node fp = need(nav["controller_server"]["ros__parameters"], "FollowPath", nav_path);
+    p.regulated = need(fp, "use_regulated_linear_velocity_scaling", nav_path).as<bool>();
+    p.reg_min_radius = need(fp, "regulated_linear_scaling_min_radius", nav_path).as<float>();
+    p.reg_min_speed = need(fp, "regulated_linear_scaling_min_speed", nav_path).as<float>();
+    p.vel_lookahead = need(fp, "use_velocity_scaled_lookahead_dist", nav_path).as<bool>();
+    p.lookahead_time = need(fp, "lookahead_time", nav_path).as<float>();
+    p.max_lookahead = need(fp, "max_lookahead_dist", nav_path).as<float>();
+    p.cost_regulated = need(fp, "use_cost_regulated_linear_velocity_scaling", nav_path).as<bool>();
+    // cost_scaling_dist·gain 은 우리 nav2_params 에 없어 Nav2 기본값(regulated_pure_pursuit_controller.cpp:97-100: 0.6, 1.0)
+    p.cost_scaling_dist = fp["cost_scaling_dist"] ? fp["cost_scaling_dist"].as<float>() : 0.6f;
+    p.cost_scaling_gain = fp["cost_scaling_gain"] ? fp["cost_scaling_gain"].as<float>() : 1.0f;
+  }
   p.collision_time = need(need(nav["controller_server"]["ros__parameters"], "FollowPath", nav_path), "max_allowed_time_to_collision_up_to_carrot", nav_path).as<float>();
   // explore_lite·우리 몫
   const YAML::Node f = YAML::LoadFile(fy);
@@ -96,6 +109,9 @@ Params load_params(const std::string& fy, const std::string& env_yaml, const std
     p.v_des = v.as<float>();
     p.v_max = v.as<float>();
   }
+  // 판마다 RPP 스위치 덮어쓰기 (없으면 nav2_params 값)
+  if (md["use_velocity_scaled_lookahead_dist"]) p.vel_lookahead = md["use_velocity_scaled_lookahead_dist"].as<bool>();
+  if (md["use_cost_regulated_linear_velocity_scaling"]) p.cost_regulated = md["use_cost_regulated_linear_velocity_scaling"].as<bool>();
   return p;
 }
 
@@ -113,6 +129,7 @@ Explorer::Explorer(const Params& p, int gw, int gh, int stride, float ox, float 
   // Nav2 InflationLayer::computeCost (inflation_layer.hpp:148-162): 막힌 칸 254, 내접 반경 안 253, 밖은 252·exp(−k(d − r_in))
   const int R = (int)std::ceil(p.inflation_radius / p.res);
   inscribed_cells_ = (int)std::ceil(p.robot_radius / p.res);
+  rb_ = mdp::robot_cells(p.robot_radius, p.res);
   for (int dy = -R; dy <= R; ++dy)
     for (int dx = -R; dx <= R; ++dx) {
       const float d = std::sqrt((float)(dx * dx + dy * dy)) * p.res;
@@ -267,12 +284,16 @@ bool Explorer::make_plan(const int16_t* L, float px, float py, double t) {
     int rx, ry;
     cell(px, py, &rx, &ry);
     const int min_cells = (int)std::ceil(p_.min_frontier_size / p_.res - 1e-4f);
-    const mdp::SearchResult r = mdp::frontier_search(view(L), rx, ry, min_cells, mdp::SearchBuf{flag_.data(), qa_.data(), qb_.data()},
-                                                     fr_.data(), (int)fr_.size());
+    const mdp::SearchBuf sb{flag_.data(), qa_.data(), qb_.data()};
+    mdp::SearchResult r = mdp::frontier_search(view(L), rx, ry, rb_, min_cells, sb, fr_.data(), (int)fr_.size());
     st_.n_frontiers = r.n_found;
     st_.n_frontier_small = r.n_small;
+    // 끝 = 지도 닫힘 (mdp/frontier.h). explore_lite 는 크기 문턱 넘는 덩어리가 없으면 끝내지만(explore.cpp:190-193), 여기선 닫힘이 끝 조건이라
+    // 작은 덩어리만 남으면 그것들을 목표 후보로 다시 찾는다
+    if (mdp::closed(r)) { reason_ = "closed"; return false; }
+    if (r.n_found == 0 && r.n_small > 0) r = mdp::frontier_search(view(L), rx, ry, rb_, 1, sb, fr_.data(), (int)fr_.size());
     const int n = std::min<int>(r.n_found, (int)fr_.size());
-    if (n == 0) { reason_ = "no_frontier"; return false; }   // explore.cpp:190-193
+    if (n == 0) { reason_ = r.start_free ? "closed" : "no_standable_cell"; return false; }
     // 비용 (frontier_search.cpp:191-196): potential × min_distance(m) × res − gain × size × res, 오름차순
     struct C { float cost, cx, cy, dist; int i; };
     std::vector<C> cs;
@@ -372,9 +393,27 @@ bool Explorer::collision_imminent(const int16_t* L, float px, float py, float pt
   return false;
 }
 
+// 로봇 중심에서 r 안 가장 가까운 막힘 씨앗 칸(lethal_src)까지 거리(칸 가운데끼리, m). 없으면 r
+float Explorer::obstacle_dist(const int16_t* L, float px, float py, float r) const {
+  const mdp::MapView m = view(L);
+  int cx, cy;
+  cell(px, py, &cx, &cy);
+  const int R = (int)std::ceil(r / p_.res);
+  float best = r;
+  for (int dy = -R; dy <= R; ++dy)
+    for (int dx = -R; dx <= R; ++dx) {
+      const int u = cx + dx, v = cy + dy;
+      if (u < 0 || v < 0 || u >= w_ || v >= h_ || !lethal_src(m, u, v)) continue;
+      best = std::min(best, std::sqrt((float)(dx * dx + dy * dy)) * p_.res);
+    }
+  return best;
+}
+
 // RPP: 경로에서 가장 가까운 점부터 lookahead 이상 떨어진 첫 점(regulated_pure_pursuit_controller.cpp:442-454), 없으면 끝 점.
-// 속도·곡률은 시뮬 goal 모드 추종기(env.h physics_step)와 같은 식. (vc, wc) 는 velocity_smoother 앞 명령
-void Explorer::follow(float px, float py, float pth, float* vc_out, float* wc_out, float* carrot_dist) {
+// lookahead 는 속도 비례면 |v|·lookahead_time 을 [min, max] 로 자름(같은 파일 264-276, v 는 smoother 출력 — velocity_smoother OPEN_LOOP 과 같이 명령을 속도로 봄).
+// 속도: RPP applyConstraints (636-672) — 곡률 감속·장애물 근접 감속 중 작은 것 → 아래 한도 → 다가가기 감속. (vc, wc) 는 velocity_smoother 앞 명령
+void Explorer::follow(const int16_t* L, float px, float py, float pth, float* vc_out, float* wc_out, float* carrot_dist) {
+  const float look = p_.vel_lookahead ? std::max(p_.min_lookahead, std::min(p_.max_lookahead, std::fabs(vs_) * p_.lookahead_time)) : p_.lookahead;
   const size_t np = path_.size() / 2;
   // 가장 가까운 점으로 앞자르기 (앞으로만)
   float bd = 1e30f;
@@ -387,7 +426,7 @@ void Explorer::follow(float px, float py, float pth, float* vc_out, float* wc_ou
   path_i_ = bi;
   size_t ci = np - 1;
   for (size_t i = path_i_; i < np; ++i)
-    if (std::hypot(path_[2 * i] - px, path_[2 * i + 1] - py) >= p_.lookahead) { ci = i; break; }
+    if (std::hypot(path_[2 * i] - px, path_[2 * i + 1] - py) >= look) { ci = i; break; }
   const float cx = path_[2 * ci], cy = path_[2 * ci + 1];
   const float ex = path_[2 * (np - 1)], ey = path_[2 * (np - 1) + 1];
   const float d_goal = std::hypot(ex - px, ey - py);
@@ -399,9 +438,22 @@ void Explorer::follow(float px, float py, float pth, float* vc_out, float* wc_ou
       wc = err > 0 ? p_.rot_w : -p_.rot_w;
     } else {
       vc = p_.v_des;
-      if (d_goal < p_.approach_dist) vc = std::max(p_.v_des * d_goal / p_.approach_dist, p_.approach_min_v);
-      const float ld = std::max(p_.min_lookahead, std::min(p_.lookahead, d_car));
-      wc = vc * (2.f * std::sin(err) / ld);
+      const float ld = std::max(p_.min_lookahead, std::min(look, d_car));
+      const float curv = 2.f * std::sin(err) / ld;
+      float v_curv = vc, v_cost = vc;
+      if (p_.regulated) {
+        const float radius = std::fabs(curv) > 1e-6f ? 1.f / std::fabs(curv) : 1e6f;
+        if (radius < p_.reg_min_radius) v_curv *= radius / p_.reg_min_radius;
+      }
+      if (p_.cost_regulated) {
+        // Nav2 는 로봇 칸 비용(팽창 반경 안에서만 0 아님)을 거리로 되돌려 쓴다 → 팽창 반경 밖이면 감속 없음
+        const float r_eff = std::min(p_.cost_scaling_dist, p_.inflation_radius);
+        const float d = obstacle_dist(L, px, py, r_eff);
+        if (d < r_eff) v_cost *= p_.cost_scaling_gain * d / p_.cost_scaling_dist;
+      }
+      if (p_.regulated || p_.cost_regulated) vc = std::max(std::min(v_curv, v_cost), p_.reg_min_speed);
+      if (d_goal < p_.approach_dist) vc = std::min(vc, std::max(p_.v_des * d_goal / p_.approach_dist, p_.approach_min_v));
+      wc = vc * curv;
       wc = std::max(-p_.w_max, std::min(p_.w_max, wc));
     }
   }
@@ -449,11 +501,10 @@ Action Explorer::step(const int16_t* L, float px, float py, float pth, double t)
   if (t >= p_.t_safe) { phase_ = Phase::Done; reason_ = "t_safe"; return Action{}; }
   if (phase_ == Phase::Wait) {
     if (t_wait0_ < 0) t_wait0_ = t;
-    // 아는 빈 칸에서 시작해 크기 문턱을 넘는 프론티어가 하나라도 보일 때까지 (빈 칸 문턱이 엄격해 처음 몇 초는 빈 칸 덩어리가 작다)
-    const int min_cells = (int)std::ceil(p_.min_frontier_size / p_.res - 1e-4f);
-    const mdp::SearchResult r = mdp::frontier_search(view(L), rcx_, rcy_, min_cells, mdp::SearchBuf{flag_.data(), qa_.data(), qb_.data()},
-                                                     fr_.data(), (int)fr_.size());
-    if (r.start_free && r.n_found > 0) {
+    // 설 수 있는 칸에서 번져 프론티어 칸이 하나라도 보일 때까지 (시작 직후엔 지도가 비어 설 수 있는 칸이 없다)
+    const mdp::SearchResult r = mdp::frontier_search(view(L), rcx_, rcy_, rb_, 1, mdp::SearchBuf{flag_.data(), qa_.data(), qb_.data()}, fr_.data(),
+                                                     (int)fr_.size());
+    if (r.start_free && r.n_cells > 0) {
       phase_ = Phase::Go;
       plan_now_ = true;
     } else if (t - t_wait0_ > p_.wait_timeout) {
@@ -502,7 +553,7 @@ Action Explorer::step(const int16_t* L, float px, float py, float pth, double t)
     }
   }
   float vc, wc, cd;
-  follow(px, py, pth, &vc, &wc, &cd);
+  follow(L, px, py, pth, &vc, &wc, &cd);
   if (collision_imminent(L, px, py, pth, vc, wc, cd)) {
     // 추종 실패 → 복구 하나 (RoundRobin) 또는 재시도 소진이면 ABORTED
     st_.n_collision_stops++;

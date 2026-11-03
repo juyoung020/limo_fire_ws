@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 
 namespace sim {
@@ -153,7 +154,17 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   return h;
 }
 
-World build_world(const std::string& name, Scene scene, const EnvHostCfg& hc) {
+// 장면 → 칸 격자 (칸 = 지도와 같은 res). 정적 장면만 본다 — 움직이는 물체(사람)는 여기 안 들어가 분모에 안 셈.
+//   1. 막힘: 몸통 높이(collision_band)에 걸린 삼각형을 칸 반 간격 점으로 찍은 칸 (충돌 격자)
+//   2. 서는 칸: 막힘이 몸통 반폭(half_wid, 내접 반지름) 안에 없는 빈 칸 — 몸통 폭보다 좁은 틈은 못 지난다(필요조건).
+//      칸 가운데끼리 거리로 잰다(칸 하나 = res).
+//   3. 갈 수 있는 서는 칸: 장면 출발점(Scene::start)에서 서는 칸을 4 이웃 flood fill. 맵 테두리 칸에 닿으면 집이 새는 것 —
+//      출발점에서 그 테두리 칸까지 길과, 길에서 가장 좁은 곳(막힘까지 가장 가까운 칸)을 leak 에 적는다
+//   4. 갈 수 있는 바닥(kCellFloor): 갈 수 있는 서는 칸에서 몸통이 쓸고 지나갈 수 있는 빈 칸 — 외접 반지름(hypot(half_len, half_wid))
+//      안이면서 빈 칸으로만 이어진 칸(빈 칸 BFS 로 번지되 출처 서는 칸에서 외접 반지름 안까지 — 얇은 벽 너머로 안 넘어감)
+//   5. 벽 면 칸(kCellWall, 덮음 분모): 갈 수 있는 바닥에 4 이웃으로 맞닿은 막힌 칸. 벽 두께 안쪽·집 밖은 바닥이 안 닿아 저절로 빠진다
+//   6. 시작 칸: 갈 수 있는 서는 칸 중 spawn_clearance 반경 안이 모두 빈 칸
+World build_world(const std::string& name, Scene scene, const EnvHostCfg& hc, bool require_closed) {
   const EnvCfg& c = hc.cfg;
   World w;
   w.name = name;
@@ -164,8 +175,9 @@ World build_world(const std::string& name, Scene scene, const EnvHostCfg& hc) {
   w.gh = (int)std::ceil((root.hi[1] - root.lo[1]) / c.res) + 1;
   if (w.gw > c.size || w.gh > c.size)
     throw std::runtime_error(name + ": 맵 " + std::to_string(w.gw) + "×" + std::to_string(w.gh) + " 칸이 지도 크기보다 큼");
-  std::vector<uint8_t> occ((size_t)w.gw * w.gh, 0);
-  // 몸통 높이에 걸린 삼각형: 칸 반 간격으로 점을 찍어 그 칸을 막음
+  const int W = w.gw, H = w.gh, N = W * H;
+  std::vector<uint8_t> occ((size_t)N, 0);
+  // 1. 몸통 높이에 걸린 삼각형: 칸 반 간격으로 점을 찍어 그 칸을 막음
   for (const Tri& t : scene.tris) {
     const float zlo = std::min({t.a.z, t.b.z, t.c.z}), zhi = std::max({t.a.z, t.b.z, t.c.z});
     if (zhi < hc.band_lo || zlo > hc.band_hi) continue;
@@ -179,51 +191,141 @@ World build_world(const std::string& name, Scene scene, const EnvHostCfg& hc) {
                    t.a.z + (t.b.z - t.a.z) * u + (t.c.z - t.a.z) * v};
         if (p.z < hc.band_lo || p.z > hc.band_hi) continue;
         const int cx = (int)std::floor((p.x - w.ox) / c.res), cy = (int)std::floor((p.y - w.oy) / c.res);
-        if (cx >= 0 && cy >= 0 && cx < w.gw && cy < w.gh) occ[(size_t)cy * w.gw + cx] = 1;
+        if (cx >= 0 && cy >= 0 && cx < W && cy < H) occ[(size_t)cy * W + cx] = 1;
       }
   }
-  // 시작 후보: 반경 안이 모두 빈 칸
-  const int R = (int)std::ceil(hc.spawn_clearance / c.res);
-  std::vector<uint8_t> roomy(occ.size(), 0);
-  for (int y = R; y < w.gh - R; ++y)
-    for (int x = R; x < w.gw - R; ++x) {
-      bool ok = true;
-      for (int dy = -R; dy <= R && ok; ++dy)
-        for (int dx = -R; dx <= R && ok; ++dx)
-          if (dx * dx + dy * dy <= R * R && occ[(size_t)(y + dy) * w.gw + x + dx]) ok = false;
-      roomy[(size_t)y * w.gw + x] = ok;
-    }
-  // 빈 칸 덩어리(4 이웃) 중 시작 후보가 가장 많은 것
-  std::vector<int> comp(occ.size(), -1);
-  int best = -1, best_cnt = 0;
-  std::vector<int> stack;
-  for (size_t s0 = 0; s0 < occ.size(); ++s0) {
-    if (occ[s0] || comp[s0] >= 0) continue;
-    const int id = (int)s0;
-    int cnt = 0;
-    stack.assign(1, (int)s0);
-    comp[s0] = id;
-    while (!stack.empty()) {
-      const int k = stack.back();
-      stack.pop_back();
-      cnt += roomy[k];
-      const int x = k % w.gw, y = k / w.gw;
-      const int nb[4][2] = {{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}};
-      for (const auto& q : nb) {
-        if (q[0] < 0 || q[1] < 0 || q[0] >= w.gw || q[1] >= w.gh) continue;
-        const int kk = q[1] * w.gw + q[0];
-        if (!occ[kk] && comp[kk] < 0) { comp[kk] = id; stack.push_back(kk); }
+  // 반지름 r(m) 안 칸 오프셋 (칸 가운데끼리)
+  auto disc = [&](float r) {
+    std::vector<std::pair<int, int>> d;
+    const int R = (int)std::ceil(r / c.res);
+    for (int dy = -R; dy <= R; ++dy)
+      for (int dx = -R; dx <= R; ++dx)
+        if ((float)(dx * dx + dy * dy) * c.res * c.res <= r * r) d.push_back({dx, dy});
+    return d;
+  };
+  // out_free: 맵 밖을 빈 곳으로 (서는 칸 — 맵 밖은 열린 곳이라 테두리까지 번져야 새는 것을 잡는다). 아니면 막힘으로 (시작 칸)
+  auto clear_disc = [&](int x, int y, const std::vector<std::pair<int, int>>& d, bool out_free) {
+    for (const auto& o : d) {
+      const int u = x + o.first, v = y + o.second;
+      if (u < 0 || v < 0 || u >= W || v >= H) {
+        if (out_free) continue;
+        return false;
       }
+      if (occ[(size_t)v * W + u]) return false;
     }
-    if (cnt > best_cnt) { best_cnt = cnt; best = id; }
+    return true;
+  };
+  // 2. 서는 칸
+  const auto d_in = disc(c.half_wid);
+  std::vector<uint8_t> stand((size_t)N, 0);
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) stand[(size_t)y * W + x] = !occ[(size_t)y * W + x] && clear_disc(x, y, d_in, true);
+  // 3. 출발점에서 flood fill. 출발점 칸이 서는 칸이 아니면(벽에 붙어 시작) 몸통 반 길이 안에서 가장 가까운 서는 칸
+  const int sx0 = (int)std::floor((scene.start[0] - w.ox) / c.res), sy0 = (int)std::floor((scene.start[1] - w.oy) / c.res);
+  int start = -1;
+  {
+    int bd = 1 << 30;
+    const int R = (int)std::ceil(c.half_len / c.res);
+    for (int dy = -R; dy <= R; ++dy)
+      for (int dx = -R; dx <= R; ++dx) {
+        const int u = sx0 + dx, v = sy0 + dy;
+        if (u < 0 || v < 0 || u >= W || v >= H || !stand[(size_t)v * W + u]) continue;
+        if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; start = v * W + u; }
+      }
   }
-  if (best < 0) throw std::runtime_error(name + ": 로봇이 설 자리가 없음");
-  w.grid.assign(occ.size(), 0);
-  for (size_t k = 0; k < occ.size(); ++k) {
-    w.grid[k] = occ[k] ? 1 : (comp[k] == best ? 2 : 0);
-    if (comp[k] == best) ++w.n_gt;
-    if (comp[k] == best && roomy[k]) w.spawn.push_back((int32_t)k);
+  if (start < 0) {
+    char b[200];
+    std::snprintf(b, sizeof(b), ": 출발점 (%.2f, %.2f) 근처에 로봇이 설 칸이 없음 (장면 출발점 확인)", scene.start[0], scene.start[1]);
+    throw std::runtime_error(name + b);
   }
+  std::vector<int32_t> parent((size_t)N, -2), queue;
+  queue.reserve(N);
+  queue.push_back(start);
+  parent[start] = -1;
+  int border = -1;
+  for (size_t h = 0; h < queue.size(); ++h) {
+    const int k = queue[h], x = k % W, y = k / W;
+    if (border < 0 && (x == 0 || y == 0 || x == W - 1 || y == H - 1)) border = k;
+    const int nb[4][2] = {{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}};
+    for (const auto& q : nb) {
+      if (q[0] < 0 || q[1] < 0 || q[0] >= W || q[1] >= H) continue;
+      const int j = q[1] * W + q[0];
+      if (stand[j] && parent[j] == -2) { parent[j] = k; queue.push_back(j); }
+    }
+  }
+  auto at = [&](int k, float* x, float* y) { *x = w.ox + ((float)(k % W) + 0.5f) * c.res; *y = w.oy + ((float)(k / W) + 0.5f) * c.res; };
+  if (border >= 0) {
+    // 길에서 가장 좁은 곳: 막힌 칸까지 가장 가까운 거리(2 m 안에서 찾음)가 가장 작은 칸 — 틈(문·벽 구멍).
+    // 같은 폭이 이어지면(뚫린 통로) 출발점 쪽에서 처음 그 폭이 되는 칸 = 집에서 빠져나가는 어귀
+    std::vector<int> path;
+    for (int k = border; k >= 0; k = parent[k]) path.push_back(k);
+    std::reverse(path.begin(), path.end());
+    std::vector<float> clr(path.size());
+    const int R = (int)std::ceil(2.f / c.res);
+    float nd = 1e9f;
+    for (size_t i = 0; i < path.size(); ++i) {
+      const int x = path[i] % W, y = path[i] / W;
+      int b2 = R * R + 1;
+      for (int dy = -R; dy <= R; ++dy)
+        for (int dx = -R; dx <= R; ++dx) {
+          const int u = x + dx, v = y + dy;
+          if (u >= 0 && v >= 0 && u < W && v < H && occ[(size_t)v * W + u] && dx * dx + dy * dy < b2) b2 = dx * dx + dy * dy;
+        }
+      clr[i] = std::sqrt((float)b2) * c.res;
+      nd = std::min(nd, clr[i]);
+    }
+    float nx = 0, ny = 0;
+    for (size_t i = 0; i < path.size(); ++i)
+      if (clr[i] <= nd + 0.5f * c.res) { at(path[i], &nx, &ny); nd = clr[i]; break; }
+    float bx, by, s0x, s0y;
+    at(border, &bx, &by);
+    at(start, &s0x, &s0y);
+    char b[400];
+    std::snprintf(b, sizeof(b),
+                  "집이 닫히지 않음: 출발점 (%.2f, %.2f) 에서 갈 수 있는 바닥이 맵 테두리 (%.2f, %.2f) 에 닿음. 그 길에서 가장 좁은 곳 (%.2f, %.2f) — 벽까지 %.2f m",
+                  s0x, s0y, bx, by, nx, ny, nd);
+    w.closed = false;
+    w.leak = b;
+    if (require_closed) throw std::runtime_error(name + ": " + w.leak);
+  }
+  // 4. 갈 수 있는 바닥: 서는 칸에서 빈 칸으로만 번지되 출처 서는 칸에서 외접 반지름 안까지 (BFS 차례 = 가까운 출처가 먼저 닿음)
+  const float r_out = std::sqrt(c.half_len * c.half_len + c.half_wid * c.half_wid);
+  const float r_out2 = (r_out / c.res) * (r_out / c.res);
+  std::vector<int32_t> src((size_t)N, -1);
+  std::vector<int32_t> q2(queue.begin(), queue.end());
+  for (int k : queue) src[k] = k;
+  for (size_t h = 0; h < q2.size(); ++h) {
+    const int k = q2[h], x = k % W, y = k / W, s = src[k], sxk = s % W, syk = s / W;
+    const int nb[4][2] = {{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}};
+    for (const auto& q : nb) {
+      if (q[0] < 0 || q[1] < 0 || q[0] >= W || q[1] >= H) continue;
+      const int j = q[1] * W + q[0];
+      if (occ[j] || src[j] >= 0) continue;
+      const int ddx = q[0] - sxk, ddy = q[1] - syk;
+      if ((float)(ddx * ddx + ddy * ddy) > r_out2) continue;
+      src[j] = s;
+      q2.push_back(j);
+    }
+  }
+  // 5·6. 격자 비트, 분모, 시작 칸
+  const auto d_spawn = disc(hc.spawn_clearance);
+  w.grid.assign((size_t)N, 0);
+  for (int k = 0; k < N; ++k) {
+    if (occ[k]) w.grid[k] |= kCellBlocked;
+    if (src[k] >= 0) { w.grid[k] |= kCellFloor; ++w.n_floor; }
+  }
+  for (int k = 0; k < N; ++k) {
+    if (!occ[k]) continue;
+    const int x = k % W, y = k / W;
+    const int nb[4][2] = {{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}};
+    for (const auto& q : nb)
+      if (q[0] >= 0 && q[1] >= 0 && q[0] < W && q[1] < H && (w.grid[q[1] * W + q[0]] & kCellFloor)) { w.grid[k] |= kCellWall; ++w.n_wall; break; }
+  }
+  for (int k : queue)
+    if (clear_disc(k % W, k / W, d_spawn, false)) w.spawn.push_back((int32_t)k);
+  if (w.spawn.empty()) throw std::runtime_error(name + ": 시작 칸 없음 (spawn_clearance 반경 안이 모두 빈 칸인 갈 수 있는 칸이 없음)");
+  if (w.n_wall == 0) throw std::runtime_error(name + ": 벽 면 칸 없음 (덮음 분모 0)");
+  std::sort(w.spawn.begin(), w.spawn.end());
   w.scene = std::move(scene);
   return w;
 }
@@ -264,7 +366,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     m.gw = w.gw;
     m.gh = w.gh;
     m.n_spawn = (int)w.spawn.size();
-    m.n_gt = w.n_gt;
+    m.n_wall = w.n_wall;
+    m.n_floor = w.n_floor;
     m.ox = w.ox;
     m.oy = w.oy;
     maps.push_back(m);
@@ -321,6 +424,13 @@ void Env::set_state(int env, const EnvState& s) {
 }
 void Env::get_map(std::vector<int16_t>& out) const {
   fetch(gpu_, b_.lmap, (size_t)b_.cfg.size * b_.cfg.size * b_.n_env, out);
+}
+void Env::get_seen(std::vector<uint8_t>& out) const {
+  std::vector<uint32_t> m;
+  const size_t cells = (size_t)b_.cfg.size * b_.cfg.size * b_.n_env;
+  fetch(gpu_, b_.marks, cells / 4, m);
+  out.resize(cells);
+  for (size_t i = 0; i < cells; ++i) out[i] = (uint8_t)((m[i >> 2] >> (8 * (i & 3) + 3)) & 3u);
 }
 void Env::get_obs(std::vector<uint8_t>& obs, std::vector<float>& num, std::vector<uint8_t>* depth) const {
   fetch(gpu_, b_.obs, (size_t)b_.cfg.obs_size * b_.cfg.obs_size * b_.n_env, obs);

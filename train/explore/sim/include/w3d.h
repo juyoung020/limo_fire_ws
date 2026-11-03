@@ -10,6 +10,7 @@ namespace sim {
 
 struct W3dReport {
   int excluded_robots = 0;
+  double robot_x = 0, robot_y = 0;      // 처음 뺀 로봇의 자리 (세계) — 장면 출발점
   std::map<std::string, int> skipped;   // 못 바꾼 형상 종류 → 개수
 };
 

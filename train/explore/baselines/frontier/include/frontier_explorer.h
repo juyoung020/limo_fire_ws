@@ -2,9 +2,9 @@
 // 시뮬은 env_api.h 로만 쓴다: 정책처럼 지도(get_map)와 지도 자세(참값 + 오차)만 본다. 참값 자세·정답 맵은 안 본다.
 //
 // 한 걸음(0.1 s, 시뮬 속도 행동 한 번)마다 Explorer::step:
-//   1. 시작: 아는 빈 칸이 생길 때까지 제자리 회전 (frontier.yaml start)
+//   1. 시작: 설 수 있는 칸에서 번져 프론티어 칸이 보일 때까지 제자리 회전 (frontier.yaml start)
 //   2. explore_lite makePlan (planner_frequency 마다, 목표 도착·실패 때는 바로): mdp::frontier_search → 비용 정렬 → 블랙리스트 아닌 첫 덩어리의 중심.
-//      진척 없음 progress_timeout → 블랙리스트. 남은 것이 없으면 끝 선언
+//      진척 없음 progress_timeout → 블랙리스트. 지도가 닫히면(mdp::closed) 끝 선언, 남은 덩어리가 다 블랙리스트여도 끝 선언
 //   3. Nav2: 목표가 바뀌거나 replan_period 마다, 또는 앞 경로가 막히면 A* 다시. 실패 = ABORTED → 블랙리스트 + 바로 다시 고름
 //   4. RPP(시뮬 goal 모드 추종기 physics_step 과 같은 식) → velocity_smoother 가속 한도 → (v, ω)
 #pragma once
@@ -20,6 +20,15 @@ struct Params {
   // Nav2 RPP · velocity_smoother · goal checker (sim::EnvCfg 와 같은 값, nav2_params.yaml)
   float v_des, v_max, w_max, a_max, alpha_max;
   float lookahead, min_lookahead, rot_w, rot_min_angle, approach_dist, approach_min_v, goal_tol;
+  // RPP 곡률 감속 (use_regulated_linear_velocity_scaling): 곡률 반지름 < reg_min_radius 면 v × 반지름 / reg_min_radius, 아래 한도 reg_min_speed
+  bool regulated;
+  float reg_min_radius, reg_min_speed;
+  // RPP 속도 비례 lookahead (use_velocity_scaled_lookahead_dist): ld = clamp(|v| · lookahead_time, min_lookahead, max_lookahead)
+  bool vel_lookahead;
+  float lookahead_time, max_lookahead;
+  // RPP 장애물 근접 감속 (use_cost_regulated_linear_velocity_scaling): 로봇 중심 → 막힘 거리 d < cost_scaling_dist 면 v × gain · d / cost_scaling_dist
+  bool cost_regulated;
+  float cost_scaling_dist, cost_scaling_gain;
   // Nav2 global costmap 팽창 · Smac 2D (nav2_params.yaml)
   float robot_radius, inflation_radius, cost_scaling, planner_tolerance, travel_mult;
   bool allow_unknown;
@@ -109,6 +118,7 @@ class Explorer {
   struct Off { int dx, dy; uint8_t cost; };
   std::vector<Off> kernel_;
   int inscribed_cells_ = 0;
+  mdp::Robot rb_{};   // 닫힘·프론티어 번지기의 로봇 반경 (robot_radius, mdp/frontier.h)
   std::vector<float> g_;
   std::vector<int32_t> parent_;
   std::vector<uint8_t> closed_;
@@ -132,7 +142,8 @@ class Explorer {
   void build_costmap(const int16_t* L);
   bool astar(float px, float py, float gx, float gy);
   bool path_blocked(const int16_t* L) const;
-  void follow(float px, float py, float pth, float* vc, float* wc, float* carrot_dist);
+  void follow(const int16_t* L, float px, float py, float pth, float* vc, float* wc, float* carrot_dist);
+  float obstacle_dist(const int16_t* L, float px, float py, float r) const;
   bool footprint_hits(const int16_t* L, float x, float y, float th) const;
   bool collision_imminent(const int16_t* L, float px, float py, float pth, float v, float w, float carrot_dist) const;
   Action recover(const int16_t* L, float px, float py, float pth, double t);

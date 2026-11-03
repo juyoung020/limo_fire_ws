@@ -6,8 +6,8 @@
 //                [--obs-every 5] [--cpu]
 //   → <root>/<name>_<판>/ (run.json kind "baseline", progress.jsonl, episodes.jsonl, evals/frontier.json, replays/*.xrp)
 //
-// 판 지표(episodes.jsonl): coverage(끝 덮은 비율), t95(95 % 도달 시각), path_len(참 자세 이동 거리), collided, outcome·end_reason.
-// 덮음 = 지금 시뮬 정의 known_gt(정답 빈 칸 중 지도에서 한 번이라도 관측된 칸) — 덮음 정의는 아직 미정(mdp/README 정할 것 1), run.json 에 적음.
+// 판 지표(episodes.jsonl): coverage(끝 덮은 비율), t95(95 % 도달 시각), tail_s(95 % 도달 → 판 끝), floor_coverage, path_len(참 자세 이동 거리),
+// collided, outcome·end_reason. 덮음 = 시뮬 정의(sim/include/env.h): 본 벽 면 칸 / 출발점에서 갈 수 있는 바닥에 맞닿은 벽 면 칸 (run.json 에 적음).
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -36,7 +36,6 @@ struct Args {
   std::string root = "train/explore/runs", name = "frontier";
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
   bool cpu = false;
-  bool interior = true;   // 덮을 칸 = 테두리에 안 닿는 가장 큰 빈 칸 덩어리 (restrict_to_interior)
 };
 
 std::vector<std::string> split(const std::string& s, char c) {
@@ -57,61 +56,12 @@ struct Episode {
   int env = 0;
   bool active = true, declared = false, collided = false, truncated = false;
   std::string reason;
-  float t = 0, coverage = 0, t95 = -1, path = 0, known_m2 = 0, cov_at_declare = -1;
+  float t = 0, coverage = 0, floor_cov = 0, t95 = -1, path = 0, known_m2 = 0, cov_at_declare = -1;
   int steps = 0;
   float last_x = 0, last_y = 0;
   bool have_last = false;
   rf::ReplayWriter* rw = nullptr;
 };
-
-// 덮을 칸을 "맵 테두리에 닿지 않는 가장 큰 빈 칸 덩어리"로 다시 고른다(env_api 의 World 를 Env 에 넘기기 전에 — 시뮬 코드는 그대로).
-// 까닭: map_saver 지도(AWS 맵)에서 map2scene 은 모름 영역의 테두리에만 벽면을 세우므로, build_world 가 고르는 "시작 후보가 가장 많은
-// 덩어리"가 집 밖(지도 바깥 모름 영역)이 된다 — 그러면 로봇이 집 밖 빈 들판에서 시작하고 덮음 분모도 바깥이 된다(2026-11-04 확인).
-// 시작 칸도 같은 규칙(반경 spawn_clearance 안이 모두 빈 칸)으로 다시 뽑는다. 테두리에 안 닿는 덩어리가 없으면 그대로 둔다.
-bool restrict_to_interior(sim::World& w, const sim::EnvHostCfg& hc) {
-  const int W = w.gw, H = w.gh;
-  std::vector<int> comp((size_t)W * H, -1), stack;
-  int best = -1, best_n = 0;
-  for (int s0 = 0; s0 < W * H; ++s0) {
-    if ((w.grid[s0] & 1) || comp[s0] >= 0) continue;
-    int n = 0;
-    bool border = false;
-    stack.assign(1, s0);
-    comp[s0] = s0;
-    while (!stack.empty()) {
-      const int k = stack.back();
-      stack.pop_back();
-      ++n;
-      const int x = k % W, y = k / W;
-      if (x == 0 || y == 0 || x == W - 1 || y == H - 1) border = true;
-      const int nb[4][2] = {{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}};
-      for (const auto& q : nb) {
-        if (q[0] < 0 || q[1] < 0 || q[0] >= W || q[1] >= H) continue;
-        const int j = q[1] * W + q[0];
-        if (!(w.grid[j] & 1) && comp[j] < 0) { comp[j] = s0; stack.push_back(j); }
-      }
-    }
-    if (!border && n > best_n) { best_n = n; best = s0; }
-  }
-  if (best < 0) return false;
-  const int R = (int)std::ceil(hc.spawn_clearance / hc.cfg.res);
-  w.spawn.clear();
-  w.n_gt = 0;
-  for (int k = 0; k < W * H; ++k) {
-    const bool in = comp[k] == best;
-    w.grid[k] = (w.grid[k] & 1) ? 1 : (in ? 2 : 0);
-    if (!in) continue;
-    ++w.n_gt;
-    const int x = k % W, y = k / W;
-    if (x < R || y < R || x >= W - R || y >= H - R) continue;
-    bool ok = true;
-    for (int dy = -R; dy <= R && ok; ++dy)
-      for (int dx = -R; dx <= R && ok; ++dx)
-        if (dx * dx + dy * dy <= R * R && (w.grid[(size_t)(y + dy) * W + x + dx] & 1)) ok = false;
-    if (ok) w.spawn.push_back(k);
-  }
-  return !w.spawn.empty();
-}
 
 rf::Json params_json(const fb::Params& p) {
   rf::Json j = rf::Json::object();
@@ -124,7 +74,9 @@ rf::Json params_json(const fb::Params& p) {
       .set("planner_period", p.planner_period).set("progress_timeout", p.progress_timeout).set("potential_scale", p.potential_scale)
       .set("gain_scale", p.gain_scale).set("min_frontier_size", p.min_frontier_size).set("blacklist_tol_cells", p.blacklist_tol)
       .set("wait_timeout", p.wait_timeout).set("t_safe", p.t_safe).set("res", p.res).set("ctrl_dt", p.ctrl_dt)
-      .set("free_logodds_max", (int)mdp::kFreeL).set("occ_logodds_min", (int)mdp::kOccL).set("free_p", mdp::kFreeP).set("occ_p", mdp::kOccP);
+      .set("regulated", p.regulated).set("reg_min_radius", p.reg_min_radius).set("reg_min_speed", p.reg_min_speed)
+      .set("vel_lookahead", p.vel_lookahead).set("cost_regulated", p.cost_regulated).set("cost_scaling_dist", p.cost_scaling_dist)
+      .set("cost_scaling_gain", p.cost_scaling_gain).set("occ_logodds_min", (int)mdp::kOccL).set("occ_p", mdp::kOccP);
   return j;
 }
 
@@ -142,14 +94,12 @@ int run_mode(const Args& a, const std::string& mode) {
   for (auto& s : a.scenes) {
     worlds.push_back(sim::build_world(stem(s), sim::load_scene(s), hc));
     auto& w = worlds.back();
-    const double area0 = w.n_gt * c.res * c.res;
-    const bool interior = a.interior && restrict_to_interior(w, hc);
     rf::Json sj = rf::Json::object();
-    sj.set("name", w.name).set("file", s).set("gw", w.gw).set("gh", w.gh).set("area_m2", w.n_gt * c.res * c.res)
-        .set("gt_interior", interior).set("area_m2_build_world", area0).set("n_spawn", (unsigned long long)w.spawn.size());
+    sj.set("name", w.name).set("file", s).set("gw", w.gw).set("gh", w.gh).set("n_wall", w.n_wall).set("wall_m2", w.n_wall * c.res * c.res)
+        .set("area_m2", w.n_floor * c.res * c.res).set("closed", w.closed).set("n_spawn", (unsigned long long)w.spawn.size());
     scene_list.push(sj);
-    std::fprintf(stderr, "장면 %s: %d×%d 칸, 덮을 빈 칸 %.1f m² (build_world %.1f m²%s), 시작 후보 %zu\n", w.name.c_str(), w.gw, w.gh,
-                 w.n_gt * c.res * c.res, area0, interior ? " → 테두리 안 덩어리로" : "", w.spawn.size());
+    std::fprintf(stderr, "장면 %s: %d×%d 칸, 벽 면 칸 %d (%.2f m²), 갈 수 있는 바닥 %.1f m², 시작 후보 %zu, 닫힘\n", w.name.c_str(), w.gw, w.gh,
+                 w.n_wall, w.n_wall * c.res * c.res, w.n_floor * c.res * c.res, w.spawn.size());
   }
 
   rf::Json limits = rf::Json::object();
@@ -158,10 +108,13 @@ int run_mode(const Args& a, const std::string& mode) {
   meta.set("kind", "baseline").set("baseline", "frontier (explore_lite + Nav2 Smac2D/RPP 식)").set("mode", mode).set("group", "frontier_" + mode)
       .set("seed", (unsigned long long)a.seed).set("n_envs", a.episodes).set("ctrl_hz", 1.0 / P.ctrl_dt).set("success_coverage", kSuccessCov)
       .set("t_safe_s", P.t_safe).set("action_limits", limits).set("scenes", scene_list).set("params", params_json(P))
-      .set("coverage_def", "known_gt: 정답 빈 칸(시작 칸과 이어진 덩어리) 중 지도에서 한 번이라도 관측된 칸의 비율 (sim env.h scan_apply)")
-      .set("coverage_def_status", "덮음 정의 미정 — mdp/README '정할 것 1' (3 m 안 여러 번 맞음 / 한 번 봄). 정해지면 이 기준선을 다시 돌린다")
+      .set("coverage_def", "벽 면 칸 덮음: 출발점에서 갈 수 있는 바닥에 4 이웃으로 맞닿은 막힌 칸 중, 라이다 빔 끝점(참 광선·잡음 섞인 거리, 8 m 안)이 "
+                            "한 번이라도 떨어진(끝점 칸 → 센서 쪽 앞 칸 → 뒤 칸) 칸의 비율 (sim env.h wall_credit)")
+      .set("floor_coverage_def", "빔이 한 번이라도 지나간(지도 자세 Bresenham) 갈 수 있는 바닥 칸 비율 — 보조 지표")
+      .set("end_def", "지도 닫힘(mdp/frontier.h closed): 모름 = 안 건드린 칸, 막힘 = p > 0.65, 막힘을 robot_radius 만큼 팽창하고 설 수 있는 칸 flood fill 이 "
+                       "프론티어(모름에 닿은 갈 수 있는 칸)에 안 닿음")
       .set("sim_overrides", "env.yaml episode.success_coverage 끔(2.0), max_steps = t_safe + 10 s — 판 끝은 기준선 선언·충돌·t_safe")
-      .set("known_area_def", "known_m2: 지도에서 아는 빈 칸(mdp/frontier.h cell_class == kFree) 넓이")
+      .set("known_area_def", "known_m2: 지도에서 갈 수 있는 칸(mdp/frontier.h cell_class == kFree: 건드렸고 막힘 아님) 넓이")
       .set("replay_lidar", "참 자세에서 정적 장면에 다시 쏜 깨끗한 광선(248 빔 ±110°) — 시뮬 내부의 오차 스캔은 env_api 로 안 나옴")
       .set("sources", "m-explore 712bdd41 explore/src/frontier_search.cpp·explore.cpp·launch/explore.launch; navigation2 humble 3c3db59d "
                       "inflation_layer.hpp:148-162, nav2_smac_planner node_2d.cpp:64-80, regulated_pure_pursuit_controller.cpp:442-454; "
@@ -204,6 +157,7 @@ int run_mode(const Args& a, const std::string& mode) {
     if (!a.cpu) cudaMalloc(&d_act, sizeof(float) * 2 * N);
     std::vector<sim::EnvState> st;
     std::vector<int16_t> L;
+    std::vector<uint8_t> seen;
     std::vector<float> reward, act(2 * N);
     std::vector<int32_t> done;
     std::vector<int8_t> obs((size_t)W.gw * W.gh);
@@ -218,8 +172,9 @@ int run_mode(const Args& a, const std::string& mode) {
       line.set("iter", (int)wi).set("env_steps", total_steps).set("env", e.env).set("ep", id).set("map", W.name).set("stage", mode)
           .set("outcome", outcome).set("success", outcome == rf::outcome::SUCCESS).set("declared", e.declared).set("collided", e.collided)
           .set("truncated", e.truncated).set("t", e.t).set("steps", e.steps).set("coverage", e.coverage).set("path_len", e.path)
-          .set("known_m2", e.known_m2).set("area_m2", W.n_gt * c.res * c.res).set("end_reason", e.reason).set("mode", mode);
-      if (e.t95 >= 0) line.set("t95", e.t95);
+          .set("known_m2", e.known_m2).set("area_m2", W.n_floor * c.res * c.res).set("n_wall", W.n_wall)
+          .set("floor_coverage", e.floor_cov).set("end_reason", e.reason).set("mode", mode);
+      if (e.t95 >= 0) line.set("t95", e.t95).set("tail_s", e.t - e.t95);   // 95 % 도달 → 판 끝(선언·충돌·안전 시간)
       if (e.declared) line.set("coverage_at_declare", e.cov_at_declare);
       const fb::Stats& s = ex[e.env].stats();
       rf::Json bs = rf::Json::object();
@@ -238,6 +193,7 @@ int run_mode(const Args& a, const std::string& mode) {
     while (n_active > 0) {
       env.get_state(st);
       env.get_map(L);
+      env.get_seen(seen);
       std::fill(act.begin(), act.end(), 0.f);
       for (int i = 0; i < N; ++i) {
         Episode& e = eps[i];
@@ -252,6 +208,7 @@ int run_mode(const Args& a, const std::string& mode) {
         e.t = t;
         e.steps = s.step;
         e.coverage = s.coverage;
+        e.floor_cov = s.floor_cov;
         uint32_t evb = 0;
         if (e.t95 < 0 && s.coverage >= kSuccessCov) { e.t95 = t; evb |= rf::ev::REACHED95; }
         int n_free = 0;
@@ -260,7 +217,7 @@ int run_mode(const Args& a, const std::string& mode) {
             const int16_t l = Li[(size_t)y * S + x];
             const size_t k = (size_t)y * W.gw + x;
             n_free += mdp::cell_class(l) == mdp::kFree;
-            cov[k] = (W.grid[k] & 2) && l != sim::kUnknown;
+            cov[k] = seen[(size_t)i * S * S + (size_t)y * S + x] & 1;   // 본 벽 면 칸 (덮음 분자)
             if (step % a.obs_every == 0)
               obs[k] = l == sim::kUnknown ? (int8_t)-1 : (int8_t)std::lround(100.0 / (1.0 + std::exp(-(double)l / 1000.0)));
           }
@@ -336,7 +293,7 @@ int run_mode(const Args& a, const std::string& mode) {
     }
     if (d_act) cudaFree(d_act);
     // 이 장면 집계 → progress 한 줄 + 평가 표 한 줄
-    double n = N, succ = 0, coll = 0, trunc = 0, decl = 0, ds = 0, cv = 0, cad = 0, t95s = 0, t95n = 0, pl = 0, km = 0, len = 0;
+    double n = N, succ = 0, coll = 0, trunc = 0, decl = 0, ds = 0, cv = 0, cad = 0, t95s = 0, t95n = 0, tails = 0, fcv = 0, pl = 0, km = 0, len = 0;
     for (auto& e : eps) {
       succ += e.declared && e.coverage >= kSuccessCov;
       ds += e.declared && e.coverage < kSuccessCov;
@@ -345,7 +302,8 @@ int run_mode(const Args& a, const std::string& mode) {
       decl += e.declared;
       cv += e.coverage;
       if (e.declared) cad += e.cov_at_declare;
-      if (e.t95 >= 0) { t95s += e.t95; t95n++; all_t95.push_back(e.t95); }
+      if (e.t95 >= 0) { t95s += e.t95; t95n++; tails += e.t - e.t95; all_t95.push_back(e.t95); }
+      fcv += e.floor_cov;
       pl += e.path;
       km += e.known_m2;
       len += e.steps;
@@ -372,7 +330,8 @@ int run_mode(const Args& a, const std::string& mode) {
     row.set("eval", W.name).set("split", mode).set("n", n).set("success", succ / n).set("collision", coll / n).set("truncation", trunc / n)
         .set("declare_short", ds / n).set("coverage", cv / n).set("t95_reached", t95n / n).set("path_len", pl / n)
         .set("pass", coll == 0 && t95n == n);
-    if (t95n > 0) row.set("t95", t95s / t95n).set("ref_t95", t95s / t95n);
+    row.set("floor_coverage", fcv / n);
+    if (t95n > 0) row.set("t95", t95s / t95n).set("ref_t95", t95s / t95n).set("tail_s", tails / t95n);
     eval_rows.push(row);
     run.event("scene " + W.name + " done: " + std::to_string((int)t95n) + "/" + std::to_string(N) + " reached 95 %");
   }
@@ -410,7 +369,6 @@ int main(int argc, char** argv) {
     else if (k == "--frontier") a.frontier = nx();
     else if (k == "--obs-every") a.obs_every = std::max(1, std::stoi(nx()));
     else if (k == "--cpu") a.cpu = true;
-    else if (k == "--no-interior") a.interior = false;
     else { std::fprintf(stderr, "모르는 인자 %s\n", k.c_str()); return 2; }
   }
   if (a.scenes.empty()) {

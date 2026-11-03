@@ -12,7 +12,11 @@
 //        지도 자세 오차(OU, Cartographer 가 남기는 몫)
 //      lidar_every 걸음마다: 실물 오차 라이다(lidar_real.h, 스캔 중 움직임 포함) → Cartographer 와 같은 확률 지도 갱신
 //        (지도 자세로, 빔 시각만큼 돌려 펴기(unwarp), max_range 넘으면 missing_ray 만큼만 빈 칸, 한 장에 칸마다 한 번, 맞음 우선)
-//   3. 보상(새로 덮은 정답 빈 칸·시간·충돌·성공)·끝 판정, 로봇 중심 관측
+//        + 덮음 표시: 빔 끝점(참 광선 · 잡음 섞인 거리, max_range 안)이 떨어진 벽 면 칸(아래 wall_credit), 빔이 지나간 바닥 칸
+//   3. 보상(새로 덮은 벽 면 칸 비율·시간·충돌·성공)·끝 판정, 로봇 중심 관측
+//
+// 덮음(coverage) = 본 벽 면 칸 / 벽 면 칸 (env_host.cpp build_world: 출발점에서 갈 수 있는 바닥에 4 이웃으로 맞닿은 막힌 칸).
+// 바닥 덮음(floor_cov) = 빔이 한 번이라도 지나간(지도 자세의 Bresenham, 끝 칸 빼고) 갈 수 있는 바닥 칸 비율 — 보조 지표, 보상에 안 씀.
 #pragma once
 #include <cstdint>
 
@@ -69,12 +73,17 @@ struct EnvCfg {
   int depth_w, depth_h;     // 관측 영상 크기 — 원본 칸을 고르게 건너뛴 가운데 광선
 };
 
+// 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
+constexpr uint8_t kCellBlocked = 1;   // 몸통 높이(collision_band)에 형상이 걸린 칸 — 충돌
+constexpr uint8_t kCellFloor = 2;     // 로봇이 출발점에서 갈 수 있는 바닥 칸 (바닥 덮음 분모)
+constexpr uint8_t kCellWall = 4;      // 그 바닥에 4 이웃으로 맞닿은 막힌 칸 = 벽 면 칸 (덮음 분모)
+
 // 맵 하나 (장면 + 정답 격자). 격자는 지도와 같은 칸(res), 원점 (ox, oy)
 struct MapDev {
   SceneView scene;
-  const uint8_t* grid;     // 칸마다 bit0 막힘(몸통 높이에 형상), bit1 덮어야 할 빈 칸(시작 칸과 이어진 빈 칸)
+  const uint8_t* grid;     // 칸마다 kCell* 비트
   const int32_t* spawn;    // 시작 칸 번호들 (몸통이 넉넉히 들어감)
-  int gw, gh, n_spawn, n_gt;
+  int gw, gh, n_spawn, n_wall, n_floor;
   float ox, oy;
 };
 
@@ -88,9 +97,9 @@ struct EnvState {
   float ex, ey, eth;           // 지도 자세 = 참값 + 오차
   float gx, gy;                // 목표점 (지도 자세 기준 세계 좌표)
   uint64_t rng, world_seed;
-  int32_t map, step, known_gt, done;   // done: 0 진행, 1 성공, 2 충돌, 3 시간 끝
+  int32_t map, step, seen_wall, seen_floor, done;   // 본 벽 면 칸·지나간 바닥 칸 수. done: 0 진행, 1 성공, 2 충돌, 3 시간 끝
   int32_t last_action, collided;
-  float reward, coverage;
+  float reward, coverage, floor_cov;   // coverage = seen_wall / n_wall, floor_cov = seen_floor / n_floor
   float gyro, gyro_bias;       // 자이로 측정 (몸통 ω + 이 판 바이어스 + 잡음)
   float slip_acc;              // 이번 행동 동안 |바퀴 ω − 몸통 ω| · dt 합 (헛돎 감점)
   LidarNoise noise;            // 이 판 라이다 오차 (무작위화)
@@ -103,7 +112,8 @@ struct Shared {
   float mx, my, mth, mw;       // 지도 자세의 라이다 위치·방향·각속도 (지도 넣기용)
   float inc;
   int bx0, by0, bx1, by1;      // 이번 장에 건드린 칸 범위
-  int part[kThreads];
+  int part[kThreads];          // scan_apply 스레드마다 새로 본 벽 면 칸 수
+  int part_floor[kThreads];    // 새로 지나간 바닥 칸 수
 };
 
 // 장치·호스트 공용 묶음 (포인터는 GPU 면 장치, CPU 면 호스트)
@@ -114,7 +124,8 @@ struct EnvBatch {
   LidarModel lidar;
   EnvState* st;
   int16_t* lmap;               // [env · size² + cy · size + cx]
-  uint32_t* marks;             // [env · size²/4]  칸마다 한 바이트: bit0 지나감, bit1 맞음
+  uint32_t* marks;             // [env · size²/4]  칸마다 한 바이트: 이번 장 bit0 지나감 · bit1 맞음 · bit2 끝점이 이 벽 면 칸에,
+                               //                   판 동안 남음 bit3 본 벽 면 칸 · bit4 지나간 바닥 칸 (Env::get_seen)
   uint8_t* obs;                // [env · obs_size²]  0 모름, 1~255 = 로그 오즈 낮음→높음
   float* obs_num;              // [env · kObsNum]
   uint8_t* obs_depth;          // [env · depth_w · depth_h]  0 없음(범위 밖), 1~255 = min_z → max_z
@@ -193,12 +204,14 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.world_seed = dm::splitmix64(e.rng);
   e.noise = randomize(b.lidar, e.rng);
   e.step = 0;
-  e.known_gt = 0;
+  e.seen_wall = 0;
+  e.seen_floor = 0;
   e.done = 0;
   e.last_action = -1;
   e.collided = 0;
   e.reward = 0.f;
   e.coverage = 0.f;
+  e.floor_cov = 0.f;
 }
 
 // 모든 스레드: 지도·표시 비우기
@@ -370,11 +383,43 @@ DEV void atomic_max_i(int* p, int v) {
 #endif
 }
 
-// 빔 j: 재고, 지도 자세로 펴서 지나간 칸·맞은 칸 표시 (Bresenham)
+// 칸 (cx, cy) 안의 점 (px, py) 에서 방향 (vx, vy) 로 광선이 다음에 들어가는 이웃 칸 (Amanatides–Woo 한 걸음). 경계까지 거리가 같으면 y 쪽
+DEV void ray_next_cell(const EnvCfg& c, const MapDev& m, float px, float py, float vx, float vy, int* cx, int* cy) {
+  const float tx = vx > 0.f ? ((m.ox + (float)(*cx + 1) * c.res) - px) / vx : (vx < 0.f ? ((m.ox + (float)*cx * c.res) - px) / vx : 3e38f);
+  const float ty = vy > 0.f ? ((m.oy + (float)(*cy + 1) * c.res) - py) / vy : (vy < 0.f ? ((m.oy + (float)*cy * c.res) - py) / vy : 3e38f);
+  if (tx < ty) *cx += vx > 0.f ? 1 : -1;
+  else *cy += vy > 0.f ? 1 : -1;
+}
+
+// 벽 덮음: 빔 끝점(참 광선 o + d · 잡음 섞인 거리 r)이 떨어진 벽 면 칸 하나를 고른다. 없으면 false.
+//   끝점 칸 → 아니면 광선을 거슬러 바로 앞 칸(센서 쪽) → 아니면 광선 따라 바로 뒤 칸.
+// 근거: 참 광선의 맞은 점은 장면 표면 위이고, 그 표면이 지나는 칸이 막힌 칸(build_world 가 삼각형을 칸에 찍음)이다. 끝점은 그 점에서
+//   광선 방향으로만 거리 잡음만큼 벗어난다 — σ = (sigma0 + sigma1·r)·물체 배율 ≈ 4~12 mm (sensor_model.yaml lidar.sigma, 실측 표면 빔 σ
+//   중앙 4.7 mm · p90 12 mm)에 양자화 1 mm 라 칸(5 cm)의 반도 안 된다. 그래서 끝점 칸이 벽 면 칸이 아니면 표면 칸은 광선 위 바로 앞(길게 재서
+//   벽 두께 안쪽으로 넘어감) 또는 바로 뒤(짧게 재서 바닥 칸에 떨어짐) 칸이다. 앞을 먼저 보는 까닭: 둘 다 벽 면 칸일 수 있는 건 1 칸 두께 벽
+//   너머 다른 면인데, 그쪽은 이 빔이 본 면이 아니다. 두 칸 넘게 떨어진 끝점(모서리 혼합 점 — 두 면 사이 값)은 덮음으로 안 친다.
+//   지도 자세 오차(OU)는 덮음에 안 들어간다(참 광선) — 덮음은 "센서가 실제로 그 벽을 맞혔나" 이고 지도 품질은 따로 본다.
+DEV bool wall_credit(const EnvCfg& c, const MapDev& m, const BeamRay& ray, float r, int* ox, int* oy) {
+  const float px = ray.o.x + ray.d.x * r, py = ray.o.y + ray.d.y * r;
+  int cx, cy;
+  if (cell_of(c, m, px, py, &cx, &cy) < 0) return false;
+  const auto wall = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh && (m.grid[y * m.gw + x] & kCellWall) != 0; };
+  if (wall(cx, cy)) { *ox = cx; *oy = cy; return true; }
+  int bx = cx, by = cy;
+  ray_next_cell(c, m, px, py, -ray.d.x, -ray.d.y, &bx, &by);
+  if (wall(bx, by)) { *ox = bx; *oy = by; return true; }
+  int fx = cx, fy = cy;
+  ray_next_cell(c, m, px, py, ray.d.x, ray.d.y, &fx, &fy);
+  if (wall(fx, fy)) { *ox = fx; *oy = fy; return true; }
+  return false;
+}
+
+// 빔 j: 재고, 지도 자세로 펴서 지나간 칸·맞은 칸 표시 (Bresenham), 끝점이 떨어진 벽 면 칸 표시 (wall_credit)
 DEV void scan_beam(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int j) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
-  const float r = lidar_beam_real(m.scene, e.noise, sh.scan, j);
+  BeamRay ray;
+  const float r = lidar_beam_real(m.scene, e.noise, sh.scan, j, &ray);
   if (r <= 0.f) return;   // 빠짐: Cartographer 는 min_range 아래로 버린다
   // ROS 가 적는 빔 각도(격자) + 빔 시각만큼 돈 몫 (Cartographer 가 펴 줌)
   const float t = (float)j * (e.noise.scan_time / sh.scan.n_rev);
@@ -393,18 +438,27 @@ DEV void scan_beam(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
   int err = ddx - ddy, x = x0, y = y0;
   const auto inside = [&](int cx, int cy) { return cx >= 0 && cy >= 0 && cx < m.gw && cy < m.gh; };
   int lox = 1 << 30, loy = 1 << 30, hix = -1, hiy = -1;
+  const auto grow = [&](int cx, int cy) {
+    lox = cx < lox ? cx : lox;
+    loy = cy < loy ? cy : loy;
+    hix = cx > hix ? cx : hix;
+    hiy = cy > hiy ? cy : hiy;
+  };
   while (true) {
     const bool last = x == x1 && y == y1;
     if (!inside(x, y)) break;
     mark(M, c.size, x, y, last && hit ? 2u : 1u);
-    lox = x < lox ? x : lox;
-    loy = y < loy ? y : loy;
-    hix = x > hix ? x : hix;
-    hiy = y > hiy ? y : hiy;
+    grow(x, y);
     if (last) break;
     const int e2 = 2 * err;
     if (e2 > -ddy) { err -= ddy; x += sx; }
     if (e2 < ddx) { err += ddx; y += sy; }
+  }
+  // 벽 덮음은 지도와 같은 거리 한도(max_range 안 = 지도에 맞음으로 들어가는 빔)만
+  int wx, wy;
+  if (hit && wall_credit(c, m, ray, r, &wx, &wy)) {
+    mark(M, c.size, wx, wy, 4u);
+    grow(wx, wy);   // scan_apply 가 이 칸을 지나가게 (참 광선 끝점은 지도 자세 Bresenham 범위 밖일 수 있음)
   }
   if (hix >= 0) {
     atomic_min_i(&sh.bx0, lox);
@@ -414,11 +468,12 @@ DEV void scan_beam(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
   }
 }
 
-// 모든 스레드: 표시된 칸을 한 번씩 갱신(맞음 우선)하고 표시를 지운다. 새로 알게 된 정답 빈 칸 수를 part[tid] 에
+// 모든 스레드: 표시된 칸을 한 번씩 갱신(맞음 우선)하고 이번 장 표시(bit0~2)를 지운다. 판 동안 남는 표시(bit3 본 벽 면 칸, bit4 지나간 바닥 칸)를
+// 처음 켤 때 센다 — 새로 본 벽 면 칸 수를 part[tid], 새로 지나간 바닥 칸 수를 part_floor[tid] 에
 DEV void scan_apply(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int tid) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
-  int count = 0;
+  int n_wall = 0, n_floor = 0;
   if (sh.bx1 >= 0) {
     const int n = c.size * c.size;
     int16_t* L = b.lmap + (size_t)env * n;
@@ -428,40 +483,52 @@ DEV void scan_apply(const EnvBatch& b, const EnvState& e, int env, Shared& sh, i
       const int cy = sh.by0 + k / nw, wx = w0 + k % nw;
       const int wi = (cy * c.size >> 2) + wx;   // size 는 4 의 배수
       const uint32_t word = M[wi];
-      if (word == 0u) continue;
-      M[wi] = 0u;
+      if ((word & 0x07070707u) == 0u) continue;
+      uint32_t keep = word & 0x18181818u;
       for (int q = 0; q < 4; ++q) {
         const uint32_t mk = (word >> (8 * q)) & 0xffu;
-        if (!mk) continue;
+        if (!(mk & 7u)) continue;
         const int cx = wx * 4 + q, ci = cy * c.size + cx;
-        const int16_t obs = (mk & 2u) ? c.l_hit : c.l_miss;
-        const int16_t old = L[ci];
-        if (old == kUnknown) {
-          L[ci] = obs;
-          if (cx < m.gw && (m.grid[cy * m.gw + cx] & 2)) ++count;
-        } else {
-          const int v = (int)old + (int)obs;
-          L[ci] = (int16_t)(v < c.l_min ? c.l_min : (v > c.l_max ? c.l_max : v));
+        if (mk & 3u) {
+          const int16_t obs = (mk & 2u) ? c.l_hit : c.l_miss;
+          const int16_t old = L[ci];
+          if (old == kUnknown) {
+            L[ci] = obs;
+          } else {
+            const int v = (int)old + (int)obs;
+            L[ci] = (int16_t)(v < c.l_min ? c.l_min : (v > c.l_max ? c.l_max : v));
+          }
+        }
+        if ((mk & 1u) && !(mk & 16u) && cx < m.gw && (m.grid[cy * m.gw + cx] & kCellFloor)) {
+          keep |= 16u << (8 * q);
+          ++n_floor;
+        }
+        if ((mk & 4u) && !(mk & 8u)) {
+          keep |= 8u << (8 * q);
+          ++n_wall;
         }
       }
+      M[wi] = keep;
     }
   }
-  sh.part[tid] = count;
+  sh.part[tid] = n_wall;
+  sh.part_floor[tid] = n_floor;
 }
 
 // ---------- 3. 보상·끝·관측 ----------
 
-// 스레드 0
-DEV void finish_step(const EnvBatch& b, EnvState& e, const Shared& sh, int new_known) {
+// 스레드 0. new_wall·new_floor: 이번 행동 동안 새로 본 벽 면 칸·새로 지나간 바닥 칸
+DEV void finish_step(const EnvBatch& b, EnvState& e, int new_wall, int new_floor) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
-  (void)sh;
-  e.known_gt += new_known;
-  const float cov = (float)e.known_gt / (float)m.n_gt;
+  e.seen_wall += new_wall;
+  e.seen_floor += new_floor;
+  const float cov = (float)e.seen_wall / (float)m.n_wall;
   float r = c.r_cov * (cov - e.coverage) + c.r_time * ((float)c.substeps * c.dt)   // 시간 감점은 초당
             + c.r_slip * e.slip_acc;                                                 // 헛돈 각도(rad)당
   e.slip_acc = 0.f;
   e.coverage = cov;
+  e.floor_cov = (float)e.seen_floor / (float)m.n_floor;
   e.step += 1;
   if (e.collided) { r += c.r_coll; e.done = 2; }
   else if (cov >= c.success_cov) { r += c.r_success; e.done = 1; }
