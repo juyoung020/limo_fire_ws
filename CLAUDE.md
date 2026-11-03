@@ -2,11 +2,23 @@
 
 폴더 구조·패키지 역할·URDF/TF/메시지 세부 규약은 [docs/conventions.md](docs/conventions.md) 에 있다.
 
-## Git: 작업 단위마다 pull → 작업 → 커밋·푸시
-- 시작 전 `git pull --rebase --autostash`.
-- 바뀐 경로만 지정해 커밋(`git add <경로>`, `git add -A` 금지)하고 바로 `git push`.
-- 커밋 메시지는 한국어 한 줄, 무엇을 왜 바꿨는지.
-- 커밋·PR 에 Claude 기여자 표기(`Co-Authored-By: Claude …`, "Generated with Claude Code" 등)를 넣지 않는다. 작성자는 사람만.
+## Git: 사용자가 맡긴 작업 하나 = 커밋 하나
+- 시작 전 `git pull --rebase --autostash`. 바뀐 경로만 지정해 커밋(`git add <경로>`, `git add -A` 금지).
+- **커밋 하나 = 사용자가 맡긴 작업 하나.** 작업 중 중간 단계(조사·수정·문서·CHANGELOG)를 따로 올리지 않는다.
+  중간 저장은 로컬 커밋으로 해도 되지만 푸시 전에 `git reset --soft @{u}` 등으로 작업 단위로 합친다.
+  이미 올린 작업의 후속 수정은 그 커밋에 `--amend` (HEAD 가 그 커밋인지 확인) 후 `git push --force-with-lease`. 다른 사람이 위에 올렸으면 먼저 묻는다.
+- 커밋 메시지는 한국어 한 줄, 무엇을 왜 바꿨는지. 작성자는 사람만 — Claude 기여자 표기(`Co-Authored-By: Claude …` 등)를 넣지 않는다.
+- 사용자가 알아챌 변경은 같은 커밋에서 `CHANGELOG.md` 의 `## [Unreleased]` 에 적는다 ([Keep a Changelog 1.1.0](https://keepachangelog.com/ko/1.1.0/)).
+  - 종류는 Added · Changed · Deprecated · Removed · Fixed · Security, 이 순서로.
+  - 항목은 사람이 읽는 한 줄(100 자 이내): 무엇이 생기거나 바뀌었는지. 경로·파일 이름 나열·수치·원인·디버깅 이야기는 커밋 메시지와 docs 에.
+  - 커밋 메시지를 옮겨 적지 않는다. 같은 기능의 여러 변경은 항목 하나로.
+  - 릴리스 때 `## [x.y.z] - YYYY-MM-DD` 로 묶고 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
+- 위 규칙은 `tools/repo_check` 가 검사한다. Claude Code 는 `.claude/settings.json` 훅으로 `git commit`·`git push` 전에 자동으로 돌리고,
+  어기면 막는다(CHANGELOG 형식, 아직 안 올린 커밋 여러 개가 같은 영역을 건드림, 기여자 표기). 사람은 `tools/repo_check/target/release/repo_check push` 로 직접.
+
+## 답하기
+- 외부 도구·사양·논문·데이터시트는 검색하고 출처와 함께 답한다. 기억으로 단정하지 않는다.
+- 결과는 있는 그대로: 안 맞는 것·못 한 것·기준 미달을 숨기지 않는다. 통과 기준은 결과를 보고 바꾸지 않고, 바꾸면 까닭을 적는다.
 
 ## 코드
 - 새 코드는 C++ 또는 Rust 만. Python 은 쓰지 않는다. launch 는 XML/YAML.
@@ -24,6 +36,17 @@
 
 ## 잔재 코드
 - 안 쓰는 코드는 지운다. 남겨야 하면 `archive/` 한곳에 두고, 임시 코드에는 `TODO(제거):` 를 달아 grep 으로 찾게 한다.
+
+## 시뮬 = 실물
+- 시뮬 값은 실물 측정(또는 출처 있는 자료)으로 정하고 근거를 config 주석·`train/explore/sim/analysis` 에 남긴다. 짐작한 값은 "잠정" 이라 적는다.
+- 맞추기(fit)와 확인(validate) 녹화를 나눈다(`analysis/calibration.yaml`). 같은 녹화로 맞추고 확인하지 않는다.
+- 실물 녹화는 `record.launch.xml` 로 늘 같은 토픽을 담고, 녹화마다 `analysis/bags.md` 에 조건 한 줄.
+
+## 실물 로봇
+- 주행 명령 전에 충전기를 뺐는지·주변이 비었는지·사람이 곁에 있는지 확인받는다. 한 번에 움직이는 거리는 정한 범위 안(기본 0.6 m).
+- ROS 명령(`/cmd_vel`)은 리모컨이 켜져 오토 모드(SWB 위)여야 바닥판이 받는다.
+- 바닥판 포트(`/dev/ttylimo`)는 드라이버 하나만 연다(대시보드 `limo_base` 와 `robot.launch.xml` 을 같이 켜지 않는다).
+- 프로세스는 PID 나 실행 파일 전체 경로로 끈다. 자기 명령줄에도 들어 있는 패턴으로 `pkill -f` 하지 않는다.
 
 ## URDF·TF
 - REP-103(미터·라디안, x 앞·y 왼쪽·z 위), REP-105(`map → odom → base_link`).

@@ -1,0 +1,7 @@
+[package]
+name = "repo_check"
+version = "0.1.0"
+edition = "2021"
+description = "커밋·푸시 전에 저장소 규칙을 기계로 검사한다: CHANGELOG 형식(Keep a Changelog 1.1.0), 푸시 전 커밋 묶음, 기여자 표기 금지"
+
+[dependencies]

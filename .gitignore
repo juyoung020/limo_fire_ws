@@ -28,6 +28,7 @@ sim/maps/houseexpo/
 
 # train 빌드·생성물
 train/maps/target/
+tools/repo_check/target/
 train/maps/out/
 archive/explore_env/build/
 

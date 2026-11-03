@@ -1,92 +1,95 @@
 # Changelog
 
-이 프로젝트의 모든 주요 변경 사항은 이 파일에 기록됩니다.
+이 프로젝트의 주요 변경 사항을 기록합니다.
 
-이 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 기반으로 하며,
-이 프로젝트는 [유의적 버전](https://semver.org/lang/ko/)을 따릅니다.
+형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르고,
+버전은 [유의적 버전](https://semver.org/lang/ko/)을 따릅니다.
+항목은 사용자가 알아챌 변화만 한 줄로 적습니다. 원인·수치·디버깅 과정은 커밋 메시지와 `docs/` 에 있습니다.
 
 ## [Unreleased]
 
 ### Added
 
-- 인식 벤치마크(`sim.launch.xml benchmark:=true`): Webots 정답과 장마다 비교해 P·R·F1·mAP·IoU·속도·물체 지도 정확도를 `docs/benchmarks/` 에 표로.
-- 바닥판 리모컨 조종 값·모터 상태·바퀴 거리 토픽(`/rc_state`, `/motor_states`, `/wheel_odometry`).
-- `robot.launch.xml base:=false`: 바닥판 없이 센서만 켜기(충전 중·세워 두고 잴 때).
-- 탐사 강화학습용 GPU 시뮬레이터(`train/explore/sim`): 구동·라이다·IMU·깊이를 실물 LIMO 녹화로 맞추고 다른 녹화로 확인.
-- 실물 녹화 `record.launch.xml` 과 보정 녹화 목록(`train/explore/sim/analysis`).
-- 탐사 RL 학습 뷰어 `train/explore/viewer`(trainview 를 가져와 탐사용으로 고침): 곡선·건강 검사·표·비교, 판 하나 2D 재생, C++ 러너가 쓰는 실행 폴더 헤더 `runfolder.h`, 가짜 실행 `fake_run`, 규약 검사 `runcheck`.
-- 탐사 RL 프론티어 탐사 기준선 `train/explore/baselines/frontier`(explore_lite 식 고르기 + Nav2 식 A*·RPP 추종, nav2·fast 두 속도)과 실행 도구 `frontier_run`, CPU·GPU 공용 프론티어 찾기 `train/explore/mdp/frontier.h`.
+- 인식 성능 벤치마크: 시뮬 정답과 비교해 정밀도·재현율·mAP·처리 속도를 잼.
+- 바닥판의 리모컨 상태·모터 상태·바퀴 거리 토픽.
+- 바닥판 없이 센서만 켜는 실행 옵션 `base:=false`.
+- 실물 녹화 실행 파일과 녹화 목록.
+- 탐사 RL 용 GPU 학습 시뮬레이터: 구동·라이다·IMU·깊이를 실물 LIMO 녹화로 맞춤.
+- 탐사 RL 설계: 행동·관측·보상·끝 조건, 움직이는 사람 피하기.
+- 탐사 RL 학습 뷰어: 학습 곡선, 실행 비교, 판 하나의 2D 재생.
+- 프론티어 탐사 기준선: RL 과 비교할 주행을 실물 지도 위에서 돌림.
+- 커밋·푸시 전에 변경 기록 형식과 커밋 묶음을 검사하는 도구.
 
 ### Changed
 
-- 바닥판 드라이버를 `limo_fire_base` 로 바꿈(WeGo `limo_base` 그대로 + 위 토픽).
-- 탐사 학습 시뮬 지도를 512 × 512 칸(25.6 m)으로 키움(12.8 m 보다 큰 맵도 씀).
-
-### Fixed
-
-- `map2scene` 이 주석 줄이 있는 PGM(Nav2 `map_saver` 가 저장한 지도)을 읽음.
+- 바닥판 드라이버를 우리 패키지 `limo_fire_base` 로 바꿈.
+- 탐사 시뮬이 다룰 수 있는 지도를 25.6 m 까지 키움.
 
 ### Removed
 
-- 옛 탐사 학습 환경 `train/explore/env` 를 `archive/explore_env` 로 옮김(실물에 맞춘 `train/explore/sim` 이 대체).
+- 옛 탐사 학습 환경. 새 GPU 학습 시뮬레이터가 대체함.
+
+### Fixed
+
+- Nav2 로 저장한 지도를 탐사 시뮬 장면으로 바꾸지 못하던 문제.
 
 ## [0.6.0] - 2026-10-29
 
 ### Added
 
-- 변경 기록 `CHANGELOG.md`, 센서 토픽 문서 `docs/sensor_topics.md`.
-- Webots 맵 3 개(덕트호스 미로·사무실·창고)와 맵별 정답 물체·순찰점 파일. `sim.launch.xml world:=<맵>` 하나로 시뮬·지도·Nav2·인식을 띄움.
-- RViz 에서 지도 위 물체 아이콘을 누르면 그 물체 사진(분할 마스크 포함)을 봄.
-- README 표지 데모 GIF.
+- 변경 기록과 센서 토픽 문서.
+- Webots 맵 3 개(덕트호스 미로·사무실·창고)와 맵별 정답 물체·순찰점.
+- 시뮬·지도·Nav2·인식을 한 번에 띄우는 `sim.launch.xml world:=<맵>`.
+- RViz 지도에서 물체 아이콘을 누르면 그 물체 사진을 봄.
+- README 데모 GIF.
 
 ### Changed
 
-- 실물 TF 를 우리 URDF 하나로 내고, 카메라 장착 위치를 실측값 (0.15, −0.005, 0.06) 으로 고침.
-- 시뮬도 실물과 같은 URDF·지도 만들기·Nav2·인식 launch 를 씀. 교수님 launch 에서 가끔 TF 가 안 나오던 문제가 없어짐.
-- 운용 화면을 RViz 하나(`viewer.launch.xml`)로 합침: 지도·Nav2 경로·물체·YOLO 영상.
-- Nav2 를 단순하게: Regulated Pure Pursuit·Smac 2D, 팽창 반경 0.45 m, 속도 명령 20 Hz. 덕트호스 미로 끝까지 주행함. 실물 확인 필요.
+- 실물 TF 를 우리 URDF 하나로 내고, 카메라 장착 위치를 실측값으로 고침.
+- 시뮬도 실물과 같은 URDF·지도 만들기·Nav2·인식 실행 파일을 씀.
+- 운용 화면을 RViz 하나로 합침: 지도·Nav2 경로·물체·YOLO 영상.
+- Nav2 를 단순하게 바꿈(Regulated Pure Pursuit·Smac 2D). 덕트호스 미로 끝까지 주행함.
 - 탐지 영상에 분할 마스크 테두리를 그림.
 
 ### Fixed
 
-- `yolo.launch.xml` 의 `mapper:=false` 가 무시되던 문제.
+- 인식 실행 파일의 `mapper:=false` 가 무시되던 문제.
+- 교수님 launch 에서 가끔 TF 가 안 나오던 문제.
 
 ## [0.5.0] - 2026-10-28
 
 ### Changed
 
-- YOLO 전처리·출력 해석·마스크 계산을 GPU 로 옮기고 탐지·매퍼 노드를 한 프로세스 컴포넌트로 묶어, Jetson 에서 한 장 처리 시간을 10.3 ms 로 줄임.
-- 실물 실행 시 Jetson 클럭을 고정하고 쓰지 않는 카메라 포인트 클라우드·IR 을 꺼서 깊이 영상을 19 Hz 에서 30 Hz 로 올림.
-- Cartographer 회전 필터를 0.5° 로, 자세 발행 주기를 20 ms 로 조정.
+- Jetson 에서 YOLO 한 장 처리 시간을 10.3 ms 로 줄임(전처리·마스크를 GPU 로).
+- 실물 깊이 영상을 19 Hz 에서 30 Hz 로 올림(Jetson 클럭 고정, 안 쓰는 카메라 스트림 끔).
+- Cartographer 회전 필터와 자세 발행 주기를 조정.
 
 ## [0.4.0] - 2026-10-27
 
 ### Added
 
-- 탐지한 소화기·불·문 등을 깊이와 TF 로 지도 좌표에 올리는 `object_mapper` 노드와 RViz 설정.
-- 지도 위 물체를 종류별 원형 아이콘 배지, 번호 라벨, 불 위험 반경, 한글 현황판으로 표시.
-- YOLO26s-seg(탐지 + 분할) 학습. 시험 세트 상자 mAP50-95 0.651, 마스크 mAP50-95 0.521.
-- 분할 가중치 Release `detect-y26s-seg`.
-- 인식 모델 발표용 문서 `docs/detect.md`.
+- 탐지한 소화기·불·문 등을 지도 좌표에 올리는 `object_mapper` 노드.
+- 지도 위 물체를 종류별 아이콘·번호·불 위험 반경·한글 현황판으로 표시.
+- 탐지와 분할을 같이 하는 YOLO26s-seg 모델과 가중치 Release.
+- 인식 모델 발표용 문서.
 
 ### Changed
 
-- 인식 노드를 YOLO26s-seg 로 교체. `object_mapper` 가 상자 대신 마스크 픽셀로 위치와 불 넓이를 잰다.
+- 인식 노드를 YOLO26s-seg 로 바꿔, 상자 대신 마스크로 물체 위치와 불 넓이를 잼.
 
 ## [0.3.0] - 2026-10-26
 
 ### Added
 
-- 실물 LIMO Pro 의 센서·매핑·맵 저장·Nav2 를 실행하는 XML launch (`limo_fire_bringup`, `limo_fire_navigation`).
-- TensorRT YOLO C++ 탐지 노드 (`limo_fire_perception`).
-- 탐지 가중치 Release `detect-y26s-clean`.
-- 교수님 Webots 맵에 불·연기·소화기·유도등·사람·계단을 배치한 시험 월드와 정답 위치 `objects.yaml`.
-- Jetson(ARM)에서 Webots 를 직접 빌드해 실행하는 방법.
-- 프로덕트 백로그 `docs/backlog.md`, 하드웨어 실측 스펙 `docs/hardware.md`.
+- 실물 LIMO Pro 의 센서·매핑·맵 저장·Nav2 실행 파일.
+- TensorRT YOLO 탐지 노드와 학습 가중치 Release.
+- 교수님 Webots 맵에 불·연기·소화기·유도등·사람·계단을 놓은 시험 월드.
+- Jetson 에서 Webots 를 직접 빌드해 실행하는 방법.
+- 프로덕트 백로그와 하드웨어 실측 스펙 문서.
 
 ### Changed
 
-- WeGo LIMO Pro 패키지를 실물 로봇에 설치된 판으로 교체 (OrbbecSDK_ROS2 등 추가).
+- WeGo LIMO Pro 패키지를 실물 로봇에 설치된 판으로 바꿈.
 
 ### Removed
 
@@ -94,39 +97,39 @@
 
 ### Fixed
 
-- Jetson 의 Webots 에서 라이다·깊이 값이 모두 inf 로 나오던 문제 (aarch64 에서 `glm::perspective` double 오류).
-- Webots 물체 proto 를 내려받다 멈추던 문제. 로컬 `webots://` proto 를 쓰도록 바꿈.
+- Jetson 의 Webots 에서 라이다·깊이 값이 모두 inf 로 나오던 문제.
+- Webots 물체를 내려받다 멈추던 문제.
 
 ## [0.2.0] - 2026-10-23
 
 ### Added
 
-- 맵 변환기 `fmap`: HouseExpo·ProcTHOR·덕트호스 미로를 점유 격자로 바꾸고 소화기·비상구·감지기를 배치.
-- 탐사 강화학습용 LIMO GPU 환경 (CUDA). CPU 참조판과 결과가 비트 단위로 같음.
-- LIMO Pro 기본 URDF 와 RViz 표시 launch (`limo_fire_description`).
+- 맵 변환기 `fmap`: 공개 맵 데이터를 점유 격자로 바꾸고 소화기·비상구를 놓음.
+- 탐사 강화학습용 LIMO GPU 환경.
+- LIMO Pro 기본 URDF 와 RViz 표시.
 - 탐지 클래스에 계단 추가, 계단·낭떠러지 낙하 방지 설계.
-- YOLO 학습 이미지 수집 도구(크롤러, SigLIP 제로샷 필터)와 공개 데이터셋 (D-Fire, Open Images, LVIS).
-- SAM 3 자동 라벨러 (C++/CUDA, fp16 6.7 장/초)로 6.8 만 장 라벨링, YOLO 데이터셋 합치기 도구 `yolods`.
-- pickle 을 실행하지 않는 `.pt` → safetensors 변환기 `ptconv`.
-- YOLO26s C++/CUDA 학습기. Ultralytics 와 정방향·기울기·손실 정합성 확인, 393 장/초.
-- 진행 기록 `docs/progress.md`.
+- YOLO 학습 이미지 수집 도구와 공개 데이터셋.
+- SAM 3 자동 라벨러로 6.8 만 장 라벨링.
+- 파이썬 없이 PyTorch 가중치를 읽는 변환기 `ptconv`.
+- YOLO26s C++/CUDA 학습기.
+- 진행 기록 문서.
 
 ### Changed
 
-- 라벨을 SigLIP 으로 다시 검사해 잘못된 exit_sign·door 라벨을 걸러냄. 시험 mAP50-95 0.635 → 0.654.
+- 잘못된 비상구·문 라벨을 걸러 탐지 성능을 올림(시험 mAP50-95 0.635 → 0.654).
 
 ## [0.1.0] - 2026-10-22
 
 ### Added
 
 - LIMO Pro 화재 대응 로봇 ROS 2 워크스페이스와 README.
-- 작업 규칙 `CLAUDE.md`, 환경 설정 `env.sh`.
-- WeGo LIMO Pro 패키지, Isaac Sim 확장, 교수님 Webots 시뮬을 `src/external` 에 포함.
+- 작업 규칙 `CLAUDE.md` 와 환경 설정 스크립트.
+- WeGo LIMO Pro 패키지, Isaac Sim 확장, 교수님 Webots 시뮬.
 - 시뮬 맵: AWS 병원·창고·서점·집 월드, ProcTHOR-10K.
 
 ### Removed
 
-- WeGo 패키지 fetch 스크립트. 저장소에 직접 포함했으므로 필요 없음.
+- WeGo 패키지 내려받기 스크립트. 저장소에 직접 포함함.
 
 [unreleased]: https://github.com/juyoung020/limo_fire_ws/compare/v0.6.0...HEAD
 [0.6.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.5.0...v0.6.0
