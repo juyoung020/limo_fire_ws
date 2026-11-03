@@ -10,7 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <!-- 실물 드라이버: ~/wego_ws 에 빌드돼 있음 (env.sh 가 먼저 연다) -->
-  <exec_depend>limo_base</exec_depend>
+  <exec_depend>limo_fire_base</exec_depend>
   <exec_depend>limo_description</exec_depend>
   <exec_depend>orbbec_camera</exec_depend>
   <exec_depend>ydlidar_ros2_driver</exec_depend>

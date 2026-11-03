@@ -13,6 +13,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 │   └── limo_fire/             우리 패키지
 │       ├── limo_fire_description/   URDF/xacro, 메시, RViz 설정
 │       ├── limo_fire_bringup/       launch(실물·시뮬), config/*.yaml 파라미터
+│       ├── limo_fire_base/          바닥판(구동·IMU·리모컨·모터 상태) 시리얼 드라이버 — WeGo limo_base 그대로 + 확장(C++)
 │       ├── limo_fire_msgs/          우리 메시지·서비스·액션
 │       ├── limo_fire_esp32_bridge/  ESP32 ↔ ROS
 │       ├── limo_fire_perception/    불 탐지·크기 추정·소방 시설 인식
