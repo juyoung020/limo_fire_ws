@@ -11,7 +11,7 @@
 | 워크스페이스·규칙 | 됨 | 루트, [CLAUDE.md](../CLAUDE.md) |
 | 시뮬레이터 역할 나누기 | 됨 | [README](../README.md#시뮬레이션) |
 | 맵 52,032 개 + 소방 시설 배치 | 됨 | `train/maps` |
-| 탐사 RL GPU 환경 (CUDA) | 됨 — 관측·PPO 남음 | `train/explore/env` |
+| 탐사 RL GPU 학습 시뮬 (CUDA, 실물에 맞춤) | 됨 — PPO·학습 뷰어·맵 읽기 남음 | `train/explore/sim` |
 | LIMO Pro 기본 URDF·TF | 됨 — 센서 모듈은 배치 정해지면 | `src/limo_fire/limo_fire_description` |
 | YOLO 데이터 모으기 | 공개 데이터·크롤링 됨, 직접 찍기 남음 | `train/detect/data` |
 | 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 6.8 만 장 라벨, YOLO 데이터셋(8:1:1) 만듦 | `train/detect/teacher`, `tools/yolods` |
@@ -61,13 +61,13 @@ Rust 변환기 `fmap` 이 공개 실내 평면도를 5 cm 점유 격자 `.fmap` 
 
 AWS 병원·창고·서점·집 월드(`sim/maps`)는 메시라 아직 격자로 안 바꿨다 — 시험용으로 나중에.
 
-## 4. 탐사 RL GPU 환경 (`train/explore/env`)
+## 4. 탐사 RL GPU 학습 시뮬 (`train/explore/sim`)
 
-- 환경 하나 = GPU 스레드 하나. 같은 헤더를 CPU 참조판과 CUDA 커널이 같이 쓰고, 부동소수 옵션을 고정해 **CPU 와 GPU 결과가 비트까지 같다**. 일부러 어긋나게 한 음성 대조도 잡힌다.
-- 행동은 바퀴 속도가 아니라 **중간 목표점**(로봇 기준 16 방향 × 0.5·1·2 m). 실물에서는 Nav2 가 그 점으로 간다.
-- 보상은 벽 표면을 빈틈없이·빨리·다시 안 가고 덮기. 장애물 뒤는 안 보이므로 셈에서 뺀다. 불을 처음 보면 +1.
-- 처리량: 16,384 환경에서 초당 35 만 행동(실시간의 약 17 만 배).
-- 남은 것: 관측 만들기(로봇 중심 지도 채널 + depth + YOLO 의미 채널), PPO(object-memory-robot 에서 옮김), 학습 뷰어.
+- 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, Cartographer 식 확률 지도, 보상, 로봇 중심 관측(지도 64 × 64 · 깊이 64 × 40 · 숫자 7)을 CUDA 커널 한 번에 돌린다. CPU 참조판과 비트까지 같다.
+- 행동은 `config/env.yaml action.mode`: 속도(0.1 s 마다 v, ω) 또는 목표점(0.5 s 마다 16 방향 × 3 거리).
+- 실행·검증 방법은 [train/README.md](../train/README.md), 실측 근거는 `train/explore/sim/analysis`.
+- 남은 것: PPO·학습 뷰어, `train/maps` 맵 읽기, 속도.
+- 첫 초안 환경(목표점 행동·칸 DDA 라이다, 2026-10-23)은 `archive/explore_env` 로 옮겼다.
 
 ## 5. URDF·TF (`limo_fire_description`)
 

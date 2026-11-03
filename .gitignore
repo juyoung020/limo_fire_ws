@@ -29,7 +29,7 @@ sim/maps/houseexpo/
 # train 빌드·생성물
 train/maps/target/
 train/maps/out/
-train/explore/env/build/
+archive/explore_env/build/
 
 # YOLO 학습 데이터
 train/detect/data/*
@@ -53,3 +53,7 @@ train/detect/trainer/ref/
 
 # Webots 가 월드마다 만드는 창 배치 상태
 *.wbproj
+train/explore/runs/
+train/explore/scenes/
+train/explore/viewer/target/
+train/explore/viewer/build/

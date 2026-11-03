@@ -12,7 +12,8 @@ set(CMAKE_CUDA_FLAGS_RELEASE "-O3 --fmad=false -prec-div=true -prec-sqrt=true -f
 find_package(CUDAToolkit REQUIRED)
 
 add_library(fenv STATIC src/fenv_kernel.cu src/fenv_ref.cpp src/fmap_host.cpp)
-target_include_directories(fenv PUBLIC include)
+# 결정적 수학(detmath.h)은 새 시뮬레이터(../sim)와 같이 쓴다
+target_include_directories(fenv PUBLIC include ../sim/include)
 target_link_libraries(fenv PUBLIC CUDA::cudart)
 
 add_executable(fenv_verify tools/fenv_verify.cu)

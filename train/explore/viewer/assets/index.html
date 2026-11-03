@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trainview · explore</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="top">
+  <div class="row1">
+    <b class="brand" title="탐사 RL 학습 뷰어">trainview <span class="muted">explore</span></b>
+    <nav id="tabs">
+      <button data-tab="train" class="on" title="Training: 실행 하나의 곡선·건강·표">Training</button>
+      <button data-tab="replay" title="Replay: 판 하나를 2D 로 다시 보기">Replay</button>
+      <button data-tab="compare" title="Compare: 실행 여럿 나란히">Compare</button>
+    </nav>
+    <span class="dd" id="rundd">
+      <button id="runbtn" title="실행 바꾸기(검색, 최신순)">Runs ▾ <b id="runname" class="mono"></b></button>
+      <div id="runmenu" class="menu runmenu" hidden>
+        <input id="runsearch" type="search" placeholder="search runs…" autocomplete="off">
+        <div id="runlist"></div>
+      </div>
+    </span>
+    <span class="grow"></span>
+    <span id="conn" class="pill" title="실시간 연결(SSE). 끊기면 3 초 폴링">—</span>
+  </div>
+</header>
+
+<main>
+<div id="syn_banner" class="synbanner" hidden>가짜 시험 자료(synthetic, fake_run) — 실제 학습 결과 아님</div>
+<!-- ============================== Training ============================== -->
+<section id="tab_train" class="tab on">
+  <div id="empty_state" class="emptybox" hidden></div>
+  <div id="train_body">
+  <div id="runhead" class="runhead">
+    <div class="rh1">
+      <span id="rh_name" class="rh_name mono"></span>
+      <span id="rh_stage" class="rh_stage"></span>
+      <span id="rh_state" class="rh_state"></span>
+      <span id="rh_time" class="muted"></span>
+      <span id="rh_res" class="rh_res"></span>
+      <span id="badges"></span>
+      <span class="grow"></span>
+      <span id="healthchip" class="hchip" tabindex="0" title="Training health checks — 누르면 펼침">Health: —</span>
+    </div>
+    <div id="status" class="muted small mono"></div>
+    <div id="metaline" class="muted small"></div>
+  </div>
+  <div id="checks_box" class="hbox" hidden><div id="checks_sum" class="muted small"></div><div id="checks"></div></div>
+  <div id="cards" class="cards bigcards"></div>
+  <div id="cards_more"></div>
+  <div class="bar">
+    <label title="x 축">X-axis <select id="xmode"><option value="iter">time/iterations</option><option value="env_steps" selected>time/total_timesteps</option><option value="wall">time/time_elapsed (relative)</option></select></label>
+    <label title="EMA 평활 (TensorBoard·W&amp;B 의 Smoothing)">Smoothing <input id="ema" type="range" min="0" max="0.99" step="0.01" value="0.6"><span id="ema_v" class="mono"></span></label>
+    <label class="grow" title="시점 커서: 카드·검사·표·재생 목록을 이 시점까지로 자름">Step cursor <input id="cursor" type="range" min="0" max="1000" value="1000" class="grow"><span id="cursor_v" class="mono"></span></label>
+    <button id="cursor_off" title="커서를 끝(실시간)으로">Latest</button>
+  </div>
+  <div id="note_first" class="note" hidden></div>
+  <div id="groups"></div>
+  <section class="panel">
+    <h3 title="판 기록 표본(log_envs 개 환경에서 끝난 판 전부)으로 센 표">Episode table <span class="warn-s">⚠ logged sample</span></h3>
+    <div class="bar">
+      <label title="줄기: 집계를 따로 하는 판 묶음(main = 학습 판 표본, eval = 평가 판)">Split <select id="t_stream"></select></label>
+      <label title="행">Rows <select id="t_rows"><option value="map">map</option><option value="stage">stage</option><option value="size">map size</option><option value="outcome">outcome</option><option value="all">all</option></select></label>
+      <label title="열">Columns <select id="t_cols"><option value="size">map size (area_bins)</option><option value="stage">stage</option><option value="map">map</option><option value="outcome">outcome</option><option value="all">all</option></select></label>
+      <label title="맵으로 거르기">Map <select id="t_map"><option value="">all</option></select></label>
+      <label title="커리큘럼 단계로 거르기">Stage <select id="t_stage"><option value="">all</option></select></label>
+      <label title="칸 값">Metric <select id="t_metric">
+        <option value="success">success_rate</option><option value="coverage">coverage (final)</option><option value="t95">t95 (s)</option><option value="t95_reached">t95 reached</option>
+        <option value="collision">collision_rate</option><option value="declare_short">declared short</option><option value="truncation">truncation_rate</option>
+        <option value="coverage_at_declare">coverage at declare</option><option value="t">ep length (s)</option><option value="path_len">path length (m)</option><option value="ret">return</option></select></label>
+      <label title="칸마다 최근 N 판">Last <input id="t_last" type="range" min="0" max="6" step="1" value="3"><span id="t_last_v" class="mono"></span> episodes per cell</label>
+    </div>
+    <div id="t_note" class="muted small"></div>
+    <div id="table" class="tablewrap"></div>
+  </section>
+  <section class="panel">
+    <h3 title="평가 표">Evaluation <span class="muted">evals/*.json</span></h3>
+    <div id="evals"></div>
+  </section>
+  <details class="panel"><summary title="사건 기록">Events <span class="muted">events.txt</span></summary><pre id="events" class="mono small"></pre></details>
+  <details class="panel"><summary>run.json</summary><pre id="metajson" class="mono small"></pre></details>
+  </div>
+</section>
+
+<!-- ============================== Replay (2D) ============================== -->
+<section id="tab_replay" class="tab">
+  <div class="replay" id="rp_root">
+    <aside id="rp_side">
+      <div class="rp_filters">
+        <label title="줄기">Split <select id="rp_stream"></select></label>
+        <label title="판 끝 사유">Outcome <select id="rp_outcome"><option value="">all</option></select></label>
+        <label title="맵">Map <select id="rp_map"><option value="">all</option></select></label>
+        <label title="Training 탭의 Step cursor 근처 판만"><input type="checkbox" id="rp_near"> near cursor</label>
+      </div>
+      <div id="rp_note" class="muted small"></div>
+      <div class="rp_lhead"><span>ep</span><span>iter</span><span>outcome</span><span>cov</span><span>len</span></div>
+      <div id="rp_list" class="list rp_table"></div>
+    </aside>
+    <div id="rp_main">
+      <div id="rp_top">
+        <button id="rp_listbtn" title="판 목록 보이기/숨기기">☰</button>
+        <button id="rp_eprev" title="앞 판 (↑)">▲</button>
+        <button id="rp_enext" title="다음 판 (↓)">▼</button>
+        <span id="rp_title" class="rp_title mono"></span>
+        <span id="rp_obadge" class="obadge" hidden></span>
+        <span class="grow"></span>
+        <span class="dd"><button id="rp_layerbtn" title="그릴 것">Layers ▾</button>
+          <div id="rp_layers" class="menu" hidden>
+            <div class="mg"><div class="mh">Map</div>
+              <label title="정답 맵(시뮬 참값, 정책은 못 봄)"><input type="checkbox" id="ly_gt" checked> ground truth</label>
+              <label title="정책이 쌓은 관측 지도(확률 지도)"><input type="checkbox" id="ly_obs" checked> observed map</label>
+              <label title="덮인 칸(정답 기준 덮음 — 보상·성공 판정에 쓰는 값)"><input type="checkbox" id="ly_cov" checked> covered cells</label></div>
+            <div class="mg"><div class="mh">Robot</div>
+              <label title="참 자세 궤적"><input type="checkbox" id="ly_path" checked> true path</label>
+              <label title="지도 자세(참값 + 오차) 궤적"><input type="checkbox" id="ly_spath"> map-pose path</label>
+              <label title="이번 걸음 라이다 빔"><input type="checkbox" id="ly_scan" checked> lidar beams</label>
+              <label title="로봇을 따라 화면을 옮김"><input type="checkbox" id="ly_follow"> follow robot</label></div>
+          </div></span>
+      </div>
+      <div class="rp_row">
+        <div id="rp_view"><canvas id="rp_canvas"></canvas><div id="rp_empty" class="empty">Pick an episode from the list</div></div>
+        <aside id="rp_hud" class="rp_hud"></aside>
+      </div>
+      <div id="rp_bar" class="bar">
+        <button id="rp_play" title="재생 / 멈춤 (space)">▶</button>
+        <button id="rp_prev" title="한 걸음 뒤 (←, shift = 1 s)">◀︎|</button>
+        <button id="rp_next" title="한 걸음 앞 (→, shift = 1 s)">|▶︎</button>
+        <div class="tl"><div id="rp_marks" class="marks"></div><input id="rp_time" type="range" min="0" max="0" value="0" class="grow"></div>
+        <span id="rp_tlabel" class="mono"></span>
+        <select id="rp_speed" title="재생 속도"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option><option>8</option></select>×
+        <label title="끝나면 처음부터"><input type="checkbox" id="rp_loop"> loop</label>
+      </div>
+      <canvas id="rp_strip" height="150" title="걸음마다 보상 항(쌓은 막대, + 위 / − 아래), 누적 리턴·가치·선언 확률 선. 누르면 그 걸음으로"></canvas>
+      <div id="rp_legend" class="legend small"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== Compare ============================== -->
+<section id="tab_compare" class="tab">
+  <div class="cmp">
+    <aside id="cmp_side">
+      <div class="muted small">실행을 고른다. 같은 <code>group</code>(씨앗만 다름)은 평균 ± 표준편차로 묶을 수 있다.</div>
+      <div id="cmp_runs" class="list"></div>
+    </aside>
+    <div id="cmp_main">
+      <div class="bar wrap">
+        <label>Metric A <select id="cmp_a"></select></label>
+        <label>Metric B <select id="cmp_b"></select></label>
+        <label>X-axis <select id="cmp_x"><option value="env_steps">time/total_timesteps</option><option value="wall">relative time (s)</option><option value="ts">wall clock</option><option value="iter">time/iterations</option></select></label>
+        <label title="씨앗 묶음 띠"><input type="checkbox" id="cmp_group" checked> Group runs (mean ± std)</label>
+        <label>Smoothing <input id="cmp_ema" type="range" min="0" max="0.99" step="0.01" value="0.6"></label>
+      </div>
+      <div id="cmp_charts"></div>
+      <h3 title="비교 표">Run comparer <span class="muted small">mean over the last 10 % of rows</span></h3>
+      <div id="cmp_table" class="tablewrap"></div>
+    </div>
+  </div>
+</section>
+</main>
+<div id="tip" class="tip" hidden></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+cmake_minimum_required(VERSION 3.22)
+# 탐사 RL 학습 시뮬레이터: 삼각형 장면 + BVH 광선 추적 센서. CPU 참조판과 비트까지 같으려고 fmad 를 끄고 나눗셈·제곱근을 정확하게 한다.
+# 빌드 대상: 젯슨 Orin(sm_87) 검증, 데스크톱 RTX 5070 Ti(sm_120) 학습. 따로 안 주면 이 기기에 맞춘다
+project(limo_fire_sim LANGUAGES CXX CUDA)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    set(CMAKE_CUDA_ARCHITECTURES 87)
+  else()
+    set(CMAKE_CUDA_ARCHITECTURES 120)
+  endif()
+endif()
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -ffp-contract=off")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 --fmad=false -prec-div=true -prec-sqrt=true -ftz=false")
+find_package(CUDAToolkit REQUIRED)
+# tinyxml2: CMake 설정이 있으면 그것, 없으면(우분투 22.04 젯슨) 라이브러리를 직접 찾는다
+find_package(tinyxml2 CONFIG QUIET)
+if(NOT TARGET tinyxml2::tinyxml2)
+  find_library(TINYXML2_LIB tinyxml2 REQUIRED)
+  find_path(TINYXML2_INC tinyxml2.h REQUIRED)
+  add_library(tinyxml2::tinyxml2 UNKNOWN IMPORTED)
+  set_target_properties(tinyxml2::tinyxml2 PROPERTIES IMPORTED_LOCATION ${TINYXML2_LIB} INTERFACE_INCLUDE_DIRECTORIES ${TINYXML2_INC})
+endif()
+
+find_package(yaml-cpp REQUIRED)
+
+add_library(limo_sim STATIC src/sensors_kernel.cu src/sensors_ref.cpp src/w3d.cpp src/sensor_model.cpp
+            src/env_kernel.cu src/env_ref.cpp src/env_host.cpp)
+target_include_directories(limo_sim PUBLIC include)
+target_link_libraries(limo_sim PUBLIC CUDA::cudart tinyxml2::tinyxml2 yaml-cpp)
+# 기본 모델·실측 통계 파일 위치
+target_compile_definitions(limo_sim PUBLIC SIM_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config"
+                                           SIM_ANALYSIS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/analysis")
+
+add_executable(w3d2scene tools/w3d2scene.cpp)
+target_link_libraries(w3d2scene limo_sim)
+add_executable(sim_verify tools/sim_verify.cu)
+target_link_libraries(sim_verify limo_sim)
+# V3: 라이다 오차 분포 vs 실측. 통계 코드는 실물 녹화 도구(limo_fire_sim scan_stats_bag)와 같은 헤더
+add_executable(noise_check tools/noise_check.cu)
+target_include_directories(noise_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../src/limo_fire/limo_fire_sim/include)
+target_link_libraries(noise_check limo_sim)
+# 학습 환경(env.h): GPU == CPU 비트 비교, 속도
+add_executable(env_verify tools/env_verify.cu)
+target_link_libraries(env_verify limo_sim)
+add_executable(env_bench tools/env_bench.cu)
+target_link_libraries(env_bench limo_sim)
+# 시뮬 = 현실 (구동): 실물 녹화 명령으로 구동 모델을 맞추고 확인 (CSV 는 limo_fire_sim motion_export)
+add_executable(motion_check tools/motion_check.cpp)
+target_link_libraries(motion_check limo_sim)
+# 실물 지도 → 장면, GPU 환경 전체를 실물 녹화로 다시 돌려 비교
+add_executable(map2scene tools/map2scene.cpp)
+target_link_libraries(map2scene limo_sim)
+add_executable(replay_check tools/replay_check.cu)
+target_link_libraries(replay_check limo_sim)

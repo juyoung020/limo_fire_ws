@@ -3,7 +3,7 @@
 <package format="3">
   <name>limo_fire_sim</name>
   <version>0.1.0</version>
-  <description>Webots 시뮬 우리 판: LIMO 드라이버 설정(교수님 webots_ros2_limo 기반)과 인식 벤치마크용 정답 카메라 플러그인</description>
+  <description>Webots 시뮬 우리 판: LIMO 드라이버 설정(교수님 webots_ros2_limo 기반)과 인식 벤치마크용 정답 카메라 플러그인, 센서 오차 통계(실물·Webots 녹화 ↔ 학습 시뮬)</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
   <license>MIT</license>
 
@@ -14,6 +14,11 @@
   <depend>sensor_msgs</depend>
   <depend>vision_msgs</depend>
   <depend>webots_ros2_driver</depend>
+  <depend>nav_msgs</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>tf2_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>limo_msgs</depend>
   <exec_depend>webots_ros2_limo</exec_depend>
   <exec_depend>webots_ros2_control</exec_depend>
 

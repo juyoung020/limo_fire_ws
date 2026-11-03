@@ -1,0 +1,13 @@
+<!-- 실물 녹화: 시뮬 = 현실 맞추기(train/explore/sim/analysis)에 쓰는 토픽을 늘 같은 묶음으로 ~/limo_bags/(name) 에 담는다.
+     ros2 launch limo_fire_bringup record.launch.xml name:=1104_wall_1m [depth:=false]
+     robot.launch.xml(또는 base:=false 로 센서만)·mapping.launch.xml 을 켠 뒤에. 녹화마다 analysis/bags.md 에 한 줄 적는다.
+     깊이 원본은 초당 약 15 MB (10 분 9 GB) — 오래 달릴 때는 depth:=false -->
+<launch>
+  <arg name="name" description="녹화 이름 (MMDD_상황). ~/limo_bags/(name) 에 생김"/>
+  <arg name="dir" default="$(env HOME)/limo_bags"/>
+  <arg name="depth" default="true" description="깊이 원본 영상도 담기"/>
+  <!-- 토픽 목록은 cmd 안에 그대로 둔다: $(var) 로 넣으면 공백째 토픽 이름 하나가 된다 -->
+
+  <executable cmd="ros2 bag record -o $(var dir)/$(var name) /scan /imu /odom /odometry/filtered /limo_status /rc_state /motor_states /wheel_odometry /cmd_vel /tf /tf_static /joint_states /map /trajectory_node_list /camera/color/camera_info /camera/color/image_raw/compressed /camera/depth/camera_info /camera/depth/image_raw" output="screen" if="$(var depth)"/>
+  <executable cmd="ros2 bag record -o $(var dir)/$(var name) /scan /imu /odom /odometry/filtered /limo_status /rc_state /motor_states /wheel_odometry /cmd_vel /tf /tf_static /joint_states /map /trajectory_node_list /camera/color/camera_info /camera/color/image_raw/compressed /camera/depth/camera_info" output="screen" unless="$(var depth)"/>
+</launch>
