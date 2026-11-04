@@ -28,8 +28,9 @@ struct ImgIn {
 struct NetSpec {
   std::vector<ImgIn> imgs;    // CNN 가지들
   int img_stride = 0;         // 환경 하나의 u8 관측 바이트 수
-  std::vector<int> conv_ch;   // 가지마다 같은 채널 목록 (층 수 = 길이)
+  std::vector<int> conv_ch;   // 가지마다 같은 채널 목록 (층 수 = 길이, 3 또는 4). 넷째 층은 셋째 층 격자를 0 으로 덧대 짝수로 만든 뒤 2×2 s2
   int in1d = 0;               // 1D 입력 수 (정규화된 real)
+  int grad_cols = -1;         // 입력 앞 몇 열의 기울기를 낼지 (−1 = 합성곱 평탄화 열). 공유 인코더 뒤 MLP 는 인코더 특징 열 수
   std::vector<int> hidden;    // MLP 은닉 층
   int out = 0;
 };
@@ -59,6 +60,9 @@ class Net {
   void backward(cublasHandle_t h, cudaStream_t st, int n, const uint8_t* img, const real* dout, const int* img_idx = nullptr);
   const NetSpec& spec() const { return s_; }
   long feat_img() const { return feat_img_; }
+  long feat() const { return feat_; }
+  real* x0() { return X0_; }    // [max_n][feat] MLP 입력 (앞 feat_img 열 = 합성곱 평탄화). MLP 없는 망(인코더)은 곧 출력 특징
+  real* dx0() { return dX0_; }  // 역방향의 입력 기울기 [max_n][feat] (앞 grad_cols 열만 유효)
   int max_n() const { return max_n_; }
   size_t ws_bytes() const { return ws_bytes_; }
   // 합성곱 가지를 텐서 코어(bf16 입력·fp32 누산) 융합 커널로. 끄면 fp32 융합 커널(정확 경로). PPOConfig::cnn_bf16 가 정한다.
@@ -79,8 +83,14 @@ class Net {
     real* X = nullptr;          // 첫 층 입력 (계층 배치 real) [n·h·w][c]
     std::vector<real*> A, dA;  // 층마다 출력 [n·oh·ow][cout] (계층 배치) — 기준 경로만
     bool fused = false;        // 융합 커널(cnn_fused) 로 도는 가지 (fp32 빌드, 지원하는 모양)
+    // 넷째 층(꼬리): 셋째 층 출력 F3 [n][h3·w3][c] (래스터) → 덧댄 im2col Tc [n·P4][4·c] → Ty [n·P4][cout] (ELU 뒤)
+    bool tail = false;
+    ConvL T{};
+    real *F3 = nullptr, *dF3 = nullptr, *Tc = nullptr, *dTc = nullptr, *Ty = nullptr, *dTy = nullptr;
   };
   CnnBranch desc(const Branch& B) const;
+  void tail_forward(cublasHandle_t h, cudaStream_t st, int n, Branch& B);
+  void tail_backward(cublasHandle_t h, cudaStream_t st, int n, Branch& B, const real* dsrc);
   struct LinL {
     int in, out;
     long w_off, b_off;
@@ -89,6 +99,7 @@ class Net {
   std::vector<Branch> br_;
   std::vector<LinL> lin_;
   long feat_img_ = 0, feat_ = 0;
+  int grad_cols_ = 0;
   real *P_ = nullptr, *G_ = nullptr;
   int max_n_ = 0;
   real *X0_ = nullptr, *dX0_ = nullptr;
@@ -111,7 +122,10 @@ class Normalizer {
   static constexpr real kEps = 1e-2f;
 };
 
+// 공유 인코더(합성곱 가지들) → 특징 F. actor·critic MLP 입력 = [F | 정규화 1D] (actor 는 정책 1D, critic 은 참값까지).
+// actor·critic 의 imgs 는 비우고 in1d 는 1D 만 적는다 — ActorCritic 이 앞에 F 열을 붙인다.
 struct ACSpec {
+  NetSpec enc;               // 합성곱 가지만 (in1d 0, MLP 없음)
   NetSpec actor, critic;
   int n_cont = 3;            // 가우시안 성분 수 (actor 출력 앞쪽), 뒤 1 개가 선언 로짓
   real init_log_std = 0.f;  // log σ 초기값 (σ = 1, rsl_rl init_noise_std=1.0)
@@ -138,7 +152,8 @@ class ActorCritic {
   real* log_std_grad() { return d_grads + logstd_off; }
 
   ACSpec spec;
-  Net actor, critic;
+  Net enc, actor, critic;  // enc = 공유 인코더 (특징 enc.x0() [n][nf]), actor·critic = MLP (입력 [F | 1D])
+  int nf = 0;              // 인코더 특징 수
   Normalizer norm;
   std::vector<ParamBlock> blocks;
   long n_params = 0, logstd_off = 0;

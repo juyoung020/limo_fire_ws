@@ -16,13 +16,22 @@ C++/CUDA 만 쓴다(MLP 는 cuBLAS GEMM, 합성곱 가지는 직접 짠 융합 �
 ## 구조
 
 ```
-가까운 지도 u8 6×64×64 ─/255→ conv 2×2 s2 16 → 32 → 32, ELU → 32×8×8  = 2048 ┐
-먼 지도     u8 7×32×32 ─/255→ conv 2×2 s2 16 → 32 → 32, ELU → 32×4×4  =  512 ├ 이어 붙임 → MLP 512-256-128 ELU → actor: v·vy·ω 평균 3 + 선언 로짓 1
-깊이        u8 1×40×64 ─/255→ conv 2×2 s2 16 → 32 → 32, ELU → 32×5×8  = 1280 │                                  (log σ 3 개는 상태 무관 변수)
-1D (정규화)  actor: POLICY_1D 1304 / critic: CRITIC_1D 1336(참값 포함) ─────────┘          critic: 같은 꼴, 가중치 따로 → 가치 1
+                     공유 인코더 (actor·critic 이 같이 씀)
+가까운 지도 u8 6×64×64 ─/255→ conv 2×2 s2 16 → 32 → 32 → 32, ELU → 32×4×4 = 512 ┐
+먼 지도     u8 7×32×32 ─/255→ conv 2×2 s2 16 → 32 → 32 → 32, ELU → 32×2×2 = 128 ├ F (1024) ─┬→ [F | 정책 1D 1304] → actor MLP 512-256-128 ELU → v·vy·ω 평균 3 + 선언 로짓 1
+깊이        u8 1×40×64 ─/255→ conv 2×2 s2 16 → 32 → 32 → 32, ELU → 32×3×4 = 384 ┘            │                                       (log σ 3 개는 상태 무관 변수)
+                                    (넷째 층 앞에서 5×8 격자를 0 행 덧대 6×8)            └→ [F | 참값까지 1D 1336] → critic MLP 512-256-128 ELU → 가치 1
 ```
 
-- 학습 변수: actor 2 818 548 + critic 2 834 545 + log σ 3 = 약 565 만 개(22.6 MB). 대부분 MLP 첫 층(5144·5176 → 512).
+- 학습 변수 약 276 만 개(11.0 MB, 옛 구조 565 만 개의 반): 인코더 약 6.5 만, actor·critic MLP 첫 층이 2328·2360 → 512.
+- **공유 인코더(구조 버전 2, 2026-11-04)**: 합성곱 가지를 actor·critic 이 같이 쓴다 — 한 번만 계산하고, 두 MLP 의 특징 기울기를 더해(고정 순서) 인코더로 흘린다(손실은 지금과 같은 합 손실).
+  Stable-Baselines3 의 PPO `CnnPolicy` 기본이 같은 꼴이다("The CNN is shared between actor and critic for A2C/PPO (on-policy algorithms) to reduce computation", SB3 문서 Policy Networks).
+  주의: rsl_rl(2.3.1)의 `ActorCritic` 은 actor·critic 을 따로 둔다(공유 아님), 상태 입력 연구(Andrychowicz et al., "What Matters in On-Policy RL", 2021)는 따로 둔 쪽이 낫다고 보고 —
+  그래서 학습 곡선을 옛 구조와 같은 조건으로 비교해 확인했다(ppo/README "구조 버전 2").
+- **합성곱 4 층**: 해상도 1/16(64→4, 32→2, 40×64→3×4) — 평탄화 3 840 → 1 024, MLP 첫 층 입력 5 144 → 2 328 (actor). 넷째 층 수용 영역 16×16 칸(가까운 지도 1.6 m, 먼 지도 12.8 m).
+  깊이 40 행은 16 의 배수가 아니라 셋째 층 뒤 5 행을 0 행 하나로 덧대 6 행으로(덧댄 자리는 입력 0 — 합성곱 0 덧댐과 같은 뜻).
+  앞 세 층은 융합 커널(아래 "계산 방식"), 넷째 층은 덧댄 im2col + GEMM + 편향·ELU(`Net::tail_forward/backward`).
+- 체크포인트 형식 버전 2 (층 이름도 `enc.cnn*`) — 버전 1(옛 구조) 체크포인트는 불러오기를 거부한다.
 - **MLP [512, 256, 128] · ELU**: legged_gym 기본값 그대로 — `legged_gym/envs/base/legged_robot_config.py:207-209`
   (`actor_hidden_dims = critic_hidden_dims = [512, 256, 128]`, `activation = 'elu'`, [leggedrobotics/legged_gym](https://github.com/leggedrobotics/legged_gym) master, 2026-11-04 확인).
   actor·critic 따로인 것도 rsl_rl `modules/actor_critic.py:42-55`(2.3.1) 와 같다.
@@ -30,8 +39,8 @@ C++/CUDA 만 쓴다(MLP 는 cuBLAS GEMM, 합성곱 가지는 직접 짠 융합 �
   (`init_noise_std = 1.0`, legged_gym `legged_robot_config.py:206`). tanh 없음 — log π 는 자르기 전 값(mdp/README "행동").
 - **선언 로짓 편향 초기값 −7** (actor 마지막 층 편향의 마지막 원소): 걸음마다 뽑으므로 0 이면 판이 평균 2 걸음에 끝난다(mdp/README "행동", 범위 −6~−8 중간).
 - **초기화**: torch `nn.Linear`·`nn.Conv2d` 기본(가중치·편향 U(±1/√fan_in) — kaiming_uniform a=√5 와 같은 경계), rsl_rl 은 따로 초기화하지 않는다.
-- **CNN: 2×2 stride 2 합성곱 3 층, 채널 16-32-32**
-  - 층 수 3: 해상도를 1/8 로(64→8, 32→4, 40×64→5×8) 줄여 평탄화 크기(3840)를 1D(1304)와 비슷한 규모로. 공간 배치는 평탄화로 MLP 까지 그대로 간다(전역 풀링 안 함 — 지도에서 "어디에" 가 중요).
+- **CNN: 2×2 stride 2 합성곱 (버전 1 은 3 층·망마다 따로, 버전 2 는 위 공유 4 층), 채널 16-32-32(-32)**
+  - 버전 1 의 층 수 3: 해상도를 1/8 로 줄여 평탄화(3840)를 1D(1304)와 비슷한 규모로 뒀다. 버전 2 는 MLP 첫 층(반복 시간의 큰 몫)을 줄이려 1/16. 공간 배치는 평탄화로 MLP 까지 그대로 간다(전역 풀링 안 함 — 지도에서 "어디에" 가 중요).
   - 2×2 stride 2(겹치지 않는 조각): ConvNeXt 의 내려받기 층과 같은 꼴(Liu et al., "A ConvNet for the 2020s", arXiv:2201.03545 — 단계 사이 2×2 s2 합성곱).
     처음엔 3×3 s2 pad 1 로 짰으나 im2col 이 입력을 9/4 배로 불려 메모리 대역이 병목이었다(장난감 환경 1024 개 반복 9.0 s → 2×2 계층 배치 5.3 s). 2×2 로 바꾸면 조각이 안 겹쳐
     아래 "계층 배치"로 복사 없이 GEMM 하나가 된다. 3 층 뒤 수용 영역은 8×8 칸(가까운 지도 0.8 m, 먼 지도 6.4 m); 그 위는 MLP 가 섞는다.

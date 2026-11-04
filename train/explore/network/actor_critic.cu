@@ -124,6 +124,33 @@ __global__ void k_norm_apply(const real* x, int n, int ldx, int D, const real* m
   int i = (int)(idx / D), j = (int)(idx % D);
   y[(long)i * ldy + j] = (x[(long)i * ldx + j] - mean[j]) / (sqrt(var[j]) + eps);
 }
+// 넷째 층(꼬리) im2col: F3 [n][h·w][C] (래스터) → Tc [n·oh·ow][자식 2×2][C], 격자 밖(덧댐)은 0
+__global__ void k_im2col_pad(const real* F3, int n, int h, int w, int C, int oh, int ow, real* Tc) {
+  long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  const long P4 = (long)oh * ow;
+  if (k >= (long)n * P4 * 4 * C) return;
+  int c = (int)(k % C);
+  long r = k / C;
+  int child = (int)(r % 4);
+  r /= 4;
+  int p = (int)(r % P4);
+  long i = r / P4;
+  int y = 2 * (p / ow) + (child >> 1), x = 2 * (p % ow) + (child & 1);
+  Tc[k] = (y < h && x < w) ? F3[i * ((long)h * w * C) + ((long)y * w + x) * C + c] : (real)0;
+}
+// 그 역: dF3 [n][h·w][C] = dTc 의 해당 칸 (칸마다 하나 — 2×2 s2 는 안 겹침)
+__global__ void k_col2im(const real* dTc, int n, int h, int w, int C, int oh, int ow, real* dF3) {
+  long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (k >= (long)n * h * w * C) return;
+  int c = (int)(k % C);
+  long r = k / C;
+  int x = (int)(r % w);
+  r /= w;
+  int y = (int)(r % h);
+  long i = r / h;
+  long row = i * ((long)oh * ow) + (long)(y / 2) * ow + (x / 2);
+  dF3[k] = dTc[(row * 4 + (y & 1) * 2 + (x & 1)) * C + c];
+}
 }  // namespace
 
 // ---------------- Net ----------------
@@ -132,14 +159,16 @@ void Net::build(const NetSpec& s, std::vector<ParamBlock>& reg, long& cur, const
   br_.clear();
   lin_.clear();
   feat_img_ = 0;
-  int L = (int)s.conv_ch.size();
+  const int L = (int)s.conv_ch.size();
+  if (!s.imgs.empty() && (L < 1 || L > 4)) throw std::runtime_error("합성곱 층 수는 1~4");
+  const int L3 = std::min(L, 3);  // 앞 세 층 = 계층 배치(융합 커널), 넷째 층 = 덧댄 꼬리
   for (size_t b = 0; b < s.imgs.size(); ++b) {
     Branch B;
     B.in = s.imgs[b];
     int c = B.in.c, h = B.in.h, w = B.in.w;
-    if (h % (1 << L) || w % (1 << L))
+    if (h % (1 << L3) || w % (1 << L3))
       throw std::runtime_error("CNN 입력 " + std::to_string(h) + "×" + std::to_string(w) + " 이 2^층수 의 배수가 아님");
-    for (int l = 0; l < L; ++l) {
+    for (int l = 0; l < L3; ++l) {
       ConvL C{c, h, w, s.conv_ch[l], h / 2, w / 2, 0, 0};
       std::string nm = pfx + ".cnn" + std::to_string(b) + ".conv" + std::to_string(l);
       C.w_off = cur;  // W [cout][자식 4][cin]
@@ -151,14 +180,28 @@ void Net::build(const NetSpec& s, std::vector<ParamBlock>& reg, long& cur, const
       B.L.push_back(C);
       c = C.cout, h = C.oh, w = C.ow;
     }
+    if (L == 4) {
+      ConvL C{c, h, w, s.conv_ch[3], (h + 1) / 2, (w + 1) / 2, 0, 0};
+      std::string nm = pfx + ".cnn" + std::to_string(b) + ".conv3";
+      C.w_off = cur;
+      reg.push_back({cur, (long)C.cout * C.cin * KK, PKind::ConvW, nm + ".w"});
+      cur += (long)C.cout * C.cin * KK;
+      C.b_off = cur;
+      reg.push_back({cur, C.cout, PKind::ConvB, nm + ".b"});
+      cur += C.cout;
+      B.tail = true;
+      B.T = C;
+      c = C.cout, h = C.oh, w = C.ow;
+    }
     B.flat_off = feat_img_;
     feat_img_ += (long)c * h * w;
     br_.push_back(B);
   }
   feat_ = feat_img_ + s.in1d;
+  grad_cols_ = s.grad_cols < 0 ? (int)feat_img_ : s.grad_cols;
   int in = (int)feat_;
   std::vector<int> dims = s.hidden;
-  dims.push_back(s.out);
+  if (s.out > 0) dims.push_back(s.out);  // 출력 0 = MLP 없음 (공유 인코더: 특징 X0 가 곧 출력)
   for (size_t l = 0; l < dims.size(); ++l) {
     LinL Lw{in, dims[l], 0, 0};
     std::string nm = pfx + ".mlp" + std::to_string(l);
@@ -174,8 +217,11 @@ void Net::build(const NetSpec& s, std::vector<ParamBlock>& reg, long& cur, const
 }
 
 CnnBranch Net::desc(const Branch& B) const {
+  // 꼬리가 있으면 앞 세 층 출력은 가지 버퍼 F3 [n][h3·w3·c] 로
+  const auto& C3 = B.L.back();
+  const long f3 = (long)C3.oh * C3.ow * C3.cout;
   return CnnBranch{B.in.c, B.in.h, B.in.w, B.L[0].cout, B.L.size() > 1 ? B.L[1].cout : 0,
-                   B.L.size() > 2 ? B.L[2].cout : 0, B.in.off, s_.img_stride, feat_, B.flat_off};
+                   B.L.size() > 2 ? B.L[2].cout : 0, B.in.off, s_.img_stride, B.tail ? f3 : feat_, B.tail ? 0 : B.flat_off};
 }
 
 void Net::bind(real* params, real* grads, int max_n) {
@@ -200,12 +246,23 @@ void Net::bind(real* params, real* grads, int max_n) {
   if (part) part_ = mk(part);
 #endif
   for (auto& B : br_) {
-    if (B.fused) continue;  // 중간 활성값을 전역에 두지 않음
-    B.X = mk((long)max_n * B.in.c * B.in.h * B.in.w);
-    for (auto& C : B.L) {
-      long a = (long)max_n * C.oh * C.ow * C.cout;
-      B.A.push_back(mk(a));
-      B.dA.push_back(mk(a));
+    if (!B.fused) {  // 융합 가지는 중간 활성값을 전역에 두지 않음
+      B.X = mk((long)max_n * B.in.c * B.in.h * B.in.w);
+      for (auto& C : B.L) {
+        long a = (long)max_n * C.oh * C.ow * C.cout;
+        B.A.push_back(mk(a));
+        B.dA.push_back(mk(a));
+      }
+    }
+    if (B.tail) {
+      const auto& C3 = B.L.back();
+      const long f3 = (long)max_n * C3.oh * C3.ow * C3.cout, p4 = (long)max_n * B.T.oh * B.T.ow;
+      B.F3 = B.fused ? mk(f3) : B.A.back();  // 기준 경로는 셋째 층 출력(맨 위 단계 = 래스터)이 곧 F3
+      B.dF3 = B.fused ? mk(f3) : B.dA.back();
+      B.Tc = mk(p4 * KK * B.T.cin);
+      B.dTc = mk(p4 * KK * B.T.cin);
+      B.Ty = mk(p4 * B.T.cout);
+      B.dTy = mk(p4 * B.T.cout);
     }
   }
   X0_ = mk(feat_ * max_n);
@@ -218,6 +275,14 @@ void Net::bind(real* params, real* grads, int max_n) {
 
 void Net::free_ws() {
   for (auto& B : br_) {
+    if (B.tail) {
+      if (B.fused) {
+        cudaFree(B.F3);
+        cudaFree(B.dF3);
+      }
+      for (real* p : {B.Tc, B.dTc, B.Ty, B.dTy}) cudaFree(p);
+      B.F3 = B.dF3 = B.Tc = B.dTc = B.Ty = B.dTy = nullptr;
+    }
     cudaFree(B.X);
     B.X = nullptr;
     for (auto p : B.A) cudaFree(p);
@@ -240,12 +305,15 @@ void Net::init(std::mt19937_64& rng, std::vector<real>& host) const {
     std::uniform_real_distribution<float> U(-bound, bound);
     for (long i = 0; i < n; ++i) host[off + i] = U(rng);
   };
-  for (auto& B : br_)
-    for (auto& C : B.L) {
+  for (auto& B : br_) {
+    std::vector<ConvL> Ls = B.L;
+    if (B.tail) Ls.push_back(B.T);
+    for (auto& C : Ls) {
       float bd = 1.f / std::sqrt((float)C.cin * KK);
       uni(C.w_off, (long)C.cout * C.cin * KK, bd);
       uni(C.b_off, C.cout, bd);
     }
+  }
   for (auto& Lw : lin_) {
     float bd = 1.f / std::sqrt((float)Lw.in);
     uni(Lw.w_off, (long)Lw.out * Lw.in, bd);
@@ -263,16 +331,16 @@ void Net::forward(cublasHandle_t h, cudaStream_t st, int n, const uint8_t* img, 
                   real* out, const int* img_idx) {
   if (img_idx && !cnn_reads_index()) throw std::runtime_error("Net::forward: 이 구조는 img_idx 를 못 읽음 (cnn_reads_index)");
   if (n > max_n_) throw std::runtime_error("Net::forward: n > max_n");
-  int NL = (int)s_.conv_ch.size();
   for (auto& B : br_) {
 #ifndef XNET_FP64
     if (B.fused) {
-      cnn_fused_forward(desc(B), P_ + B.L[0].w_off, img, img_idx, n, X0_, st, cnn_bf16);
+      cnn_fused_forward(desc(B), P_ + B.L[0].w_off, img, img_idx, n, B.tail ? B.F3 : X0_, st, cnn_bf16);
+      if (B.tail) tail_forward(h, st, n, B);
       continue;
     }
 #endif
     long tot = (long)n * B.in.c * B.in.h * B.in.w;
-    k_reorder_u8<<<nblk(tot), 256, 0, st>>>(img + B.in.off, s_.img_stride, B.in.c, B.in.h, B.in.w, NL, n, B.X);
+    k_reorder_u8<<<nblk(tot), 256, 0, st>>>(img + B.in.off, s_.img_stride, B.in.c, B.in.h, B.in.w, (int)B.L.size(), n, B.X);
     for (size_t l = 0; l < B.L.size(); ++l) {
       auto& C = B.L[l];
       long rows = (long)n * C.oh * C.ow;
@@ -281,11 +349,15 @@ void Net::forward(cublasHandle_t h, cudaStream_t st, int n, const uint8_t* img, 
       gemm(h, false, true, (int)rows, C.cout, K, 1.f, X, K, P_ + C.w_off, K, 0.f, B.A[l], C.cout);
       k_bias_act<<<nblk(rows * C.cout), 256, 0, st>>>(B.A[l], rows, C.cout, P_ + C.b_off, true);
     }
+    if (B.tail) {
+      tail_forward(h, st, n, B);
+      continue;
+    }
     auto& C = B.L.back();
     int d = C.oh * C.ow * C.cout;  // 샘플마다 연속 [픽셀][채널]
     k_copy_rows<<<nblk((long)n * d), 256, 0, st>>>(B.A.back(), d, n, d, X0_, feat_, B.flat_off);
   }
-  k_copy_rows<<<nblk((long)n * s_.in1d), 256, 0, st>>>(x1d, ld1d, n, s_.in1d, X0_, feat_, feat_img_);
+  if (s_.in1d > 0) k_copy_rows<<<nblk((long)n * s_.in1d), 256, 0, st>>>(x1d, ld1d, n, s_.in1d, X0_, feat_, feat_img_);
   const real* x = X0_;
 #ifndef XNET_FP64
   if (mlp_mode != 0) {  // 직접 짠 GEMM: 편향(+ELU)을 같은 커널에서
@@ -343,10 +415,10 @@ void Net::backward(cublasHandle_t h, cudaStream_t st, int n, const uint8_t* img,
         d.N = Lw.in, d.C = dH_[l - 1], d.ldc = Lw.in;
         d.epi = FEpi::EluBack, d.aux = H_[l - 1], d.ldaux = Lw.in, d.broken = g_break_elu_grad;
       } else {
-        d.N = (int)feat_img_, d.C = dX0_, d.ldc = (int)feat_;
+        d.N = grad_cols_, d.C = dX0_, d.ldc = (int)feat_;
         d.epi = FEpi::Store;
       }
-      fgemm(d, mlp_mode == 2, st);
+      if (d.N > 0) fgemm(d, mlp_mode == 2, st);
       dy = l > 0 ? dH_[l - 1] : nullptr;
     }
   } else
@@ -357,24 +429,27 @@ void Net::backward(cublasHandle_t h, cudaStream_t st, int n, const uint8_t* img,
     gemm(h, true, false, Lw.out, Lw.in, n, 1.f, dy, Lw.out, x, Lw.in, 1.f, G_ + Lw.w_off, Lw.in);  // dW += dYᵀ X
     col_sum(dy, n, Lw.out, Lw.out, G_ + Lw.b_off, true, st);
     real* dx = l == 0 ? dX0_ : dH_[l - 1];
-    int ncol = l == 0 ? (int)feat_img_ : Lw.in;  // 첫 층은 CNN 열만 (1D 입력 기울기는 안 씀)
+    int ncol = l == 0 ? grad_cols_ : Lw.in;  // 첫 층은 앞 grad_cols 열만 (합성곱·인코더 특징 — 1D 입력 기울기는 안 씀)
     if (ncol > 0)
       gemm(h, false, false, n, ncol, Lw.out, 1.f, dy, Lw.out, P_ + Lw.w_off, Lw.in, 0.f, dx, l == 0 ? (int)feat_ : Lw.in);  // dX = dY W
     if (l > 0) k_elu_back<<<nblk((long)n * Lw.in), 256, 0, st>>>(dx, H_[l - 1], (long)n * Lw.in, g_break_elu_grad);
     dy = dx;
   }
-  // CNN
+  // CNN — MLP 없는 망(공유 인코더)은 dout 이 곧 특징 기울기 [n][feat]
+  const real* dsrc = lin_.empty() ? dout : dX0_;
   for (auto& B : br_) {
+    if (B.tail) tail_backward(h, st, n, B, dsrc);  // → B.dF3 (기준 경로는 B.dA[2] 와 같은 버퍼)
 #ifndef XNET_FP64
     if (B.fused) {
-      cnn_fused_backward(desc(B), P_ + B.L[0].w_off, img, img_idx, n, X0_, dX0_, G_ + B.L[0].w_off, part_, st, g_break_elu_grad, cnn_bf16);
+      cnn_fused_backward(desc(B), P_ + B.L[0].w_off, img, img_idx, n, B.tail ? B.F3 : X0_, B.tail ? B.dF3 : dsrc,
+                         G_ + B.L[0].w_off, part_, st, g_break_elu_grad, cnn_bf16);
       continue;
     }
 #endif
-    {
+    if (!B.tail) {
       auto& C = B.L.back();
       int d = C.oh * C.ow * C.cout;
-      k_copy_rows<<<nblk((long)n * d), 256, 0, st>>>(dX0_ + B.flat_off, (int)feat_, n, d, B.dA.back(), d, 0);
+      k_copy_rows<<<nblk((long)n * d), 256, 0, st>>>(dsrc + B.flat_off, (int)feat_, n, d, B.dA.back(), d, 0);
     }
     for (int l = (int)B.L.size() - 1; l >= 0; --l) {
       auto& C = B.L[l];
@@ -393,6 +468,28 @@ void Net::backward(cublasHandle_t h, cudaStream_t st, int n, const uint8_t* img,
         gemm(h, false, false, (int)rows, K, C.cout, 1.f, B.dA[l], C.cout, P_ + C.w_off, K, 0.f, B.dA[l - 1], K);
     }
   }
+}
+
+// 넷째 층(꼬리): F3 → 덧댄 im2col → GEMM → 편향 + ELU → X0 의 가지 열
+void Net::tail_forward(cublasHandle_t h, cudaStream_t st, int n, Branch& B) {
+  const auto& T = B.T;
+  const long rows = (long)n * T.oh * T.ow;
+  const int K = T.cin * KK;
+  k_im2col_pad<<<nblk(rows * K), 256, 0, st>>>(B.F3, n, T.h, T.w, T.cin, T.oh, T.ow, B.Tc);
+  gemm(h, false, true, (int)rows, T.cout, K, 1.f, B.Tc, K, P_ + T.w_off, K, 0.f, B.Ty, T.cout);
+  k_bias_act<<<nblk(rows * T.cout), 256, 0, st>>>(B.Ty, rows, T.cout, P_ + T.b_off, true);
+  const int d = T.oh * T.ow * T.cout;
+  k_copy_rows<<<nblk((long)n * d), 256, 0, st>>>(B.Ty, d, n, d, X0_, feat_, B.flat_off);
+}
+void Net::tail_backward(cublasHandle_t h, cudaStream_t st, int n, Branch& B, const real* dsrc) {
+  const auto& T = B.T;
+  const long rows = (long)n * T.oh * T.ow;
+  const int K = T.cin * KK, d = T.oh * T.ow * T.cout;
+  k_copy_rows<<<nblk((long)n * d), 256, 0, st>>>(dsrc + B.flat_off, (int)feat_, n, d, B.dTy, d, 0);
+  col_sum(B.dTy, rows, T.cout, T.cout, G_ + T.b_off, true, st, B.Ty, g_break_elu_grad);  // ELU 미분 + 편향 기울기
+  gemm(h, true, false, T.cout, K, (int)rows, 1.f, B.dTy, T.cout, B.Tc, K, 1.f, G_ + T.w_off, K);  // dW += dZᵀ Tc
+  gemm(h, false, false, (int)rows, K, T.cout, 1.f, B.dTy, T.cout, P_ + T.w_off, K, 0.f, B.dTc, K);  // dTc = dZ W
+  k_col2im<<<nblk((long)n * T.h * T.w * T.cin), 256, 0, st>>>(B.dTc, n, T.h, T.w, T.cin, T.oh, T.ow, B.dF3);
 }
 
 // ---------------- Normalizer ----------------
@@ -424,12 +521,16 @@ void Normalizer::apply(const real* x, int n, int ldx, real* y, int ldy, cudaStre
 ACSpec explore_spec() {
   namespace o = mdp::obs;
   ACSpec s;
-  NetSpec a;
-  a.imgs = {{0, o::NEAR_C, o::NEAR_H, o::NEAR_W},
+  NetSpec e;
+  e.imgs = {{0, o::NEAR_C, o::NEAR_H, o::NEAR_W},
             {o::NEAR_SIZE, o::FAR_C, o::FAR_H, o::FAR_W},
             {o::NEAR_SIZE + o::FAR_SIZE, o::DEPTH_C, o::DEPTH_H, o::DEPTH_W}};
-  a.img_stride = o::IMG_SIZE;
-  a.conv_ch = {16, 32, 32};
+  e.img_stride = o::IMG_SIZE;
+  e.conv_ch = {16, 32, 32, 32};  // 4 층: 평탄화 near 4×4·far 2×2·depth 3×4 (5 행을 6 으로 덧댐) × 32 = 1024 (network/README)
+  e.in1d = 0;
+  e.out = 0;
+  s.enc = e;
+  NetSpec a;
   a.in1d = o::POLICY_1D;
   a.hidden = {512, 256, 128};
   a.out = mdp::act::DIM;
@@ -447,9 +548,17 @@ ACSpec explore_spec() {
 ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), max_chunk(mc) {
   if (sp.actor.out != sp.n_cont + 1 || sp.critic.out != 1) throw std::runtime_error("ACSpec 출력 크기");
   if (sp.actor.in1d > sp.norm_dim || sp.critic.in1d != sp.norm_dim) throw std::runtime_error("ACSpec 1D 크기");
+  if (!sp.actor.imgs.empty() || !sp.critic.imgs.empty() || sp.enc.in1d != 0 || sp.enc.out != 0 || !sp.enc.hidden.empty())
+    throw std::runtime_error("ACSpec: 합성곱은 enc 에만, actor·critic 은 MLP 만");
   long cur = 0;
-  actor.build(sp.actor, blocks, cur, "actor");
-  critic.build(sp.critic, blocks, cur, "critic");
+  enc.build(sp.enc, blocks, cur, "enc");
+  nf = (int)enc.feat_img();
+  NetSpec as = sp.actor, cs = sp.critic;  // 입력 = [F | 1D], 앞 nf 열 기울기를 인코더로
+  as.in1d += nf;
+  cs.in1d += nf;
+  as.grad_cols = cs.grad_cols = nf;
+  actor.build(as, blocks, cur, "actor");
+  critic.build(cs, blocks, cur, "critic");
   logstd_off = cur;
   blocks.push_back({cur, sp.n_cont, PKind::LogStd, "log_std"});
   cur += sp.n_cont;
@@ -466,10 +575,12 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   CK(cudaEventCreateWithFlags(&ev_fork_, cudaEventDisableTiming));
   CK(cudaEventCreateWithFlags(&ev_join_, cudaEventDisableTiming));
   CKB(cublasSetMathMode(cublas, CUBLAS_DEFAULT_MATH));  // fp32 그대로 (TF32 안 씀)
+  enc.bind(d_params, d_grads, mc);
   actor.bind(d_params, d_grads, mc);
   critic.bind(d_params, d_grads, mc);
   std::vector<real> host(n_params);
   std::mt19937_64 rng(seed);
+  enc.init(rng, host);
   actor.init(rng, host);
   critic.init(rng, host);
   for (int j = 0; j < sp.n_cont; ++j) host[logstd_off + j] = sp.init_log_std;
@@ -489,6 +600,7 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
 }
 
 ActorCritic::~ActorCritic() {
+  enc.free_ws();
   actor.free_ws();
   critic.free_ws();
   norm.release();

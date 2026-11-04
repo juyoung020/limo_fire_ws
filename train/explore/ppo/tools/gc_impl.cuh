@@ -19,10 +19,13 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   if (full) {
     spec = explore_spec();
   } else {
+    // 공유 인코더 4 층: 넷째 층 덧댐(셋째 층 격자 홀수 행)까지 들어가게 — 16×16 → 2×2 → 1×1, 8×16 → 1×2 → 1×1, 24×16 → 3×2 → 2×1
+    NetSpec e;
+    e.imgs = {{0, 2, 16, 16}, {512, 3, 8, 16}, {896, 1, 24, 16}};
+    e.img_stride = 1280;
+    e.conv_ch = {3, 4, 4, 4};
+    spec.enc = e;
     NetSpec a;
-    a.imgs = {{0, 2, 8, 8}, {128, 3, 8, 8}, {320, 1, 8, 16}};
-    a.img_stride = 448;
-    a.conv_ch = {3, 4, 4};
     a.in1d = 5;
     a.hidden = {6, 5};
     a.out = 4;
@@ -44,7 +47,7 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   cfg.mlp = mlp;
   PPO ppo(cfg, spec, 1234);
   auto& ac = ppo.ac();
-  int N = cfg.num_envs, IMG = spec.actor.img_stride, P1 = spec.actor.in1d, PR = spec.norm_dim - P1, A = spec.n_cont + 1;
+  int N = cfg.num_envs, IMG = spec.enc.img_stride, P1 = spec.actor.in1d, PR = spec.norm_dim - P1, A = spec.n_cont + 1;
 
   std::mt19937 rng(7);
   std::uniform_int_distribution<int> U8(0, 255);

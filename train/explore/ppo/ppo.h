@@ -85,12 +85,13 @@ class PPO {
 
  private:
   void concat_norm(const real* obs1d, const real* priv, int n, bool upd, real* out_norm);
+  void encode(int n, const uint8_t* img, const int* idx, const real* x1d);
   double minibatch(const int* d_idx, int n, int mb_size, bool backward, double stats[4]);
 
   PPOConfig cfg_;
   XNET_NS::ActorCritic* ac_;
   uint64_t seed_;
-  int N_, T_, S_, D_, IMG_, A_, NC_;
+  int N_, T_, S_, D_, IMG_, A_, NC_, NF_ = 0;
   int step_ = 0, iter_ = 0;
   uint64_t act_calls_ = 0;
   float lr_;
@@ -103,6 +104,7 @@ class PPO {
   real *raw_, *last_obs_, *last_val_;
   uint8_t* c_img_;
   real *c_obs_, *c_aout_, *c_v_, *c_da_, *c_dv_, *c_dls_, *c_stat_, *c_red_, *c_gat_;
+  real *c_x_ = nullptr, *c_df_ = nullptr;  // MLP 입력 [F | 1D], 인코더 특징 기울기
   int* d_perm_;
   size_t storage_bytes_ = 0;
 };
