@@ -100,6 +100,7 @@ const char* outcome_of(int32_t d) {
     case mdp::cur::kDeclareShort: return rf::outcome::DECLARED_SHORT;
     case mdp::cur::kCollision:
     case mdp::cur::kCollisionPerson: return rf::outcome::COLLISION;
+    case mdp::cur::kNoProgress: return rf::outcome::NO_PROGRESS;
     default: return rf::outcome::TRUNCATED;
   }
 }
@@ -528,7 +529,7 @@ int main(int argc, char** argv) {
       const bool need_state = rec_want > 0 || !rec.empty();
       double t_act = 0, t_sim = 0, t_host = 0;
       // 반복 통계
-      double n_ep = 0, n_succ = 0, n_coll = 0, n_pcoll = 0, n_trunc = 0, n_short = 0, cov = 0, cad = 0, n_decl = 0, t95 = 0, t95n = 0, stage = 0,
+      double n_ep = 0, n_succ = 0, n_coll = 0, n_pcoll = 0, n_trunc = 0, n_short = 0, n_idle = 0, cov = 0, cad = 0, n_decl = 0, t95 = 0, t95n = 0, stage = 0,
              len = 0, rew_ep = 0, step_rew = 0;
       std::vector<double> term_sum(mdp::rew::kTerms, 0.0);
       for (int t = 0; t < pc.steps_per_env; ++t) {
@@ -580,6 +581,7 @@ int main(int argc, char** argv) {
           n_pcoll += d == mdp::cur::kCollisionPerson;
           n_trunc += d == mdp::cur::kTruncated;
           n_short += d == mdp::cur::kDeclareShort;
+          n_idle += d == mdp::cur::kNoProgress;
           cov += f.coverage;
           if (d == mdp::cur::kDeclareOk || d == mdp::cur::kDeclareShort) { cad += f.coverage; n_decl += 1; }
           if (f.t95 >= 0) { t95 += f.t95; t95n += 1; }
@@ -666,6 +668,7 @@ int main(int argc, char** argv) {
         r.mean_w(rf::key::TRUNCATION_RATE, n_trunc / n_ep, n_ep);
         r.mean_w(rf::key::DECLARE_RATE, n_decl / n_ep, n_ep);
         r.mean_w(rf::key::DECLARE_SHORT_RATE, n_short / n_ep, n_ep);
+        r.mean_w(rf::key::NO_PROGRESS_RATE, n_idle / n_ep, n_ep);
         r.mean_w(rf::key::COVERAGE_MEAN, cov / n_ep, n_ep);
         r.mean_w(rf::key::T95_REACHED_RATE, t95n / n_ep, n_ep);
         r.mean_w(rf::key::CURRICULUM_STAGE, stage / n_ep, n_ep);

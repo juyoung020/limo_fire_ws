@@ -137,8 +137,8 @@ int main(int argc, char** argv) {
       for (int i = 0; i < n_env; ++i) { codes[R.done[i]]++; cv += R.cov[i]; len += R.steps[i]; }
       double mn = 1e9, mx = -1e9;
       for (double r : R.ret) { mn = std::min(mn, r); mx = std::max(mx, r); }
-      std::printf("  %-10s 판 합 평균 %+8.3f (최소 %+.3f, 최대 %+.3f) · 끝 [진행 %d, 성공 %d, 충돌 %d, 끊김 %d, 선언 실패 %d, 사람 충돌 %d] · 길이 %.1f s · 끝 덮음 %.3f\n",
-                  nm.c_str(), mean(R.ret), mn, mx, codes[0], codes[1], codes[2], codes[3], codes[4], codes[5], len / n_env * hc.cfg.substeps * hc.cfg.dt,
+      std::printf("  %-10s 판 합 평균 %+8.3f (최소 %+.3f, 최대 %+.3f) · 끝 [진행 %d, 성공 %d, 충돌 %d, 끊김 %d, 선언 실패 %d, 사람 충돌 %d, 진행 없음 %d] · 길이 %.1f s · 끝 덮음 %.3f\n",
+                  nm.c_str(), mean(R.ret), mn, mx, codes[0], codes[1], codes[2], codes[3], codes[4], codes[5], codes[6], len / n_env * hc.cfg.substeps * hc.cfg.dt,
                   cv / n_env);
       std::printf("             항 평균:");
       for (int k = 0; k < K; ++k) std::printf(" %s %+.3f", mdp::rew::term_name(k), R.terms[k] / n_env);
@@ -158,6 +158,14 @@ int main(int argc, char** argv) {
       bool ok = true;
       for (int i = 0; i < n_env; ++i) ok = ok && res["declare0"].done[i] == mdp::cur::kDeclareShort && res["declare0"].ret[i] < 0;
       check(ok, "0 걸음 선언 → 모든 판 done 4·판 합 < 0");
+    }
+    if (has("still") && has("crash") && has("frontier")) {
+      // 진행 없음 끝 (D1): 버티다 끝나는 판이 박기보다 덜 나쁘고(박기로 도망 안 감), 기준선 따라 선언보다 나빠야 함
+      bool all6 = true;
+      for (int d : res["still"].done) all6 = all6 && d == mdp::cur::kNoProgress;
+      check(all6, "제자리 → 모든 판 done 6(진행 없음)");
+      check(mean(res["still"].ret) > mean(res["crash"].ret), "제자리(진행 없음 끝) 판 합 평균 > 일부러 박기 판 합 평균");
+      check(mean(res["still"].ret) < mean(res["frontier"].ret), "제자리(진행 없음 끝) 판 합 평균 < 기준선 따라 선언 판 합 평균");
     }
     if (has("crash") && has("frontier")) check(mean(res["crash"].ret) < mean(res["frontier"].ret), "일부러 박기 판 합 평균 < 기준선 따라 선언 판 합 평균");
     if (has("frontier")) check(mean(res["frontier"].ret) > 0, "기준선 따라가기 → 판 합 평균 > 0");

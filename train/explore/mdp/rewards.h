@@ -27,9 +27,9 @@
 namespace mdp::rew {
 
 // ---- 항 번호 (reward_terms [N][kTerms]) ----
-enum Term : int { kTermCov = 0, kTermTime, kTermCollWall, kTermCollPerson, kTermPersonNear, kTermDeclare, kTermSlip, kTerms };
+enum Term : int { kTermCov = 0, kTermTime, kTermCollWall, kTermCollPerson, kTermPersonNear, kTermDeclare, kTermSlip, kTermIdle, kTerms };
 inline const char* term_name(int k) {
-  static const char* n[kTerms] = {"coverage", "time", "collision_wall", "collision_person", "person_near", "declare", "slip"};
+  static const char* n[kTerms] = {"coverage", "time", "collision_wall", "collision_person", "person_near", "declare", "slip", "no_progress"};
   return n[k];
 }
 
@@ -49,6 +49,16 @@ constexpr float kDeclareFail = -3.f;
 constexpr float kDeclareNear = 0.f;
 constexpr float kDeclareWidth = 0.02f;
 constexpr float kSlip = -0.05f;           // 헛돈 각도 rad 당
+// 진행 없음 끝: 새 벽 면 칸(덮음 증가)을 kIdleTime 동안 못 보면 판 종료(뒤 가치 0, 끊김과 달리 bootstrap 안 함) + kIdlePenalty.
+//   까닭: 끊김(안전 시간)은 time-out 이라 V 로 메워, 버티는 판의 값은 걸음당 시간 감점 할인 합(작은 맵 ≈ 0.0004/(1−γ) ≈ 0.14)뿐 —
+//   충돌(−10)·미달 선언(−3)보다 훨씬 싸서 '판을 안 끝내는' 붕괴가 남(cur-fix (ii) 씨앗 2, B·C 실험 씨앗 1 모두).
+//   출처: Go-Explore (Ecoffet et al., Nature 2021, arXiv 2004.12919 Methods) "we terminate the episode early … if no new cells are
+//   discovered for 1,000 steps (while exploring)" — 진행 없는 걸음을 아끼려 판을 끝냄.
+//   kIdleTime 근거: (ii-a) 씨앗 3 반복 300 체크포인트, 학습 맵 15,318 판(학습식 표집)에서 판 최대 '새 벽 없는 간격' ≥ 60 s 는
+//   성공 0.4 %·미달 선언 0.5 %·충돌 0.3 %, 시험 맵에서 1,200 s 끊긴 판은 28/28 이 걸림 (diag 측정).
+//   kIdlePenalty: 버티다 끝 > 박기(−10), 버티다 끝 < 기준선 따라 선언 — reward_probe 가 검사.
+constexpr float kIdleTime = 60.f;         // s
+constexpr float kIdlePenalty = -3.f;
 
 // 맵 하나의 T_ref (호스트, 맵 만들 때 한 번)
 inline float t_ref(int n_wall) {
@@ -83,6 +93,7 @@ struct StepIn {
   int declared;         // 이번 걸음 선언 (충돌이면 선언 안 셈)
   float cov;            // 선언 때 덮음
   float slip;           // 헛돈 각도 합 (rad)
+  int idle;             // 이번 걸음 진행 없음으로 끝 (충돌·선언이 아닐 때만)
 };
 
 // 항마다 값 → out[kTerms], 합을 돌려줌 (더하는 순서 고정 — 결정적)
@@ -94,6 +105,7 @@ DEV float terms(const StepIn& in, float* out) {
   out[kTermPersonNear] = kPersonNear * in.near_person;
   out[kTermDeclare] = in.declared ? declare_reward(in.cov) : 0.f;
   out[kTermSlip] = kSlip * in.slip;
+  out[kTermIdle] = in.idle ? kIdlePenalty : 0.f;
   float r = 0.f;
   for (int k = 0; k < kTerms; ++k) r += out[k];
   return r;

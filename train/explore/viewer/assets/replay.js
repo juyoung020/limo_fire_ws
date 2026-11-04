@@ -4,8 +4,8 @@
 import { fmt, esc, color, cssv } from "./charts.js";
 
 const $ = id => document.getElementById(id);
-const OUT_COLOR = { success: "--good", declared_short: "--warning", collision: "--critical", truncated: "--muted" };
-const OUT_WORD = { success: "success (declared ≥ threshold)", declared_short: "declared short", collision: "collision", truncated: "truncated (safety time)" };
+const OUT_COLOR = { success: "--good", declared_short: "--warning", collision: "--critical", truncated: "--muted", no_progress: "--warning" };
+const OUT_WORD = { success: "success (declared ≥ threshold)", declared_short: "declared short", collision: "collision", truncated: "truncated (safety time)", no_progress: "no progress (ended)" };
 const EV = { COLLISION: 1, DECLARE: 2, TRUNCATED: 4, REACHED95: 8 };
 const SNAP = 50;   // 관측 지도 사본 간격(프레임)
 

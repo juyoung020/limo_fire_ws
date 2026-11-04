@@ -2,7 +2,8 @@
 //
 // 판 끝 (done 코드, 러너는 terminal() 로 "종료(뒤 가치 0)" 와 "끊김(가치로 메움)" 을 가른다)
 //   0 진행 · 1 선언 성공(선언 때 벽 덮음 ≥ 95 %) · 2 벽 충돌 · 3 끊김(안전 시간) · 4 선언 실패(기준 미달) · 5 사람 충돌
-//   1·2·4·5 = 종료, 3 = 끊김 (rsl_rl time_outs, IsaacLab is_finite_horizon=False 와 같은 쓰임).
+//   · 6 진행 없음(지도에서 새 칸을 mdp::rew::kIdleTime 동안 못 봄 — 종료, rewards.h '진행 없음')
+//   1·2·4·5·6 = 종료, 3 = 끊김 (rsl_rl time_outs, IsaacLab is_finite_horizon=False 와 같은 쓰임).
 //   한 걸음에 충돌과 선언이 같이 오면 충돌.
 //
 // 단계 (환경마다 하나, legged_gym terrain curriculum 꼴: legged_gym/envs/base/legged_robot.py _update_terrain_curriculum —
@@ -24,7 +25,8 @@
 
 namespace mdp::cur {
 
-enum Done : int32_t { kRunning = 0, kDeclareOk = 1, kCollision = 2, kTruncated = 3, kDeclareShort = 4, kCollisionPerson = 5, kNumDone = 6 };
+enum Done : int32_t { kRunning = 0, kDeclareOk = 1, kCollision = 2, kTruncated = 3, kDeclareShort = 4, kCollisionPerson = 5, kNoProgress = 6,
+                      kNumDone = 7 };
 DEV bool terminal(int32_t d) { return d != kRunning && d != kTruncated; }   // 종료 (뒤 가치 0)
 
 struct Stage {

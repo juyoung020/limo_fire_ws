@@ -42,6 +42,7 @@ pub const OUTCOMES: &[(&str, &str)] = &[
     ("declared_short", "선언 — 기준 미달"),
     ("collision", "충돌(종료)"),
     ("truncated", "안전 시간(끊김, truncation)"),
+    ("no_progress", "진행 없음(새 칸을 오래 못 봄, 종료)"),
 ];
 
 /// `/proc/<pid>/stat` 의 22 번째 칸(부팅 뒤 시작 시각, 클럭 틱). pid 재사용을 거르는 데 쓴다.

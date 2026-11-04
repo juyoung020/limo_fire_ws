@@ -204,8 +204,8 @@ int main(int argc, char** argv) {
   cudaGetDeviceProperties(&prop, 0);
   std::printf("GPU %s (sm_%d%d), 환경 %d × 행동 %d, 선언 확률 %.3f%s\n", prop.name, prop.major, prop.minor, n_env, n_steps, p_declare,
               negative ? " (일부러 어긋나게)" : "");
-  std::printf("판 끝: 선언 성공 %d · 벽 충돌 %d · 끊김 %d · 선언 실패 %d · 사람 충돌 %d, 행동당 평균 보상 %.4f, 안전층이 앞 명령을 막은 걸음 %zu, 지도에서 아는 칸 %zu, 지금 판들이 본 벽 면 칸 %zu\n",
-              ends[1], ends[2], ends[3], ends[4], ends[5], reward_sum / (n_env * n_steps), safety_zero, known, seen_wall);
+  std::printf("판 끝: 선언 성공 %d · 벽 충돌 %d · 끊김 %d · 선언 실패 %d · 사람 충돌 %d · 진행 없음 %d, 행동당 평균 보상 %.4f, 안전층이 앞 명령을 막은 걸음 %zu, 지도에서 아는 칸 %zu, 지금 판들이 본 벽 면 칸 %zu\n",
+              ends[1], ends[2], ends[3], ends[4], ends[5], ends[6], reward_sum / (n_env * n_steps), safety_zero, known, seen_wall);
   std::printf("보상 항 합(전체):");
   for (int k = 0; k < K; ++k) std::printf(" %s %.3f", mdp::rew::term_name(k), term_sum[k]);
   std::printf("\n관측 0 아닌 칸 — 가까운 지도:");

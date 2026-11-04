@@ -304,6 +304,7 @@ inline constexpr const char* PERSON_COLLISION_RATE = "rollout/person_collision_r
 inline constexpr const char* TRUNCATION_RATE = "rollout/truncation_rate";
 inline constexpr const char* DECLARE_RATE = "rollout/declare_rate";
 inline constexpr const char* DECLARE_SHORT_RATE = "rollout/declare_short_rate";
+inline constexpr const char* NO_PROGRESS_RATE = "rollout/no_progress_rate";   // 진행 없음으로 끝난 비율
 inline constexpr const char* COVERAGE_MEAN = "rollout/coverage_mean";
 inline constexpr const char* COVERAGE_AT_DECLARE = "rollout/coverage_at_declare_mean";  // 가중치 = 선언한 판 수
 inline constexpr const char* T95_MEAN = "rollout/t95_mean";                 // 가중치 = 95 % 도달 판 수
@@ -358,6 +359,7 @@ inline constexpr const char* SUCCESS = "success";                // 선언, 기�
 inline constexpr const char* DECLARED_SHORT = "declared_short";  // 선언, 기준 미달
 inline constexpr const char* COLLISION = "collision";            // 충돌(종료)
 inline constexpr const char* TRUNCATED = "truncated";            // 안전 시간(끊김)
+inline constexpr const char* NO_PROGRESS = "no_progress";        // 새 칸을 오래 못 봄(종료)
 }  // namespace outcome
 
 // =============================================================================================

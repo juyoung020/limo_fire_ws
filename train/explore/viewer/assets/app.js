@@ -224,7 +224,7 @@ function chartsSpec() {
     { g: "Episode outcome (all episodes)", ko: "판 끝 사유 — 학습 판 전체(모집단)", c: [
       { t: "Success rate (declared ≥ threshold)", ko: "선언 + 기준 덮음 이상", k: ["rollout/success_rate"], pct: 1, refs: () => ref("rollout/success_rate", "target") },
       { t: "Eval success rate", ko: "평가 판 성공률", k: ["eval/success_rate"], pct: 1 },
-      { t: "Collision · declared short · truncated", ko: "충돌(종료) · 기준 미달 선언 · 안전 시간 끊김", k: ["rollout/collision_rate", "rollout/declare_short_rate", "rollout/truncation_rate"], pct: 1 },
+      { t: "Collision · declared short · truncated · no progress", ko: "충돌(종료) · 기준 미달 선언 · 안전 시간 끊김 · 진행 없음(종료)", k: ["rollout/collision_rate", "rollout/declare_short_rate", "rollout/truncation_rate", "rollout/no_progress_rate"], pct: 1 },
       { t: "Person collision rate", ko: "사람과 부딪혀 끝난 판 비율(충돌의 일부)", k: ["rollout/person_collision_rate"], pct: 1 },
       { t: "Declare rate", ko: "끝 선언으로 끝난 판 비율(성공 + 미달)", k: ["rollout/declare_rate"], pct: 1 },
       { t: "Episodes per row", ko: "줄마다 끝난 판 수", k: ["rollout/n_episodes"] },
@@ -370,7 +370,7 @@ function renderCards() {
     big("Success", pc0(es ?? sr), es != null ? `eval · training rollouts ${pc0(sr)}` : "training rollouts (declared, coverage ≥ threshold)", "선언했고 덮음이 기준 이상인 판 비율", es != null ? "eval/success_rate" : "rollout/success_rate"),
     big("Coverage", pc0(cov), `at episode end · when declaring ${pc0(g("rollout/coverage_at_declare_mean"))}`, "판 끝 덮은 비율(정답 맵 기준) · 선언 때 덮음", "rollout/coverage_mean"),
     big("Time to 95 %", t95 != null ? fmt(t95) + " s" : "—", `reached in ${pc0(g("rollout/t95_reached_rate"))} of episodes${fr != null ? ` · frontier ${fmt(fr)} s` : ""}`, "95 % 덮음 도달 시간(도달한 판만). 프론티어 기준선보다 빨라야 한다", "rollout/t95_mean", t95 != null && fr != null && t95 > fr),
-    big("Collisions", pc0(coll), `declared short ${pc0(g("rollout/declare_short_rate"))} · truncated ${pc0(g("rollout/truncation_rate"))}`, "충돌로 끝난 판 · 기준 미달 선언 · 안전 시간 끊김", "rollout/collision_rate"),
+    big("Collisions", pc0(coll), `declared short ${pc0(g("rollout/declare_short_rate"))} · truncated ${pc0(g("rollout/truncation_rate"))} · no progress ${pc0(g("rollout/no_progress_rate"))}`, "충돌로 끝난 판 · 기준 미달 선언 · 안전 시간 끊김 · 진행 없음", "rollout/collision_rate"),
   ].join(""));
   const out = [];
   out.push(card("Iterations · timesteps", fmt(g("time/iterations")), `time/total_timesteps ${fmt(g("time/total_timesteps"))}`, false, "업데이트 수 · 누적 환경 걸음"));

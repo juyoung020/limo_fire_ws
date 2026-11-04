@@ -27,6 +27,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("rollout/truncation_rate", "안전 시간으로 끊긴 비율"),
     ("rollout/declare_rate", "끝 선언으로 끝난 비율(성공 + 미달)"),
     ("rollout/declare_short_rate", "기준 미달 선언 비율"),
+    ("rollout/no_progress_rate", "진행 없음으로 끝난 비율"),
     ("rollout/coverage_mean", "판 끝 덮은 비율(정답 맵 기준) 평균"),
     ("rollout/coverage_at_declare_mean", "선언한 판의 선언 때 덮은 비율 평균"),
     ("rollout/t95_mean", "95 % 덮음 도달 시간(s) 평균 — 도달한 판만"),

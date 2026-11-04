@@ -130,6 +130,7 @@ struct EnvState {
   float last_act[mdp::act::DIM * 4];   // 직전 행동 4 걸음 (정규 단위로 자른 값, 최근 것 먼저)
   float ekf_v, ekf_w;          // EKF 속도 자리: 바퀴 v·자이로 ω 의 1 차 필터 (잠정 — 실물 robot_localization 은 📏)
   int32_t known_free, prog[kProgRing], prog_sum, since_new;   // 지도에서 갈 수 있음 칸 수, 걸음마다 새로 안 칸 수 링·합, 마지막 새 칸 뒤 걸음
+  int32_t since_wall;   // 마지막 새 벽 면 칸(덮음 증가) 뒤 걸음 — 진행 없음 끝 (rewards.h kIdleTime)
   int32_t kb_x0, kb_y0, kb_x1, kb_y1;   // 지도에서 건드린 칸 범위 (프론티어 요약을 이 안에서만)
   int32_t lid_head, delay;     // 라이다 링 최신 칸, 이 판 관측 지연 (걸음)
   int32_t stage, cur_n;        // 커리큘럼 단계, 최근 판 기록 수
@@ -316,6 +317,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   for (int i = 0; i < kProgRing; ++i) e.prog[i] = 0;
   e.prog_sum = 0;
   e.since_new = 0;
+  e.since_wall = 0;
   e.kb_x0 = e.kb_y0 = 1 << 30;
   e.kb_x1 = e.kb_y1 = -1;
   e.lid_head = 0;
@@ -765,6 +767,10 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   in.declared = e.declared && !e.collided;
   in.cov = cov;
   in.slip = e.slip_acc;
+  // 진행 없음 (rewards.h kIdleTime): 새 벽 면 칸 없는 걸음 수 — 충돌·선언이 먼저.
+  // 지도 새 칸(since_new)이 아니라 벽 덮음으로 셈: 제자리에서도 지도 새 칸은 가끔 생겨(reward_probe still 8 판 중 1~3 판이 1,200 s 까지 감) 버티기를 못 막음
+  e.since_wall = new_wall > 0 ? 0 : e.since_wall + 1;
+  in.idle = !e.collided && !in.declared && (float)e.since_wall * dt_act >= mdp::rew::kIdleTime;
   float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
   e.reward = mdp::rew::terms(in, T);
   e.slip_acc = 0.f;
@@ -792,9 +798,10 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
         if (dx * dx + dy * dy <= 5 && u >= 0 && v >= 0 && u < m.gw && v < m.gh) mark(M, c.size, u, v, 32u);
       }
   }
-  // 판 끝: 충돌 > 선언 > 끊김
+  // 판 끝: 충돌 > 선언 > 진행 없음 > 끊김
   if (e.collided) e.done = e.people.hit_person ? mdp::cur::kCollisionPerson : mdp::cur::kCollision;
   else if (in.declared) e.done = cov >= mdp::rew::kSuccessCov ? mdp::cur::kDeclareOk : mdp::cur::kDeclareShort;
+  else if (in.idle) e.done = mdp::cur::kNoProgress;
   else if (e.step >= c.max_steps) e.done = mdp::cur::kTruncated;
   if (e.done) {
     EpInfo& I = b.ep[env];
