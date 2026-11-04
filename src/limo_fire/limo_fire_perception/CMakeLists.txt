@@ -6,7 +6,8 @@ endif()
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 87)  # Jetson Orin
 endif()
-project(limo_fire_perception LANGUAGES CXX CUDA)
+project(limo_fire_perception LANGUAGES CXX)
+option(BUILD_YOLO "Build CUDA/TensorRT detector (OFF for CPU mapper and simulation fixtures)" ON)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -15,6 +16,7 @@ add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall> $<$<COMPILE_LANGUAGE:CXX>:-
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(limo_fire_msgs REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
@@ -27,6 +29,8 @@ find_package(std_srvs REQUIRED)
 find_package(rviz_2d_overlay_msgs REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc dnn)
+if(BUILD_YOLO)
+enable_language(CUDA)
 find_package(CUDAToolkit REQUIRED)
 
 # TensorRT (JetPack: /usr/include/aarch64-linux-gnu, /usr/lib/aarch64-linux-gnu)
@@ -49,11 +53,14 @@ target_link_libraries(yolo_detector_component trt_yolo)
 ament_target_dependencies(yolo_detector_component rclcpp rclcpp_components sensor_msgs vision_msgs)
 rclcpp_components_register_node(yolo_detector_component
   PLUGIN "limo_fire_perception::YoloDetectorNode" EXECUTABLE yolo_detector)
+install(TARGETS trt_yolo yolo_detector_component
+  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+endif()
 
 # 탐지 상자 + 깊이 → 지도 위 물체 위치 (TensorRT·OpenCV 안 씀)
 add_library(object_mapper_component SHARED src/object_mapper_node.cpp)
 ament_target_dependencies(object_mapper_component rclcpp rclcpp_components sensor_msgs vision_msgs
-  visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs)
+  visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs limo_fire_msgs)
 rclcpp_components_register_node(object_mapper_component
   PLUGIN "limo_fire_perception::ObjectMapperNode" EXECUTABLE object_mapper)
 
@@ -66,8 +73,19 @@ target_link_libraries(perception_benchmark_component yaml-cpp)
 rclcpp_components_register_node(perception_benchmark_component
   PLUGIN "limo_fire_perception::PerceptionBenchmarkNode" EXECUTABLE perception_benchmark)
 
-install(TARGETS trt_yolo yolo_detector_component object_mapper_component perception_benchmark_component
+install(TARGETS object_mapper_component perception_benchmark_component
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY launch config icons DESTINATION share/${PROJECT_NAME})
+
+
+if(BUILD_TESTING)
+  enable_testing()
+  add_executable(fire_observation_test test/fire_observation_test.cpp)
+  target_compile_options(fire_observation_test PRIVATE -UNDEBUG)
+  ament_target_dependencies(fire_observation_test rclcpp rclcpp_components sensor_msgs vision_msgs
+    visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs limo_fire_msgs)
+  add_test(NAME fire_observation_test COMMAND fire_observation_test)
+  set_tests_properties(fire_observation_test PROPERTIES TIMEOUT 10 RUN_SERIAL TRUE ENVIRONMENT "ROS_DOMAIN_ID=176")
+endif()
 
 ament_package()

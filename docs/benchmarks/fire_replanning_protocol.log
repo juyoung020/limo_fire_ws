@@ -1,0 +1,231 @@
+Starting >>> limo_fire_bt
+Starting >>> limo_fire_perception
+UpdateCTestConfiguration  from :/home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/CTestConfiguration.ini
+Parse Config file:/home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/CTestConfiguration.ini
+   Site: jun
+   Build name: (empty)
+ Add coverage exclude regular expressions.
+Create new tag: 20261104-0303 - Experimental
+UpdateCTestConfiguration  from :/home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/CTestConfiguration.ini
+Parse Config file:/home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/CTestConfiguration.ini
+Test project /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 1
+      Start  1: danger_layer_test
+
+1: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/danger_layer_test
+1: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+1: Environment variables:
+1:  ROS_DOMAIN_ID=175
+1: Test timeout computed to be: 10
+UpdateCTestConfiguration  from :/home/choejunhyeok/limo_fire_ws/build/limo_fire_perception/CTestConfiguration.ini
+Parse Config file:/home/choejunhyeok/limo_fire_ws/build/limo_fire_perception/CTestConfiguration.ini
+   Site: jun
+   Build name: (empty)
+ Add coverage exclude regular expressions.
+Create new tag: 20261104-0303 - Experimental
+UpdateCTestConfiguration  from :/home/choejunhyeok/limo_fire_ws/build/limo_fire_perception/CTestConfiguration.ini
+Parse Config file:/home/choejunhyeok/limo_fire_ws/build/limo_fire_perception/CTestConfiguration.ini
+Test project /home/choejunhyeok/limo_fire_ws/build/limo_fire_perception
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 1
+    Start 1: fire_observation_test
+
+1: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_perception/fire_observation_test
+1: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_perception
+1: Environment variables:
+1:  ROS_DOMAIN_ID=176
+1: Test timeout computed to be: 10
+1: [ERROR] [1793761408.002567001] [tf2_buffer]: Do not call canTransform or lookupTransform with a timeout unless you are using another thread for populating data. Without a dedicated thread it will always timeout.  If you have a separate thread servicing tf messages, call setUsingDedicatedThread(true) on your Buffer instance.
+1: [INFO] [1793761408.004635587] [object_mapper]: 지도에 추가: FIRE 1 (-0.01, -0.01)
+1: [ERROR] [1793761408.013021827] [tf2_buffer]: Do not call canTransform or lookupTransform with a timeout unless you are using another thread for populating data. Without a dedicated thread it will always timeout.  If you have a separate thread servicing tf messages, call setUsingDedicatedThread(true) on your Buffer instance.
+1: [ERROR] [1793761408.023354277] [tf2_buffer]: Do not call canTransform or lookupTransform with a timeout unless you are using another thread for populating data. Without a dedicated thread it will always timeout.  If you have a separate thread servicing tf messages, call setUsingDedicatedThread(true) on your Buffer instance.
+ 1/11 Test  #1: danger_layer_test ................   Passed    0.19 sec
+test 2
+      Start  2: protocol_small_success
+
+2: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=small_success" "-p" "phase_timeout_s:=5.0"
+2: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+2: Environment variables:
+2:  ROS_DOMAIN_ID=180
+2: Test timeout computed to be: 20
+2: [INFO] [1793761408.181243958] [fire_manager]: NAVIGATING|ready
+2: [INFO] [1793761408.783579226] [fire_manager]: FIRE_DETECTED|test_fire
+2: [INFO] [1793761408.783711392] [fire_manager]: CLASSIFY_FIRE|
+2: [INFO] [1793761408.783726176] [fire_manager]: SMALL_FIRE|
+2: [INFO] [1793761408.783734878] [fire_manager]: STOPPING|
+1/1 Test #1: fire_observation_test ............   Passed    1.08 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   1.08 sec
+Finished <<< limo_fire_perception [1.11s]
+2: [INFO] [1793761409.089285093] [fire_manager]: EXTINGUISHING|
+2: [INFO] [1793761409.182632317] [fire_manager]: VERIFY_RESULT|simulator confirmed extinguished
+2: [INFO] [1793761409.182700109] [fire_manager]: RESUME_NAVIGATION|
+2: [INFO] [1793761409.182714777] [fire_manager]: NAVIGATING|resumed after extinguishing
+2: [INFO] [1793761409.557631499] [fire_manager]: NAVIGATING|goal reached
+2: PASS ROS action protocol fixture (not Webots)
+ 2/11 Test  #2: protocol_small_success ...........   Passed    1.58 sec
+test 3
+      Start  3: protocol_ext_failure
+
+3: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=ext_failure" "-p" "phase_timeout_s:=5.0"
+3: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+3: Environment variables:
+3:  ROS_DOMAIN_ID=181
+3: Test timeout computed to be: 20
+3: [INFO] [1793761409.761148269] [fire_manager]: NAVIGATING|ready
+3: [INFO] [1793761410.369947947] [fire_manager]: FIRE_DETECTED|test_fire
+3: [INFO] [1793761410.369992050] [fire_manager]: CLASSIFY_FIRE|
+3: [INFO] [1793761410.369998494] [fire_manager]: SMALL_FIRE|
+3: [INFO] [1793761410.370004132] [fire_manager]: STOPPING|
+3: [INFO] [1793761410.664621675] [fire_manager]: EXTINGUISHING|
+3: [INFO] [1793761410.770049783] [fire_manager]: VERIFY_RESULT|extinguishing failed
+3: [INFO] [1793761410.770121057] [fire_manager]: AVOID_OR_STOP|extinguishing failed
+3: [INFO] [1793761410.770146834] [fire_manager]: UPDATE_DANGER_ZONE|previous path intersects hazard or is unavailable
+3: [INFO] [1793761410.813511508] [fire_manager]: REPLANNING|
+3: [INFO] [1793761410.866145895] [fire_manager]: FOLLOW_NEW_PATH|path_length_m=8.828427
+3: [INFO] [1793761411.241778675] [fire_manager]: NAVIGATING|goal reached
+3: PASS ROS action protocol fixture (not Webots)
+ 3/11 Test  #3: protocol_ext_failure .............   Passed    1.69 sec
+test 4
+      Start  4: protocol_large_success
+
+4: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=large_success" "-p" "phase_timeout_s:=5.0"
+4: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+4: Environment variables:
+4:  ROS_DOMAIN_ID=182
+4: Test timeout computed to be: 20
+4: [INFO] [1793761411.471024910] [fire_manager]: NAVIGATING|ready
+4: [INFO] [1793761412.072191718] [fire_manager]: FIRE_DETECTED|test_fire
+4: [INFO] [1793761412.072235017] [fire_manager]: CLASSIFY_FIRE|
+4: [INFO] [1793761412.072244302] [fire_manager]: LARGE_FIRE|
+4: [INFO] [1793761412.072252520] [fire_manager]: STOPPING|
+4: [INFO] [1793761412.376223122] [fire_manager]: UPDATE_DANGER_ZONE|previous path intersects hazard or is unavailable
+4: [INFO] [1793761412.428738965] [fire_manager]: REPLANNING|
+4: [INFO] [1793761412.482124954] [fire_manager]: FOLLOW_NEW_PATH|path_length_m=8.828427
+4: [INFO] [1793761412.846686779] [fire_manager]: NAVIGATING|goal reached
+4: PASS ROS action protocol fixture (not Webots)
+ 4/11 Test  #4: protocol_large_success ...........   Passed    1.60 sec
+test 5
+      Start  5: protocol_no_path
+
+5: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=no_path" "-p" "phase_timeout_s:=5.0"
+5: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+5: Environment variables:
+5:  ROS_DOMAIN_ID=183
+5: Test timeout computed to be: 20
+5: [INFO] [1793761413.058547221] [fire_manager]: NAVIGATING|ready
+5: [INFO] [1793761413.661919242] [fire_manager]: FIRE_DETECTED|test_fire
+5: [INFO] [1793761413.661987437] [fire_manager]: CLASSIFY_FIRE|
+5: [INFO] [1793761413.661998924] [fire_manager]: LARGE_FIRE|
+5: [INFO] [1793761413.662014880] [fire_manager]: STOPPING|
+5: [INFO] [1793761413.965215510] [fire_manager]: UPDATE_DANGER_ZONE|previous path intersects hazard or is unavailable
+5: [INFO] [1793761414.017538698] [fire_manager]: REPLANNING|
+5: [INFO] [1793761414.070051034] [fire_manager]: SAFE_STOP|no safe path
+5: PASS ROS action protocol fixture (not Webots)
+ 5/11 Test  #5: protocol_no_path .................   Passed    1.21 sec
+test 6
+      Start  6: protocol_bad_input
+
+6: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=bad_input" "-p" "phase_timeout_s:=5.0"
+6: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+6: Environment variables:
+6:  ROS_DOMAIN_ID=184
+6: Test timeout computed to be: 20
+6: [INFO] [1793761414.289654662] [fire_manager]: NAVIGATING|ready
+6: [INFO] [1793761414.878725243] [fire_manager]: SAFE_STOP|invalid fire observation
+6: PASS ROS action protocol fixture (not Webots)
+ 6/11 Test  #6: protocol_bad_input ...............   Passed    0.81 sec
+test 7
+      Start  7: protocol_depth_missing
+
+7: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=depth_missing" "-p" "phase_timeout_s:=5.0"
+7: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+7: Environment variables:
+7:  ROS_DOMAIN_ID=185
+7: Test timeout computed to be: 20
+7: [INFO] [1793761415.077649533] [fire_manager]: NAVIGATING|ready
+7: [INFO] [1793761415.730964719] [fire_manager]: FIRE_DETECTED|test_fire
+7: [INFO] [1793761415.731012470] [fire_manager]: CLASSIFY_FIRE|
+7: [INFO] [1793761415.731024035] [fire_manager]: UNKNOWN|
+7: [INFO] [1793761415.731033379] [fire_manager]: STOPPING|
+7: [INFO] [1793761415.981427229] [fire_manager]: SAFE_STOP|fire position unavailable
+7: PASS ROS action protocol fixture (not Webots)
+ 7/11 Test  #7: protocol_depth_missing ...........   Passed    1.10 sec
+test 8
+      Start  8: protocol_duplicate
+
+8: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=duplicate" "-p" "phase_timeout_s:=5.0"
+8: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+8: Environment variables:
+8:  ROS_DOMAIN_ID=186
+8: Test timeout computed to be: 20
+8: [INFO] [1793761416.179557429] [fire_manager]: NAVIGATING|ready
+8: [INFO] [1793761416.781443054] [fire_manager]: FIRE_DETECTED|test_fire
+8: [INFO] [1793761416.781522782] [fire_manager]: CLASSIFY_FIRE|
+8: [INFO] [1793761416.781540335] [fire_manager]: SMALL_FIRE|
+8: [INFO] [1793761416.781555818] [fire_manager]: STOPPING|
+8: [INFO] [1793761417.085118434] [fire_manager]: EXTINGUISHING|
+8: [INFO] [1793761417.189649170] [fire_manager]: VERIFY_RESULT|simulator confirmed extinguished
+8: [INFO] [1793761417.189700611] [fire_manager]: RESUME_NAVIGATION|
+8: [INFO] [1793761417.189714002] [fire_manager]: NAVIGATING|resumed after extinguishing
+8: [INFO] [1793761417.544833108] [fire_manager]: NAVIGATING|goal reached
+8: PASS ROS action protocol fixture (not Webots)
+ 8/11 Test  #8: protocol_duplicate ...............   Passed    1.57 sec
+test 9
+      Start  9: protocol_nav_failure
+
+9: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=nav_failure" "-p" "phase_timeout_s:=5.0"
+9: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+9: Environment variables:
+9:  ROS_DOMAIN_ID=187
+9: Test timeout computed to be: 20
+9: [INFO] [1793761417.753588833] [fire_manager]: NAVIGATING|ready
+9: [INFO] [1793761418.313421128] [fire_manager]: SAFE_STOP|Nav2 action failed
+9: PASS ROS action protocol fixture (not Webots)
+ 9/11 Test  #9: protocol_nav_failure .............   Passed    0.77 sec
+test 10
+      Start 10: protocol_ext_timeout
+
+10: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/protocol_test "--ros-args" "--params-file" "/home/choejunhyeok/limo_fire_ws/src/limo_fire/limo_fire_bt/config/fire_manager.yaml" "-p" "use_sim_time:=true" "-p" "scenario:=ext_timeout" "-p" "phase_timeout_s:=5.0"
+10: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+10: Environment variables:
+10:  ROS_DOMAIN_ID=188
+10: Test timeout computed to be: 20
+10: [INFO] [1793761418.550780280] [fire_manager]: NAVIGATING|ready
+10: [INFO] [1793761419.205494398] [fire_manager]: FIRE_DETECTED|test_fire
+10: [INFO] [1793761419.205553104] [fire_manager]: CLASSIFY_FIRE|
+10: [INFO] [1793761419.205564026] [fire_manager]: SMALL_FIRE|
+10: [INFO] [1793761419.205572915] [fire_manager]: STOPPING|
+10: [INFO] [1793761419.458607331] [fire_manager]: EXTINGUISHING|
+10: [INFO] [1793761421.156836135] [fire_manager]: AVOID_OR_STOP|extinguishing timeout
+10: [INFO] [1793761421.156919514] [fire_manager]: UPDATE_DANGER_ZONE|previous path intersects hazard or is unavailable
+10: [INFO] [1793761421.157050808] [fire_manager]: SAFE_STOP|extinguishing timeout; motion inhibited until device shutdown is confirmed
+10: PASS ROS action protocol fixture (not Webots)
+10/11 Test #10: protocol_ext_timeout .............   Passed    2.85 sec
+test 11
+      Start 11: safety_test
+
+11: Test command: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt/safety_test
+11: Working Directory: /home/choejunhyeok/limo_fire_ws/build/limo_fire_bt
+11: Test timeout computed to be: 10000000
+11/11 Test #11: safety_test ......................   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =  13.39 sec
+Finished <<< limo_fire_bt [13.4s]
+
+Summary: 2 packages finished [13.6s]

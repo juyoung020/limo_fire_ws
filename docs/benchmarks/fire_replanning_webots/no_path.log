@@ -1,0 +1,577 @@
+[INFO] [launch]: All log files can be found below /home/choejunhyeok/.ros/log/2026-11-04-11-54-42-262292-jun-32698
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [webots-1]: process started with pid [32807]
+[INFO] [ros2_supervisor.py-2]: process started with pid [32808]
+[INFO] [webots_controller_LIMO-3]: process started with pid [32809]
+[INFO] [spawner-4]: process started with pid [32810]
+[INFO] [spawner-5]: process started with pid [32813]
+[INFO] [robot_state_publisher-6]: process started with pid [32814]
+[INFO] [component_container_isolated-7]: process started with pid [32815]
+[INFO] [rviz2-8]: process started with pid [32817]
+[INFO] [twist_stamper-9]: process started with pid [32818]
+[INFO] [fire_manager-10]: process started with pid [32819]
+[INFO] [mock_extinguisher-11]: process started with pid [32820]
+[INFO] [fire_demo-12]: process started with pid [32822]
+[robot_state_publisher-6] Warning: link 'laser_link' material 'laser_material' undefined.
+[robot_state_publisher-6]          at line 85 in ./urdf_parser/src/model.cpp
+[robot_state_publisher-6] Warning: link 'laser_link' material 'laser_material' undefined.
+[robot_state_publisher-6]          at line 85 in ./urdf_parser/src/model.cpp
+[robot_state_publisher-6] Warning: link 'imu_link' material 'imu_material' undefined.
+[robot_state_publisher-6]          at line 85 in ./urdf_parser/src/model.cpp
+[robot_state_publisher-6] Warning: link 'imu_link' material 'imu_material' undefined.
+[robot_state_publisher-6]          at line 85 in ./urdf_parser/src/model.cpp
+[robot_state_publisher-6] [INFO] [1793760883.547250168] [robot_state_publisher]: Robot initialized
+[fire_manager-10] [INFO] [1793760883.675003671] [fire_manager]: NAVIGATING|ready
+[component_container_isolated-7] [INFO] [1793760883.675187571] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libcontroller_server_core.so
+[component_container_isolated-7] [INFO] [1793760883.690194477] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_controller::ControllerServer>
+[component_container_isolated-7] [INFO] [1793760883.690266780] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_controller::ControllerServer>
+[component_container_isolated-7] [INFO] [1793760883.707310723] [controller_server]:
+[component_container_isolated-7] 	controller_server lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760883.711924090] [controller_server]: Creating controller server
+[component_container_isolated-7] [INFO] [1793760883.726749585] [local_costmap.local_costmap]:
+[component_container_isolated-7] 	local_costmap lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760883.728381798] [local_costmap.local_costmap]: Creating Costmap
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/controller_server' in container 'nav2_container'
+[component_container_isolated-7] [INFO] [1793760883.738516341] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libsmoother_server_core.so
+[component_container_isolated-7] [INFO] [1793760883.741464396] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_smoother::SmootherServer>
+[component_container_isolated-7] [INFO] [1793760883.741505525] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_smoother::SmootherServer>
+[component_container_isolated-7] [INFO] [1793760883.760781704] [smoother_server]:
+[component_container_isolated-7] 	smoother_server lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760883.762218742] [smoother_server]: Creating smoother server
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/smoother_server' in container 'nav2_container'
+[component_container_isolated-7] [INFO] [1793760883.767951028] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libplanner_server_core.so
+[component_container_isolated-7] [INFO] [1793760883.768807066] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_planner::PlannerServer>
+[component_container_isolated-7] [INFO] [1793760883.768826612] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_planner::PlannerServer>
+[webots_controller_LIMO-3] The specified robot (at /tmp/webots/choejunhyeok/1234/ipc/LIMO/extern) is not in the list of robots with <extern> controllers, retrying for another 50 seconds...
+[component_container_isolated-7] [INFO] [1793760883.787420031] [planner_server]:
+[component_container_isolated-7] 	planner_server lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760883.788747975] [planner_server]: Creating
+[component_container_isolated-7] [INFO] [1793760883.810800087] [global_costmap.global_costmap]:
+[component_container_isolated-7] 	global_costmap lifecycle node launched.
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/planner_server' in container 'nav2_container'
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760883.811497123] [global_costmap.global_costmap]: Creating Costmap
+[component_container_isolated-7] [INFO] [1793760883.812602596] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libmap_server_core.so
+[component_container_isolated-7] [INFO] [1793760883.831459993] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_map_server::CostmapFilterInfoServer>
+[component_container_isolated-7] [INFO] [1793760883.831542628] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_map_server::MapSaver>
+[component_container_isolated-7] [INFO] [1793760883.831549131] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_map_server::MapServer>
+[component_container_isolated-7] [INFO] [1793760883.831555554] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_map_server::MapServer>
+[component_container_isolated-7] [INFO] [1793760883.856811159] [map_server]:
+[component_container_isolated-7] 	map_server lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/map_server' in container 'nav2_container'
+[component_container_isolated-7] [INFO] [1793760883.856908727] [map_server]: Creating
+[component_container_isolated-7] [INFO] [1793760883.857850344] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libbehavior_server_core.so
+[component_container_isolated-7] [INFO] [1793760883.859559518] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<behavior_server::BehaviorServer>
+[component_container_isolated-7] [INFO] [1793760883.859611740] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<behavior_server::BehaviorServer>
+[component_container_isolated-7] [INFO] [1793760883.881445024] [behavior_server]:
+[component_container_isolated-7] 	behavior_server lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760883.888072171] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libamcl_core.so
+[component_container_isolated-7] [INFO] [1793760883.891655022] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_amcl::AmclNode>
+[component_container_isolated-7] [INFO] [1793760883.891711553] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_amcl::AmclNode>
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/behavior_server' in container 'nav2_container'
+[component_container_isolated-7] [INFO] [1793760883.917658426] [amcl]:
+[component_container_isolated-7] 	amcl lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760883.918291124] [amcl]: Creating
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/amcl' in container 'nav2_container'
+[component_container_isolated-7] [INFO] [1793760883.927887282] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libbt_navigator_core.so
+[component_container_isolated-7] [INFO] [1793760883.933870145] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_bt_navigator::BtNavigator>
+[component_container_isolated-7] [INFO] [1793760883.933965980] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_bt_navigator::BtNavigator>
+[spawner-4] [INFO] [1793760883.946466196] [spawner_diffdrive_controller]: waiting for service /controller_manager/list_controllers to become available...
+[component_container_isolated-7] [INFO] [1793760883.957593663] [bt_navigator]:
+[component_container_isolated-7] 	bt_navigator lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760883.960012677] [bt_navigator]: Creating
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/bt_navigator' in container 'nav2_container'
+[component_container_isolated-7] [INFO] [1793760883.961460129] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libnav2_lifecycle_manager_core.so
+[component_container_isolated-7] [INFO] [1793760883.963548588] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_lifecycle_manager::LifecycleManager>
+[component_container_isolated-7] [INFO] [1793760883.963608213] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_lifecycle_manager::LifecycleManager>
+[rviz2-8] [INFO] [1793760883.963846527] [rviz2]: Stereo is NOT SUPPORTED
+[rviz2-8] [INFO] [1793760883.963926536] [rviz2]: OpenGl version: 4.6 (GLSL 4.6)
+[component_container_isolated-7] [INFO] [1793760883.991696324] [lifecycle_manager_localization]: Creating
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/lifecycle_manager_localization' in container 'nav2_container'
+[rviz2-8] [INFO] [1793760883.998596479] [rviz2]: Stereo is NOT SUPPORTED
+[component_container_isolated-7] [INFO] [1793760884.000392365] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libwaypoint_follower_core.so
+[component_container_isolated-7] [INFO] [1793760884.000433260] [lifecycle_manager_localization]: [34m[1mCreating and initializing lifecycle service clients[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.001583919] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_waypoint_follower::WaypointFollower>
+[component_container_isolated-7] [INFO] [1793760884.001603353] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_waypoint_follower::WaypointFollower>
+[component_container_isolated-7] [INFO] [1793760884.012917082] [lifecycle_manager_localization]: [34m[1mStarting managed nodes bringup...[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.012969932] [lifecycle_manager_localization]: [34m[1mConfiguring map_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.013977322] [map_server]: Configuring
+[component_container_isolated-7] [INFO] [1793760884.014038485] [map_io]: Loading yaml file: /home/choejunhyeok/limo_fire_ws/install/limo_fire_navigation/share/limo_fire_navigation/maps/sim/limo_fire_replan.yaml
+[component_container_isolated-7] [INFO] [1793760884.014251720] [map_io]: resolution: 0.05
+[component_container_isolated-7] [INFO] [1793760884.014259649] [map_io]: origin[0]: -1.5
+[component_container_isolated-7] [INFO] [1793760884.014263405] [map_io]: origin[1]: -4.5
+[component_container_isolated-7] [INFO] [1793760884.014265814] [map_io]: origin[2]: 0
+[component_container_isolated-7] [INFO] [1793760884.014268568] [map_io]: free_thresh: 0.196
+[component_container_isolated-7] [INFO] [1793760884.014270906] [map_io]: occupied_thresh: 0.65
+[component_container_isolated-7] [INFO] [1793760884.014274106] [map_io]: mode: trinary
+[component_container_isolated-7] [INFO] [1793760884.014277406] [map_io]: negate: 0
+[component_container_isolated-7] [INFO] [1793760884.014434270] [map_io]: Loading image_file: /home/choejunhyeok/limo_fire_ws/install/limo_fire_navigation/share/limo_fire_navigation/maps/sim/limo_fire_replan.pgm
+[component_container_isolated-7] [INFO] [1793760884.018141460] [map_io]: Read map /home/choejunhyeok/limo_fire_ws/install/limo_fire_navigation/share/limo_fire_navigation/maps/sim/limo_fire_replan.pgm: 260 X 180 map @ 0.05 m/cell
+[component_container_isolated-7] [INFO] [1793760884.027616772] [lifecycle_manager_localization]: [34m[1mConfiguring amcl[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.028576030] [amcl]: Configuring
+[component_container_isolated-7] [INFO] [1793760884.028672695] [amcl]: initTransforms
+[component_container_isolated-7] [INFO] [1793760884.046211678] [waypoint_follower]:
+[component_container_isolated-7] 	waypoint_follower lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[component_container_isolated-7] [INFO] [1793760884.046640066] [waypoint_follower]: Creating
+[component_container_isolated-7] [INFO] [1793760884.050141863] [amcl]: initPubSub
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/waypoint_follower' in container 'nav2_container'
+[component_container_isolated-7] [INFO] [1793760884.058544518] [amcl]: Subscribed to map topic.
+[component_container_isolated-7] [INFO] [1793760884.059638124] [nav2_container]: Load Library: /opt/ros/jazzy/lib/libvelocity_smoother_core.so
+[component_container_isolated-7] [INFO] [1793760884.060661655] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_velocity_smoother::VelocitySmoother>
+[component_container_isolated-7] [INFO] [1793760884.060686736] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_velocity_smoother::VelocitySmoother>
+[component_container_isolated-7] [INFO] [1793760884.077924920] [lifecycle_manager_localization]: [34m[1mActivating map_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.078274073] [map_server]: Activating
+[component_container_isolated-7] [INFO] [1793760884.078397916] [map_server]: Creating bond (map_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760884.078659807] [amcl]: Received a 260 X 180 map @ 0.050 m/pix
+[component_container_isolated-7] [INFO] [1793760884.106977572] [velocity_smoother]:
+[component_container_isolated-7] 	velocity_smoother lifecycle node launched.
+[component_container_isolated-7] 	Waiting on external lifecycle transitions to activate
+[component_container_isolated-7] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/velocity_smoother' in container 'nav2_container'
+[component_container_isolated-7] [INFO] [1793760884.112673445] [nav2_container]: Found class: rclcpp_components::NodeFactoryTemplate<nav2_lifecycle_manager::LifecycleManager>
+[component_container_isolated-7] [INFO] [1793760884.112730172] [nav2_container]: Instantiate class: rclcpp_components::NodeFactoryTemplate<nav2_lifecycle_manager::LifecycleManager>
+[component_container_isolated-7] [INFO] [1793760884.147731575] [lifecycle_manager_navigation]: Creating
+[component_container_isolated-7] [INFO] [1793760884.150426996] [lifecycle_manager_navigation]: [34m[1mCreating and initializing lifecycle service clients[0m[0m
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/lifecycle_manager_navigation' in container 'nav2_container'
+[ros2_supervisor.py-2] The specified robot (at /tmp/webots/choejunhyeok/1234/ipc/Ros2Supervisor/extern) is not in the list of robots with <extern> controllers, retrying for another 50 seconds...
+[component_container_isolated-7] [INFO] [1793760884.161805932] [lifecycle_manager_navigation]: [34m[1mStarting managed nodes bringup...[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.161877889] [lifecycle_manager_navigation]: [34m[1mConfiguring controller_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.162218500] [controller_server]: Configuring controller interface
+[component_container_isolated-7] [INFO] [1793760884.162260525] [controller_server]: getting progress checker plugins..
+[component_container_isolated-7] [INFO] [1793760884.162882749] [controller_server]: getting goal checker plugins..
+[component_container_isolated-7] [INFO] [1793760884.164076797] [controller_server]: Controller frequency set to 20.0000Hz
+[component_container_isolated-7] [INFO] [1793760884.164182309] [local_costmap.local_costmap]: Configuring
+[component_container_isolated-7] [INFO] [1793760884.174965233] [local_costmap.local_costmap]: Using plugin "obstacle_layer"
+[component_container_isolated-7] [INFO] [1793760884.180886664] [local_costmap.local_costmap]: Subscribed to Topics: scan
+[rviz2-8] [ERROR] [1793760884.181991675] [rviz2]: PluginlibFactory: The plugin for class 'rviz_2d_overlay_plugins/TextOverlay' failed to load. Error: According to the loaded plugin descriptions the class rviz_2d_overlay_plugins/TextOverlay with base class type rviz_common::Display does not exist. Declared types are  nav2_rviz_plugins/ParticleCloud rviz_default_plugins/AccelStamped rviz_default_plugins/Axes rviz_default_plugins/Camera rviz_default_plugins/CameraInfo rviz_default_plugins/DepthCloud rviz_default_plugins/Effort rviz_default_plugins/FluidPressure rviz_default_plugins/Grid rviz_default_plugins/GridCells rviz_default_plugins/Illuminance rviz_default_plugins/Image rviz_default_plugins/InteractiveMarkers rviz_default_plugins/LaserScan rviz_default_plugins/Map rviz_default_plugins/Marker rviz_default_plugins/MarkerArray rviz_default_plugins/Odometry rviz_default_plugins/Path rviz_default_plugins/PointCloud rviz_default_plugins/PointCloud2 rviz_default_plugins/PointStamped rviz_default_plugins/Polygon rviz_default_plugins/Pose rviz_default_plugins/PoseArray rviz_default_plugins/PoseWithCovariance rviz_default_plugins/Range rviz_default_plugins/RelativeHumidity rviz_default_plugins/RobotModel rviz_default_plugins/TF rviz_default_plugins/Temperature rviz_default_plugins/TwistStamped rviz_default_plugins/Wrench
+[component_container_isolated-7] [INFO] [1793760884.184636714] [local_costmap.local_costmap]: Initialized plugin "obstacle_layer"
+[component_container_isolated-7] [INFO] [1793760884.184669592] [local_costmap.local_costmap]: Using plugin "fire_layer"
+[component_container_isolated-7] [INFO] [1793760884.191161500] [local_costmap.local_costmap]: Initialized plugin "fire_layer"
+[component_container_isolated-7] [INFO] [1793760884.191195497] [local_costmap.local_costmap]: Using plugin "inflation_layer"
+[component_container_isolated-7] [INFO] [1793760884.191698260] [local_costmap.local_costmap]: Initialized plugin "inflation_layer"
+[component_container_isolated-7] [INFO] [1793760884.193247977] [lifecycle_manager_localization]: Server map_server connected with bond.
+[component_container_isolated-7] [INFO] [1793760884.193290689] [lifecycle_manager_localization]: [34m[1mActivating amcl[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.193477110] [amcl]: Activating
+[component_container_isolated-7] [INFO] [1793760884.193506558] [amcl]: initialPoseReceived
+[component_container_isolated-7] [INFO] [1793760884.193580723] [amcl]: Setting pose (0.000000): 0.000 0.000 0.000
+[component_container_isolated-7] [INFO] [1793760884.193995529] [amcl]: Creating bond (amcl) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760884.213602227] [controller_server]: Created progress_checker : progress_checker of type nav2_controller::SimpleProgressChecker
+[component_container_isolated-7] [INFO] [1793760884.213923306] [controller_server]: Controller Server has progress_checker  progress checkers available.
+[component_container_isolated-7] [INFO] [1793760884.214316570] [controller_server]: Created goal checker : general_goal_checker of type nav2_controller::SimpleGoalChecker
+[component_container_isolated-7] [INFO] [1793760884.214543981] [controller_server]: Controller Server has general_goal_checker  goal checkers available.
+[component_container_isolated-7] [INFO] [1793760884.216959703] [controller_server]: Created controller : FollowPath of type nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
+[component_container_isolated-7] [WARN] [1793760884.242650256] [amcl]: New subscription discovered on topic '/particle_cloud', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY_QOS_POLICY
+[component_container_isolated-7] [INFO] [1793760884.249542724] [controller_server]: Controller Server has FollowPath  controllers available.
+[component_container_isolated-7] [INFO] [1793760884.268518337] [lifecycle_manager_navigation]: [34m[1mConfiguring smoother_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.268701878] [smoother_server]: Configuring smoother server
+[component_container_isolated-7] [INFO] [1793760884.286339360] [smoother_server]: Created smoother : simple_smoother of type nav2_smoother::SimpleSmoother
+[component_container_isolated-7] [INFO] [1793760884.286944063] [smoother_server]: Smoother Server has simple_smoother  smoothers available.
+[component_container_isolated-7] [INFO] [1793760884.300513485] [lifecycle_manager_navigation]: [34m[1mConfiguring planner_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.300701308] [planner_server]: Configuring
+[component_container_isolated-7] [INFO] [1793760884.300757054] [global_costmap.global_costmap]: Configuring
+[component_container_isolated-7] [INFO] [1793760884.302821671] [lifecycle_manager_localization]: Server amcl connected with bond.
+[component_container_isolated-7] [INFO] [1793760884.302884587] [lifecycle_manager_localization]: [34m[1mManaged nodes are active[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.302913349] [lifecycle_manager_localization]: [34m[1mCreating bond timer...[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.306245800] [global_costmap.global_costmap]: Using plugin "static_layer"
+[component_container_isolated-7] [INFO] [1793760884.307087008] [global_costmap.global_costmap]: Subscribing to the map topic (/map) with transient local durability
+[component_container_isolated-7] [INFO] [1793760884.307798605] [global_costmap.global_costmap]: Initialized plugin "static_layer"
+[component_container_isolated-7] [INFO] [1793760884.307816708] [global_costmap.global_costmap]: Using plugin "obstacle_layer"
+[component_container_isolated-7] [INFO] [1793760884.308568220] [global_costmap.global_costmap]: Subscribed to Topics: scan
+[component_container_isolated-7] [INFO] [1793760884.317098437] [global_costmap.global_costmap]: Initialized plugin "obstacle_layer"
+[component_container_isolated-7] [INFO] [1793760884.317154720] [global_costmap.global_costmap]: Using plugin "fire_layer"
+[component_container_isolated-7] [INFO] [1793760884.327488672] [global_costmap.global_costmap]: Initialized plugin "fire_layer"
+[component_container_isolated-7] [INFO] [1793760884.327539640] [global_costmap.global_costmap]: Using plugin "inflation_layer"
+[component_container_isolated-7] [INFO] [1793760884.328715038] [global_costmap.global_costmap]: Initialized plugin "inflation_layer"
+[rviz2-8] [INFO] [1793760884.336610020] [rviz2]: Stereo is NOT SUPPORTED
+[rviz2-8] [INFO] [1793760884.355857840] [rviz2]: Stereo is NOT SUPPORTED
+[component_container_isolated-7] [INFO] [1793760884.377776254] [global_costmap.global_costmap]: StaticLayer: Resizing costmap to 260 X 180 at 0.050000 m/pix
+[component_container_isolated-7] [INFO] [1793760884.383760941] [planner_server]: Created global planner plugin GridBased of type nav2_smac_planner::SmacPlanner2D
+[component_container_isolated-7] [INFO] [1793760884.383846841] [planner_server]: Configuring GridBased of type SmacPlanner2D
+[component_container_isolated-7] [INFO] [1793760884.390440520] [planner_server]: Configured plugin GridBased of type SmacPlanner2D with tolerance 0.25, maximum iterations 1000000, max on approach iterations 1000, and allowing unknown traversal.
+[component_container_isolated-7] [INFO] [1793760884.390513660] [planner_server]: Planner Server has GridBased  planners available.
+[component_container_isolated-7] [INFO] [1793760884.412524090] [lifecycle_manager_navigation]: [34m[1mConfiguring behavior_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.412919696] [behavior_server]: Configuring
+[component_container_isolated-7] [INFO] [1793760884.418713399] [behavior_server]: Creating behavior plugin spin of type nav2_behaviors::Spin
+[component_container_isolated-7] [INFO] [1793760884.419744810] [behavior_server]: Creating behavior plugin backup of type nav2_behaviors::BackUp
+[component_container_isolated-7] [INFO] [1793760884.420658323] [behavior_server]: Creating behavior plugin drive_on_heading of type nav2_behaviors::DriveOnHeading
+[component_container_isolated-7] [INFO] [1793760884.421395255] [behavior_server]: Creating behavior plugin wait of type nav2_behaviors::Wait
+[component_container_isolated-7] [INFO] [1793760884.424050359] [behavior_server]: Configuring spin
+[component_container_isolated-7] [INFO] [1793760884.431478716] [behavior_server]: Configuring backup
+[component_container_isolated-7] [INFO] [1793760884.441775422] [behavior_server]: Configuring drive_on_heading
+[component_container_isolated-7] [INFO] [1793760884.449045465] [behavior_server]: Configuring wait
+[component_container_isolated-7] [INFO] [1793760884.453908878] [lifecycle_manager_navigation]: [34m[1mConfiguring bt_navigator[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.454469512] [bt_navigator]: Configuring
+[component_container_isolated-7] [INFO] [1793760884.463572137] [bt_navigator]: Creating navigator id navigate_to_pose of type nav2_bt_navigator::NavigateToPoseNavigator
+[component_container_isolated-7] [WARN] [1793760884.467261724] [bt_navigator]: Error_code parameters were not set. Using default values of: follow_path_error_code compute_path_error_code
+[component_container_isolated-7] Make sure these match your BT and there are not other sources of error codes youreported to your application
+[rviz2-8] Warning: link 'laser_link' material 'laser_material' undefined.
+[rviz2-8]          at line 85 in ./urdf_parser/src/model.cpp
+[rviz2-8] Warning: link 'laser_link' material 'laser_material' undefined.
+[rviz2-8]          at line 85 in ./urdf_parser/src/model.cpp
+[rviz2-8] Warning: link 'imu_link' material 'imu_material' undefined.
+[rviz2-8]          at line 85 in ./urdf_parser/src/model.cpp
+[rviz2-8] Warning: link 'imu_link' material 'imu_material' undefined.
+[rviz2-8]          at line 85 in ./urdf_parser/src/model.cpp
+[component_container_isolated-7] [INFO] [1793760884.544285655] [bt_navigator]: Creating navigator id navigate_through_poses of type nav2_bt_navigator::NavigateThroughPosesNavigator
+[component_container_isolated-7] [INFO] [1793760884.574666869] [lifecycle_manager_navigation]: [34m[1mConfiguring waypoint_follower[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.574876311] [waypoint_follower]: Configuring
+[component_container_isolated-7] [INFO] [1793760884.597568111] [waypoint_follower]: Created waypoint_task_executor : wait_at_waypoint of type nav2_waypoint_follower::WaitAtWaypoint
+[component_container_isolated-7] [INFO] [1793760884.599366376] [lifecycle_manager_navigation]: [34m[1mConfiguring velocity_smoother[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.599584719] [velocity_smoother]: Configuring velocity smoother
+[component_container_isolated-7] [INFO] [1793760884.607387583] [lifecycle_manager_navigation]: [34m[1mActivating controller_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760884.607563918] [controller_server]: Activating
+[component_container_isolated-7] [INFO] [1793760884.607608541] [local_costmap.local_costmap]: Activating
+[component_container_isolated-7] [INFO] [1793760884.607618597] [local_costmap.local_costmap]: Checking transform
+[component_container_isolated-7] [INFO] [1793760884.607656356] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760885.107728654] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760885.607757500] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760886.107725449] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760886.607761152] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760887.107783499] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760887.607760093] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[webots_controller_LIMO-3] [INFO] [1793760887.608689226] [limo.limo_base]: Odometry kinematics: four-wheel differential
+[webots_controller_LIMO-3] [INFO] [1793760887.643084522] [controller_manager]: Using ROS clock for triggering controller manager cycles.
+[webots_controller_LIMO-3] [WARN] [1793760887.643184794] [controller_manager]: The resource manager is not yet initialized, will wait for the robot description to initialize it..
+[webots_controller_LIMO-3] [INFO] [1793760887.649620964] [controller_manager]: Subscribing to '/robot_description' topic for robot description.
+[webots_controller_LIMO-3] [INFO] [1793760887.656506330] [LIMO]: Controller successfully connected to robot in Webots simulation.
+[webots_controller_LIMO-3] [INFO] [1793760887.662340861] [controller_manager]: Received robot description from topic.
+[webots_controller_LIMO-3] [INFO] [1793760887.662437416] [controller_manager]: Enforcing command limits is disabled. Command limits from URDF will be ignored.
+[webots_controller_LIMO-3] Warning: link 'laser_link' material 'laser_material' undefined.
+[webots_controller_LIMO-3]          at line 85 in ./urdf_parser/src/model.cpp
+[webots_controller_LIMO-3] Warning: link 'laser_link' material 'laser_material' undefined.
+[webots_controller_LIMO-3]          at line 85 in ./urdf_parser/src/model.cpp
+[webots_controller_LIMO-3] Warning: link 'imu_link' material 'imu_material' undefined.
+[webots_controller_LIMO-3]          at line 85 in ./urdf_parser/src/model.cpp
+[webots_controller_LIMO-3] Warning: link 'imu_link' material 'imu_material' undefined.
+[webots_controller_LIMO-3]          at line 85 in ./urdf_parser/src/model.cpp
+[webots_controller_LIMO-3] [INFO] [1793760887.682548836] [controller_manager]: Initialize hardware 'WebotsControl'
+[webots_controller_LIMO-3] [WARN] [1793760887.682597978] [controller_manager.hardware_component.system.WebotsControl]: Executor is not available during hardware component initialization for 'WebotsControl'. Skipping node creation!
+[webots_controller_LIMO-3] [INFO] [1793760887.682656438] [controller_manager]: Successful initialization of hardware 'WebotsControl'
+[webots_controller_LIMO-3] [INFO] [1793760887.683128617] [controller_manager]: Activating component 'WebotsControl'.
+[webots_controller_LIMO-3] [INFO] [1793760887.683139746] [resource_manager]: 'configure' hardware 'WebotsControl'
+[webots_controller_LIMO-3] [INFO] [1793760887.683144768] [resource_manager]: Successful 'configure' of hardware 'WebotsControl'
+[webots_controller_LIMO-3] [INFO] [1793760887.683150856] [resource_manager]: 'activate' hardware 'WebotsControl'
+[webots_controller_LIMO-3] [INFO] [1793760887.683158343] [resource_manager]: Successful 'activate' of hardware 'WebotsControl'
+[webots_controller_LIMO-3] [WARN] [1793760887.683207708] [controller_manager]: Component 'WebotsControl' does not have read or write statistics initialized, skipping registration.
+[webots_controller_LIMO-3] [INFO] [1793760887.683213649] [controller_manager]: Resource Manager has been successfully initialized. Starting Controller Manager services...
+[webots_controller_LIMO-3] [INFO] [1793760887.703237163] [controller_manager]: Loading controller : 'diffdrive_controller' of type 'diff_drive_controller/DiffDriveController'
+[webots_controller_LIMO-3] [INFO] [1793760887.703280830] [controller_manager]: Loading controller 'diffdrive_controller'
+[webots_controller_LIMO-3] [WARN] [1793760887.705735853] [controller_manager]: The use of remapping arguments to the controller_manager node is deprecated. Please use the '--controller-ros-args' argument of the spawner to pass remapping arguments to the controller node.
+[webots_controller_LIMO-3] [INFO] [1793760887.705757348] [controller_manager]: Controller 'diffdrive_controller' node arguments: --ros-args -p use_sim_time:=true -p set_robot_state_publisher:=false -r /diffdrive_controller/cmd_vel_unstamped:=/fire/cmd_vel_stamped -r /diffdrive_controller/cmd_vel:=/fire/cmd_vel_stamped --params-file /home/choejunhyeok/limo_fire_ws/install/webots_ros2_limo/share/webots_ros2_limo/resource/diff/ros2control.yaml --param use_sim_time:=true
+[spawner-4] [INFO] [1793760887.723787998] [spawner_diffdrive_controller]: Loaded diffdrive_controller
+[webots_controller_LIMO-3] [INFO] [1793760887.806125607] [controller_manager]: Configuring controller: 'diffdrive_controller'
+[webots_controller_LIMO-3] [INFO] [1793760887.819430290] [controller_manager]: Activating controllers: [ diffdrive_controller ]
+[webots_controller_LIMO-3] [INFO] [1793760887.852958104] [controller_manager]: Successfully switched controllers!
+[spawner-4] [INFO] [1793760887.893776284] [spawner_diffdrive_controller]: Configured and activated diffdrive_controller
+[spawner-5] [INFO] [1793760888.024956003] [spawner_joint_state_broadcaster]: waiting for service /controller_manager/list_controllers to become available...
+[INFO] [spawner-4]: process has finished cleanly [pid 32810]
+[component_container_isolated-7] [INFO] [1793760888.107724041] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[webots_controller_LIMO-3] [INFO] [1793760888.527413654] [controller_manager]: Loading controller : 'joint_state_broadcaster' of type 'joint_state_broadcaster/JointStateBroadcaster'
+[webots_controller_LIMO-3] [INFO] [1793760888.527476912] [controller_manager]: Loading controller 'joint_state_broadcaster'
+[webots_controller_LIMO-3] [WARN] [1793760888.532555679] [controller_manager]: The use of remapping arguments to the controller_manager node is deprecated. Please use the '--controller-ros-args' argument of the spawner to pass remapping arguments to the controller node.
+[webots_controller_LIMO-3] [INFO] [1793760888.532603130] [controller_manager]: Controller 'joint_state_broadcaster' node arguments: --ros-args -p use_sim_time:=true -p set_robot_state_publisher:=false -r /diffdrive_controller/cmd_vel_unstamped:=/fire/cmd_vel_stamped -r /diffdrive_controller/cmd_vel:=/fire/cmd_vel_stamped --params-file /home/choejunhyeok/limo_fire_ws/install/webots_ros2_limo/share/webots_ros2_limo/resource/diff/ros2control.yaml --param use_sim_time:=true
+[spawner-5] [INFO] [1793760888.568017025] [spawner_joint_state_broadcaster]: Loaded joint_state_broadcaster
+[webots_controller_LIMO-3] [INFO] [1793760888.571210568] [controller_manager]: Configuring controller: 'joint_state_broadcaster'
+[webots_controller_LIMO-3] [INFO] [1793760888.571350151] [joint_state_broadcaster]: 'joints' or 'interfaces' parameter is empty. All available state interfaces will be published
+[webots_controller_LIMO-3] Warning: link 'laser_link' material 'laser_material' undefined.
+[webots_controller_LIMO-3]          at line 85 in ./urdf_parser/src/model.cpp
+[webots_controller_LIMO-3] Warning: link 'laser_link' material 'laser_material' undefined.
+[webots_controller_LIMO-3]          at line 85 in ./urdf_parser/src/model.cpp
+[webots_controller_LIMO-3] Warning: link 'imu_link' material 'imu_material' undefined.
+[webots_controller_LIMO-3]          at line 85 in ./urdf_parser/src/model.cpp
+[webots_controller_LIMO-3] Warning: link 'imu_link' material 'imu_material' undefined.
+[webots_controller_LIMO-3]          at line 85 in ./urdf_parser/src/model.cpp
+[webots_controller_LIMO-3] [INFO] [1793760888.605705922] [controller_manager]: Activating controllers: [ joint_state_broadcaster ]
+[component_container_isolated-7] [INFO] [1793760888.607729323] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[webots_controller_LIMO-3] [INFO] [1793760888.645344295] [controller_manager]: Successfully switched controllers!
+[spawner-5] [INFO] [1793760888.695001033] [spawner_joint_state_broadcaster]: Configured and activated joint_state_broadcaster
+[INFO] [spawner-5]: process has finished cleanly [pid 32813]
+[component_container_isolated-7] [INFO] [1793760889.107772703] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760889.608019053] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760890.107712916] [local_costmap.local_costmap]: Timed out waiting for transform from base_link to odom to become available, tf error: Invalid frame ID "odom" passed to canTransform argument target_frame - frame does not exist
+[component_container_isolated-7] [INFO] [1793760890.553009464] [amcl]: createLaserObject
+[component_container_isolated-7] [INFO] [1793760890.607911166] [local_costmap.local_costmap]: start
+[component_container_isolated-7] [INFO] [1793760891.110603095] [controller_server]: Activating controller: FollowPath of type regulated_pure_pursuit_controller::RegulatedPurePursuitController
+[component_container_isolated-7] [INFO] [1793760891.110644690] [controller_server]: Creating bond (controller_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760891.219586395] [lifecycle_manager_navigation]: Server controller_server connected with bond.
+[component_container_isolated-7] [INFO] [1793760891.219648087] [lifecycle_manager_navigation]: [34m[1mActivating smoother_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760891.220485159] [smoother_server]: Activating
+[component_container_isolated-7] [INFO] [1793760891.220552926] [smoother_server]: Creating bond (smoother_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760891.330924655] [lifecycle_manager_navigation]: Server smoother_server connected with bond.
+[component_container_isolated-7] [INFO] [1793760891.330975314] [lifecycle_manager_navigation]: [34m[1mActivating planner_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760891.331290301] [planner_server]: Activating
+[component_container_isolated-7] [INFO] [1793760891.331330833] [global_costmap.global_costmap]: Activating
+[component_container_isolated-7] [INFO] [1793760891.331337747] [global_costmap.global_costmap]: Checking transform
+[component_container_isolated-7] [INFO] [1793760891.331369727] [global_costmap.global_costmap]: Timed out waiting for transform from base_link to map to become available, tf error: Lookup would require extrapolation into the past.  Requested time 3.500000 but the earliest data is at time 3.800000, when looking up transform from frame [base_link] to frame [map]
+[component_container_isolated-7] [INFO] [1793760891.831488929] [global_costmap.global_costmap]: start
+[component_container_isolated-7] [INFO] [1793760893.836044709] [planner_server]: Activating plugin GridBased of type SmacPlanner2D
+[component_container_isolated-7] [INFO] [1793760893.838689234] [planner_server]: Creating bond (planner_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760893.948108825] [lifecycle_manager_navigation]: Server planner_server connected with bond.
+[component_container_isolated-7] [INFO] [1793760893.948173764] [lifecycle_manager_navigation]: [34m[1mActivating behavior_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760893.948603231] [behavior_server]: Activating
+[component_container_isolated-7] [INFO] [1793760893.948624663] [behavior_server]: Activating spin
+[component_container_isolated-7] [INFO] [1793760893.948648528] [behavior_server]: Activating backup
+[component_container_isolated-7] [INFO] [1793760893.948660617] [behavior_server]: Activating drive_on_heading
+[component_container_isolated-7] [INFO] [1793760893.948672116] [behavior_server]: Activating wait
+[component_container_isolated-7] [INFO] [1793760893.948688663] [behavior_server]: Creating bond (behavior_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760894.057416256] [lifecycle_manager_navigation]: Server behavior_server connected with bond.
+[component_container_isolated-7] [INFO] [1793760894.057472205] [lifecycle_manager_navigation]: [34m[1mActivating bt_navigator[0m[0m
+[component_container_isolated-7] [INFO] [1793760894.057897993] [bt_navigator]: Activating
+[component_container_isolated-7] [INFO] [1793760894.181825310] [bt_navigator]: Creating bond (bt_navigator) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760894.221240960] [bt_navigator]: Begin navigating from current location (-0.00, 0.00) to (10.00, 0.00)
+[component_container_isolated-7] [INFO] [1793760894.291925117] [lifecycle_manager_navigation]: Server bt_navigator connected with bond.
+[component_container_isolated-7] [INFO] [1793760894.291982592] [lifecycle_manager_navigation]: [34m[1mActivating waypoint_follower[0m[0m
+[component_container_isolated-7] [INFO] [1793760894.292520416] [waypoint_follower]: Activating
+[component_container_isolated-7] [INFO] [1793760894.292567072] [waypoint_follower]: Creating bond (waypoint_follower) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760894.401756188] [lifecycle_manager_navigation]: Server waypoint_follower connected with bond.
+[component_container_isolated-7] [INFO] [1793760894.401862669] [lifecycle_manager_navigation]: [34m[1mActivating velocity_smoother[0m[0m
+[component_container_isolated-7] [INFO] [1793760894.402331644] [velocity_smoother]: Activating
+[component_container_isolated-7] [INFO] [1793760894.402388932] [velocity_smoother]: Creating bond (velocity_smoother) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760894.422314890] [controller_server]: Received a goal, begin computing control effort.
+[component_container_isolated-7] [WARN] [1793760894.422381347] [controller_server]: No goal checker was specified in parameter 'current_goal_checker'. Server will use only plugin loaded general_goal_checker . This warning will appear once.
+[component_container_isolated-7] [WARN] [1793760894.422395108] [controller_server]: No progress checker was specified in parameter 'current_progress_checker'. Server will use only plugin loaded progress_checker . This warning will appear once.
+[component_container_isolated-7] [INFO] [1793760894.510115411] [lifecycle_manager_navigation]: Server velocity_smoother connected with bond.
+[component_container_isolated-7] [INFO] [1793760894.510183541] [lifecycle_manager_navigation]: [34m[1mManaged nodes are active[0m[0m
+[component_container_isolated-7] [INFO] [1793760894.510191752] [lifecycle_manager_navigation]: [34m[1mCreating bond timer...[0m[0m
+[component_container_isolated-7] [INFO] [1793760895.522533071] [controller_server]: Passing new path to controller.
+[fire_manager-10] [INFO] [1793760895.825069161] [fire_manager]: FIRE_DETECTED|demo_candle
+[fire_manager-10] [INFO] [1793760895.825123936] [fire_manager]: CLASSIFY_FIRE|
+[fire_manager-10] [INFO] [1793760895.825139086] [fire_manager]: SMALL_FIRE|
+[fire_manager-10] [INFO] [1793760895.825155163] [fire_manager]: STOPPING|
+[component_container_isolated-7] [INFO] [1793760895.922510856] [controller_server]: Cancellation was successful. Stopping the robot.
+[component_container_isolated-7] [INFO] [1793760895.922548668] [controller_server]: [follow_path] [ActionServer] Client requested to cancel the goal. Cancelling.
+[component_container_isolated-7] [INFO] [1793760895.922734245] [bt_navigator]: [navigate_to_pose] [ActionServer] Client requested to cancel the goal. Cancelling.
+[component_container_isolated-7] [INFO] [1793760895.922906645] [bt_navigator]: Goal canceled
+[fire_manager-10] [INFO] [1793760896.525324248] [fire_manager]: EXTINGUISHING|
+[fire_manager-10] [INFO] [1793760897.625156491] [fire_manager]: VERIFY_RESULT|simulator confirmed extinguished
+[fire_manager-10] [INFO] [1793760897.625211234] [fire_manager]: RESUME_NAVIGATION|
+[fire_manager-10] [INFO] [1793760897.625245958] [fire_manager]: NAVIGATING|resumed after extinguishing
+[component_container_isolated-7] [INFO] [1793760897.626142278] [bt_navigator]: Begin navigating from current location (0.33, -0.00) to (10.00, 0.00)
+[component_container_isolated-7] [INFO] [1793760897.826918223] [controller_server]: Received a goal, begin computing control effort.
+[fire_manager-10] [INFO] [1793760898.875163696] [fire_manager]: FIRE_DETECTED|demo_floor
+[fire_manager-10] [INFO] [1793760898.875227267] [fire_manager]: CLASSIFY_FIRE|
+[fire_manager-10] [INFO] [1793760898.875244173] [fire_manager]: LARGE_FIRE|
+[fire_manager-10] [INFO] [1793760898.875255685] [fire_manager]: STOPPING|
+[component_container_isolated-7] [INFO] [1793760898.927072197] [controller_server]: Cancellation was successful. Stopping the robot.
+[component_container_isolated-7] [INFO] [1793760898.927125345] [controller_server]: [follow_path] [ActionServer] Client requested to cancel the goal. Cancelling.
+[component_container_isolated-7] [INFO] [1793760898.927267743] [bt_navigator]: [navigate_to_pose] [ActionServer] Client requested to cancel the goal. Cancelling.
+[component_container_isolated-7] [INFO] [1793760898.927385407] [bt_navigator]: Goal canceled
+[fire_manager-10] [INFO] [1793760899.475083412] [fire_manager]: UPDATE_DANGER_ZONE|previous path intersects hazard or is unavailable
+[fire_manager-10] [INFO] [1793760899.875409285] [fire_manager]: REPLANNING|
+[component_container_isolated-7] [WARN] [1793760899.876374321] [planner_server]: GridBased plugin failed to plan from (0.59, -0.01) to (10.00, 0.00): "Start occupied"
+[component_container_isolated-7] [WARN] [1793760899.876425937] [planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[fire_manager-10] [INFO] [1793760899.876711206] [fire_manager]: SAFE_STOP|no safe path
+[fire_demo-12] [INFO] [1793760900.418804789] [fire_demo]: PASS negative safety check: Action failure + SAFE_STOP + independent physical stop
+[fire_demo-12] [INFO] [1793760900.419154438] [fire_demo]: FAIL actual simulation demo: EXPECTED_SAFE_STOP_VERIFIED: SAFE_STOP|no safe path
+[ERROR] [fire_demo-12]: process has died [pid 32822, exit code 1, cmd '/home/choejunhyeok/limo_fire_ws/install/limo_fire_bt/lib/limo_fire_bt/fire_demo --ros-args -r __node:=fire_demo --params-file /home/choejunhyeok/limo_fire_ws/install/limo_fire_bt/share/limo_fire_bt/config/fire_manager.yaml --params-file /home/choejunhyeok/limo_fire_ws/install/limo_fire_bt/share/limo_fire_bt/config/demo_blocked.yaml --params-file /tmp/launch_params_rb2tkimk --params-file /tmp/launch_params_k1ovayww'].
+[INFO] [launch]: process[fire_demo-12] was required: shutting down launched system
+[INFO] [mock_extinguisher-11]: sending signal 'SIGINT' to process[mock_extinguisher-11]
+[INFO] [fire_manager-10]: sending signal 'SIGINT' to process[fire_manager-10]
+[INFO] [twist_stamper-9]: sending signal 'SIGINT' to process[twist_stamper-9]
+[INFO] [rviz2-8]: sending signal 'SIGINT' to process[rviz2-8]
+[INFO] [component_container_isolated-7]: sending signal 'SIGINT' to process[component_container_isolated-7]
+[INFO] [robot_state_publisher-6]: sending signal 'SIGINT' to process[robot_state_publisher-6]
+[INFO] [webots_controller_LIMO-3]: sending signal 'SIGINT' to process[webots_controller_LIMO-3]
+[INFO] [ros2_supervisor.py-2]: sending signal 'SIGINT' to process[ros2_supervisor.py-2]
+[INFO] [webots-1]: sending signal 'SIGINT' to process[webots-1]
+[mock_extinguisher-11] [INFO] [1793760901.179087243] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[fire_manager-10] [INFO] [1793760901.181435574] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[twist_stamper-9] [INFO] [1793760901.183139269] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[rviz2-8] [INFO] [1793760901.184563390] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[component_container_isolated-7] [INFO] [1793760901.186677752] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[component_container_isolated-7] [INFO] [1793760901.186765894] [controller_server]: Running Nav2 LifecycleNode rcl preshutdown (controller_server)
+[component_container_isolated-7] [INFO] [1793760901.186845467] [controller_server]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.186867652] [controller_server]: Deactivating controller: FollowPath of type regulated_pure_pursuit_controller::RegulatedPurePursuitController
+[component_container_isolated-7] [INFO] [1793760901.186889297] [local_costmap.local_costmap]: Deactivating
+[robot_state_publisher-6] [INFO] [1793760901.190146996] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[ERROR] [ros2_supervisor.py-2]: process has died [pid 32808, exit code -2, cmd '/home/choejunhyeok/webots_ros2_ws/install/webots_ros2_driver/lib/webots_ros2_driver/ros2_supervisor.py --ros-args -r __ns:=/Ros2Supervisor -r /Ros2Supervisor/clock:=/clock'].
+[webots_controller_LIMO-3] [INFO] [1793760901.270232305] [LIMO]: Controller successfully disconnected from robot in Webots simulation.
+[webots_controller_LIMO-3] [INFO] [1793760901.270315250] [controller_manager]: Shutdown request received....
+[webots_controller_LIMO-3] [INFO] [1793760901.270337051] [controller_manager]: Shutting down all controllers in the controller manager.
+[webots_controller_LIMO-3] [INFO] [1793760901.270347431] [controller_manager]: Deactivating controller 'joint_state_broadcaster'
+[webots_controller_LIMO-3] [INFO] [1793760901.270388456] [controller_manager]: Shutting down controller 'joint_state_broadcaster'
+[webots_controller_LIMO-3] [INFO] [1793760901.270414128] [controller_manager]: Deactivating controller 'diffdrive_controller'
+[webots_controller_LIMO-3] [INFO] [1793760901.270443792] [controller_manager]: Shutting down controller 'diffdrive_controller'
+[webots_controller_LIMO-3] [INFO] [1793760901.270460019] [resource_manager]: 'deactivate' hardware 'WebotsControl'
+[webots_controller_LIMO-3] [INFO] [1793760901.270466758] [resource_manager]: Successful 'deactivate' of hardware 'WebotsControl'
+[webots_controller_LIMO-3] [INFO] [1793760901.270468806] [resource_manager]: 'shutdown' hardware 'WebotsControl'
+[webots_controller_LIMO-3] [INFO] [1793760901.270471136] [resource_manager]: Successful 'shutdown' of hardware 'WebotsControl'
+[webots_controller_LIMO-3] [INFO] [1793760901.270493509] [controller_manager]: Shutting down the controller manager.
+[webots_controller_LIMO-3] [ERROR] [1793760901.270725499] [controller_manager.pal_statistics]: Exception in publisher thread: context cannot be slept with because it's invalid!. Aborting!
+[webots_controller_LIMO-3] [ERROR] [1793760901.270831466] [controller_manager.pal_statistics]: Exception in publisher thread: context cannot be slept with because it's invalid!. Aborting!
+[webots_controller_LIMO-3] [INFO] [1793760901.276665463] [controller_manager.pal_statistics]: Async messages lost 0
+[webots_controller_LIMO-3] [INFO] [1793760901.276684084] [controller_manager.pal_statistics]: publish_async_failures_ 0
+[webots_controller_LIMO-3] [INFO] [1793760901.277295032] [controller_manager.pal_statistics]: Async messages lost 0
+[webots_controller_LIMO-3] [INFO] [1793760901.277300706] [controller_manager.pal_statistics]: publish_async_failures_ 0
+[webots_controller_LIMO-3] Warning: class_loader.ClassLoader: SEVERE WARNING!!! Attempting to unload library while objects created by this loader exist in the heap! You should delete your objects before attempting to unload the library or destroying the ClassLoader. The library will NOT be unloaded.
+[webots_controller_LIMO-3]          at line 127 in ./src/class_loader.cpp
+[webots_controller_LIMO-3] Warning: class_loader.ClassLoader: SEVERE WARNING!!! Attempting to unload library while objects created by this loader exist in the heap! You should delete your objects before attempting to unload the library or destroying the ClassLoader. The library will NOT be unloaded.
+[webots_controller_LIMO-3]          at line 127 in ./src/class_loader.cpp
+[INFO] [twist_stamper-9]: process has finished cleanly [pid 32818]
+[INFO] [webots-1]: process has finished cleanly [pid 32807]
+[INFO] [launch]: process[webots-1] was required: shutting down launched system
+[ERROR] [launch]: Caught exception in launch (see debug for traceback): Cannot shutdown a ROS adapter that is not running
+[INFO] [mock_extinguisher-11]: process has finished cleanly [pid 32820]
+[INFO] [robot_state_publisher-6]: process has finished cleanly [pid 32814]
+[INFO] [fire_manager-10]: process has finished cleanly [pid 32819]
+[INFO] [webots_controller_LIMO-3]: process has finished cleanly [pid 32809]
+[component_container_isolated-7] [INFO] [1793760901.608268911] [controller_server]: Destroying bond (controller_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.618715357] [controller_server]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760901.618759525] [controller_server]: Cleaning up controller: FollowPath of type regulated_pure_pursuit_controller::RegulatedPurePursuitController
+[component_container_isolated-7] [INFO] [1793760901.618830051] [local_costmap.local_costmap]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760901.680310321] [controller_server]: Destroying bond (controller_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.680349984] [smoother_server]: Running Nav2 LifecycleNode rcl preshutdown (smoother_server)
+[component_container_isolated-7] [INFO] [1793760901.680371487] [smoother_server]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.680382525] [smoother_server]: Destroying bond (smoother_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.690788689] [smoother_server]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760901.710406412] [lifecycle_manager_navigation]: [34m[1mHave not received a heartbeat from controller_server.[0m[0m
+[component_container_isolated-7] [ERROR] [1793760901.710460814] [lifecycle_manager_navigation]: CRITICAL FAILURE: SERVER controller_server IS DOWN after not receiving a heartbeat for 4000 ms. Shutting down related nodes.
+[component_container_isolated-7] [INFO] [1793760901.710500914] [lifecycle_manager_navigation]: [34m[1mTerminating bond timer...[0m[0m
+[component_container_isolated-7] [INFO] [1793760901.710506146] [lifecycle_manager_navigation]: [34m[1mResetting managed nodes...[0m[0m
+[component_container_isolated-7] [INFO] [1793760901.710509566] [lifecycle_manager_navigation]: [34m[1mDeactivating velocity_smoother[0m[0m
+[component_container_isolated-7] [INFO] [1793760901.710809221] [velocity_smoother]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.710882585] [velocity_smoother]: Destroying bond (velocity_smoother) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.710932340] [smoother_server]: Destroying bond (smoother_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.710954504] [planner_server]: Running Nav2 LifecycleNode rcl preshutdown (planner_server)
+[component_container_isolated-7] [INFO] [1793760901.710973996] [planner_server]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.711002425] [global_costmap.global_costmap]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.825551918] [lifecycle_manager_navigation]: [34m[1mDeactivating waypoint_follower[0m[0m
+[component_container_isolated-7] [INFO] [1793760901.826068637] [waypoint_follower]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.826150705] [waypoint_follower]: Destroying bond (waypoint_follower) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.831880283] [planner_server]: Deactivating plugin GridBased of type SmacPlanner2D
+[component_container_isolated-7] [INFO] [1793760901.831938129] [planner_server]: Destroying bond (planner_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.842274518] [planner_server]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760901.858659408] [global_costmap.global_costmap]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760901.865789439] [planner_server]: Cleaning up plugin GridBased of type SmacPlanner2D
+[component_container_isolated-7] [INFO] [1793760901.865932824] [planner_server]: Destroying plugin GridBased of type SmacPlanner2D
+[component_container_isolated-7] [INFO] [1793760901.895939639] [planner_server]: Destroying bond (planner_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.895976977] [map_server]: Running Nav2 LifecycleNode rcl preshutdown (map_server)
+[component_container_isolated-7] [INFO] [1793760901.895994041] [map_server]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.896007453] [map_server]: Destroying bond (map_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.903037158] [lifecycle_manager_localization]: [34m[1mHave not received a heartbeat from map_server.[0m[0m
+[component_container_isolated-7] [ERROR] [1793760901.903104772] [lifecycle_manager_localization]: CRITICAL FAILURE: SERVER map_server IS DOWN after not receiving a heartbeat for 4000 ms. Shutting down related nodes.
+[component_container_isolated-7] [INFO] [1793760901.903140403] [lifecycle_manager_localization]: [34m[1mTerminating bond timer...[0m[0m
+[component_container_isolated-7] [INFO] [1793760901.903144960] [lifecycle_manager_localization]: [34m[1mResetting managed nodes...[0m[0m
+[component_container_isolated-7] [INFO] [1793760901.903149105] [lifecycle_manager_localization]: [34m[1mDeactivating amcl[0m[0m
+[component_container_isolated-7] [INFO] [1793760901.903494192] [amcl]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.903567936] [amcl]: Destroying bond (amcl) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.906226875] [map_server]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760901.906276475] [map_server]: Destroying bond (map_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.906282453] [behavior_server]: Running Nav2 LifecycleNode rcl preshutdown (behavior_server)
+[component_container_isolated-7] [INFO] [1793760901.906294536] [behavior_server]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.906315840] [behavior_server]: Destroying bond (behavior_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.916633360] [behavior_server]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760901.921231171] [behavior_server]: Destroying bond (behavior_server) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.921277371] [amcl]: Running Nav2 LifecycleNode rcl preshutdown (amcl)
+[component_container_isolated-7] [INFO] [1793760901.921288436] [amcl]: Destroying bond (amcl) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.921293884] [bt_navigator]: Running Nav2 LifecycleNode rcl preshutdown (bt_navigator)
+[component_container_isolated-7] [INFO] [1793760901.921311878] [bt_navigator]: Deactivating
+[component_container_isolated-7] [INFO] [1793760901.921340642] [bt_navigator]: Destroying bond (bt_navigator) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760901.931614161] [bt_navigator]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760901.942621555] [lifecycle_manager_navigation]: [34m[1mDeactivating bt_navigator[0m[0m
+[component_container_isolated-7] [WARN] [1793760901.972915905] [rcl_lifecycle]: No transition matching 4 found for current state cleaningup
+[component_container_isolated-7] [WARN] [1793760901.972937490] [rcl_lifecycle]: No transition matching 4 found for current state cleaningup
+[component_container_isolated-7] [ERROR] [1793760901.972946586] [bt_navigator]: Unable to start transition 4 from current state cleaningup: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1793760901.973492869] [lifecycle_manager_navigation]: Failed to change state for node: bt_navigator
+[component_container_isolated-7] [INFO] [1793760901.973571781] [lifecycle_manager_navigation]: [34m[1mDeactivating behavior_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.018956089] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.018979828] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.018983936] [behavior_server]: Unable to start transition 4 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1793760902.019394412] [lifecycle_manager_navigation]: Failed to change state for node: behavior_server
+[component_container_isolated-7] [INFO] [1793760902.019472384] [lifecycle_manager_navigation]: [34m[1mDeactivating planner_server[0m[0m
+[component_container_isolated-7] [INFO] [1793760902.021032583] [lifecycle_manager_localization]: [34m[1mDeactivating map_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.021422493] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.021451996] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.021458336] [map_server]: Unable to start transition 4 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1793760902.022107264] [lifecycle_manager_localization]: Failed to change state for node: map_server
+[component_container_isolated-7] [INFO] [1793760902.022181120] [lifecycle_manager_localization]: [34m[1mCleaning up amcl[0m[0m
+[component_container_isolated-7] [INFO] [1793760902.022415930] [amcl]: Cleaning up
+[component_container_isolated-7] [WARN] [1793760902.027631725] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.027655737] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.027659728] [planner_server]: Unable to start transition 4 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1793760902.028089277] [lifecycle_manager_navigation]: Failed to change state for node: planner_server
+[component_container_isolated-7] [INFO] [1793760902.028159198] [lifecycle_manager_navigation]: [34m[1mDeactivating smoother_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.038183340] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.038209277] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.038213565] [smoother_server]: Unable to start transition 4 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1793760902.038689686] [lifecycle_manager_navigation]: Failed to change state for node: smoother_server
+[component_container_isolated-7] [INFO] [1793760902.038758021] [lifecycle_manager_navigation]: [34m[1mDeactivating controller_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.049747036] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.049779341] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.049785899] [controller_server]: Unable to start transition 4 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1793760902.050289428] [lifecycle_manager_navigation]: Failed to change state for node: controller_server
+[component_container_isolated-7] [INFO] [1793760902.050331401] [lifecycle_manager_navigation]: [34m[1mCleaning up velocity_smoother[0m[0m
+[component_container_isolated-7] [INFO] [1793760902.050552254] [velocity_smoother]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760902.058146773] [lifecycle_manager_navigation]: [34m[1mCleaning up waypoint_follower[0m[0m
+[component_container_isolated-7] [INFO] [1793760902.058380317] [waypoint_follower]: Cleaning up
+[component_container_isolated-7] [INFO] [1793760902.081071925] [lifecycle_manager_localization]: [34m[1mCleaning up map_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.081312784] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.081328778] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.081332998] [map_server]: Unable to start transition 2 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [INFO] [1793760902.081673737] [lifecycle_manager_localization]: [34m[1mManaged nodes have been reset[0m[0m
+[component_container_isolated-7] [INFO] [1793760902.117399958] [lifecycle_manager_navigation]: [34m[1mCleaning up bt_navigator[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.156534931] [rcl_lifecycle]: No transition matching 2 found for current state cleaningup
+[component_container_isolated-7] [WARN] [1793760902.156569074] [rcl_lifecycle]: No transition matching 2 found for current state cleaningup
+[component_container_isolated-7] [ERROR] [1793760902.156575980] [bt_navigator]: Unable to start transition 2 from current state cleaningup: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1793760902.157035388] [lifecycle_manager_navigation]: Failed to change state for node: bt_navigator
+[component_container_isolated-7] [INFO] [1793760902.157080650] [lifecycle_manager_navigation]: [34m[1mCleaning up behavior_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.157194991] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.157210075] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.157215273] [behavior_server]: Unable to start transition 2 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [INFO] [1793760902.157394564] [lifecycle_manager_navigation]: [34m[1mCleaning up planner_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.157610600] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.157631492] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.157637901] [planner_server]: Unable to start transition 2 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [INFO] [1793760902.157915440] [lifecycle_manager_navigation]: [34m[1mCleaning up smoother_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.158045619] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.158057112] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.158062097] [smoother_server]: Unable to start transition 2 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [INFO] [1793760902.158336283] [lifecycle_manager_navigation]: [34m[1mCleaning up controller_server[0m[0m
+[component_container_isolated-7] [WARN] [1793760902.158588193] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1793760902.158604977] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1793760902.158609422] [controller_server]: Unable to start transition 2 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [INFO] [1793760902.158733658] [lifecycle_manager_navigation]: [34m[1mManaged nodes have been reset[0m[0m
+[component_container_isolated-7] [INFO] [1793760902.180050259] [bt_navigator]: Completed Cleaning up
+[component_container_isolated-7] [INFO] [1793760902.180117296] [bt_navigator]: Destroying bond (bt_navigator) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760902.180130891] [lifecycle_manager_localization]: Running Nav2 LifecycleManager rcl preshutdown (lifecycle_manager_localization)
+[component_container_isolated-7] [INFO] [1793760902.186234108] [waypoint_follower]: Running Nav2 LifecycleNode rcl preshutdown (waypoint_follower)
+[component_container_isolated-7] [INFO] [1793760902.186291710] [waypoint_follower]: Destroying bond (waypoint_follower) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760902.186299105] [velocity_smoother]: Running Nav2 LifecycleNode rcl preshutdown (velocity_smoother)
+[component_container_isolated-7] [INFO] [1793760902.186308697] [velocity_smoother]: Destroying bond (velocity_smoother) to lifecycle manager.
+[component_container_isolated-7] [INFO] [1793760902.186315567] [lifecycle_manager_navigation]: Running Nav2 LifecycleManager rcl preshutdown (lifecycle_manager_navigation)
+[component_container_isolated-7] [INFO] [1793760902.232206038] [lifecycle_manager_navigation]: Destroying lifecycle_manager_navigation
+[component_container_isolated-7] [INFO] [1793760902.259716112] [velocity_smoother]: Destroying
+[component_container_isolated-7] [INFO] [1793760902.269145116] [waypoint_follower]: Destroying
+[component_container_isolated-7] [INFO] [1793760902.281381449] [lifecycle_manager_localization]: Destroying lifecycle_manager_localization
+[component_container_isolated-7] [INFO] [1793760902.297110334] [bt_navigator]: Destroying
+[component_container_isolated-7] [INFO] [1793760902.311099118] [amcl]: Destroying
+[component_container_isolated-7] [INFO] [1793760902.323550858] [behavior_server]: Destroying
+[component_container_isolated-7] Magick: abort due to signal 11 (SIGSEGV) "Segmentation Fault"...
+[ERROR] [component_container_isolated-7]: process has died [pid 32815, exit code -6, cmd '/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated --ros-args --log-level info --ros-args -r __node:=nav2_container -r __ns:=/ --params-file /home/choejunhyeok/limo_fire_ws/install/limo_fire_bt/share/limo_fire_bt/config/nav2_base_jazzy.yaml --params-file /home/choejunhyeok/limo_fire_ws/install/limo_fire_navigation/share/limo_fire_navigation/config/nav2_sim.yaml --params-file /home/choejunhyeok/limo_fire_ws/install/limo_fire_bt/share/limo_fire_bt/config/nav2_fire_jazzy.yaml --params-file /tmp/launch_params_0mntvse3 --params-file /tmp/launch_params_fho4zlyb -r /tf:=tf -r /tf_static:=tf_static'].
+[rviz2-8] [INFO] [1793760903.606264248] [rviz2]: Trying to create a map of size 260 x 180 using 1 swatches
+[rviz2-8] [ERROR] [1793760903.614348235] [rviz2]: rviz/glsl120/indexed_8bit_image.vert
+[rviz2-8] rviz/glsl120/indexed_8bit_image.frag
+[rviz2-8]  GLSL link result :
+[rviz2-8] active samplers with a different type refer to the same texture image unit
+[rviz2-8] terminate called after throwing an instance of 'std::system_error'
+[rviz2-8]   what():  Invalid argument
+[ERROR] [rviz2-8]: process has died [pid 32817, exit code -6, cmd '/opt/ros/jazzy/lib/rviz2/rviz2 -d /home/choejunhyeok/limo_fire_ws/install/limo_fire_description/share/limo_fire_description/rviz/limo_fire.rviz --ros-args -r __node:=limo_fire_rviz --params-file /tmp/launch_params_17n_ezo9'].

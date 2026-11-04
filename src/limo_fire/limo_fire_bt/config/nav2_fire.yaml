@@ -1,0 +1,22 @@
+# nav2_sim.yaml 위에 적용. 실물 launch 에서 사용하지 않는다.
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      plugins: [static_layer, obstacle_layer, fire_layer, inflation_layer]
+      fire_layer:
+        plugin: limo_fire_bt::DangerLayer
+        topic: /fire/danger_zones
+        ack_topic: /fire/global_applied
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      plugins: [obstacle_layer, fire_layer, inflation_layer]
+      fire_layer:
+        plugin: limo_fire_bt::DangerLayer
+        topic: /fire/danger_zones
+        ack_topic: /fire/local_applied
+# Keep navigation acceptance tighter than the independent 0.30m ground-truth check.
+controller_server:
+  ros__parameters:
+    general_goal_checker:
+      xy_goal_tolerance: 0.10

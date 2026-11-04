@@ -1,0 +1,2 @@
+result,mission_success,stop_latency_s,replan_latency_s,path_length_m,danger_intrusion,resume_success,distance_m,final_x,final_y,final_error_m,reason
+FAIL,0,0.24,-1,-1,0,0,0.32855,0.328281,-0.000458986,9.67172,"EXPECTED_SAFE_STOP_VERIFIED: SAFE_STOP|extinguishing timeout; motion inhibited until device shutdown is confirmed"

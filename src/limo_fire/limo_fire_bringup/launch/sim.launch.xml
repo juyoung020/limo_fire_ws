@@ -14,17 +14,25 @@
   <arg name="nav" default="true" description="Nav2 를 띄운다"/>
   <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/sim/$(var world).yaml" description="slam:=false 일 때 쓰는 지도"/>
   <arg name="perception" default="false" description="YOLO 탐지 + 물체 지도 (limo_fire_perception yolo.launch.xml)"/>
+  <arg name="yolo_engine_path" default="$(env HOME)/limo_fire_ws/src/limo_fire/limo_fire_perception/models/yolo26s_seg_fire_u8_480.engine" description="TensorRT YOLO segmentation engine for this machine"/>
   <arg name="benchmark" default="false"
        description="인식 벤치마크: 인식을 켜고 정답(/gt/*)과 비교해 끝낼 때 docs/benchmarks/ 에 표를 쓴다. 로봇은 따로 움직인다(RViz 목표·순찰)"/>
   <arg name="report_dir" default="$(env HOME)/limo_fire_ws/docs/benchmarks"/>
   <arg name="rviz" default="true"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
+  <arg name="fire_params" default="$(find-pkg-share limo_fire_navigation)/config/nav2_sim.yaml"/>
+  <arg name="nav_params_file" default="$(find-pkg-share limo_fire_navigation)/config/nav2_params.yaml"/>
+  <arg name="sim_velocity_topic" default="/cmd_vel"/>
+  <arg name="nav_velocity_output" default="/cmd_vel"/>
+  <arg name="navigate_action" default="navigate_to_pose"/>
+  <arg name="through_action" default="navigate_through_poses"/>
 
   <!-- include 에 준 인자는 Humble 에서 바깥으로 새어 나와 다음 include 의 값을 바꾸므로 하나씩 group 으로 가둔다 -->
   <group>
     <include file="$(find-pkg-share limo_fire_bringup)/launch/sim_robot.launch.xml">
       <arg name="world_file" value="$(var world_dir)/$(var world).wbt"/>
       <arg name="mode" value="$(var mode)"/>
+      <arg name="velocity_topic" value="$(var sim_velocity_topic)"/>
     </include>
   </group>
 
@@ -39,7 +47,12 @@
   <group if="$(var nav)">
     <include file="$(find-pkg-share limo_fire_bringup)/launch/navigation.launch.xml">
       <arg name="map" value="$(var map)"/>
+      <arg name="params_file" value="$(var nav_params_file)"/>
       <arg name="params_override" value="$(find-pkg-share limo_fire_navigation)/config/nav2_sim.yaml"/>
+      <arg name="fire_params" value="$(var fire_params)"/>
+      <arg name="velocity_output" value="$(var nav_velocity_output)"/>
+      <arg name="navigate_action" value="$(var navigate_action)"/>
+      <arg name="through_action" value="$(var through_action)"/>
       <arg name="use_sim_time" value="true"/>
       <arg name="localization" value="$(not $(var slam))"/>
       <arg name="rviz" value="false"/>
@@ -51,6 +64,7 @@
       <arg name="use_sim_time" value="true"/>
       <arg name="rviz" value="false"/>
       <arg name="params_override" value="$(find-pkg-share limo_fire_perception)/config/$(if $(var benchmark) benchmark.yaml yolo_fire.yaml)"/>
+      <arg name="engine_path" value="$(var yolo_engine_path)"/>
     </include>
   </group>
 

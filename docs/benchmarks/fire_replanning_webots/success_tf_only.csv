@@ -1,0 +1,2 @@
+result,mission_success,stop_latency_s,replan_latency_s,path_length_m,danger_intrusion,resume_success,distance_m,reason
+PASS,1,0.28,0.01,8.94976,0,1,11.0437,all stages and final pose verified

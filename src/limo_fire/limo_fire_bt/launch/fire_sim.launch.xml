@@ -1,0 +1,47 @@
+<launch>
+  <arg name="world" default="limo_fire_office"/>
+  <arg name="rviz" default="true"/>
+  <arg name="perception" default="false"/>
+  <arg name="mode" default="realtime"/>
+  <arg name="outcome" default="success"/>
+  <arg name="use_mujoco_extinguisher" default="false" description="Use MuJoCo shot result for virtual extinguishing instead of the mock action"/>
+  <arg name="show_mujoco_gui" default="false" description="Show and retain the MuJoCo shot result window during the Fire-Aware mission"/>
+  <arg name="mujoco_root" default="$(env HOME)/robot-programming/simulation/mujoco_ball_mvp"/>
+  <arg name="jazzy" default="false" description="Jazzy compatibility test only; default target remains Humble"/>
+  <arg name="scenario_params" default="$(find-pkg-share limo_fire_bt)/config/fire_manager.yaml"/>
+  <group>
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/sim.launch.xml">
+      <arg name="world" value="$(var world)"/>
+      <arg name="nav_params_file" value="$(if $(var jazzy) $(find-pkg-share limo_fire_bt)/config/nav2_base_jazzy.yaml $(find-pkg-share limo_fire_navigation)/config/nav2_params.yaml)"/>
+      <arg name="rviz" value="$(var rviz)"/>
+      <arg name="perception" value="$(var perception)"/>
+      <arg name="mode" value="$(var mode)"/>
+      <arg name="fire_params" value="$(if $(var jazzy) $(find-pkg-share limo_fire_bt)/config/nav2_fire_jazzy.yaml $(find-pkg-share limo_fire_bt)/config/nav2_fire.yaml)"/>
+      <arg name="sim_velocity_topic" value="$(if $(var jazzy) /fire/cmd_vel_stamped /fire/cmd_vel_safe)"/>
+      <arg name="nav_velocity_output" value="/fire/cmd_vel_input"/>
+      <arg name="navigate_action" value="/fire/nav2_navigate_to_pose"/>
+      <arg name="through_action" value="/fire/disabled_navigate_through_poses"/>
+    </include>
+  </group>
+  <node pkg="limo_fire_bt" exec="twist_stamper" name="sim_twist_stamper" if="$(var jazzy)" output="screen">
+    <param from="$(find-pkg-share limo_fire_bt)/config/fire_manager.yaml"/>
+    <param name="use_sim_time" value="true"/>
+  </node>
+  <node pkg="limo_fire_bt" exec="fire_manager" output="screen">
+    <param from="$(find-pkg-share limo_fire_bt)/config/fire_manager.yaml"/>
+    <param from="$(var scenario_params)"/>
+    <param name="extinguish_action" value="$(if $(var use_mujoco_extinguisher) /fire/mujoco_extinguish /fire/mock_extinguish)"/>
+    <param name="use_sim_time" value="true"/>
+  </node>
+  <node pkg="limo_fire_bt" exec="mock_extinguisher" output="screen" unless="$(var use_mujoco_extinguisher)">
+    <param from="$(find-pkg-share limo_fire_bt)/config/fire_manager.yaml"/>
+    <param name="outcome" value="$(var outcome)"/>
+    <param name="use_sim_time" value="true"/>
+  </node>
+  <node pkg="limo_fire_bridge" exec="mujoco_extinguisher" output="screen" if="$(var use_mujoco_extinguisher)">
+    <param name="action" value="/fire/mujoco_extinguish"/>
+    <param name="mujoco_root" value="$(var mujoco_root)"/>
+    <param name="show_gui" value="$(var show_mujoco_gui)"/>
+    <param name="use_sim_time" value="true"/>
+  </node>
+</launch>

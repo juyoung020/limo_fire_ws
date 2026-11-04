@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <message_filters/subscriber.h>
+#include <limo_fire_msgs/msg/fire_observation.hpp>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
 #include <geometry_msgs/msg/point_stamped.hpp>
@@ -97,6 +98,13 @@ public:
     merge_radius_ = declare_parameter<double>("merge_radius", 0.8);
     min_hits_ = declare_parameter<int>("min_hits", 3);
     min_score_ = declare_parameter<double>("min_score", 0.5);
+    fire_pub_ = create_publisher<limo_fire_msgs::msg::FireObservation>(
+      declare_parameter<std::string>("fire_observations_topic", "/fire/observations"), 10);
+    missing_depth_timeout_ = declare_parameter<double>("missing_depth_timeout_s", 0.5);
+    last_fire_estimate_ = now();
+    det_watch_ = create_subscription<vision_msgs::msg::Detection2DArray>(
+      declare_parameter<std::string>("watch_detections_topic", "/yolo_detector/detections"), 10,
+      [this](vision_msgs::msg::Detection2DArray::ConstSharedPtr m) {latest_dets_ = m;});
     fire_zone_radius_ = declare_parameter<double>("fire_zone_radius", 1.0);
     label_offset_ = declare_parameter<std::vector<double>>("label_offset", {0.0, 0.55});
     icon_size_ = declare_parameter<double>("icon_size", 0.6);
@@ -144,6 +152,7 @@ public:
     clear_srv_ = create_service<std_srvs::srv::Trigger>("~/clear",
         [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
           landmarks_.clear();
+          ++mapping_epoch_;
           counters_.fill(0);
           pending_.clear();
           selected_ = -1;
@@ -164,7 +173,22 @@ public:
     sync_->registerCallback(&ObjectMapperNode::on_pair, this);
 
     // 불 위험 반경 깜빡임·로봇까지 거리 갱신 (벽시계 기준이라 시뮬이 멈춰도 표시는 돈다)
-    timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {publish();});
+    timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {
+      publish();
+      if (latest_dets_ && (now() - last_fire_estimate_).seconds() > missing_depth_timeout_ &&
+        latest_dets_->header.stamp != paired_stamp_) {
+        for (const auto & d : latest_dets_->detections) {
+          if (!d.results.empty() && d.results[0].hypothesis.class_id == "fire" &&
+            d.results[0].hypothesis.score >= min_score_) {
+            limo_fire_msgs::msg::FireObservation f;
+            f.header.frame_id = map_frame_; f.header.stamp = now();
+            f.id = "unlocalized_fire"; f.confidence = d.results[0].hypothesis.score;
+            fire_pub_->publish(f); break;
+          }
+        }
+        latest_dets_.reset();
+      }
+    });
     publish_summary();
   }
 
@@ -277,10 +301,14 @@ private:
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "지원하지 않는 깊이 형식: %s", depth->encoding.c_str());
       return;
     }
+    const size_t bytes_per_pixel = depth->encoding == "16UC1" ? 2 : 4;
+    if (!depth->width || !depth->height || depth->step < depth->width * bytes_per_pixel ||
+      depth->data.size() < static_cast<size_t>(depth->height) * depth->step) {return;}
     // 탐지 좌표는 컬러 영상 기준. 깊이 해상도가 다르면 비율로 맞춘다
     const double sx = static_cast<double>(depth->width) / info_->width;
     const double sy = static_cast<double>(depth->height) / info_->height;
     const double fx = info_->k[0], fy = info_->k[4], cx = info_->k[2], cy = info_->k[5];
+    if (!info_->width || !info_->height || !std::isfinite(fx + fy) || fx <= 0 || fy <= 0) {return;}
 
     geometry_msgs::msg::TransformStamped tf;
     try {
@@ -294,14 +322,18 @@ private:
     // 같은 시각 마스크 (분할 모델일 때). 영상 크기가 탐지 기준(camera_info)과 같아야 쓴다
     sensor_msgs::msg::Image::ConstSharedPtr mask;
     for (const auto & mk : masks_) {
-      if (mk->header.stamp == dets->header.stamp && mk->width == info_->width && mk->height == info_->height) {
+      if (mk->header.stamp == dets->header.stamp && mk->width == info_->width && mk->height == info_->height &&
+        mk->encoding == "mono8" && mk->step >= mk->width && mk->data.size() >= static_cast<size_t>(mk->height) * mk->step) {
         mask = mk;
       }
     }
 
     for (size_t i = 0; i < dets->detections.size(); ++i) {
       const auto & d = dets->detections[i];
-      if (d.results.empty() || d.results[0].hypothesis.score < min_score_) {continue;}
+      if (d.results.empty() || !std::isfinite(d.results[0].hypothesis.score) ||
+        d.results[0].hypothesis.score < min_score_ ||
+        !std::isfinite(d.bbox.center.position.x + d.bbox.center.position.y + d.bbox.size_x + d.bbox.size_y) ||
+        d.bbox.size_x <= 0 || d.bbox.size_y <= 0) {continue;}
       const int cls = class_index(d.results[0].hypothesis.class_id);
       if (cls < 0) {continue;}
       Measure m{d.bbox.center.position.x, d.bbox.center.position.y, 0.0, 0.0};
@@ -319,6 +351,20 @@ private:
           p_map.point.x - tf.transform.translation.x);
       const size_t idx = add(cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw,
           d.results[0].hypothesis.score, m.area);
+      if (class_names_[cls] == "fire" && landmarks_[idx].hits >= min_hits_) {
+        limo_fire_msgs::msg::FireObservation f;
+        f.header.frame_id = map_frame_; f.header.stamp = dets->header.stamp;
+        f.id = "mapper_fire_" + std::to_string(mapping_epoch_) + "_" + std::to_string(idx);
+        f.position = p_map.point;
+        f.position_valid = std::isfinite(f.position.x + f.position.y + f.position.z);
+        f.width_m = d.bbox.size_x * m.z / fx;
+        // A fallback box depth may be the back wall: never authorize extinguishing from it.
+        f.size_valid = m.area > 0 && std::isfinite(f.width_m) && f.width_m > 0;
+        f.confidence = d.results[0].hypothesis.score;
+        fire_pub_->publish(f);
+        paired_stamp_ = dets->header.stamp;
+        last_fire_estimate_ = now();
+      }
       // 크게(가까이)·확실하게 찍힐수록 좋은 사진. 지금 것보다 나을 때만 자른다
       const double quality = d.bbox.size_x * d.bbox.size_y * d.results[0].hypothesis.score;
       if (quality > landmarks_[idx].view_quality) {
@@ -595,6 +641,13 @@ private:
   }
 
   tf2_ros::Buffer tf_buffer_;
+  double missing_depth_timeout_;
+  rclcpp::Time last_fire_estimate_{0, 0, RCL_ROS_TIME};
+  uint64_t mapping_epoch_ = 0;
+  builtin_interfaces::msg::Time paired_stamp_;
+  vision_msgs::msg::Detection2DArray::ConstSharedPtr latest_dets_;
+  rclcpp::Subscription<vision_msgs::msg::Detection2DArray>::SharedPtr det_watch_;
+  rclcpp::Publisher<limo_fire_msgs::msg::FireObservation>::SharedPtr fire_pub_;
   tf2_ros::TransformListener tf_listener_;
   std::string map_frame_, robot_frame_;
   double min_depth_, max_depth_, box_shrink_, depth_percentile_, mask_depth_percentile_, merge_radius_, min_score_,

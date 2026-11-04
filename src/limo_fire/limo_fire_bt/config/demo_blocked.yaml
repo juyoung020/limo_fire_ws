@@ -1,0 +1,9 @@
+# Negative test: expanded circle blocks the whole 8m-wide floor.
+# Robot stops to the west of the zone; goal is to the east outside the zone.
+fire_manager:
+  ros__parameters:
+    danger_radius_m: 4.0 # + 0.25m robot clearance > 4m half-width
+fire_demo:
+  ros__parameters:
+    large_trigger_x: 0.55
+    expect_safe_stop: true

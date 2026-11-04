@@ -1,0 +1,1 @@
+<library path="danger_layer"><class name="limo_fire_bt::DangerLayer" type="limo_fire_bt::DangerLayer" base_class_type="nav2_costmap_2d::Layer"><description>Persistent fire exclusion circles with application acknowledgement</description></class></library>

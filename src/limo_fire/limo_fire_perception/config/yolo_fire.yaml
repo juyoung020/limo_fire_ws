@@ -12,6 +12,9 @@ yolo_detector:
 # 탐지 → 지도 위 물체 (object_mapper). 깊이는 컬러에 정렬된 영상
 object_mapper:
   ros__parameters:
+    fire_observations_topic: /fire/observations
+    watch_detections_topic: /yolo_detector/detections
+    missing_depth_timeout_s: 0.5 # 잠정: 유효한 깊이·TF 추정이 없으면 위치 미상의 화재 보고
     detections_topic: /yolo_detector/detections
     depth_topic: /camera/depth/image_raw
     camera_info_topic: /camera/depth/camera_info

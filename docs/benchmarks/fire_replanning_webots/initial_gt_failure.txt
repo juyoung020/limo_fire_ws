@@ -1,0 +1,2 @@
+result,mission_success,stop_latency_s,replan_latency_s,path_length_m,danger_intrusion,resume_success,distance_m,reason
+FAIL,0,0.06,0.01,8.8813,0,1,10.5644,action, phase, motion or final pose check failed

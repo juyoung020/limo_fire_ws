@@ -1,0 +1,75 @@
+fire_manager:
+  ros__parameters:
+    small_width_m: 0.20
+    large_width_m: 0.30
+    danger_radius_m: 1.0
+    zone_update_distance_m: 0.5 # 잠정, 관측 흔들림으로 같은 불에 반복 정지하는 것을 억제
+    robot_clearance_m: 0.25 # 잠정: 차체 반경 0.2 + 위치 오차 여유, 실물 검증 전 사용 금지
+    phase_timeout_s: 20.0 # 잠정, 시뮬 시험용
+    freshness_s: 1.0
+    clock_skew_tolerance_s: 0.10 # 잠정: /clock 전달 순서 차이 허용, 오래된/큰 미래 시각은 거부
+    stop_dwell_s: 0.5
+    stop_linear_mps: 0.01
+    stop_angular_rps: 0.02
+    standoff_min_m: 0.5 # 잠정, 펌프 사거리 실측 아님
+    standoff_max_m: 2.0
+    obstacle_clearance_m: 0.25
+    min_confidence: 0.5
+    tick_s: 0.05
+    map_frame: map
+    base_frame: base_link
+    state_topic: /fire/state
+    zones_topic: /fire/danger_zones
+    fire_topic: /fire/observations
+    input_velocity_topic: /fire/cmd_vel_input
+    output_velocity_topic: /fire/cmd_vel_safe
+    odom_topic: /odom
+    scan_topic: /scan
+    backend_action: /fire/nav2_navigate_to_pose
+    mission_action: /navigate_to_pose
+    planner_action: /compute_path_to_pose
+    planned_path_topic: /plan
+    extinguish_action: /fire/mock_extinguish
+    global_ack_topic: /fire/global_applied
+    local_ack_topic: /fire/local_applied
+mock_extinguisher:
+  ros__parameters:
+    tick_s: 0.05
+    action: /fire/mock_extinguish
+    outcome: success # success / failure / timeout
+    delay_s: 1.0 # 잠정, 실제 장치 작동 시간이 아님
+fire_demo:
+  # Readiness is queried from the lifecycle server, never inferred from a startup delay.
+  ros__parameters:
+    map_frame: map
+    base_frame: base_link
+    report: /tmp/fire_demo_result.csv
+    navigation_ready_service: /bt_navigator/get_state
+    navigation_shutdown_service: /lifecycle_manager_navigation/manage_nodes
+    localization_shutdown_service: /lifecycle_manager_localization/manage_nodes
+    shutdown_timeout_s: 15.0
+    ground_truth_topic: /fire/ground_truth
+    freshness_s: 1.0
+    min_base_height_m: 0.10 # validation world starts at z=0.145, on a solid floor
+    max_base_height_m: 0.20
+    verified_stop_speed_mps: 0.02
+    expect_safe_stop: false
+    negative_stop_hold_s: 0.5
+    goal: [10.0, 0.0]
+    small_position: [1.0, 0.8]
+    large_position: [5.0, 0.0]
+    small_trigger_x: 0.3
+    large_trigger_x: 2.0
+    timeout_s: 300.0 # 잠정, 10m 주행 + 우회 여유
+    goal_tolerance_m: 0.3
+    min_movement_m: 8.0
+    tick_s: 0.05
+    mission_action: /navigate_to_pose
+    fire_topic: /fire/observations
+    state_topic: /fire/state
+    odom_topic: /odom
+    zones_topic: /fire/danger_zones
+sim_twist_stamper:
+  ros__parameters:
+    input_topic: /fire/cmd_vel_safe
+    output_topic: /fire/cmd_vel_stamped

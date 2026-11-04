@@ -1,0 +1,29 @@
+<!-- Deterministic control test. Perception disabled; events have known map coordinates.
+     PASS requires real Nav2 Action success, measured movement and hazard clearance. -->
+<launch>
+  <arg name="rviz" default="true"/>
+  <arg name="outcome" default="success"/>
+  <arg name="use_mujoco_extinguisher" default="false"/>
+  <arg name="show_mujoco_gui" default="false"/>
+  <arg name="mujoco_root" default="$(env HOME)/robot-programming/simulation/mujoco_ball_mvp"/>
+  <arg name="jazzy" default="false"/>
+  <arg name="scenario_params" default="$(find-pkg-share limo_fire_bt)/config/fire_manager.yaml"/>
+  <arg name="report" default="/tmp/fire_demo_result.csv"/>
+  <include file="$(find-pkg-share limo_fire_bt)/launch/fire_sim.launch.xml">
+    <arg name="world" value="limo_fire_replan"/>
+    <arg name="rviz" value="$(var rviz)"/>
+    <arg name="perception" value="false"/>
+    <arg name="outcome" value="$(var outcome)"/>
+    <arg name="jazzy" value="$(var jazzy)"/>
+    <arg name="scenario_params" value="$(var scenario_params)"/>
+    <arg name="use_mujoco_extinguisher" value="$(var use_mujoco_extinguisher)"/>
+    <arg name="show_mujoco_gui" value="$(var show_mujoco_gui)"/>
+    <arg name="mujoco_root" value="$(var mujoco_root)"/>
+  </include>
+  <node pkg="limo_fire_bt" exec="fire_demo" name="fire_demo" output="screen" on_exit="shutdown">
+    <param from="$(find-pkg-share limo_fire_bt)/config/fire_manager.yaml"/>
+    <param from="$(var scenario_params)"/>
+    <param name="report" value="$(var report)"/>
+    <param name="use_sim_time" value="true"/>
+  </node>
+</launch>

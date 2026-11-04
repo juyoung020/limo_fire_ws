@@ -31,6 +31,14 @@
             <syncTopic>/camera/color/camera_info</syncTopic>
             <classNames>fire,smoke,fire_extinguisher,exit_sign,person,door,stairs</classNames>
         </plugin>
+        <!-- Inactive unless LIMO is a supervisor (only the dedicated validation world). -->
+        <plugin type="limo_fire_sim::GroundTruthPose">
+            <originX>-5.0</originX>
+            <originY>0.0</originY>
+            <periodMs>50</periodMs>
+            <frameId>map</frameId>
+            <topicName>/fire/ground_truth</topicName>
+        </plugin>
     </webots>
 
     <ros2_control name="WebotsControl" type="system">

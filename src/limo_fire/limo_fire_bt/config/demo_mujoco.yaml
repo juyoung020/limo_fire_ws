@@ -1,0 +1,5 @@
+# Combined MuJoCo shot demo: place the small-fire center in the forward,
+# reachable firing sector at the manager's small-fire trigger point.
+fire_demo:
+  ros__parameters:
+    small_position: [2.0, 0.25]

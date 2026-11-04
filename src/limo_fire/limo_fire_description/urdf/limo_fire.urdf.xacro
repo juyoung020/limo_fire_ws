@@ -21,4 +21,9 @@
   <xacro:property name="camera_xyz" value="${dict(real='0.15 -0.005 0.0431', webots='0.096 0.015 0.03')['$(arg platform)']}"/>
   <xacro:orbbec_dabai parent="base_link" name="camera" xyz="${camera_xyz}"
                       pitch="$(arg camera_pitch)" driver_tf="$(arg camera_driver_tf)"/>
+  <!-- Jazzy controller_manager receives the RSP robot_description topic.
+       Include the same Webots control declaration used by the driver; real mode excludes it. -->
+  <xacro:if value="${'$(arg platform)' == 'webots'}">
+    <xacro:include filename="$(find limo_fire_sim)/resource/limo_webots.urdf"/>
+  </xacro:if>
 </robot>

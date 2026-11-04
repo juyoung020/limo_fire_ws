@@ -1,0 +1,7 @@
+string fire_id
+geometry_msgs/PointStamped target
+---
+bool success
+string reason
+---
+string phase

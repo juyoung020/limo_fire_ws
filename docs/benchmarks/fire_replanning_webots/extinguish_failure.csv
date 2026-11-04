@@ -1,0 +1,2 @@
+result,mission_success,stop_latency_s,replan_latency_s,path_length_m,danger_intrusion,resume_success,distance_m,final_x,final_y,final_error_m,reason
+FAIL,0,0.28,-1,-1,0,0,0.338954,0.338678,-0.000655094,9.66132,"EXPECTED_SAFE_STOP_VERIFIED: SAFE_STOP|no safe path"

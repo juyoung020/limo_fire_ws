@@ -1,0 +1,3 @@
+from setuptools import setup
+package_name='limo_fire_bridge'
+setup(name=package_name,version='0.1.0',packages=[package_name],data_files=[('share/ament_index/resource_index/packages',['resource/'+package_name]),('share/'+package_name,['package.xml']),('share/'+package_name+'/launch',['launch/bridge.launch.py','launch/pose_sync.launch.py'])],install_requires=['setuptools'],zip_safe=True,entry_points={'console_scripts':['fire_bridge = limo_fire_bridge.fire_bridge:main','fire_detector = limo_fire_bridge.fire_detector:main','mujoco_extinguisher = limo_fire_bridge.mujoco_extinguisher:main','pose_udp = limo_fire_bridge.pose_udp:main']})

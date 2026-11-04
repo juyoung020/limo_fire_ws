@@ -1,0 +1,45 @@
+#VRML_SIM R2025a utf8
+# Self-contained collision geometry: no downloadable Floor/Wall PROTO dependency.
+EXTERNPROTO "../protos/LimoFire.proto"
+EXTERNPROTO "../protos/FireBillboard.proto"
+EXTERNPROTO "../protos/Candle.proto"
+WorldInfo {
+  title "LIMO fire-aware replanning validation"
+  basicTimeStep 10
+  contactProperties [
+    ContactProperties { material1 "wheel" material2 "default" coulombFriction 1 forceDependentSlip 0.01 bounce 0 }
+  ]
+}
+Viewpoint { orientation 0.25 0.25 -0.93 1.64 position 0 9 12 follow "LIMO" }
+Background { skyColor [0.13 0.16 0.21] }
+DirectionalLight { direction -0.3 -0.4 -1 intensity 1 }
+LimoFire { translation -5 0 0.145 name "LIMO" controller "<extern>" supervisor TRUE }
+Solid {
+  translation 0 0 -0.05
+  name "floor"
+  children [ Shape { appearance PBRAppearance { baseColor 0.65 0.67 0.70 roughness 1 metalness 0 } geometry Box { size 12 8 0.1 } } ]
+  boundingObject Box { size 12 8 0.1 }
+}
+Solid {
+  translation 0 4.1 1.2 name "north_wall"
+  children [ Shape { appearance DEF WALL PBRAppearance { baseColor 0.8 0.82 0.85 roughness 1 metalness 0 } geometry Box { size 12.4 0.2 2.4 } } ]
+  boundingObject Box { size 12.4 0.2 2.4 }
+}
+Solid {
+  translation 0 -4.1 1.2 name "south_wall"
+  children [ Shape { appearance USE WALL geometry Box { size 12.4 0.2 2.4 } } ]
+  boundingObject Box { size 12.4 0.2 2.4 }
+}
+Solid {
+  translation -6.1 0 1.2 name "west_wall"
+  children [ Shape { appearance USE WALL geometry Box { size 0.2 8 2.4 } } ]
+  boundingObject Box { size 0.2 8 2.4 }
+}
+Solid {
+  translation 6.1 0 1.2 name "east_wall"
+  children [ Shape { appearance USE WALL geometry Box { size 0.2 8 2.4 } } ]
+  boundingObject Box { size 0.2 8 2.4 }
+}
+Candle { translation -4 0.8 0 name "fire_candle" }
+FireBillboard { translation 0 0 0 name "fire_floor" texture "flame_bonfire" width 0.7 height 0.4 }
+Robot { name "Ros2Supervisor" controller "<extern>" supervisor TRUE }

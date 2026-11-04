@@ -1,0 +1,8 @@
+# Analytic map of limo_fire_replan.wbt. World -> map: x_map=x_world+5, y_map=y_world.
+image: limo_fire_replan.pgm
+mode: trinary
+resolution: 0.05
+origin: [-1.5, -4.5, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

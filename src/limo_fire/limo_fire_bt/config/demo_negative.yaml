@@ -1,0 +1,4 @@
+# Use with outcome:=failure or outcome:=timeout. A failed mission is expected.
+fire_demo:
+  ros__parameters:
+    expect_safe_stop: true
