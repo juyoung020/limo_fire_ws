@@ -1,0 +1,40 @@
+# 연기 모드 (limo_fire_navigation smoke_mode 노드). 설계·근거는 limo_fire_navigation/README.md "연기 모드".
+# navigation.launch.xml 이 저장 지도 위치 추정(localization:=true)일 때 늘 띄운다. 켜기: ros2 service call /smoke_mode/set std_srvs/srv/SetBool "{data: true}"
+smoke_mode:
+  ros__parameters:
+    global_frame: map
+    odom_frame: odom
+    base_frame: base_link
+    # map → odom 을 이 노드가 낸다(AMCL tf_broadcast: false). 늦게 묻는 쪽을 위해 AMCL transform_tolerance(1.0 s)와 같게 앞날짜
+    tf_rate: 20.0
+    transform_tolerance: 1.0
+
+    # 연기 속 장애물 지도에 넣는 가상 스캔: 저장 지도에서 광선을 쏨. 각도는 실물 라이다와 같게(hardware.md: ±110°, 0.01544 rad)
+    # range_max 는 global costmap raytrace_max_range(4.0 m)와 같게 — 안 닿은 빔이 그 거리까지 비운다
+    virtual_scan:
+      frame_id: laser_link
+      rate: 10.0                 # 실물 라이다 10 Hz
+      angle_min: -1.91986
+      angle_max: 1.91986
+      angle_increment: 0.01544
+      range_min: 0.05
+      range_max: 4.0
+      occupied_threshold: 65     # map_server occupied_thresh 0.65
+
+    # 연기 속 최고 속도 (m/s). 잠정: 평상시 0.26 의 절반. 앞을 못 보고 위치가 이동 거리만큼 흐려지므로 낮춘다
+    speed_limit: 0.13
+
+    # 연기 속 추정 자세의 불확실성 (1σ). 잠정: 바퀴 오도메트리 주행 오차는 아직 안 쟀다(hardware.md "확인할 것")
+    #   xy = xy_sigma0 + xy_per_m × 이동 거리,  yaw = yaw_sigma0 + yaw_per_rad × 회전량
+    # 나올 때 이 값을 /initialpose 공분산으로 AMCL 에 넘긴다
+    drift:
+      xy_sigma0: 0.1
+      xy_per_m: 0.05
+      yaw_sigma0: 0.05
+      yaw_per_rad: 0.02
+
+    # 부딪힘 의심: IMU 수평 가속도 크기가 이 값(m/s²) 이상. 잠정: 속도 평활기 가속 한도 2.5 m/s² 보다 크게.
+    # 정지 잡음은 x 0.045 · y 0.030 m/s²(hardware.md). 메카넘 바퀴 주행 진동은 아직 안 쟀다
+    bump:
+      accel: 4.0
+      holdoff: 1.0               # s, 한 번 부딪힘을 여러 번 알리지 않게
