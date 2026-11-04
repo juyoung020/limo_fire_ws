@@ -2,10 +2,13 @@
 # (그 launch 는 값을 launch 인자로만 갖고 있어서 여기 파일로 옮겼다)
 # 바꾼 것 (2026-10-28): 아무도 안 쓰는 포인트 클라우드 2 개·IR 영상은 끈다 (드라이버 CPU).
 #   Nav2 는 라이다 /scan 만, YOLO·object_mapper 는 컬러·깊이 영상만 쓴다
+# 바꾼 것 (2026-11-04): depth_registration true — 포인트 클라우드를 끄면 드라이버가 정렬도 같이 꺼서(docs/sensor_topics.md 주의 1)
+#   깊이가 640×400·깊이 렌즈 기준으로 나왔다. 켜면 컬러와 같은 640×480·camera_color_optical_frame·fx 489.39.
+#   실측(부하 없음, 번갈아 2 번): 끔 29.90 Hz·CPU 15 % / 켬 29.03·28.62 Hz·CPU 19 %. 아래 80 행은 깊이 시야 밖이라 늘 0.
 /**:
   ros__parameters:
     camera_name: camera
-    depth_registration: false
+    depth_registration: true
     serial_number: ""
     usb_port: ""
     device_num: 1

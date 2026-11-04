@@ -127,7 +127,7 @@ Cartographer 는 `/imu` 를 직접 받고(`use_imu_data = true`, `tracking_frame
 
 ## 주의할 것
 
-### 주의 1. 깊이가 컬러에 정렬되지 않게 바뀐다
+### 주의 1. 깊이가 컬러에 정렬되지 않게 바뀐다 (2026-11-04 고침)
 
 커밋 `02ec95e`(10-28)에서 카메라 포인트 클라우드를 껐다. 그런데 Orbbec 드라이버는 `enable_colored_point_cloud: true` 일 때만 `depth_registration` 을 강제로 켜고(`ob_camera_node.cpp:946-948`), `depth_registration` 이 켜졌을 때만 깊이를 컬러에 정렬한다(`:1057-1061`). 우리 설정은 `depth_registration: false` 라서 **포인트 클라우드를 끄면 정렬도 같이 꺼진다.**
 
@@ -145,7 +145,19 @@ Cartographer 는 `/imu` 를 직접 받고(`use_imu_data = true`, `tracking_frame
 
 `yolo_fire.yaml` 주석("깊이는 컬러에 정렬된 영상")과 [hardware.md](hardware.md#깊이-카메라--orbbec-dabai-dc1) 의 "깊이 (발행) 640×480, 컬러에 정렬"도 설치본 기준이다.
 
-고칠 방법(아직 안 고침): `orbbec_dabai_dc1.yaml` 에 `depth_registration: true` 를 넣으면 포인트 클라우드는 끈 채로 정렬만 켤 수 있다(코드 기준). 커밋 메시지의 "깊이 19→30 Hz" 가 정렬을 끈 덕분인지는 확인하지 않았으니, 켠 뒤 YOLO 를 같이 돌리면서 깊이 주기를 다시 재야 한다.
+고침(2026-11-04): `orbbec_dabai_dc1.yaml` 에 `depth_registration: true` — 포인트 클라우드는 끈 채로 정렬만 켠다. 실물에서 카메라만 띄워 잰 값:
+
+| | 정렬 끔 | 정렬 켬 |
+|---|---|---|
+| `/camera/depth/image_raw` | 640×400, `camera_depth_optical_frame` | 640×480, `camera_color_optical_frame` |
+| `camera_info` fx | 478.02 | 489.39 (컬러와 같음) |
+| 주기 (부하 없음, 번갈아 2 번) | 29.90 · 29.90 Hz | 29.03 · 28.62 Hz |
+| 드라이버 CPU | 15 % | 19 % |
+| 값 있는 픽셀 | 50.7 % | 42.5 % (아래 80 행은 깊이 시야 밖이라 늘 0) |
+
+- 같은 날 Webots 시뮬·RViz 가 같이 돌 때 정렬을 켜면 19.5~25 Hz 로 떨어졌다. 깊이 주기는 로봇 CPU 부하에 민감하다.
+- 정렬 뒤에는 컬러 화면 아래쪽(대략 아래 1/6) 탐지에 깊이가 없다. 바닥 가까운 물체는 상자 측정이 비어 나온다.
+- 탐사 RL 시뮬의 깊이 모델(`train/explore/sim/config/sensor_model.yaml`)은 아직 정렬 안 된 640×400·fx 478 기준이다 — 따로 바꾼다.
 
 ### 주의 2. 설치본이 소스보다 오래됐다
 
