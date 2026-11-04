@@ -530,6 +530,18 @@ void Env::set_state(int env, const EnvState& s) {
   if (gpu_) cudaMemcpy(b_.st + env, &s, sizeof(EnvState), cudaMemcpyHostToDevice);
   else b_.st[env] = s;
 }
+void Env::set_smoke(const std::vector<int>& on) {
+  if ((int)on.size() != b_.n_env) throw std::runtime_error("set_smoke: 환경 수와 다름");
+  std::vector<EnvState> st;
+  get_state(st);
+  for (int i = 0; i < b_.n_env; ++i) {
+    if (on[i] != 0 && on[i] != 1) throw std::runtime_error("set_smoke: 0 또는 1");
+    if (st[i].smoke == on[i]) continue;
+    st[i].smoke = on[i];
+    st[i].smoke_steps = 0;
+    set_state(i, st[i]);
+  }
+}
 void Env::get_map(std::vector<int16_t>& out) const {
   fetch(gpu_, b_.lmap, (size_t)b_.cfg.size * b_.cfg.size * b_.n_env, out);
 }

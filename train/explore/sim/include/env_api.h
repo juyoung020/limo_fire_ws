@@ -82,6 +82,8 @@ class Env {
   // 움직이는 사람 (src/people_host.cpp): 환경마다 다음 판 사람 수 상한 (판 시작 인자, 0 ~ kMaxPeople) · 이 판 사람들 (뷰어 재생)
   void set_people_max(const std::vector<int>& k);
   void get_people(std::vector<People>& out) const;
+  // 연기 모드 (mdp/smoke.h): 환경마다 0/1, 바로 다음 걸음부터 (판 중간에 연기가 낌). 리셋하면 0 으로 돌아간다
+  void set_smoke(const std::vector<int>& on);
 
   const EnvBatch& batch() const { return b_; }
   int n_env() const { return b_.n_env; }

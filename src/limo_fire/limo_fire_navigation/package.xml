@@ -3,24 +3,11 @@
 <package format="3">
   <name>limo_fire_navigation</name>
   <version>0.1.0</version>
-  <description>Nav2·Cartographer 파라미터와 지도, 연기 모드(바퀴 오도메트리·IMU 만으로 저장 지도 위 주행)</description>
+  <description>Nav2·Cartographer 파라미터와 지도</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-
-  <depend>rclcpp</depend>
-  <depend>geometry_msgs</depend>
-  <depend>nav_msgs</depend>
-  <depend>nav2_msgs</depend>
-  <depend>sensor_msgs</depend>
-  <depend>std_msgs</depend>
-  <depend>std_srvs</depend>
-  <depend>tf2</depend>
-  <depend>tf2_ros</depend>
-  <depend>tf2_geometry_msgs</depend>
-
-  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

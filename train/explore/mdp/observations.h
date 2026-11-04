@@ -25,6 +25,8 @@
 // 1D (float): 라이다 4 장(지금 → 직전 3 장, 지연 반영) · 세기(지금 장, 칸마다 가장 가까운 빔 — 지연은 아직 안 넣음) · 숫자 VEC (obs_layout.h 오프셋)
 // 관측 지연: 판마다 e.delay 걸음(0 또는 1, reset_state) — 라이다 장과 숫자(직전 행동·지난 시간 빼고)를 그만큼 늦은 것으로.
 //   지도·깊이는 지연 안 함(지도는 실물도 쌓는 데 시간이 걸려 늦지만 그 몫은 📏).
+// 연기 모드(e.smoke, mdp/smoke.h): 라이다 4 장·세기·깊이 = 0, SMOKE 칸 = 1. 지도는 연기 전 것 그대로(env.h scan_apply 가 안 쌓음)를
+//   추측 항법 지도 자세에 맞춰 그린다.
 #pragma once
 #include "env.h"
 
@@ -193,6 +195,10 @@ DEV void obs_depth(const EnvBatch& b, const EnvState& e, int env, int i) {
   const sim::MapDev& m = b.maps[e.map];
   float u, v;
   depth_uv(c.depth, i, &u, &v);
+  if (e.smoke) {   // 연기 모드: 깊이를 가림 (mdp/smoke.h). GPU 는 env_kernel.cu env_depth_pixel_kernel 이 같은 규칙
+    depth_out(b, env)[i] = mdp::smoke::depth_px(e.smoke, 0);
+    return;
+  }
   const float z = sim::depth_pixel_real(sim::with_people(m.scene, e.people), c.depth, depth_camera(c, e), u, v, depth_seed(e, i));   // 사람 원기둥도 보임
   depth_out(b, env)[i] = depth_u8(c.depth, z);
 }
@@ -276,6 +282,8 @@ DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh) {
   }
   for (int i = 0; i < mdp::act::DIM * 4; ++i) O[LAST_ACT + i] = e.last_act[i];
   O[ELAPSED] = (float)e.step * dt_act / mdp::rew::kSafeTime;
+  // 연기 모드: 라이다·세기를 가리고 SMOKE 칸 표시 (mdp/smoke.h). 자세·지도 그리는 자리는 이미 추측 항법 오차가 든 지도 자세(env.h physics_step)
+  mdp::smoke::mask_policy_1d(e.smoke, b.obs_1d + (size_t)env * POLICY_1D);
   // 가치 전용 참값
   float* Q = b.priv + (size_t)env * PRIV;
   for (int i = 0; i < PRIV; ++i) Q[i] = 0.f;

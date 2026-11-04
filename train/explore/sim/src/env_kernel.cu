@@ -469,6 +469,10 @@ __global__ void __launch_bounds__(kDepthThreads) env_depth_pixel_kernel(EnvBatch
   const EnvCfg& c = b.cfg;
   const DepthModel& M = c.depth;
   uint8_t* out = mdp::obsgen::depth_out(b, env);
+  if (e.smoke) {   // 연기 모드: 깊이를 가림 (mdp/smoke.h). 두 단계 모두 0 을 쓰고 옆 광선 일감도 안 만듦 — CPU obs_depth 와 같음
+    out[i] = mdp::smoke::depth_px(e.smoke, 0);
+    return;
+  }
   const int tri = b.dep_tri[px];
   if (tri == -1) {   // 유효 영역 밖·못 맞음
     if (!final) out[i] = 0;
