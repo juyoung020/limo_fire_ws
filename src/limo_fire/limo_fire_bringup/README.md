@@ -15,11 +15,11 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=<맵>        # 시뮬: 1(sim
 
 ## 키보드로 조종 (teleop)
 
-바퀴만 움직이면 되면 바닥판 드라이버 `limo_fire_base` 만 켠다. 센서도 필요하면 대신 `robot.launch.xml` 을 켠다(둘 다 `/dev/ttylimo` 를 열어서 같이 켜면 안 된다. 대시보드의 WeGo `limo_base` 와도 마찬가지).
+바퀴만 움직이면 되면 섀시 드라이버 `limo_fire_base` 만 켠다. 센서도 필요하면 대신 `robot.launch.xml` 을 켠다(둘 다 `/dev/ttylimo` 를 열어서 같이 켜면 안 된다. 대시보드의 WeGo `limo_base` 와도 마찬가지).
 
 ```bash
 source ~/limo_fire_ws/env.sh
-ros2 run limo_fire_base limo_fire_base --ros-args -r __ns:=/limo --params-file $(ros2 pkg prefix limo_fire_bringup)/share/limo_fire_bringup/config/limo_base.yaml   # 바닥판 (/cmd_vel 받음, WeGo limo_base 와 같은 동작)
+ros2 run limo_fire_base limo_fire_base --ros-args -r __ns:=/limo --params-file $(ros2 pkg prefix limo_fire_bringup)/share/limo_fire_bringup/config/limo_base.yaml   # 섀시 (/cmd_vel 받음, WeGo limo_base 와 같은 동작)
 
 # 새 터미널 — 키 입력을 받으므로 이 창이 선택돼 있어야 한다
 source ~/limo_fire_ws/env.sh
@@ -67,7 +67,7 @@ WeGo 와 다른 점 (성능 측정은 limo_fire_perception README·2026-10-28 �
 - `cartographer_2d.lua`: 회전 움직임 필터 0.1° → 0.5° (CPU -20 %, 궤적 차 1.5~1.8 cm), 자세 발행 5 → 20 ms (TF 트래픽). 파일 머리 주석에 비교 방법
 - `save_map.launch.xml` 의 지도 대기 시간을 2 초 → 10 초로 늘렸다. 2 초로는 `/map`(1 초마다 발행)을 못 받고 실패하는 일이 있었다 — 대시보드 "맵 저장"이 파일을 안 바꾼 원인으로 보인다. 저장 위치는 WeGo 처럼 src 와 install 두 곳이라 다시 빌드하지 않아도 네비게이션이 새 지도를 연다.
 
-바닥판은 우리 `limo_fire_base`, 나머지 드라이버(`orbbec_camera`, `ydlidar_ros2_driver`, `robot_localization`, `limo_description`, `limo_msgs`)는 로봇의 `~/wego_ws` 에 빌드된 것을 쓴다. 대시보드로 켠 것과 동시에 켜면 같은 장치를 두 번 열어 실패하니 한쪽만 쓴다.
+섀시는 우리 `limo_fire_base`, 나머지 드라이버(`orbbec_camera`, `ydlidar_ros2_driver`, `robot_localization`, `limo_description`, `limo_msgs`)는 로봇의 `~/wego_ws` 에 빌드된 것을 쓴다. 대시보드로 켠 것과 동시에 켜면 같은 장치를 두 번 열어 실패하니 한쪽만 쓴다.
 
 ## 검증 (2026-10-26, 실물)
 

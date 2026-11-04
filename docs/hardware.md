@@ -88,7 +88,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 구동 | **파랑(메카넘) 모드로 운용**(바퀴: 메카넘 4 개, LIMO Pro 기본 구성). 구동 모델도 이 모드 녹화로 맞춤. 예전 표기 "차동(diff) 모드"는 잘못. `limo_fire_base`(WeGo `limo_base` 의 우리 판), 포트 `ttylimo`. 모드는 바닥판이 정함: 앞 불 노랑 4 륜 차동 · 초록 아커만 · 파랑 메카넘(앱) |
+| 구동 | **파랑(메카넘) 모드로 운용**(바퀴: 메카넘 4 개, LIMO Pro 기본 구성). 구동 모델도 이 모드 녹화로 맞춤. 예전 표기 "차동(diff) 모드"는 잘못. `limo_fire_base`(WeGo `limo_base` 의 우리 판), 포트 `ttylimo`. 모드는 섀시가 정함: 앞 불 노랑 4 륜 차동 · 초록 아커만 · 파랑 메카넘(앱) |
 | `/odom` | 50 Hz (실측 49.9 Hz) |
 | 정지 드리프트 | 20 초 동안 0.1 mm |
 | EKF | `robot_localization` `ekf_filter_node_odom` → `/odometry/filtered` 30 Hz. 기동 때 `odom0_differential` 과 `odom0_relative` 가 둘 다 true 라는 오류가 찍힌다(차동 모드로 동작) — 설정 정리 필요 |

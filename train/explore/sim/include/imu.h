@@ -1,4 +1,4 @@
-// IMU 측정 모델 (바닥판 IMU, /imu 100 Hz — 학습 환경은 물리 걸음 50 Hz 마다). 호스트·장치 공용, CPU == GPU 비트 같음(detmath).
+// IMU 측정 모델 (섀시 IMU, /imu 100 Hz — 학습 환경은 물리 걸음 50 Hz 마다). 호스트·장치 공용, CPU == GPU 비트 같음(detmath).
 // 값과 근거: config/sensor_model.yaml imu, analysis/real_limo.md IMU 절, 맞춤·확인 도구 tools/imu_check.
 //
 // 2D 시뮬이라 몸통 기울기·가속은 구동 모델이 낸 몸통 속도(v, ω)와 그 변화(a)에서 만들고, 나머지는 실측 잡음·진동 모델로 채운다.

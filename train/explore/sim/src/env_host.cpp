@@ -98,7 +98,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   if (c.substeps < 1 || std::fabs(c.substeps * c.dt - period) > 1e-4f)
     throw std::runtime_error(path + ": action period 는 time.dt 의 배수");
 
-  // 바닥판 구동 (drive.h) · 바닥 재질
+  // 섀시 구동 (drive.h) · 바닥 재질
   const YAML::Node dr = need(y, "drive", path);
   DriveModel& drv = c.drive;
   drv.delay_v = dr["delay_steps"][0].as<int>();
@@ -115,7 +115,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   drv.v_max = dr["max"][0].as<float>();
   drv.w_max = dr["max"][1].as<float>();
   // rc_v·rc_w 는 리모컨 녹화를 다시 돌릴 때만(motion_check, drive.rc) — 학습 환경은 /cmd_vel 경로
-  // 물리 단위 행동(act_raw) 한도 = 바닥판 최고 속도. 정규 단위 행동 한도는 mdp/obs_layout.h mdp::act
+  // 물리 단위 행동(act_raw) 한도 = 섀시 최고 속도. 정규 단위 행동 한도는 mdp/obs_layout.h mdp::act
   c.act_v_max = drv.v_max;
   c.act_w_max = mdp::act::W_MAX < drv.w_max ? mdp::act::W_MAX : drv.w_max;
   c.act_raw = 0;

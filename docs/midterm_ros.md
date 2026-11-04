@@ -11,8 +11,8 @@
 | 무엇 | 값 |
 |---|---|
 | 로봇 | AgileX LIMO Pro (WeGo 판), 컴퓨터 Jetson Orin Nano, Ubuntu 22.04 + **ROS 2 Humble** |
-| 센서 | 라이다 YDLIDAR T-mini Plus · 깊이 카메라 Orbbec Dabai DC1 · IMU(바닥판 안) · 바퀴 엔코더 4개 |
-| 핵심 흐름 | 센서 → **EKF**(odom→base_link) → **Cartographer / AMCL**(map→odom) → **Nav2** → `/cmd_vel` → 바닥판 |
+| 센서 | 라이다 YDLIDAR T-mini Plus · 깊이 카메라 Orbbec Dabai DC1 · IMU(섀시 안) · 바퀴 엔코더 4개 |
+| 핵심 흐름 | 센서 → **EKF**(odom→base_link) → **Cartographer / AMCL**(map→odom) → **Nav2** → `/cmd_vel` → 섀시 |
 | 인식 흐름 | 컬러 → **yolo_detector**(TensorRT YOLO26s-seg, 7 클래스) → **object_mapper**(깊이 + TF) → 지도 위 물체 |
 | 주기 | `/imu` 100 · `/odom` 50 · `/wheel_odometry` 50 · `/rc_state` 40 · 카메라 30 · `/odometry/filtered` 30 · `/motor_states` 20 · Nav2 제어 20 · `/scan` 10 · `/joint_states` 10 · `/limo_status` 2 · `/map` 1 Hz |
 | TF | `map →(Cartographer 또는 AMCL) odom →(EKF) base_link →(URDF) laser_link · imu_link · camera_link →(카메라 드라이버) color/depth 프레임` |
@@ -34,7 +34,7 @@ limo_fire_base ─/odom 50Hz, /imu 100Hz─► EKF ─/odometry/filtered 30Hz─
               occupancy_grid_node ─/map 1Hz─► RViz·map_saver_cli,  cartographer_node ─TF map→odom, /trajectory_node_list ~30Hz─►
 주행 때: map_server ─/map(TRANSIENT_LOCAL, 한 번)─► AMCL·전역 costmap,  AMCL(0.25 m·0.2 rad 움직이면 갱신) ─TF map→odom, /amcl_pose, /particle_cloud─►
 RViz ─/initialpose─► AMCL    RViz ─/goal_pose(토픽)─► bt_navigator =액션=► planner · controller · behavior_server
-controller ─/cmd_vel_nav 20Hz─► velocity_smoother ─/cmd_vel 20Hz(설정)─► limo_fire_base ─UART 0x111─► 바닥판
+controller ─/cmd_vel_nav 20Hz─► velocity_smoother ─/cmd_vel 20Hz(설정)─► limo_fire_base ─UART 0x111─► 섀시
 behavior_server(spin·backup) ─/cmd_vel 직접─► limo_fire_base
 카메라 ─color 30Hz─► yolo_detector ─detections, mask, image─► object_mapper ◄─depth 30Hz, camera_info─ 카메라
 RViz ─/clicked_point─► object_mapper ─/object_mapper/markers 10Hz, /summary 2Hz, /selected─► RViz
@@ -42,17 +42,17 @@ RViz ─/clicked_point─► object_mapper ─/object_mapper/markers 10Hz, /summ
 
 **그림 2 — TF**: `map →(Cartographer|AMCL) odom →(EKF) base_link →(URDF, robot_state_publisher) laser_link · imu_link · camera_link →(Orbbec 드라이버) color/depth optical`
 
-**문단 1 — 전체 구조·폴더.** ROS 2 Humble 워크스페이스. 남의 코드는 `src/external`(WeGo LIMO, 교수님 Webots)에 두고 직접 고치지 않으며(바꿀 것은 우리 패키지로 가져와 고침 — 바닥판 드라이버가 그 예), 우리 코드는 역할마다 패키지 하나 `src/limo_fire/limo_fire_<역할>`: base(바닥판 드라이버), bringup(launch·config), description(URDF→TF), navigation(Cartographer·Nav2 설정·지도), perception(YOLO·물체 지도), sim(Webots 플러그인·녹화 분석). `train/`·`sim/` 은 ROS 가 아니라 COLCON_IGNORE. 노드는 C++, launch 는 XML, 설정은 yaml. 실행 순서: `robot.launch.xml`(센서만은 `base:=false`) → 지도 `mapping.launch.xml` → `save_map.launch.xml`, 또는 주행 `navigation.launch.xml` → 인식 `yolo.launch.xml`. 시뮬은 `sim.launch.xml world:= slam:= perception:=` 이 같은 파일들을 include 해서 "로봇 켜기"만 다르다.
+**문단 1 — 전체 구조·폴더.** ROS 2 Humble 워크스페이스. 남의 코드는 `src/external`(WeGo LIMO, 교수님 Webots)에 두고 직접 고치지 않으며(바꿀 것은 우리 패키지로 가져와 고침 — 섀시 드라이버가 그 예), 우리 코드는 역할마다 패키지 하나 `src/limo_fire/limo_fire_<역할>`: base(섀시 드라이버), bringup(launch·config), description(URDF→TF), navigation(Cartographer·Nav2 설정·지도), perception(YOLO·물체 지도), sim(Webots 플러그인·녹화 분석). `train/`·`sim/` 은 ROS 가 아니라 COLCON_IGNORE. 노드는 C++, launch 는 XML, 설정은 yaml. 실행 순서: `robot.launch.xml`(센서만은 `base:=false`) → 지도 `mapping.launch.xml` → `save_map.launch.xml`, 또는 주행 `navigation.launch.xml` → 인식 `yolo.launch.xml`. 시뮬은 `sim.launch.xml world:= slam:= perception:=` 이 같은 파일들을 include 해서 "로봇 켜기"만 다르다.
 
-**문단 2 — 센서와 주기.** limo_fire_base 가 UART 460800 bps 로 받은 프레임을 ID 별로 나눠 `/imu` 100 Hz, `/odom` 50 Hz, `/wheel_odometry` 50 Hz, `/rc_state` 40 Hz, `/motor_states` 20 Hz, `/limo_status` 2 Hz 로 내고, `/cmd_vel` 이 오면 바로 0x111 구동 프레임을 보낸다(리모컨 SWB 오토 모드일 때만 바닥판이 받음). 라이다 `/scan` 10 Hz(±110°), 카메라 컬러·깊이 각 30 Hz. `/joint_states` 10 Hz 는 센서가 아니라 joint_state_publisher 가 URDF 바퀴 관절 값(실물은 0)을 내는 것. 센서 주기는 녹화 bag 의 메시지 수 ÷ 시간 실측, Nav2(제어 20, 재계획 1, costmap 0.5·2 Hz)는 설정값.
+**문단 2 — 센서와 주기.** limo_fire_base 가 UART 460800 bps 로 받은 프레임을 ID 별로 나눠 `/imu` 100 Hz, `/odom` 50 Hz, `/wheel_odometry` 50 Hz, `/rc_state` 40 Hz, `/motor_states` 20 Hz, `/limo_status` 2 Hz 로 내고, `/cmd_vel` 이 오면 바로 0x111 구동 프레임을 보낸다(리모컨 SWB 오토 모드일 때만 섀시가 받음). 라이다 `/scan` 10 Hz(±110°), 카메라 컬러·깊이 각 30 Hz. `/joint_states` 10 Hz 는 센서가 아니라 joint_state_publisher 가 URDF 바퀴 관절 값(실물은 0)을 내는 것. 센서 주기는 녹화 bag 의 메시지 수 ÷ 시간 실측, Nav2(제어 20, 재계획 1, costmap 0.5·2 Hz)는 설정값.
 
-**문단 3 — 위치 추정.** EKF 가 `/odom`(x, y, yaw, 속도)과 `/imu`(yaw, 각속도, 가속도)를 30 Hz 로 합쳐 `/odometry/filtered` 와 TF odom→base_link 를 낸다(바닥판 TF 는 꺼서 발행자 하나). 바퀴 위치는 미끄러짐이 쌓이니 differential(앞 값과의 차이)로 쓰고, 회전은 IMU 자이로를 같이 믿는다. 누적 오차는 지도 만들 때 Cartographer(`/scan`·`/imu`·`/odometry/filtered` 로 스캔 정합 + 루프 닫기), 주행할 때 AMCL(입자 500~2000, `/scan` 을 `/map` 에 맞춤)이 TF map→odom 으로 보정한다. `/map` 은 0.05 m 격자. 내가 `05f3a3b` 에서 Cartographer 회전 필터를 0.1°→0.5° 로 바꿔 노드가 덜 생겨 CPU 를 20 % 줄였고(궤적 차 1.5~1.8 cm < 지도 칸 5 cm), 자세 발행 주기를 5→20 ms 로 늘렸다(map→odom TF 가 /tf 의 가장 큰 몫이라). 그래서 /tf 가 10-26 녹화 245 Hz 에서 11-03 녹화 91~98 Hz 로 줄었다.
+**문단 3 — 위치 추정.** EKF 가 `/odom`(x, y, yaw, 속도)과 `/imu`(yaw, 각속도, 가속도)를 30 Hz 로 합쳐 `/odometry/filtered` 와 TF odom→base_link 를 낸다(섀시 TF 는 꺼서 발행자 하나). 바퀴 위치는 미끄러짐이 쌓이니 differential(앞 값과의 차이)로 쓰고, 회전은 IMU 자이로를 같이 믿는다. 누적 오차는 지도 만들 때 Cartographer(`/scan`·`/imu`·`/odometry/filtered` 로 스캔 정합 + 루프 닫기), 주행할 때 AMCL(입자 500~2000, `/scan` 을 `/map` 에 맞춤)이 TF map→odom 으로 보정한다. `/map` 은 0.05 m 격자. 내가 `05f3a3b` 에서 Cartographer 회전 필터를 0.1°→0.5° 로 바꿔 노드가 덜 생겨 CPU 를 20 % 줄였고(궤적 차 1.5~1.8 cm < 지도 칸 5 cm), 자세 발행 주기를 5→20 ms 로 늘렸다(map→odom TF 가 /tf 의 가장 큰 몫이라). 그래서 /tf 가 10-26 녹화 245 Hz 에서 11-03 녹화 91~98 Hz 로 줄었다.
 
 **문단 4 — 액션으로 주행.** 2D Goal Pose 는 액션이 아니라 `/goal_pose` 토픽이고, bt_navigator 가 이를 받아 자기 `navigate_to_pose` 액션 서버에 goal 로 넣는다(명령줄: `ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose …`). bt_navigator 는 이 액션의 서버이면서, 행동 트리가 `compute_path_to_pose`(planner_server, Smac 2D, 1 Hz 재계획) · `follow_path`(controller_server, RPP 20 Hz) · `spin`·`backup`·`wait`(behavior_server) 액션의 클라이언트이고, costmap `clear_entirely_*` 서비스의 클라이언트다. 경로는 토픽이 아니라 액션으로 넘어간다: compute_path_to_pose 의 result 경로를 BT 가 follow_path 의 goal 로 준다(`/plan` 토픽은 RViz 표시용). BT 는 100 ms(bt_loop_duration)마다 돌며 feedback 을 낸다. 실패하면 Nav2 기본 BT 의 복구(costmap 지우기 → spin → wait → backup)를 RoundRobin 으로 실패할 때마다 다음 것으로 돌린다 — 같은 복구만 되풀이하지 않으려고. 복구 동작은 behavior_server 가 velocity_smoother 를 거치지 않고 `/cmd_vel` 로 바로 낸다. 타입 `nav2_msgs/action/NavigateToPose`: goal = PoseStamped(+behavior_tree), feedback = current_pose·navigation_time·estimated_time_remaining·number_of_recoveries·distance_remaining, result 는 비어 있어 성공·실패·취소 상태로 끝을 안다. 액션은 서비스와 달리 피드백과 취소가 된다. 시뮬 맵 4 개의 순찰점 46 개는 월드 파일의 `patrol` 목록을 읽어 navigate_to_pose 액션 클라이언트(임시 스크립트, 저장소에 없음)로 하나씩 보내고 결과를 기다려 돌았다. 여러 점을 한 번에 주는 정식 방법은 `follow_waypoints`(waypoint_follower 가 navigate_to_pose 클라이언트).
 
 **문단 5 — 인식과 내 실수.** yolo_detector 가 컬러 영상을 TensorRT YOLO26s-seg(7 클래스: 불·연기·소화기·유도등·사람·문·계단)로 한 장 10.3 ms 에 처리해 `/yolo_detector/detections`(Detection2DArray)·`mask` 를 낸다. object_mapper 는 탐지와 깊이를 ApproximateTime(0.05 s)으로 짝짓고, 깊이 + camera_info(fx, fy, cx, cy)로 3D 역투영 → 영상 시각의 TF(map ← 깊이 카메라)를 `lookupTransform` 으로 찾아 map 좌표 → 같은 클래스 근처면 합치고 5 번 이상 본 것만 MarkerArray 10 Hz 로 낸다. 내 실수: `05f3a3b` 에서 안 쓰는 포인트 클라우드를 껐는데, Orbbec 드라이버는 컬러 포인트 클라우드가 켜져야만 depth_registration 을 켜서 깊이가 컬러에 정렬되지 않게 됐다(640×400 대 640×480). 팀원이 `7c208c1` 에서 찾았다. 그래서 실물은 마스크 대신 상자 깊이로 재고 위치가 어긋날 수 있다. 고칠 방법은 `depth_registration: true` 로 정렬만 켜는 것. 11-04 실물에서 켜 보니 드라이버가 `ALIGN_D2C_HW_MODE` 로 깊이를 640×480·`camera_color_optical_frame`·fx 489.39(컬러와 같음)로 내는 것까지 확인했다. 깊이 값과 주기("19→30 Hz" 가 정렬을 끈 덕분인지)는 카메라 앞이 0.3 m 안이라 아직 못 쟀고, 확인 전이라 설정은 되돌려 뒀다. 같이 바꿀 것: 탐사 RL 시뮬 깊이 모델(지금 640×400·fx 478 기준).
 
-**문단 6 — 내가 한 것 (커밋).** 구조 `759c357`, URDF `10e621b`, 실물 XML launch `d5068ff`(WeGo 대시보드 Python 실행을 옮김), YOLO 노드 `bf15281`·`09da2f2`, object_mapper `fdda7f8`, Jetson 실시간화·컴포넌트 `05f3a3b`, Webots 맵·sim.launch·Nav2 `571f1a0`, 인식 벤치마크 `4698491`, 바닥판 드라이버 `6f59512`(버려지던 리모컨·모터·바퀴 거리 토픽), 녹화 launch·bag 분석 도구는 탐사 RL 커밋 `eb2670c` 에 같이 넣음(탐사 RL 자체는 ROS 가 아닌 GPU 학습, `40ecee2` 까지). 팀원: 실물 TF 를 URDF 하나로 `773d838`(woojoo1116), 센서 토픽 문서 `7c208c1`(leeyechan). `571f1a0` 에서 Webots 새 맵 3 개와 교수님 맵을 실물과 같은 launch 로 돌리며 Nav2 를 바꿨다: DWB 는 U 자 구간에서 제자리 회전만 하다 멈춰 RPP 로, NavFn 은 미로 끝까지 경로를 못 내 Smac 2D 로, 팽창 0.05·0.13 m 는 로봇 반경 0.2 m 보다 작아 벽에 붙어서 0.45 m 로, velocity_smoother 5 Hz 는 명령이 0.2 초마다만 나가 20 Hz 로(컨트롤러는 원래 20 Hz). 4 맵 순찰점 46 개 전부 도착. EKF·AMCL 값은 WeGo 그대로다. main 은 "작업 하나 = 커밋 하나" 규칙(`62b091d`)으로 합쳤고 세부 커밋은 태그 v0.1.0~v0.6.0 에 남아 있다.
+**문단 6 — 내가 한 것 (커밋).** 구조 `759c357`, URDF `10e621b`, 실물 XML launch `d5068ff`(WeGo 대시보드 Python 실행을 옮김), YOLO 노드 `bf15281`·`09da2f2`, object_mapper `fdda7f8`, Jetson 실시간화·컴포넌트 `05f3a3b`, Webots 맵·sim.launch·Nav2 `571f1a0`, 인식 벤치마크 `4698491`, 섀시 드라이버 `6f59512`(버려지던 리모컨·모터·바퀴 거리 토픽), 녹화 launch·bag 분석 도구는 탐사 RL 커밋 `eb2670c` 에 같이 넣음(탐사 RL 자체는 ROS 가 아닌 GPU 학습, `40ecee2` 까지). 팀원: 실물 TF 를 URDF 하나로 `773d838`(woojoo1116), 센서 토픽 문서 `7c208c1`(leeyechan). `571f1a0` 에서 Webots 새 맵 3 개와 교수님 맵을 실물과 같은 launch 로 돌리며 Nav2 를 바꿨다: DWB 는 U 자 구간에서 제자리 회전만 하다 멈춰 RPP 로, NavFn 은 미로 끝까지 경로를 못 내 Smac 2D 로, 팽창 0.05·0.13 m 는 로봇 반경 0.2 m 보다 작아 벽에 붙어서 0.45 m 로, velocity_smoother 5 Hz 는 명령이 0.2 초마다만 나가 20 Hz 로(컨트롤러는 원래 20 Hz). 4 맵 순찰점 46 개 전부 도착. EKF·AMCL 값은 WeGo 그대로다. main 은 "작업 하나 = 커밋 하나" 규칙(`62b091d`)으로 합쳤고 세부 커밋은 태그 v0.1.0~v0.6.0 에 남아 있다.
 
 **문단 7 — ROS 2 기능.** Nav2 는 lifecycle 노드라 lifecycle_manager 두 개(localization: map_server·amcl / navigation: 나머지 7 개)가 autostart 로 각 노드의 `/<노드>/change_state` 서비스를 불러 configure → activate 하고, `/bond` 로 살아 있는지 봐서 하나가 죽으면 전체를 내린다. 재시작·정지는 `…/manage_nodes` 서비스. 모두 `component_container_isolated`(nav2_container) 한 프로세스에 `load_composable_node` 로 올렸다. 인식 두 노드는 `component_container_mt` 에 `use_intra_process_comms` 로 복사 없이 넘기고, yolo_detector 는 작업 스레드가 최신 영상만 처리한다. 파라미터는 노드별 yaml 을 `<param from>` 으로 넣는다. QoS: `/scan` BEST_EFFORT, 카메라는 RELIABLE 로 나오고 우리 노드는 SensorDataQoS 로 받음, `/map`·`/tf_static`·마커는 TRANSIENT_LOCAL. 내 서비스 `/object_mapper/clear`(std_srvs/Trigger). 시뮬은 Ros2Supervisor 가 `/clock`(모든 노드 use_sim_time), 바퀴는 ros2_control `diffdrive_controller`, EKF 자리는 교수님 플러그인이 대신하고, `nav2_sim.yaml` 이 use_sim_time·odom_topic·AMCL 처음 위치만 덮는다. 교수님 robot_launch.py 는 URDF 를 1 초만 기다려 두 번에 한 번 TF 가 안 나와 `sim_robot.launch.xml` 을 따로 짰다.
 
@@ -69,7 +69,7 @@ limo_fire_ws/                       워크스페이스 루트 (colcon build)
 │   │   ├── wego_limo_pro/          WeGo LIMO Pro 드라이버·예제 (라이다·카메라 드라이버 포함)
 │   │   └── webots_ros2_limo/       교수님 Webots LIMO (센서 플러그인 limo_sensors)
 │   └── limo_fire/                  ★ 우리 패키지 (이름 규칙 limo_fire_<역할>)
-│       ├── limo_fire_base/         바닥판 UART 드라이버 (C++) — /odom /imu /cmd_vel …
+│       ├── limo_fire_base/         섀시 UART 드라이버 (C++) — /odom /imu /cmd_vel …
 │       ├── limo_fire_bringup/      launch 와 config (실물·시뮬·녹화)
 │       ├── limo_fire_description/  URDF/xacro, RViz 설정, 로봇 모델 → TF
 │       ├── limo_fire_navigation/   Cartographer·Nav2 파라미터, 저장 지도
@@ -100,7 +100,7 @@ limo_fire_ws/                       워크스페이스 루트 (colcon build)
 
 | 패키지 | 노드 (실행 이름) | 하는 일 |
 |---|---|---|
-| `limo_fire_base` | `/limo/limo_fire_base` | 바닥판과 UART(`/dev/ttylimo`, 460800 bps)로 통신. 받은 프레임 → `/odom` `/imu` `/limo_status` `/rc_state` `/motor_states` `/wheel_odometry`, `/cmd_vel` → 구동 명령 프레임 |
+| `limo_fire_base` | `/limo/limo_fire_base` | 섀시와 UART(`/dev/ttylimo`, 460800 bps)로 통신. 받은 프레임 → `/odom` `/imu` `/limo_status` `/rc_state` `/motor_states` `/wheel_odometry`, `/cmd_vel` → 구동 명령 프레임 |
 | (external) ydlidar_ros2_driver | `/ydlidar_ros2_driver_node` | 라이다 → `/scan` |
 | (external) orbbec_camera | `/camera/camera` (컴포넌트, `camera_container`) | 카메라 → `/camera/color/*` `/camera/depth/*`, 카메라 프레임 TF |
 | robot_localization | `/ekf_filter_node_odom` | `/odom` + `/imu` → `/odometry/filtered`, TF odom→base_link |
@@ -150,7 +150,7 @@ limo_fire_ws/                       워크스페이스 루트 (colcon build)
 ```
  ┌──────────────┐ /odom 50Hz      ┌──────────┐ /odometry/filtered 30Hz  ┌───────────────────┐
  │limo_fire_base├────────────────►│   EKF    ├─────────────────────────►│ Cartographer      │
- │ (UART 바닥판)├─/imu 100Hz─────►│          │ TF odom→base_link        │  또는 AMCL(TF 로) │
+ │ (UART 섀시)├─/imu 100Hz─────►│          │ TF odom→base_link        │  또는 AMCL(TF 로) │
  │              │                 │          │  (AMCL 은 토픽 대신 TF)  │ + map_server(주행)│
  └──▲───────────┘        │        └──────────┘                          │ TF map→odom, /map │
     │ /cmd_vel           └──────────────────────────────────────────────►│                   │
@@ -178,7 +178,7 @@ limo_fire_ws/                       워크스페이스 루트 (colcon build)
 
 주기 "실측"은 11-03 녹화(`1103_M_drive3` 95 s, `1103_M_cmd1` 227 s, `static_1103_floor` 61 s)의 메시지 수 ÷ 녹화 길이. 녹화에 없는 토픽은 설정값.
 
-### 5-1. 센서·바닥판
+### 5-1. 센서·섀시
 
 | 토픽 | 메시지 타입 | 주기 (실측) | frame_id | 발행 | 구독 |
 |---|---|---|---|---|---|
@@ -232,7 +232,7 @@ limo_fire_ws/                       워크스페이스 루트 (colcon build)
 
 ### 5-5. 실행 중 노드마다 주고받는 것 전부 (실측 `ros2 node info`)
 
-2026-11-04 Webots 에서 `sim.launch.xml world:=limo_fire_maze perception:=true`(저장 지도 + AMCL + Nav2 + YOLO·물체 지도)를 띄우고 모든 노드에 `ros2 node info` 를 돌린 결과. 모든 노드에 공통인 `/parameter_events`·`/rosout`·`/clock`·lifecycle 서비스(`change_state` 등)·파라미터 서비스·`/bond` 는 뺐다. 시뮬에서는 Webots 플러그인이 실물 드라이버와 같은 이름(`/limo/limo_base`, `/ydlidar_ros2_driver_node`, `/camera/camera`)으로 낸다. 실물은 바닥판이 `/rc_state` `/motor_states` `/wheel_odometry` `/limo_status` 를 더 내고 `/cmd_vel` 을 받으며, odom→base_link 는 EKF 가 낸다. bt_navigator·controller 의 `/odom` 구독은 실물에서 `/odometry/filtered`.
+2026-11-04 Webots 에서 `sim.launch.xml world:=limo_fire_maze perception:=true`(저장 지도 + AMCL + Nav2 + YOLO·물체 지도)를 띄우고 모든 노드에 `ros2 node info` 를 돌린 결과. 모든 노드에 공통인 `/parameter_events`·`/rosout`·`/clock`·lifecycle 서비스(`change_state` 등)·파라미터 서비스·`/bond` 는 뺐다. 시뮬에서는 Webots 플러그인이 실물 드라이버와 같은 이름(`/limo/limo_base`, `/ydlidar_ros2_driver_node`, `/camera/camera`)으로 낸다. 실물은 섀시가 `/rc_state` `/motor_states` `/wheel_odometry` `/limo_status` 를 더 내고 `/cmd_vel` 을 받으며, odom→base_link 는 EKF 가 낸다. bt_navigator·controller 의 `/odom` 구독은 실물에서 `/odometry/filtered`.
 
 | 노드 | 구독 | 발행 | 서비스 서버 | 액션 |
 |---|---|---|---|---|
@@ -275,7 +275,7 @@ map
 ```
 
 - 규약: REP-103 (미터·라디안, x 앞·y 왼쪽·z 위), REP-105 (map → odom → base_link). `base_footprint` 는 실물 드라이버에 없어서 안 쓴다.
-- **TF 하나 = 발행자 하나**. 바닥판도 odom→base_link 를 낼 수 있지만 `pub_odom_tf: false` 로 끄고 EKF 만 낸다. 둘이 내면 번갈아 덮어써 위치가 튄다.
+- **TF 하나 = 발행자 하나**. 섀시도 odom→base_link 를 낼 수 있지만 `pub_odom_tf: false` 로 끄고 EKF 만 낸다. 둘이 내면 번갈아 덮어써 위치가 튄다.
 - **map→odom 의 뜻**: odom→base_link 는 매끄럽지만 바퀴 미끄러짐으로 누적 오차가 생긴다. 라이다를 지도에 맞춰 찾은 "진짜 위치"와의 차이를 map→odom 으로 내서 보정한다. 그래서 로봇 위치 = map→odom × odom→base_link.
 - 센서 장착 위치는 URDF(`limo_fire_description/urdf/*.xacro`) 한 곳에만 둔다. launch 에 static_transform_publisher 를 흩어 두지 않는다. 카메라는 `orbbec_dabai.xacro` 모듈.
 
@@ -283,7 +283,7 @@ map
 
 ## 7. 노드별 자세히
 
-### 7-1. 바닥판 드라이버 `limo_fire_base` (C++, 내가 확장)
+### 7-1. 섀시 드라이버 `limo_fire_base` (C++, 내가 확장)
 - 시리얼 `/dev/ttylimo`(→ `/dev/ttyTHS1`), **460800 bps**. 읽기 전용 스레드가 바이트를 받아 프레임으로 맞추고(`processRxData` → `parseFrame`), **프레임 ID** 로 나눈다:
 
 | 프레임 ID | 내용 | 나가는 토픽 |
@@ -297,9 +297,9 @@ map
 | `0x111` (보냄) | 구동 명령 | ← `/cmd_vel` |
 
 - `/cmd_vel` 콜백이 오면 바로 `0x111` 프레임을 보낸다(타이머가 아니라 이벤트). 구동 모드에 따라 쓰는 값이 다르다: 4WD 차동은 `linear.x`·`angular.z`, 아커만은 `angular.z` 로 조향각 계산, 메카넘은 `linear.y` 도.
-- 리모컨 스위치 SWB 가 위(오토 모드)여야 바닥판이 ROS 명령을 받는다. 리모컨 조종은 ROS 를 거치지 않고 바닥판이 바로 처리한다.
+- 리모컨 스위치 SWB 가 위(오토 모드)여야 섀시가 ROS 명령을 받는다. 리모컨 조종은 ROS 를 거치지 않고 섀시가 바로 처리한다.
 - 토픽을 절대 이름(`"/odom"`)으로 만들어서 노드가 `/limo` 이름공간이어도 토픽은 `/odom`. 코드 안 노드 이름은 `limo_base` 이고 launch 의 `name=` 이 `limo_fire_base` 로 바꾼다.
-- `control_rate` 파라미터는 선언만 되고 쓰이지 않는다(WeGo 원본 그대로). 주기는 바닥판이 보내는 프레임 주기가 정한다.
+- `control_rate` 파라미터는 선언만 되고 쓰이지 않는다(WeGo 원본 그대로). 주기는 섀시가 보내는 프레임 주기가 정한다.
 - WeGo 원본은 리모컨·모터·바퀴 거리 프레임을 받고 버렸다 → `limo_fire_base` 로 가져와 토픽으로 낸다(원본은 `archive/limo_base`).
 
 ### 7-2. EKF (`robot_localization`, `config/ekf.yaml`)
@@ -408,7 +408,7 @@ NavigateRecovery (재시도 6번)
 | 10-27 | **object_mapper**: 탐지 → 깊이·TF 로 지도 좌표, 아이콘·현황판 · YOLO26s-seg(탐지+분할) 학습과 노드 적용 |
 | 10-28 | YOLO 전처리·마스크 GPU 로(한 장 10.3 ms), 컴포넌트로 묶음, jetson_clocks, 깊이 19 → 30 Hz · CHANGELOG · 규약 문서 |
 | 10-29 | Webots 맵 3개와 `sim.launch.xml world:=` · RViz 운용 화면 하나 · Nav2 를 RPP·Smac 2D 로 · 인식 벤치마크(정답 카메라 플러그인 + `perception_benchmark`) |
-| 11-03 | **`limo_fire_base`**: 바닥판 드라이버를 가져와 리모컨·모터·바퀴 거리 토픽 추가, `base:=false` · 녹화 launch · 실물 녹화로 맞춘 탐사 RL GPU 시뮬 |
+| 11-03 | **`limo_fire_base`**: 섀시 드라이버를 가져와 리모컨·모터·바퀴 거리 토픽 추가, `base:=false` · 녹화 launch · 실물 녹화로 맞춘 탐사 RL GPU 시뮬 |
 | 11-04 | 커밋 규칙 검사 도구(Rust)·훅 · 탐사 RL 덮음·끝 판정, 프론티어 기준선 |
 
 팀원: woojoo1116 — 실물 TF 를 우리 URDF 하나로(카메라 장착 실측), leeyechan — `sensor_topics.md`, Luke — teleop 사용법·`.gitignore`.
@@ -418,10 +418,10 @@ NavigateRecovery (재시도 6번)
 ## 13. 서술형 예상 문제와 답
 
 **Q1. 로봇은 자기 위치를 어떻게 아는가?**
-바닥판이 바퀴 속도를 적분한 `/odom`(50 Hz)과 IMU `/imu`(100 Hz)를 robot_localization EKF 가 합쳐 `/odometry/filtered`(30 Hz)와 TF odom→base_link 를 낸다. 이것은 매끄럽지만 미끄러짐으로 누적 오차가 생긴다. 지도 만들 때는 Cartographer 가 `/scan` 을 서브맵에 맞추고 루프를 닫아, 주행할 때는 AMCL 이 입자 필터로 `/scan` 을 저장 지도에 맞춰 TF map→odom 을 낸다. 최종 위치는 TF 체인 map→odom→base_link 로 얻는다.
+섀시가 바퀴 속도를 적분한 `/odom`(50 Hz)과 IMU `/imu`(100 Hz)를 robot_localization EKF 가 합쳐 `/odometry/filtered`(30 Hz)와 TF odom→base_link 를 낸다. 이것은 매끄럽지만 미끄러짐으로 누적 오차가 생긴다. 지도 만들 때는 Cartographer 가 `/scan` 을 서브맵에 맞추고 루프를 닫아, 주행할 때는 AMCL 이 입자 필터로 `/scan` 을 저장 지도에 맞춰 TF map→odom 을 낸다. 최종 위치는 TF 체인 map→odom→base_link 로 얻는다.
 
 **Q2. 목표를 찍으면 바퀴가 돌기까지 데이터가 어떻게 흐르나?**
-RViz 2D Goal Pose → `/goal_pose` → bt_navigator 가 `navigate_to_pose` 액션 시작 → 행동 트리가 1 Hz 로 `compute_path_to_pose` 액션을 planner_server(Smac 2D, 전역 costmap)에 보내 경로를 받고, `follow_path` 액션으로 controller_server(RPP, 20 Hz, 지역 costmap)가 따라간다 → `cmd_vel_nav` → velocity_smoother(가속 제한) → `/cmd_vel`(Twist) → limo_fire_base 가 UART `0x111` 프레임으로 바닥판에 → 모터. 위치는 TF 와 `/odometry/filtered` 로 계속 읽고, 막히면 costmap 지우기·Spin·Wait·BackUp 으로 복구한다.
+RViz 2D Goal Pose → `/goal_pose` → bt_navigator 가 `navigate_to_pose` 액션 시작 → 행동 트리가 1 Hz 로 `compute_path_to_pose` 액션을 planner_server(Smac 2D, 전역 costmap)에 보내 경로를 받고, `follow_path` 액션으로 controller_server(RPP, 20 Hz, 지역 costmap)가 따라간다 → `cmd_vel_nav` → velocity_smoother(가속 제한) → `/cmd_vel`(Twist) → limo_fire_base 가 UART `0x111` 프레임으로 섀시에 → 모터. 위치는 TF 와 `/odometry/filtered` 로 계속 읽고, 막히면 costmap 지우기·Spin·Wait·BackUp 으로 복구한다.
 
 **Q3. 라이다는 어디에 쓰이나?**
 `/scan`(10 Hz, ±110°)은 Cartographer(SLAM), AMCL(위치 추정), 전역·지역 costmap 장애물 층(3 m·1 m 안 장애물 표시, 4 m·1.5 m 까지 지우기)에서 쓴다. QoS 는 BEST_EFFORT.
@@ -430,7 +430,7 @@ RViz 2D Goal Pose → `/goal_pose` → bt_navigator 가 `navigate_to_pose` 액�
 yolo_detector 가 컬러 영상에서 상자·마스크를 낸다 → object_mapper 가 같은 시각 깊이 영상과 짝짓고(ApproximateTime 0.05 s) 마스크 안 깊이와 camera_info 내부 파라미터로 핀홀 역투영 → 그 영상 시각의 TF 로 map 좌표 → 같은 클래스 근처면 합치고 5번 이상 본 것만 MarkerArray 로 표시. TF 에 시각이 있어 움직이는 중에도 찍은 순간의 자세를 쓴다. 단 실물은 지금 깊이가 컬러에 정렬되지 않아 마스크를 못 쓰고 위치가 어긋날 수 있다(시뮬은 맞음, `depth_registration: true` 로 고칠 예정).
 
 **Q5. TF 를 왜 한 발행자만 내게 하나?**
-같은 변환을 둘이 내면 번갈아 덮어써 로봇 위치가 튄다. 그래서 odom→base_link 는 EKF 만(바닥판 `pub_odom_tf: false`), map→odom 은 Cartographer 와 AMCL 중 하나만 켠다.
+같은 변환을 둘이 내면 번갈아 덮어써 로봇 위치가 튄다. 그래서 odom→base_link 는 EKF 만(섀시 `pub_odom_tf: false`), map→odom 은 Cartographer 와 AMCL 중 하나만 켠다.
 
 **Q6. 실물과 시뮬을 어떻게 같은 코드로 돌리나?**
 교수님 센서 플러그인이 실물과 같은 토픽·프레임으로 내서, "로봇 켜기" launch 만 다르고 mapping·navigation·yolo launch 는 같다. 차이는 `use_sim_time`·`odom_topic`·초기 위치 같은 파라미터를 `nav2_sim.yaml` 로 덮는 것뿐이다.

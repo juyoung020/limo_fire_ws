@@ -151,7 +151,7 @@ Cartographer 는 `/imu` 를 직접 받고(`use_imu_data = true`, `tracking_frame
 
 `install/limo_fire_bringup` 은 10-26 19:30 빌드다. 10-28 의 카메라 설정 변경이 아직 안 들어가 있어서, 지금 `robot.launch.xml` 을 켜면 포인트 클라우드·IR 이 다 나온다. `colcon build --packages-select limo_fire_bringup` 을 하면 반영되고, 그때부터 주의 1 이 생긴다.
 
-### 주의 3. 바닥판 드라이버의 네임스페이스는 토픽에 안 붙는다
+### 주의 3. 섀시 드라이버의 네임스페이스는 토픽에 안 붙는다
 
 노드 이름은 `/limo/limo_fire_base` 지만 토픽은 `/odom`, `/imu`, `/cmd_vel` 이다. remap 하거나 로봇을 여러 대 띄울 때 `/limo/...` 로 찾으면 안 나온다.
 
@@ -188,5 +188,5 @@ ros2 topic echo --once --no-arr /camera/depth/image_raw # 해상도·frame_id (�
 ros2 topic echo --once --field k /camera/depth/camera_info
 ```
 
-- 바닥판 드라이버(대시보드의 `limo_base`, 따로 켠 `limo_fire_base`)가 이미 떠 있으면 `robot.launch.xml` 을 또 켜지 않는다. 같은 시리얼 포트 `ttylimo` 를 두고 부딪친다.
+- 섀시 드라이버(대시보드의 `limo_base`, 따로 켠 `limo_fire_base`)가 이미 떠 있으면 `robot.launch.xml` 을 또 켜지 않는다. 같은 시리얼 포트 `ttylimo` 를 두고 부딪친다.
 - `ros2 topic hz` 를 `timeout` 으로 끊을 때는 `timeout -s INT` 를 써야 평균값이 찍힌다.

@@ -3,7 +3,7 @@
 <package format="3">
   <name>limo_fire_base</name>
   <version>0.1.0</version>
-  <description>LIMO 바닥판 시리얼 드라이버: WeGo/AgileX limo_base 를 그대로 가져와 받고 버리던 리모컨·모터 상태·바퀴 거리도 낸다</description>
+  <description>LIMO 섀시 시리얼 드라이버: WeGo/AgileX limo_base 를 그대로 가져와 받고 버리던 리모컨·모터 상태·바퀴 거리도 낸다</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
   <license>MIT</license>
 

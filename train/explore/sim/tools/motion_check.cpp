@@ -3,7 +3,7 @@
 //   motion_check <구동.csv>[@시작:끝,시작:끝…] … [--set analysis/calibration.yaml fit|validate] [--env config/env.yaml] [--floor office] [--fit]
 //   --set: 보정 녹화 목록에서 그 역할의 녹화(뺄 구간 포함)를 더한다
 //   @ 뒤 구간(s, 그 녹화 처음 기준)은 비교에서 뺀다 — 부딪히거나 앞이 막힌 곳처럼 구동 응답이 아닌 곳
-// CSV 는 limo_fire_sim motion_export 로 만든다. 녹화마다 경로를 고른다: 리모컨 줄이 많으면 리모컨(바닥판에 바로 → env.yaml
+// CSV 는 limo_fire_sim motion_export 로 만든다. 녹화마다 경로를 고른다: 리모컨 줄이 많으면 리모컨(섀시에 바로 → env.yaml
 // drive.rc: 스틱 → 목표 속도 표와 모터 응답), 아니면 ROS 명령(/cmd_vel → limo_fire_base, 정책·Nav2 가 쓰는 길 → drive).
 // 바닥(일정할 때 비·몸통 가속 한도 = 마찰, env.yaml floors)은 같은 바닥의 ROS 명령 녹화로 맞춘다 — 몸통 ω 를 자이로에,
 // 몸통 직진 가속을 IMU 가속도에 (일정할 때 직진 비는 IMU 로 못 잰다: 가속도 0).

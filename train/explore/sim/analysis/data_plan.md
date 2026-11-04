@@ -10,8 +10,8 @@
 | 라이다 YDLIDAR T-mini Plus | `/scan` | 10 Hz | 빔 239~258, 1 mm, 세기, time_increment | 늘 |
 | 깊이 Orbbec Dabai DC1 | `/camera/depth/image_raw` · `camera_info` | 30 Hz | 640 × 400 16UC1 mm (정렬 안 됨, [sensor_topics 주의 1](../../../../docs/sensor_topics.md)) | 늘 (오래 달릴 땐 끔: 15 MB/s) |
 | 컬러 | `/camera/color/image_raw/compressed` · `camera_info` | 30 Hz | 640 × 480 JPEG | 늘 (사람이 보는 용·나중 YOLO) |
-| IMU (바닥판, limo_base) | `/imu` | 100 Hz | 자이로 0.01 °/s, 가속도 0.01 m/s², 바닥판이 낸 자세각 | 늘 |
-| 바퀴 오도메트리 (limo_base) | `/odom` | 50 Hz | 바닥판이 계산한 v (1 mm/s), ω (0.001 rad/s). **바퀴 엔코더 원값은 드라이버가 읽기만 하고 안 냄** | 늘 |
+| IMU (섀시, limo_base) | `/imu` | 100 Hz | 자이로 0.01 °/s, 가속도 0.01 m/s², 섀시가 낸 자세각 | 늘 |
+| 바퀴 오도메트리 (limo_base) | `/odom` | 50 Hz | 섀시가 계산한 v (1 mm/s), ω (0.001 rad/s). **바퀴 엔코더 원값은 드라이버가 읽기만 하고 안 냄** | 늘 |
 | 배터리·상태 (limo_base) | `/limo_status` | 2 Hz (`sensor_topics.md` 실측) | 전압 0.1 V, 오류 코드, 구동 모드 | 늘 (전압이 모터 응답을 바꾼다) |
 | EKF | `/odometry/filtered`, TF `odom → base_link` | 30 Hz | 바퀴 + IMU | 늘 |
 | Cartographer | TF `map → odom`, `/map`, `/trajectory_node_list` | — | 고친 자세·지도 | 지도 만들 때 |
@@ -66,7 +66,7 @@
 | M6 | 시연장 지도 | 덕트호스 미로를 Nav2 로 천천히 한 바퀴, 출발점 복귀 | × 3 | 〃 + `mapping.launch.xml` |
 
 - M 녹화는 바닥 재질을 바꿔(타일·카펫) 한 번씩 더.
-- 리모컨 조종도 `/rc_state` 로 녹화에 남는다(`limo_fire_base`). 다만 바닥판이 리모컨과 ROS 명령을 다르게 다루므로(회전 1.165 vs 1.00), 실전 경로 값은 ROS 명령 녹화로 잰다 — 리모컨 **오토 모드**에서 정해진 `/cmd_vel` 계단을 보낸다.
+- 리모컨 조종도 `/rc_state` 로 녹화에 남는다(`limo_fire_base`). 다만 섀시가 리모컨과 ROS 명령을 다르게 다루므로(회전 1.165 vs 1.00), 실전 경로 값은 ROS 명령 녹화로 잰다 — 리모컨 **오토 모드**에서 정해진 `/cmd_vel` 계단을 보낸다.
 - 실제로 쓸 속도로 잰다: 빠른 탐사면 0.5~1.0 m/s · 1~3 rad/s 도 담는다 (오차가 속도에 따라 커진다).
 - 녹화 전후로 bags.md 에: 배터리 전압, 바닥, 조명, 줄자로 잰 값, 사진.
 - 디스크: 깊이를 담으면 분당 약 0.9 GB (지금 남은 43 GB). 오래 걸리는 M6 은 `depth:=false` 로 한 번, 켜고 한 번.

@@ -1,6 +1,6 @@
 <!-- 실물 LIMO Pro 센서·구동 켜기 (대시보드 "센서" = WeGo wego/teleop_launch.py 와 같은 구성)
      ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [camera_pitch:=0.0] [base:=false]
-     URDF(limo_fire_description, 카메라 장착 포함) + 바닥판(limo_fire_base: 바퀴·IMU·리모컨) + 깊이 카메라 + 라이다 + EKF
+     URDF(limo_fire_description, 카메라 장착 포함) + 섀시(limo_fire_base: 바퀴·IMU·리모컨) + 깊이 카메라 + 라이다 + EKF
      base:=false 는 센서만(베이스·EKF 끔): 충전 중이나 세워 두고 센서 오차를 잴 때 — 바퀴가 명령을 받지 않는다 -->
 <launch>
   <arg name="camera_pitch" default="0.0" description="카메라 마운트 틸트 pitch (라디안, 아래로 숙이면 +). WeGo 의 degree 인자"/>
@@ -19,7 +19,7 @@
     <arg name="joint_states" value="true"/>
   </include>
 
-  <!-- 바닥판: /cmd_vel 받음, 바퀴 오도메트리 /odom, IMU /imu, 상태 /limo_status, 리모컨 /rc_state, 모터 /motor_states, 바퀴 거리 /wheel_odometry.
+  <!-- 섀시: /cmd_vel 받음, 바퀴 오도메트리 /odom, IMU /imu, 상태 /limo_status, 리모컨 /rc_state, 모터 /motor_states, 바퀴 거리 /wheel_odometry.
        odom TF 는 EKF 가 낸다. limo_fire_base = WeGo limo_base 그대로 + 버리던 리모컨·모터·바퀴 거리 -->
   <node pkg="limo_fire_base" exec="limo_fire_base" name="limo_fire_base" namespace="limo" output="screen" emulate_tty="true" if="$(var base)">
     <param from="$(find-pkg-share limo_fire_bringup)/config/limo_base.yaml"/>

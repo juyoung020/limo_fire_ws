@@ -59,7 +59,7 @@ depth:                      # Orbbec Dabai DC1, 지금 실물 설정(정렬 안 
     edge_px: 3
   mount_check: [0.1881, 0.1152]   # 바닥 면으로 잰 카메라 광축 높이 (m)·숙인 각 (rad) — env.yaml body.camera_mount[2]·camera_pitch 와 같게 (depth_check 가 확인)
 
-imu:                        # 바닥판 IMU /imu (include/imu.h). 맞춤: tools/imu_check --fit (analysis/calibration.yaml imu: fit 녹화 —
+imu:                        # 섀시 IMU /imu (include/imu.h). 맞춤: tools/imu_check --fit (analysis/calibration.yaml imu: fit 녹화 —
                             # 정지 1103_R1_spot1·spot2·mapping_1026_1900, 주행 1103_M_cmd2·1103_M_drive3), 확인: 1103_R1_spot3·1103_M_cmd1·1103_M_drive1
                             # roll·pitch 는 REP-103 (실물 쿼터니언도 그대로 REP-103 — analysis/real_limo.md IMU 절)
   g: 10.0337                # 정지 가속도 크기 (m/s², 9.80 보다 2.4 % 큼 — 장치 배율)

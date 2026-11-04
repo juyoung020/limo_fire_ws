@@ -1,9 +1,9 @@
-# 바닥판 드라이버 limo_fire_base (WeGo limo_base 를 그대로 가져와 리모컨·모터·바퀴 거리만 더 냄). 파라미터도 limo_base 와 같다
+# 섀시 드라이버 limo_fire_base (WeGo limo_base 를 그대로 가져와 리모컨·모터·바퀴 거리만 더 냄). 파라미터도 limo_base 와 같다
 /**:
   ros__parameters:
     port_name: ttylimo          # /dev/ttylimo → /dev/ttyTHS1
     odom_frame: odom
     base_frame: base_link
     pub_odom_tf: false          # odom → base_link 는 EKF 가 낸다
-    use_mcnamu: false           # true 면 바닥판 보고와 상관없이 메카넘으로 다룸
+    use_mcnamu: false           # true 면 섀시 보고와 상관없이 메카넘으로 다룸
     control_rate: 50

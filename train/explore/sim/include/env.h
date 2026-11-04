@@ -8,7 +8,7 @@
 //      목표점 행동이면 로봇(지도 자세) 기준 방향 n_dir × 거리,
 //      정답 충돌 격자로 막히기 전까지 자름 (Nav2 가 피해 가는 몫 대신)
 //   2. 물리 substeps 번 (dt, limo_base 50 Hz):
-//        (목표점이면 Nav2 Regulated Pure Pursuit 식 → velocity_smoother 가속 한도) → 바닥판 구동 모델(drive.h, 실물로 맞춤:
+//        (목표점이면 Nav2 Regulated Pure Pursuit 식 → velocity_smoother 가속 한도) → 섀시 구동 모델(drive.h, 실물로 맞춤:
 //        지연·가속·1 차 응답, 미끄러짐은 판마다 뽑은 바닥 재질) → 참값 자세 적분 → 몸통 사각형이 충돌 격자에 닿으면 되돌리고 판 끝.
 //        IMU 측정(imu.h: 가속도·roll·pitch·자이로 x·y — 몸통 v·ω·가속 + 실측 잡음·진동), 지도 자세 오차(OU, Cartographer 가 남기는 몫)
 //      lidar_every 걸음마다: 실물 오차 라이다(lidar_real.h, 스캔 중 움직임 포함) → Cartographer 와 같은 확률 지도 갱신
@@ -117,7 +117,7 @@ struct EnvState {
   float x, y, th, v, w;        // 참값 자세·속도 (세계)
   float vs, ws;                // velocity_smoother 출력 (목표점 행동의 명령)
   float cmd_v, cmd_w;          // 속도 행동의 명령 (/cmd_vel)
-  DriveState drive;            // 바닥판 구동 (바퀴 속도 = 오도메트리)
+  DriveState drive;            // 섀시 구동 (바퀴 속도 = 오도메트리)
   Floor ground;                // 이 판 바닥 (미끄러짐·마찰)
   int32_t floor, tick;         // 바닥 번호, 물리 걸음 수
   float ex, ey, eth;           // 지도 자세 = 참값 + 오차
@@ -477,7 +477,7 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
     cmd_v = e.vs;
     cmd_w = e.ws;
   }
-  // 바닥판 구동: 명령 → 바퀴 → 몸통 (바닥 미끄러짐)
+  // 섀시 구동: 명령 → 바퀴 → 몸통 (바닥 미끄러짐)
   const float v_prev = e.v;
   e.vy = drive_lat(c.drive, e.drive, c.action_mode == kActVelocity ? e.cmd_vy : 0.f, c.dt, e.ground);
   drive_step(c.drive, e.drive, cmd_v, cmd_w, c.dt, e.ground, &e.v, &e.w);
