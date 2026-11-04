@@ -106,6 +106,12 @@ flowchart LR
 ## 5. 학습
 
 - 데스크톱 GPU, PPO 는 C++/CUDA 로 직접(구조는 rsl_rl·IsaacLab 을 따름, `train/explore`). 정책: 2D 관측(지도·깊이)마다 CNN + 1D·숫자 → MLP → v, vy, ω + 끝 선언.
+- 신경망(구조 버전 2): 가지 3 개(가까운 지도·먼 지도·깊이)의 2×2 s2 합성곱 4 층 16-32-32-32 를 actor·critic 이 공유 → 특징 1024 + 정규화 1D 1304(critic 은 참값 32 더) → MLP 512-256-128 ELU → actor 4(v·vy·ω 평균 + 선언 로짓)·critic 1.
+  자세한 근거·계산 방식은 `train/explore/network/README.md`, ONNX 는 `docs/models/explore_net_v2.onnx`(Netron 으로 바로 열림).
+
+  ![탐사 RL 신경망 구조 버전 2 (Netron)](images/explore_net_v2.png)
+
+  다시 그리기: `onnx_export --out docs/models/explore_net_v2.onnx` (C++, `train/explore/network/tools/onnx_export.cpp`) → netron.app 에서 열어 PNG.
 - 목표 속도: 환경 4,096 개 이상, 초당 행동 5 만 이상(센서는 행동마다 0.5 s 분량 = 라이다 5 장).
 - 교육 과정: 작은 덕트호스 맵·오차 없음 → 큰 맵·방 구조 → 오차·지연 전부.
 - 비교 기준(같은 GPU 환경에서, 같은 평가 코드): 가장 가까운 프론티어, 정보 이득 프론티어. 실물 Fallback 도 이 프론티어를 쓴다.

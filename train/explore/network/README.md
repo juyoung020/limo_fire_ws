@@ -51,6 +51,26 @@ C++/CUDA 만 쓴다(MLP 는 cuBLAS GEMM, 합성곱 가지는 직접 짠 융합 �
   롤아웃 중 `act` 마다 갱신, 평가(`act_inference`)·마지막 가치(`compute_returns`)에서는 안 바꾼다. 체크포인트에 들어간다.
 - 2D 는 u8 로 받아 첫 커널에서 /255.
 
+### 그림 (Netron)
+
+![탐사 RL 신경망 구조 버전 2 (Netron)](../../../docs/images/explore_net_v2.png)
+
+실제 계산 순서대로 그린 ONNX 그래프: 가지마다 u8 → Cast·÷255 → (Conv 2×2 s2 + Elu) × 4 (깊이는 넷째 층 앞 Pad) → NHWC 로 Transpose·Flatten → Concat = 공유 특징 F 1024,
+1D 는 Sub·Div 정규화 → actor 는 앞 1304 열(Slice) → [F | 1D] Concat → Gemm·Elu × 3 → Gemm (actor 4 / critic 1), log σ 3 은 상태 무관 변수(Identity).
+ONNX 파일은 [`docs/models/explore_net_v2.onnx`](../../../docs/models/explore_net_v2.onnx)(모양만, 8 KB) — [netron.app](https://netron.app) 에 끌어 놓으면 바로 열린다(브라우저 안에서 읽음, 서버로 안 올림).
+
+다시 만들기 (Python 없이, protobuf 를 와이어 형식으로 직접 씀 — `network/tools/onnx_export.cpp`):
+
+```bash
+cmake --build <빌드> --target onnx_export                                    # ppo/CMakeLists.txt
+<빌드>/onnx_export --out docs/models/explore_net_v2.onnx                       # 모양만 (구조는 explore_spec() 그대로)
+<빌드>/onnx_export --out /tmp/net.onnx --ckpt train/explore/runs/<실험>/ckpt/model_latest.bin   # 가중치·정규화 통계까지 (형식 2, 약 11 MB)
+# 그림: netron.app 에서 Open Model → 파일 → 전체 그래프 화면을 PNG 로 (이 PC 에는 netron 이 설치돼 있지 않아 netron.app 을 씀)
+```
+
+합성곱 가중치는 체크포인트의 `[cout][자식 dy·2+dx][cin]` 을 ONNX `[cout][cin][kh][kw]` 로 바꿔 넣는다(계층 배치 합성곱 = 보통의 2×2 s2 합성곱).
+평탄화 순서가 `[픽셀(래스터)][채널]` 이라 Flatten 앞에 NHWC Transpose 를 둔다. 주의: ONNX 쪽 출력을 우리 CUDA 정방향과 수치로 맞춰 본 적은 없다(그림·구조 확인용).
+
 ## 계산 방식
 
 - **합성곱 = GEMM 하나 (계층 배치)**: 픽셀을 "부모 조각 순서"(쿼드트리)로, 채널을 맨 뒤에 둔다. 그러면 층 입력 `[n·P_out][4·cin]` 이 그대로 im2col 행렬이고
