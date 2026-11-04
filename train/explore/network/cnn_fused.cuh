@@ -28,9 +28,10 @@ bool cnn_fused_supported(const CnnBranch& b, int nlayers);
 bool cnn_fused_tc_supported(const CnnBranch& b);
 void cnn_fused_forward(const CnnBranch& b, const float* params, const uint8_t* img, const int* idx, int n, float* X0,
                        cudaStream_t st, bool tc);
-// X0 = 직전 정방향 출력, dX0 = 그 기울기. grads(가지 첫 변수 위치)에 더한다. part = 작업 공간(cnn_fused_part_floats).
-void cnn_fused_backward(const CnnBranch& b, const float* params, const uint8_t* img, const int* idx, int n, const float* X0,
-                        const float* dX0, float* grads, float* part, cudaStream_t st, bool broken_elu, bool tc);
+// dZ3 = 출력 기울기에 ELU'(출력)을 곱한 것 (X0 와 같은 배치 — 넷째 층 역방향이 z_out 으로 씀). grads(가지 첫 변수 위치)에 더한다.
+// part = 작업 공간(cnn_fused_part_floats).
+void cnn_fused_backward(const CnnBranch& b, const float* params, const uint8_t* img, const int* idx, int n, const float* dZ3,
+                        float* grads, float* part, cudaStream_t st, bool broken_elu, bool tc);
 long cnn_fused_part_floats(const CnnBranch& b);
 #endif
 

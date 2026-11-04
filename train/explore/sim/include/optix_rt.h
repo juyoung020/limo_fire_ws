@@ -14,8 +14,16 @@ namespace sim {
 
 struct Scene;
 
-// 광선 한 묶음: o.xyz·o.w = 사람까지 본 best(=tmax), d.xyz·d.w = 맵 번호(int 비트, < 0 이면 안 쏨), tri0 = 그 best 의 번호(사람 −2−k, 없음 −1)
+// 발사 하나. prog 가 raygen 을 고른다 (src/optix_rays.cu):
+//   0 준비된 광선 묶음: o.xyz·o.w = 사람까지 본 best(=tmax), d.xyz·d.w = 맵 번호(int 비트, < 0 이면 안 쏨), tri0 = 그 best 의 번호(사람 −2−k, 없음 −1)
+//     → out_t·out_tri (rt_fastcheck)
+//   1 깊이 가운데: raygen 이 장치의 EnvBatch(batch)에서 광선을 만들어 쏴 dep_z·dep_tri 에 (결과 뒤는 CUDA 커널)
+//   2 깊이 옆: 큐(dep_jobs, 길이 n_dev)의 픽셀마다 옆 광선 2 개(왼쪽·오른쪽, 발사 일 하나 = 광선 하나) → dep_side (마무리는 CUDA 커널)
+//   3 라이다 빔 가운데 · 4 라이다 옆(큐의 빔마다 4 개): 광선만 만들어 쏴 beam_t·beam_tri / beam_side 에 (결과 뒤는 CUDA 커널)
+enum RtProg : int { kRtRays = 0, kRtDepth = 1, kRtDepthSide = 2, kRtBeam = 3, kRtBeamSide = 4, kRtProgs = 5 };
 struct RtParams {
+  int prog;
+  const void* batch;               // const EnvBatch* (장치, prog ≥ 1)
   const float4* o;
   const float4* d;
   const int32_t* tri0;

@@ -4,8 +4,10 @@
 //   3. 지도 갱신 (환경 하나 = 블록 하나): scan_apply + 정수 합 → 1 로 돌아가 다음 장 (목표점 행동은 한 행동에 장 여럿)
 //   4. 마무리 (환경 하나 = 블록 하나): 남은 물리 → 보상·끝 → 라이다 링 → 끝난 판 리셋 → 관측 (깊이 빼고)
 //   5. 깊이 (픽셀 하나 = 스레드 하나)
+// 2·5 의 광선은 RT 코어(OptiX — src/optix_rays.cu 의 raygen 이 광선을 만들고 결과 뒤 단계까지)나 소프트웨어 순회(아래 광선 묶음 커널)로
 // 커널 사이 상태는 b.st(EnvState)와 b.scratch(Shared, 환경마다)에 둔다.
 #include "env_api.h"
+#include "env_rays.h"
 #ifdef SIM_OPTIX
 #include "optix_rt.h"
 #endif
@@ -23,11 +25,76 @@ __device__ void reset_env(const EnvBatch& b, EnvState& e, int env, int tid) {
   __syncthreads();
 }
 
-// 관측: 칸마다(모든 스레드) → 합치기·숫자(스레드 0)
-__device__ void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, int tid, const mdp::obsgen::FarDirty& fd) {
+// 먼 지도: 다시 그릴 칸을 모아(공유 메모리 목록) 칸마다 8 스레드가 점 줄 하나씩 — 최댓값·OR 을 8 스레드끼리 합친다.
+// 칸마다 스레드 하나가 64 점을 다 돌면 다시 그릴 칸이 흩어진 워프가 오래 놀아서 (CPU 참조판은 obs_cells 안에서 칸마다 차례로, 같은 함수)
+__device__ void obs_far_block(const EnvBatch& b, const EnvState& e, int env, int tid, const mdp::obsgen::FarDirty& fd, bool statics) {
+  using namespace mdp::obs;
+  constexpr int kRowThreads = mdp::obsgen::kFarSub;   // 칸 하나 = 8 스레드
+  constexpr int kPerRound = kThreads / kRowThreads;
+  static_assert(32 % kRowThreads == 0 && kThreads % 32 == 0, "점 줄 스레드 묶음이 워프 안에");
+  __shared__ int list[FAR_H * FAR_W];
+  __shared__ int n_list;
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
+  const uint32_t* M = b.marks + (size_t)env * (c.size * c.size / 4);
+  uint8_t* F = b.obs_img + (size_t)env * IMG_SIZE + NEAR_SIZE;
+  mdp::obsgen::FarFrame ff;
+  mdp::obsgen::far_frame(e, e.x + e.ex, e.y + e.ey, &ff);
+  if (tid == 0) n_list = 0;
+  __syncthreads();
+  for (int i = tid; i < FAR_H * FAR_W; i += kThreads)
+    if (mdp::obsgen::far_cell_head(e, fd, ff, F, i, statics)) list[atomicAdd(&n_list, 1)] = i;
+  __syncthreads();
+  const int n = n_list, kr = tid % kRowThreads;
+  for (int base = 0; base < n; base += kPerRound) {   // 모든 스레드가 같은 횟수 (셔플이 워프 전체)
+    const int t = base + tid / kRowThreads;
+    int lmax = kUnknown, vis = 0;
+    if (t < n) mdp::obsgen::far_cell_row(c, m, L, M, e, ff, list[t], kr, &lmax, &vis);
+    for (int o = 1; o < kRowThreads; o <<= 1) {
+      const int l2 = __shfl_xor_sync(0xffffffffu, lmax, o);
+      lmax = l2 > lmax ? l2 : lmax;
+      vis |= __shfl_xor_sync(0xffffffffu, vis, o);
+    }
+    if (t < n && kr == 0) mdp::obsgen::far_cell_put(c, F, list[t], lmax, vis);
+  }
+}
+
+// 프론티어 요약 (observations.h obs_cells 의 프론티어 칸과 같은 값): 칸마다 frontier_cell 을 다시 보는 대신 프론티어 칸 지도(fmap)의 켜진 비트만 —
+// 프론티어 칸은 아는 칸이라 모두 건드린 범위(kb) 안이고, 비트는 지도 갱신 때 고쳐 둠 (frontier_fix). sh.part[tid] = 칸 수, sh.fr_min = 가장 가까운 키
+__device__ void obs_front_block(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int tid) {
+  int n = 0;
+  if (e.kb_x1 >= 0) {
+    const EnvCfg& c = b.cfg;
+    const MapDev& m = b.maps[e.map];
+    int rx, ry;
+    cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
+    const int ws = fmap_row(c), w0 = e.kb_x0 >> 5, nw = (e.kb_x1 >> 5) - w0 + 1, rows = e.kb_y1 - e.kb_y0 + 1;
+    const uint32_t* F = b.fmap + (size_t)env * c.size * ws;
+    unsigned long long best = mdp::kNoFrontier;
+    for (int k = tid; k < nw * rows; k += kThreads) {
+      const int y = e.kb_y0 + k / nw, wx = w0 + k % nw;
+      uint32_t bits = F[y * ws + wx];
+      n += __popc(bits);
+      for (; bits; bits &= bits - 1) {
+        const int x = wx * 32 + __ffs(bits) - 1;
+        const int dx = x - rx, dy = y - ry;
+        const unsigned long long key = ((unsigned long long)(uint32_t)(dx * dx + dy * dy) << 32) | (uint32_t)(y * m.gw + x);   // mdp::summary_key
+        best = key < best ? key : best;
+      }
+    }
+    if (best != mdp::kNoFrontier) atomicMin(&sh.fr_min, best);
+  }
+  sh.part[tid] = n;
+}
+
+// 관측: 칸마다(모든 스레드) → 합치기·숫자(스레드 0). statics: 늘 0 인 물체 채널(📏)도 씀 — 판이 시작할 때만 (observations.h obs_cells)
+__device__ void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, int tid, const mdp::obsgen::FarDirty& fd, bool statics) {
   if (tid == 0) sh.fr_min = mdp::kNoFrontier;
   __syncthreads();
-  mdp::obsgen::obs_cells(b, e, env, sh, tid, fd);
+  mdp::obsgen::obs_cells(b, e, env, sh, tid, fd, false, statics);
+  obs_far_block(b, e, env, tid, fd, statics);
+  obs_front_block(b, e, env, sh, tid);
   __syncthreads();
   if (tid == 0) mdp::obsgen::obs_finish(b, e, env, sh);
   __syncthreads();
@@ -81,14 +148,51 @@ __device__ void block_sum4(int v[4], int tid) {
   for (int q = 0; q < 4; ++q) v[q] = acc[q];
 }
 
+// 프론티어 칸 지도 고치기 (지도 갱신 뒤): 칸 종류가 바뀐 칸이 있는 낱말(4 칸)과 그 4 이웃(위·아래 줄 4 칸, 왼·오른 끝 칸)의 비트를 frontier_cell 로 다시 —
+// 다른 칸은 칸 종류도 이웃도 그대로라 비트가 같다.
+// 목록이 넘치면 이번 장 범위 ±1 전체를 다시. 같은 칸을 여러 스레드가 고쳐도 같은 지도에서 같은 값
+__device__ void frontier_fix(const EnvBatch& b, const EnvState& e, int env, const Shared& sh, int tid, int n_chg) {
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
+  const int ws = fmap_row(c);
+  uint32_t* F = b.fmap + (size_t)env * c.size * ws;
+  const auto fix = [&](int x, int y) {
+    if (x < 0 || y < 0 || x >= m.gw || y >= m.gh) return;
+    const uint32_t bit = 1u << (x & 31);
+    uint32_t* w = F + y * ws + (x >> 5);
+    if (mdp::frontier_cell(mv, x, y)) {
+      if (!(*w & bit)) atomicOr(w, bit);
+    } else if (*w & bit) {
+      atomicAnd(w, ~bit);
+    }
+  };
+  if (n_chg <= kClassLog) {
+    const int32_t* list = b.fchg + (size_t)env * kClassLog;
+    for (int k = tid; k < 14 * n_chg; k += kThreads) {   // 낱말마다 14 칸: 줄 y−1·y·y+1 의 4 칸 + (x0 − 1, y) + (x0 + 4, y)
+      const int ci = list[k / 14], x0 = ci % c.size, y = ci / c.size, r = k % 14;
+      if (r < 12) fix(x0 + (r & 3), y + r / 4 - 1);
+      else fix(r == 12 ? x0 - 1 : x0 + 4, y);
+    }
+  } else if (sh.bx1 >= 0) {
+    const int x0 = sh.bx0 - 1, y0 = sh.by0 - 1, w = sh.bx1 - sh.bx0 + 3, h = sh.by1 - sh.by0 + 3;
+    for (int k = tid; k < w * h; k += kThreads) fix(x0 + k % w, y0 + k / w);
+  }
+}
+
 __global__ void __launch_bounds__(kThreads) env_apply_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
   Shared& sh = b.scratch[env];
   if (!sh.pending) return;   // 블록 전체가 같은 값
   EnvState& e = b.st[env];
-  const ApplyCount n = scan_apply(b, e, env, sh, tid, kThreads, b.scratch[env].far_mask);   // 로그 오즈가 바뀐 칸 → 먼 지도 칸 표시
+  __shared__ int n_chg;
+  if (tid == 0) n_chg = 0;
+  __syncthreads();
+  const ClassLog log{b.fchg + (size_t)env * kClassLog, &n_chg};
+  const ApplyCount n = scan_apply(b, e, env, sh, tid, kThreads, b.scratch[env].far_mask, &log);   // 로그 오즈가 바뀐 칸 → 먼 지도 칸 표시
   int v[4] = {n.wall, n.floor, n.known, n.fresh};
-  block_sum4(v, tid);
+  block_sum4(v, tid);   // 끝에 __syncthreads — 지도 갱신이 다 보임
+  frontier_fix(b, e, env, sh, tid, n_chg);
   if (tid == 0) {
     sh.new_wall += v[0];
     sh.new_floor += v[1];
@@ -99,15 +203,22 @@ __global__ void __launch_bounds__(kThreads) env_apply_kernel(EnvBatch b) {
   }
 }
 
-__device__ void finish_depth_prep(const EnvBatch& b, int env, int tid);   // 아래 (DepthCenter 뒤)
+// 상태(EnvState)를 블록 스레드 모두가 낱말(4 바이트)씩 옮긴다 — 스레드 하나가 구조체 전체를 옮기는 동안 블록이 기다리지 않게
+__device__ void copy_state(EnvState& dst, const EnvState& src, int tid) {
+  static_assert(sizeof(EnvState) % 4 == 0, "EnvState 낱말 복사");
+  const uint32_t* s = (const uint32_t*)&src;
+  uint32_t* d = (uint32_t*)&dst;
+  for (int i = tid; i < (int)(sizeof(EnvState) / 4); i += kThreads) d[i] = s[i];
+}
 
 __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
   __shared__ EnvState e;
   __shared__ Shared sh;   // 관측용 (프론티어 합)
   Shared& g = b.scratch[env];
+  copy_state(e, b.st[env], tid);
+  __syncthreads();
   if (tid == 0) {
-    e = b.st[env];
     // 마지막 장 뒤 남은 물리 걸음 (장 수만큼 1~3 을 돌렸으므로 여기선 장이 없다)
     while (g.k_next < b.cfg.substeps) {
       if (!e.collided) physics_step(b, e);
@@ -130,35 +241,33 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b) {
   if (tid == 0) {
     fd = mdp::obsgen::far_dirty_take(b, e, g, was_done);
   }
-  write_obs(b, e, env, sh, tid, fd);
-  if (tid == 0) b.st[env] = e;
-#ifdef SIM_OPTIX
-  if (b.rt) {   // RT 코어 깊이 가운데 광선 준비를 여기서 (이 환경의 픽셀들 — 따로 준비 커널 없이, 최종 상태를 쓴 뒤)
-    __syncthreads();
-    finish_depth_prep(b, env, tid);
-  }
-#endif
+  write_obs(b, e, env, sh, tid, fd, was_done);   // 끝에 __syncthreads
+  copy_state(b.st[env], e, tid);
+  if (tid == 0) g.cam = mdp::obsgen::depth_camera(b.cfg, e);
 }
 
 __global__ void env_reset_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
   __shared__ EnvState e;
   __shared__ Shared sh;
-  if (tid == 0) e = b.st[env];
+  copy_state(e, b.st[env], tid);
   __syncthreads();
   reset_env(b, e, env, tid);
   const mdp::obsgen::FarDirty all{1, 0.f, 0.f, 0.f, 0.f};
-  write_obs(b, e, env, sh, tid, all);
-  if (tid == 0) b.scratch[env].far_ok = 0;   // 다음 걸음은 다시 전부 (판 기록은 그때 남김)
+  write_obs(b, e, env, sh, tid, all, true);
   if (tid == 0) {
-    b.st[env] = e;
+    b.scratch[env].far_ok = 0;   // 다음 걸음은 다시 전부 (판 기록은 그때 남김)
+    b.scratch[env].cam = mdp::obsgen::depth_camera(b.cfg, e);
+  }
+  copy_state(b.st[env], e, tid);
+  if (tid == 0) {
     b.reward[env] = 0.f;
     b.done[env] = 0;
     for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = 0.f;
   }
 }
 
-// ---------- 광선 묶음: 스레드마다 광선 하나씩 순회(trav_step)하고, 끝난 스레드는 워프 단위로 다음 광선을 받는다 ----------
+// ---------- 소프트웨어 광선 묶음: 스레드마다 광선 하나씩 순회(trav_step)하고, 끝난 스레드는 워프 단위로 다음 광선을 받는다 ----------
 // 광선마다 걸음 순서는 raycast 와 같아 결과가 같고, 워프 안 광선 길이 차이로 노는 스레드가 없어진다.
 // G: make(b, job, sv, o, d, tmax) → 쏠 광선이면 true (아니면 none(b, job)), store(b, job, t, tri)
 constexpr int kRayThreads = 128;
@@ -232,84 +341,8 @@ void launch_rays(const EnvBatch& b, G g, int n_static, const int* n_dev, int cou
   ray_kernel<G><<<blocks, kRayThreads, 0, st>>>(b, g, n_static, n_dev, b.counters + counter);
 }
 
-#ifdef SIM_OPTIX
-// RT 코어 경로 (include/optix_rt.h): 광선 묶음 G 를 준비(사람 원기둥까지 소프트웨어 — trav_init 과 같은 best) → OptiX → 결과 넣기.
-// 준비 칸은 환경 · DEPTH_SIZE 개라 그보다 많은 묶음(깊이 옆 광선)은 여러 번에 나눠 쏜다. 안 쏘는 칸은 번호 칸에 kRtNone
-constexpr int kRtNone = -2147483647 - 1;
-// 준비 칸 i 에 광선 job 하나 (사람 원기둥까지 소프트웨어 — trav_init 과 같은 best)
-template <class G>
-__device__ void rt_prep_one(const EnvBatch& b, const G& g, int i, int job) {
-  float4* O = (float4*)b.rt_o;
-  float4* D = (float4*)b.rt_d;
-  SceneView sv;
-  V3 o, d;
-  float tmax;
-  if (!g.make(b, job, sv, o, d, tmax)) {
-    D[i] = make_float4(0.f, 0.f, 0.f, __int_as_float(-1));
-    if constexpr (G::kDirect) g.none(b, job);
-    else b.rt_tri0[i] = kRtNone;   // 안 쏘는 광선 (none)
-    return;
-  }
-  float best = tmax;
-  int best_tri = -1;
-  for (int k = 0; k < sv.n_cyl; ++k) {   // trav_init 과 같은 사람 먼저
-    const float t = cyl_hit(sv.cyl[k], o.x, o.y, o.z, d.x, d.y, d.z);
-    if (t < best) { best = t; best_tri = -2 - k; }
-  }
-  O[i] = make_float4(o.x, o.y, o.z, best);
-  D[i] = make_float4(d.x, d.y, d.z, __int_as_float(b.st[g.env_of(b, job)].map));
-  b.rt_tri0[i] = best_tri;
-}
-template <class G>
-__global__ void __launch_bounds__(kDepthThreads) rt_prep_kernel(EnvBatch b, G g, int off, int cap, int n_static, const int* n_dev) {
-  const int i = blockIdx.x * kDepthThreads + threadIdx.x;
-  if (i >= cap) return;
-  const int job = off + i, n = n_dev ? *n_dev : n_static;
-  if (job >= n) return;   // 묶음 밖: 아무것도 안 씀 (OptiX·넣기도 n_dev 로 건너뜀)
-  rt_prep_one(b, g, i, job);
-}
-template <class G>
-__global__ void __launch_bounds__(kDepthThreads) rt_store_kernel(EnvBatch b, G g, int off, int cap, const int* n_dev) {
-  const int i = blockIdx.x * kDepthThreads + threadIdx.x;
-  if (i >= cap || (n_dev && off + i >= *n_dev)) return;
-  const int tri = b.rt_tri0[i];
-  if (tri == kRtNone) { g.none(b, off + i); return; }
-  g.store(b, off + i, b.rt_t[i], tri);
-}
-template <class G>
-void rt_rays(const EnvBatch& b, G g, int n_max, int n_static, const int* n_dev, cudaStream_t st, bool prepped = false) {   // prepped: 첫 덩이 준비를 앞 커널이 함
-  const int cap = 2 * b.n_env * mdp::obs::DEPTH_SIZE;   // 준비 칸 수 (env_host.cpp) — 모든 묶음이 한 번에 든다
-  for (int off = 0; off < n_max; off += cap) {
-    const int c = n_max - off < cap ? n_max - off : cap;
-    const int blocks = (c + kDepthThreads - 1) / kDepthThreads;
-    if (!(prepped && off == 0)) rt_prep_kernel<G><<<blocks, kDepthThreads, 0, st>>>(b, g, off, c, n_static, n_dev);
-    RtParams p{};
-    p.o = (const float4*)b.rt_o;
-    p.d = (const float4*)b.rt_d;
-    p.tri0 = b.rt_tri0;
-    if constexpr (G::kDirect) {   // 한 번에 다 (cap = 환경 · DEPTH_SIZE)
-      p.out_t = b.dep_z + off;
-      p.out_tri = b.dep_tri + off;
-    } else {
-      p.out_t = b.rt_t;
-      p.out_tri = b.rt_tri0;
-    }
-    p.n = c;
-    p.fast = b.rt_fast;
-    p.n_dev = n_dev;
-    p.off = off;
-    ((OptixRt*)b.rt)->launch(p, st);
-    if constexpr (!G::kDirect && !G::kNoStore) rt_store_kernel<G><<<blocks, kDepthThreads, 0, st>>>(b, g, off, c, n_dev);
-  }
-}
-#endif
-
 // 깊이 가운데 광선: job = env · DEPTH_SIZE + 픽셀
 struct DepthCenter {
-  static constexpr bool kNoStore = false;   // true: 받는 커널이 rt_t 를 바로 읽음
-  // RT 코어 경로: 묶음 번호 = 픽셀 번호라 결과를 dep_z·dep_tri 에 바로 (넣기 커널 없음)
-  static constexpr bool kDirect = true;
-  __device__ int env_of(const EnvBatch&, int job) const { return job / mdp::obs::DEPTH_SIZE; }
   __device__ bool make(const EnvBatch& b, int job, SceneView& sv, V3& o, V3& d, float& tmax) const {
     const int env = job / mdp::obs::DEPTH_SIZE, i = job % mdp::obs::DEPTH_SIZE;
     const EnvState& e = b.st[env];
@@ -328,18 +361,8 @@ struct DepthCenter {
   __device__ void store(const EnvBatch& b, int job, float t, int tri) const { b.dep_z[job] = t; b.dep_tri[job] = tri; }
 };
 
-__device__ void finish_depth_prep(const EnvBatch& b, int env, int tid) {
-#ifdef SIM_OPTIX
-  const int base = env * mdp::obs::DEPTH_SIZE;
-  for (int p = tid; p < mdp::obs::DEPTH_SIZE; p += kThreads) rt_prep_one(b, DepthCenter{}, base + p, base + p);
-#endif
-}
-
 // 깊이 옆 광선: job = 큐 칸 → 픽셀 · 2 + (0 왼쪽 u − edge_px, 1 오른쪽 u + edge_px)
 struct DepthSide {
-  static constexpr bool kNoStore = true;   // true: 받는 커널이 rt_t 를 바로 읽음
-  static constexpr bool kDirect = false;
-  __device__ int env_of(const EnvBatch& b, int job) const { return (b.dep_jobs[job] >> 1) / mdp::obs::DEPTH_SIZE; }
   __device__ bool make(const EnvBatch& b, int job, SceneView& sv, V3& o, V3& d, float& tmax) const {
     const int q = b.dep_jobs[job], px = q >> 1;
     const int env = px / mdp::obs::DEPTH_SIZE, i = px % mdp::obs::DEPTH_SIZE;
@@ -360,13 +383,10 @@ struct DepthSide {
 
 // 라이다 빔 가운데 광선: job = env · kMaxBeams + j (이번 장이 있는 환경의 j < n_beams 만)
 struct BeamCenter {
-  static constexpr bool kNoStore = false;   // true: 받는 커널이 rt_t 를 바로 읽음
-  static constexpr bool kDirect = false;
-  __device__ int env_of(const EnvBatch&, int job) const { return job / kMaxBeams; }
   __device__ bool make(const EnvBatch& b, int job, SceneView& sv, V3& o, V3& d, float& tmax) const {
     const int env = job / kMaxBeams, j = job % kMaxBeams;
+    if (!beam_live(b, env, j)) return false;
     const Shared& sh = b.scratch[env];
-    if (!sh.pending || j >= sh.n_beams) return false;
     const EnvState& e = b.st[env];
     BeamGeom g;
     beam_center_ray(e.noise, sh.scan, j, g);
@@ -382,9 +402,6 @@ struct BeamCenter {
 
 // 라이다 옆 광선: job = 큐 칸 → 빔 · 4 + k
 struct BeamSide {
-  static constexpr bool kNoStore = true;   // true: 받는 커널이 rt_t 를 바로 읽음
-  static constexpr bool kDirect = false;
-  __device__ int env_of(const EnvBatch& b, int job) const { return (b.beam_jobs[job] >> 2) / kMaxBeams; }
   __device__ bool make(const EnvBatch& b, int job, SceneView& sv, V3& o, V3& d, float& tmax) const {
     const int q = b.beam_jobs[job], bj = q >> 2;
     const int env = bj / kMaxBeams, j = bj % kMaxBeams;
@@ -402,153 +419,104 @@ struct BeamSide {
   __device__ void store(const EnvBatch& b, int job, float t, int) const { b.beam_side[b.beam_jobs[job]] = t; }
 };
 
-// 빔마다 (lidar_beam_real 을 광선 사이에서 나눈 것): final = 0 가운데 광선 뒤 — 끝나면 지도 표시, 옆 광선이 있어야 하면 큐에.
-// final = 1 옆 광선 뒤 마무리
-__device__ void beam_one(const EnvBatch& b, int env, int j, int final, const float* side = nullptr) {   // side: 옆 광선 거리 4 개 (nullptr 이면 beam_side)
-  Shared& sh = b.scratch[env];
-  if (!sh.pending || j >= sh.n_beams) return;
+// 빔마다 가운데 광선 뒤: 끝나면 지도 표시, 옆 광선이 있어야 하면 큐에 — PER = 4 (소프트웨어: 광선마다 칸 하나, 빔 · 4 + k) · 1 (RT 코어: 빔)
+template <int PER>
+__global__ void __launch_bounds__(kBeamThreads) env_beam_kernel(EnvBatch b) {
+  const int env = blockIdx.y, j = blockIdx.x * kBeamThreads + threadIdx.x;
+  if (!beam_live(b, env, j)) return;
   const int job = env * kMaxBeams + j;
-  const EnvState& e = b.st[env];
-  const LidarNoise& N = e.noise;
-  const SceneView sv = with_people(b.maps[e.map].scene, e.people);
-  BeamGeom geo;
-  beam_center_ray(N, sh.scan, j, geo);
-  beam_center_hit(sv, geo, b.beam_t[job], b.beam_tri[job]);
-  if (!geo.hit) return;
-  const BeamDraw w = beam_draw(sh.scan, j);
-  Material mat;
-  const int st = beam_mid(sv, N, sh.scan, geo, w, &mat);
-  if (st == 0) return;
-  float r;
-  if (!final) {
-    if (st == 2) {
-      const int q = atomicAdd(b.counters + kCntBeamSide, 4);
-      for (int k = 0; k < 4; ++k) b.beam_jobs[q + k] = 4 * job + k;
-#ifdef SIM_OPTIX
-      if (b.rt)   // RT 코어: 옆 광선 준비를 여기서 (준비 칸 = 큐 칸 — 빔 옆 광선 큐는 늘 첫 덩이 안: 4 · kMaxBeams < DEPTH_SIZE)
-        for (int k = 0; k < 4; ++k) rt_prep_one(b, BeamSide{}, q + k, q + k);
-#endif
-      return;
-    }
-    r = beam_finish(N, geo, w, mat, false);
-  } else {
-    if (st != 2) return;
-    beam_edges_from(N, geo, side ? side : b.beam_side + 4 * job);
-    r = beam_finish(N, geo, w, mat, true);
-  }
-  BeamRay ray;
-  beam_ray_out(geo, &ray);
-  scan_beam_mark(b, e, env, sh, j, r, ray);
-}
-__global__ void __launch_bounds__(kBeamThreads) env_beam_kernel(EnvBatch b, int final) {
-  beam_one(b, blockIdx.y, blockIdx.x * kBeamThreads + threadIdx.x, final);
+  if (beam_center_done(b, env, j, b.beam_t[job], b.beam_tri[job])) return;
+  const int q = atomicAdd(b.counters + kCntBeamSide, PER);
+  if (PER == 1) b.beam_jobs[q] = job;
+  else
+    for (int k = 0; k < 4; ++k) b.beam_jobs[q + k] = 4 * job + k;
 }
 
-// 옆 광선 큐의 네 칸 묶음(빔 하나)마다 그 빔을 마무리 — 큐에 없는 빔은 첫 패스에서 끝났다 (beam_one final = 1 과 같은 일)
+// 옆 광선 큐의 빔마다(PER 칸 묶음) 그 빔을 마무리 — 큐에 없는 빔은 첫 패스에서 끝났다
+template <int PER>
 __global__ void __launch_bounds__(kDepthThreads) env_beam_side_kernel(EnvBatch b) {
   const int g = blockIdx.x * kDepthThreads + threadIdx.x;
-  if (4 * g >= b.counters[kCntBeamSide]) return;
-  const int job = b.beam_jobs[4 * g] >> 2;
-  beam_one(b, job / kMaxBeams, job % kMaxBeams, 1, b.rt ? b.rt_t + 4 * g : nullptr);   // RT 코어: 큐 칸 = 준비 칸이라 결과를 바로 읽음
+  if (PER * g >= b.counters[kCntBeamSide]) return;
+  const int job = PER == 1 ? b.beam_jobs[g] : b.beam_jobs[4 * g] >> 2;
+  beam_side_done(b, job / kMaxBeams, job % kMaxBeams, b.beam_t[job], b.beam_tri[job], b.beam_side + 4 * job);
 }
 
-void beams_gpu(const EnvBatch& b, cudaStream_t st) {
-  const dim3 grid((kMaxBeams + kBeamThreads - 1) / kBeamThreads, b.n_env);
-#ifdef SIM_OPTIX
-  if (b.rt)
-    rt_rays(b, BeamCenter{}, b.n_env * kMaxBeams, b.n_env * kMaxBeams, nullptr, st);
-  else
-#endif
-    launch_rays(b, BeamCenter{}, b.n_env * kMaxBeams, nullptr, kCntBeamNext, st);
-  cudaMemsetAsync(b.counters + kCntBeamSide, 0, sizeof(int), st);
-  env_beam_kernel<<<grid, kBeamThreads, 0, st>>>(b, 0);
-#ifdef SIM_OPTIX
-  if (b.rt)
-    rt_rays(b, BeamSide{}, 4 * b.n_env * kMaxBeams, 0, b.counters + kCntBeamSide, st, true);   // 준비는 빔 커널이 함
-  else
-#endif
-    launch_rays(b, BeamSide{}, 0, b.counters + kCntBeamSide, kCntBeamSideNext, st);
-  env_beam_side_kernel<<<(b.n_env * kMaxBeams + kDepthThreads - 1) / kDepthThreads, kDepthThreads, 0, st>>>(b);   // 옆 광선을 쏜 빔만 마무리
-}
-
-// 픽셀마다: 가운데 광선 뒤 구멍이 정해지면 값을 쓰고, 아니면 옆 광선 둘을 큐에 (final = 0) / 옆 광선 뒤 마무리 (final = 1)
-__device__ void depth_px(const EnvBatch& b, int px, int final, const float* side = nullptr) {   // side: 옆 광선 거리 2 개 (nullptr 이면 dep_side)
-  const int env = px / mdp::obs::DEPTH_SIZE, i = px % mdp::obs::DEPTH_SIZE;
-  const EnvState& e = b.st[env];
-  const EnvCfg& c = b.cfg;
-  const DepthModel& M = c.depth;
-  uint8_t* out = mdp::obsgen::depth_out(b, env);
-  if (e.smoke) {   // 연기 모드: 깊이를 가림 (mdp/smoke.h). 두 단계 모두 0 을 쓰고 옆 광선 일감도 안 만듦 — CPU obs_depth 와 같음
-    out[i] = mdp::smoke::depth_px(e.smoke, 0);
-    return;
-  }
-  const int tri = b.dep_tri[px];
-  if (tri == -1) {   // 유효 영역 밖·못 맞음
-    if (!final) out[i] = 0;
-    return;
-  }
-  const float z = b.dep_z[px];
-  float u, v;
-  mdp::obsgen::depth_uv(M, i, &u, &v);
-  const Pose cam = mdp::obsgen::depth_camera(c, e);
-  const SceneView sv = with_people(b.maps[e.map].scene, e.people);
-  uint64_t seed = mdp::obsgen::depth_seed(e, i);
-  const float u_hole = dm::rand01(seed);
-  float p_edge, p_flat;
-  depth_hole_probs(sv, M, depth_dir(M.spec, cam, u, v), z, tri, e.depth_floor, &p_edge, &p_flat);
-  int hole = depth_hole_decided(u_hole, p_edge, p_flat);
-  if (!final) {
-    if (hole < 0) {
-      const int q = atomicAdd(b.counters + kCntDepSide, 2);
-      b.dep_jobs[q] = 2 * px;
-      b.dep_jobs[q + 1] = 2 * px + 1;
-#ifdef SIM_OPTIX
-      if (b.rt) {   // RT 코어: 옆 광선 준비를 여기서 (준비 칸 = 큐 칸)
-        rt_prep_one(b, DepthSide{}, q, q);
-        rt_prep_one(b, DepthSide{}, q + 1, q + 1);
-      }
-#endif
-      return;
-    }
-  } else {
-    if (hole >= 0) return;   // 앞에서 씀
-    const float* sd = side ? side : b.dep_side + 2 * px;
-    const bool edge = depth_edge(z, sd[0]) || depth_edge(z, sd[1]);
-    hole = u_hole < (edge ? p_edge : p_flat) ? 1 : 0;
-  }
-  out[i] = mdp::obsgen::depth_u8(M, hole ? 0.f : depth_value(M, z, seed));
-}
-__global__ void __launch_bounds__(kDepthThreads) env_depth_pixel_kernel(EnvBatch b, int final) {
+// 픽셀마다 가운데 광선 뒤: 값이 정해지면 쓰고, 아니면 큐에 — PER = 2 (소프트웨어: 광선마다 칸 하나, 픽셀 · 2 + 왼0/오른1) · 1 (RT 코어: 픽셀)
+template <int PER>
+__global__ void __launch_bounds__(kDepthThreads) env_depth_pixel_kernel(EnvBatch b) {
   const int px = blockIdx.x * kDepthThreads + threadIdx.x;
-  if (px < b.n_env * mdp::obs::DEPTH_SIZE) depth_px(b, px, final);
+  if (px >= b.n_env * mdp::obs::DEPTH_SIZE || depth_px_smoke(b, px)) return;
+  const int tri = b.dep_tri[px];
+  if (depth_px_center(b, px, b.dep_z[px], tri, tri == -1 ? V3{} : depth_px_dir(b, px))) return;
+  const int q = atomicAdd(b.counters + kCntDepSide, PER);
+  if (PER == 1) {
+    b.dep_jobs[q] = px;
+    return;
+  }
+  b.dep_jobs[q] = 2 * px;
+  b.dep_jobs[q + 1] = 2 * px + 1;
 }
 
-
-// 옆 광선 큐의 짝(왼·오른)마다 그 픽셀을 마무리 — 큐에 없는 픽셀은 첫 패스에서 이미 썼다 (depth_px final = 1 과 같은 일, 스레드만 덜 씀)
+// 옆 광선 큐의 픽셀마다(PER 칸 묶음) 그 픽셀을 마무리 — 큐에 없는 픽셀은 첫 패스에서 이미 썼다
+template <int PER>
 __global__ void __launch_bounds__(kDepthThreads) env_depth_side_kernel(EnvBatch b) {
   const int pair = blockIdx.x * kDepthThreads + threadIdx.x;
-  if (2 * pair >= b.counters[kCntDepSide]) return;
-  depth_px(b, b.dep_jobs[2 * pair] >> 1, 1, b.rt ? b.rt_t + 2 * pair : nullptr);
+  if (PER * pair >= b.counters[kCntDepSide]) return;
+  const int px = PER == 1 ? b.dep_jobs[pair] : b.dep_jobs[2 * pair] >> 1;
+  depth_px_side(b, px, b.dep_z[px], b.dep_tri[px], depth_px_dir(b, px), b.dep_side + 2 * px);
 }
 
-void depth_gpu(const EnvBatch& b, cudaStream_t st, bool prepped) {   // prepped: 가운데 광선 준비를 마무리 커널이 함
+#ifdef SIM_OPTIX
+// RT 코어 (src/optix_rays.cu): raygen 이 광선을 만들어 쏜다 (깊이 옆 광선은 마무리까지). 1·3 은 픽셀·빔 전부, 2·4 는 큐 길이(장치, counter 칸)만큼
+void rt_launch(const EnvBatch& b, RtProg prog, int n, int counter, cudaStream_t st) {
+  RtParams p{};
+  p.prog = prog;
+  p.batch = b.dev_self;
+  p.fast = b.rt_fast;
+  p.n = n;
+  if (prog == kRtDepthSide || prog == kRtBeamSide) p.n_dev = b.counters + counter;
+  ((OptixRt*)b.rt)->launch(p, st);
+}
+#endif
+
+void beams_gpu(const EnvBatch& b, cudaStream_t st) {
+  const int n = b.n_env * kMaxBeams;
+#ifdef SIM_OPTIX
+  const dim3 grid((kMaxBeams + kBeamThreads - 1) / kBeamThreads, b.n_env);
+  if (b.rt) {   // raygen 은 광선만 (결과 뒤는 아래 커널)
+    rt_launch(b, kRtBeam, n, 0, st);
+    cudaMemsetAsync(b.counters + kCntBeamSide, 0, sizeof(int), st);
+    env_beam_kernel<1><<<grid, kBeamThreads, 0, st>>>(b);
+    rt_launch(b, kRtBeamSide, n, kCntBeamSide, st);
+    env_beam_side_kernel<1><<<(n + kDepthThreads - 1) / kDepthThreads, kDepthThreads, 0, st>>>(b);
+    return;
+  }
+#endif
+  launch_rays(b, BeamCenter{}, n, nullptr, kCntBeamNext, st);
+  cudaMemsetAsync(b.counters + kCntBeamSide, 0, sizeof(int), st);
+  env_beam_kernel<4><<<dim3((kMaxBeams + kBeamThreads - 1) / kBeamThreads, b.n_env), kBeamThreads, 0, st>>>(b);
+  launch_rays(b, BeamSide{}, 0, b.counters + kCntBeamSide, kCntBeamSideNext, st);
+  env_beam_side_kernel<4><<<(n + kDepthThreads - 1) / kDepthThreads, kDepthThreads, 0, st>>>(b);   // 옆 광선을 쏜 빔만 마무리
+}
+
+void depth_gpu(const EnvBatch& b, cudaStream_t st) {
   const int n_px = b.n_env * mdp::obs::DEPTH_SIZE;
   const int px_blocks = (n_px + kDepthThreads - 1) / kDepthThreads;
 #ifdef SIM_OPTIX
-  if (b.rt)
-    rt_rays(b, DepthCenter{}, n_px, n_px, nullptr, st, prepped);
-  else
+  if (b.rt) {
+    rt_launch(b, kRtDepth, n_px, 0, st);
+    cudaMemsetAsync(b.counters + kCntDepSide, 0, sizeof(int), st);
+    env_depth_pixel_kernel<1><<<px_blocks, kDepthThreads, 0, st>>>(b);
+    rt_launch(b, kRtDepthSide, n_px, kCntDepSide, st);
+    env_depth_side_kernel<1><<<px_blocks, kDepthThreads, 0, st>>>(b);
+    return;
+  }
 #endif
-    launch_rays(b, DepthCenter{}, n_px, nullptr, kCntDepNext, st);
+  launch_rays(b, DepthCenter{}, n_px, nullptr, kCntDepNext, st);
   cudaMemsetAsync(b.counters + kCntDepSide, 0, sizeof(int), st);
-  env_depth_pixel_kernel<<<px_blocks, kDepthThreads, 0, st>>>(b, 0);
-#ifdef SIM_OPTIX
-  if (b.rt)
-    rt_rays(b, DepthSide{}, 2 * n_px, 0, b.counters + kCntDepSide, st, true);   // 첫 덩이 준비는 픽셀 커널이 함
-  else
-#endif
-    launch_rays(b, DepthSide{}, 0, b.counters + kCntDepSide, kCntDepSideNext, st);
-  env_depth_side_kernel<<<(n_px + kDepthThreads - 1) / kDepthThreads, kDepthThreads, 0, st>>>(b);   // 옆 광선을 쏜 픽셀만 마무리
+  env_depth_pixel_kernel<2><<<px_blocks, kDepthThreads, 0, st>>>(b);
+  launch_rays(b, DepthSide{}, 0, b.counters + kCntDepSide, kCntDepSideNext, st);
+  env_depth_side_kernel<2><<<px_blocks, kDepthThreads, 0, st>>>(b);   // 옆 광선을 쏜 픽셀만 마무리
 }
 
 }  // namespace
@@ -564,12 +532,12 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
     env_apply_kernel<<<b.n_env, kThreads, 0, st>>>(b);
   }
   env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b);
-  depth_gpu(b, st, true);
+  depth_gpu(b, st);
 }
 
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st) {
   env_reset_kernel<<<b.n_env, kThreads, 0, st>>>(b);
-  depth_gpu(b, st, false);
+  depth_gpu(b, st);
 }
 
 }  // namespace sim

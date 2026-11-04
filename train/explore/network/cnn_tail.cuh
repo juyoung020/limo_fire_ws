@@ -25,7 +25,9 @@ long cnn_tail_part_floats(const TailShape& s);  // 역방향 블록별 부분합
 void cnn_tail_forward(const TailShape& s, const float* F3, const float* Wb, float* Y, long ldy, cudaStream_t st,
                       unsigned short* Yh = nullptr);
 // g1·g2 = 특징 기울기 (이 가지 첫 열 위치, g2 = nullptr 이면 g1 만). gWb = dW·db 자리(누적 +=). part = 작업 공간.
+// z_out: dF3 대신 dZ3 = dF3 · ELU'(F3) 를 쓴다 (앞 세 층 융합 커널이 받는 꼴 — F3 를 다시 읽지 않게; 곱은 그 커널이 하던 fp32 식 그대로)
 void cnn_tail_backward(const TailShape& s, const float* F3, const float* Wb, const float* Y, long ldy, const float* g1, long ld1,
-                       const float* g2, long ld2, float* dF3, float* gWb, float* part, bool broken_elu, cudaStream_t st);
+                       const float* g2, long ld2, float* dF3, float* gWb, float* part, bool broken_elu, cudaStream_t st,
+                       bool z_out = false);
 
 }  // namespace xnet

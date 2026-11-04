@@ -107,6 +107,7 @@ struct MapDev {
 constexpr int kLidarRing = mdp::obs::LIDAR_FRAMES + 1;   // 라이다 칸 링 (지금 + 직전 3 장 + 지연 1 장)
 constexpr int kProgRing = 20;                             // 탐사 진행 속도: 최근 20 걸음(2 s) 새로 안 칸 수
 constexpr int kBinNone = 1 << 30;                         // 라이다 칸에 점 없음
+constexpr int kClassLog = 16384;                          // 한 장에 칸 종류가 바뀐 칸 낱말 목록 길이 (넘으면 장 범위 전체를 다시 셈 — env_kernel.cu)
 
 // 판 끝 정보 (러너·평가용, done ≠ 0 인 걸음에만 새로 씀)
 struct EpInfo {
@@ -168,11 +169,17 @@ struct Shared {
   int dx0, dy0, dx1, dy1, far_ok, far_map;
   uint32_t far_mask[mdp::obs::FAR_H * mdp::obs::FAR_W / 32];   // 이번 행동에 로그 오즈 값이 바뀐 지도 칸이 덮는 먼 지도 칸 (비트)
   float far_key[3];
+  Pose cam;                    // 깊이 카메라 자세 (GPU: 마무리·리셋 커널이 이번 걸음 최종 상태로 한 번 — 픽셀마다 다시 안 셈, depth_camera 와 같은 값)
 };
 
 // scan_apply 가 스레드 하나 몫으로 센 수 (합은 순서와 무관한 정수 합)
 struct ApplyCount {
   int wall, floor, known, fresh;   // 새로 본 벽 면 칸, 새로 지나간 바닥 칸, 갈 수 있음 칸 변화, 모름 → 앎 칸
+};
+// 칸 종류(mdp::cell_class)가 바뀐 칸이 있는 칸 낱말(같은 줄 4 칸) 목록 — 낱말 첫 칸 번호 (GPU 지도 갱신이 프론티어 칸 지도를 고칠 곳). n 은 넘쳐도 계속 셈
+struct ClassLog {
+  int32_t* list;
+  int* n;
 };
 
 // 장치·호스트 공용 묶음 (포인터는 GPU 면 장치, CPU 면 호스트)
@@ -202,29 +209,32 @@ struct EnvBatch {
   int max_stage;
   int n_env;
   Shared* scratch;             // [env] GPU 판: 커널 사이에 넘기는 장 준비·한 행동 합 (CPU 판은 안 씀)
-  // GPU 판 깊이 광선 묶음 (env_kernel.cu): 픽셀마다 가운데 광선 거리·삼각형, 옆 광선 큐(픽셀 · 2 + 왼0/오른1)·그 거리, 원자 셈 칸
+  // GPU 판 깊이 광선 (env_kernel.cu·optix_rays.cu): 픽셀마다 가운데 광선 거리·삼각형, 옆 광선 큐(소프트웨어: 픽셀 · 2 + 왼0/오른1, RT 코어: 픽셀)·그 거리(소프트웨어), 원자 셈 칸
   float* dep_z;                // [env · DEPTH_SIZE]
   int32_t* dep_tri;            // [env · DEPTH_SIZE]
   float* dep_side;             // [env · DEPTH_SIZE · 2]
   int32_t* dep_jobs;           // [env · DEPTH_SIZE · 2]
-  // 라이다 빔 광선 묶음: 빔(env · kMaxBeams + j)마다 가운데 광선 거리·삼각형, 옆 광선 큐(빔 · 4 + k)·그 거리
+  // 라이다 빔 광선: 빔(env · kMaxBeams + j)마다 가운데 광선 거리·삼각형, 옆 광선 큐(소프트웨어: 빔 · 4 + k, RT 코어: 빔)·그 거리(소프트웨어)
   float* beam_t;
   int32_t* beam_tri;
   float* beam_side;
   int32_t* beam_jobs;
   int32_t* counters;           // [kCounters] (env_kernel.cu)
-  // RT 코어 (OptiX, 선택): 있으면 깊이 가운데 광선을 하드웨어로 (include/optix_rt.h). 광선 준비 칸 [env · DEPTH_SIZE]
+  // 프론티어 칸 지도 (GPU): 칸마다 비트 — 지금 지도에서 mdp::frontier_cell 인 칸. 지도 갱신이 칸 종류가 바뀐 칸(fchg 목록)과 그 4 이웃만 다시 셈
+  // (env_kernel.cu env_apply_kernel), 관측은 이 비트만 센다 (판이 길어 지도가 커져도 건드린 범위 전체를 다시 보지 않게). CPU 참조판은 안 씀(nullptr)
+  uint32_t* fmap;              // [env · size · fmap_row]  줄마다 낱말 fmap_row 개, 칸 x 는 낱말 x / 32 의 비트 x % 32
+  int32_t* fchg;               // [env · kClassLog]  이번 장에 칸 종류가 바뀐 칸이 있는 낱말의 첫 칸 번호
+  // RT 코어 (OptiX, 선택): 있으면 깊이·라이다 광선을 하드웨어로 (include/optix_rt.h — raygen 이 이 묶음의 장치 사본 dev_self 를 읽음)
   void* rt;                    // OptixRt* (호스트 객체, 없으면 nullptr)
   int rt_fast;                 // 1: 빠른 길(하드웨어 삼각형, 학습 기본) · 0: 정확한 길(SIM_EXACT=1 — GPU == CPU 비트 같음). include/optix_rt.h
-  void* rt_o;                  // float4
-  void* rt_d;                  // float4
-  int32_t* rt_tri0;
-  float* rt_t;                 // 결과 거리 (번호는 rt_tri0 자리에 덮어씀)
+  const EnvBatch* dev_self;    // 이 묶음의 장치 사본 (GPU 판, 생성 끝에 올림 — 그 뒤 묶음은 안 바뀜)
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)
 
 // ---------- 작은 도구 ----------
+
+DEV int fmap_row(const EnvCfg& c) { return (c.size + 31) / 32; }   // 프론티어 칸 지도 한 줄 낱말 수
 
 DEV float wrapf(float a) { return dm::wrap_pi(a); }
 
@@ -341,6 +351,10 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
 // 모든 스레드: 지도·표시 비우기
 DEV void reset_map(const EnvBatch& b, int env, int tid) {
   const int n = b.cfg.size * b.cfg.size;
+  if (b.fmap) {   // 프론티어 칸 없음 (모두 모름)
+    const int nf = b.cfg.size * fmap_row(b.cfg);
+    for (int i = tid; i < nf; i += kThreads) b.fmap[(size_t)env * nf + i] = 0u;
+  }
   int16_t* L = b.lmap + (size_t)env * n;
   uint32_t* M = b.marks + (size_t)env * (n / 4);
   for (int i = tid; i < n; i += kThreads) L[i] = kUnknown;
@@ -594,6 +608,14 @@ DEV void mark(uint32_t* M, int size, int cx, int cy, uint32_t bits) {
 #endif
 }
 
+DEV void mark_word(uint32_t* M, int w, uint32_t bits) {   // 칸 낱말 w 에 비트 (칸 4 개 몫, mark 와 같은 자리)
+#ifdef __CUDA_ARCH__
+  atomicOr(&M[w], bits);
+#else
+  M[w] |= bits;
+#endif
+}
+
 DEV void atomic_min_i(int* p, int v) {
 #ifdef __CUDA_ARCH__
   atomicMin(p, v);
@@ -674,15 +696,33 @@ DEV void scan_beam_mark(const EnvBatch& b, const EnvState& e, int env, Shared& s
     hix = cx > hix ? cx : hix;
     hiy = cy > hiy ? cy : hiy;
   };
+  // 같은 낱말(같은 줄 4 칸)에 이어 떨어지는 칸 표시는 모아 한 번에 OR (원자 연산 수 줄임 — OR 이라 같은 값).
+  // 지나간 칸은 (x0, y0) 에서 x·y 가 한쪽으로만 가는 앞부분이라 범위는 첫 칸과 마지막 칸으로 정해진다
+  int word = -1, xl = x0, yl = y0;
+  uint32_t acc = 0u;
   while (true) {
     const bool last = x == x1 && y == y1;
     if (!inside(x, y)) break;
-    mark(M, c.size, x, y, last && hit ? 2u : 1u);
-    grow(x, y);
+    const int i = y * c.size + x;
+    const uint32_t v = (last && hit ? 2u : 1u) << (8 * (i & 3));
+    if ((i >> 2) != word) {
+      if (word >= 0) mark_word(M, word, acc);
+      word = i >> 2;
+      acc = v;
+    } else {
+      acc |= v;
+    }
+    xl = x;
+    yl = y;
     if (last) break;
     const int e2 = 2 * err;
     if (e2 > -ddy) { err -= ddy; x += sx; }
     if (e2 < ddx) { err += ddx; y += sy; }
+  }
+  if (word >= 0) {
+    mark_word(M, word, acc);
+    grow(x0, y0);
+    grow(xl, yl);
   }
   // 벽 덮음은 지도와 같은 거리 한도(max_range 안 = 지도에 맞음으로 들어가는 빔)만
   int wx, wy;
@@ -733,7 +773,8 @@ DEV void far_mark_cells(const EnvCfg& c, const MapDev& m, const EnvState& e, flo
 
 // 스레드 tid / nthreads: 표시된 칸을 한 번씩 갱신(맞음 우선)하고 이번 장 표시(bit0~2)를 지운다. 판 동안 남는 표시(bit3 본 벽 면 칸, bit4 지나간 바닥 칸)를
 // 처음 켤 때 센다. 칸 낱말(4 칸)마다 스레드 하나만 만지므로 나누는 방식과 무관하게 지도·합이 같다
-DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const Shared& sh, int tid, int nthreads, uint32_t* far_mask = nullptr) {
+DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const Shared& sh, int tid, int nthreads, uint32_t* far_mask = nullptr,
+                          const ClassLog* log = nullptr) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   float s0 = 0.f, c0 = 1.f;
@@ -753,6 +794,7 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
       if ((word & 0x07070707u) == 0u) continue;
       uint32_t keep = word & 0x38383838u;   // 판 동안 남는 bit3·4·5
       int ch_lo = 1 << 30, ch_hi = -1;
+      bool cls_chg = false;   // 이 낱말에 칸 종류가 바뀐 칸이 있나 (ClassLog)
       for (int q = 0; q < 4; ++q) {
         const uint32_t mk = (word >> (8 * q)) & 0xffu;
         if (!(mk & 7u)) continue;
@@ -768,6 +810,7 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
             L[ci] = (int16_t)(v < c.l_min ? c.l_min : (v > c.l_max ? c.l_max : v));
           }
           d_known += (int)(mdp::cell_class(L[ci]) == mdp::kFree) - (int)(mdp::cell_class(old) == mdp::kFree);
+          cls_chg = cls_chg || mdp::cell_class(L[ci]) != mdp::cell_class(old);
           if (L[ci] != old) {   // 이 낱말에서 바뀐 칸 범위 (먼 지도 칸 표시는 낱말마다 한 번)
             ch_lo = cx < ch_lo ? cx : ch_lo;
             ch_hi = cx > ch_hi ? cx : ch_hi;
@@ -783,6 +826,12 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
         }
       }
       M[wi] = keep;
+#ifdef __CUDA_ARCH__
+      if (log && cls_chg) {   // 낱말 첫 칸 번호
+        const int q = atomicAdd(log->n, 1);
+        if (q < kClassLog) log->list[q] = cy * c.size + wx * 4;
+      }
+#endif
       if (far_mask && ch_hi >= 0) far_mark_cells(c, m, e, s0, c0, far_mask, ch_lo, ch_hi, cy);   // 먼 지도 칸 더럽힘
     }
   }

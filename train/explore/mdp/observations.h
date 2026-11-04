@@ -104,7 +104,62 @@ DEV FarDirty far_dirty_take(const EnvBatch& b, const EnvState& e, Shared& g, boo
   return fd;
 }
 
-DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int tid, const FarDirty& fd) {
+// 먼 지도 칸 (시작 자세 기준 0.8 m, 점 8 × 8). 칸마다 따로라 CPU 는 차례로, GPU 는 다시 그릴 칸만 모아 점 줄(kr)마다 나눠 부른다
+struct FarFrame {
+  float s0, c0, half;
+  int prow, pcol;   // 지금 위치 칸
+};
+DEV void far_frame(const EnvState& e, float px, float py, FarFrame* f) {
+  using namespace mdp::obs;
+  dm::sincosf_d(e.th0, &f->s0, &f->c0);
+  const float dx = px - e.x0, dy = py - e.y0;
+  const float rf = f->c0 * dx + f->s0 * dy, rl = -f->s0 * dx + f->c0 * dy;
+  f->half = 0.5f * (float)FAR_H * kFarCell;
+  f->prow = (int)floorf((f->half - rf) / kFarCell);
+  f->pcol = (int)floorf((f->half - rl) / kFarCell);
+}
+// 칸 i 의 지금 위치 채널(과 statics 면 물체 📏 0 채널)을 쓰고, 확률·지나간 곳을 다시 그려야 하면 true
+DEV bool far_cell_head(const EnvState& e, const FarDirty& fd, const FarFrame& f, uint8_t* F, int i, bool statics = true) {
+  using namespace mdp::obs;
+  const int row = i / FAR_W, col = i % FAR_W;
+  F[2 * FAR_H * FAR_W + i] = (row == f.prow && col == f.pcol) ? (uint8_t)255 : (uint8_t)0;
+  if (statics)
+    for (int ch = 3; ch < FAR_C; ++ch) F[ch * FAR_H * FAR_W + i] = 0;   // 물체 📏
+  if (fd.all) return true;
+  // 칸 가운데 (점 64 개는 가운데에서 앞·옆 0.35 m 안 → 반지름 0.5 m 안, fd 상자는 0.6 m 넓혀 둠)
+  const float fwd_c = f.half - ((float)row + 0.5f) * kFarCell, left_c = f.half - ((float)col + 0.5f) * kFarCell;
+  const float wcx = (e.x0 + f.c0 * fwd_c) - f.s0 * left_c, wcy = (e.y0 + f.s0 * fwd_c) + f.c0 * left_c;
+  const bool marked = fd.mask && ((fd.mask[i >> 5] >> (i & 31)) & 1u);
+  return marked || (wcx >= fd.x0 && wcx <= fd.x1 && wcy >= fd.y0 && wcy <= fd.y1);
+}
+// 칸 i 의 점 줄 kr (8 점): 아는 점의 로그 오즈 최댓값·지나간 곳을 lmax·vis 에 합침.
+// 확률 칸 값 = 아는 점의 prob_u8 최댓값. prob_u8 은 로그 오즈에 단조(모름 = kUnknown 이 가장 작음)라 로그 오즈 최댓값 하나만 바꾼다
+DEV void far_cell_row(const sim::EnvCfg& c, const sim::MapDev& m, const int16_t* L, const uint32_t* M, const EnvState& e, const FarFrame& f, int i,
+                      int kr, int* lmax, int* vis) {
+  using namespace mdp::obs;
+  const int row = i / FAR_W, col = i % FAR_W;
+  const float fwd = f.half - ((float)row + ((float)kr + 0.5f) / (float)kFarSub) * kFarCell;
+  const float ax = e.x0 + f.c0 * fwd, ay = e.y0 + f.s0 * fwd;
+  for (int kc = 0; kc < kFarSub; ++kc) {
+    const float left = f.half - ((float)col + ((float)kc + 0.5f) / (float)kFarSub) * kFarCell;
+    const float wx = ax - f.s0 * left, wy = ay + f.c0 * left;
+    int cx, cy;
+    const int ci = sim::cell_of(c, m, wx, wy, &cx, &cy);
+    if (ci < 0) continue;
+    const int l = L[ci];
+    *lmax = l > *lmax ? l : *lmax;
+    *vis |= visited(M, ci) ? 1 : 0;
+  }
+}
+DEV void far_cell_put(const sim::EnvCfg& c, uint8_t* F, int i, int lmax, int vis) {
+  using namespace mdp::obs;
+  F[i] = prob_u8(c, (int16_t)lmax);
+  F[FAR_H * FAR_W + i] = vis ? (uint8_t)255 : (uint8_t)0;
+}
+
+// whole = false: 먼 지도·프론티어 요약은 부르는 쪽이 (GPU env_kernel.cu obs_far_block·obs_front_block — 같은 값).
+// statics = false: 늘 0 인 물체 채널(📏)을 안 씀 — GPU 는 판이 시작할 때(리셋)만 쓰고 그 뒤 걸음은 그대로 둔다 (관측 버퍼는 이 함수만 씀, 같은 값)
+DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int tid, const FarDirty& fd, bool whole = true, bool statics = true) {
   using namespace mdp::obs;
   const sim::EnvCfg& c = b.cfg;
   const sim::MapDev& m = b.maps[e.map];
@@ -123,47 +178,19 @@ DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
     const int ci = sim::cell_of(c, m, wx, wy, &cx, &cy);
     I[i] = ci >= 0 ? prob_u8(c, L[ci]) : (uint8_t)0;
     I[NEAR_H * NEAR_W + i] = ci >= 0 && visited(M, ci) ? (uint8_t)255 : (uint8_t)0;
-    for (int ch = 2; ch < NEAR_C; ++ch) I[ch * NEAR_H * NEAR_W + i] = 0;   // 물체 📏
+    if (statics)
+      for (int ch = 2; ch < NEAR_C; ++ch) I[ch * NEAR_H * NEAR_W + i] = 0;   // 물체 📏
   }
-  // 먼 지도 (시작 자세 기준)
-  {
+  // 먼 지도 (시작 자세 기준). GPU 는 다시 그릴 칸만 모아 칸마다 8 스레드(점 줄)가 나눠 한다 (env_kernel.cu obs_far_block — 같은 함수, 최댓값·OR 이라 순서 무관)
+  if (whole) {
     uint8_t* F = I + NEAR_SIZE;
-    float s0, c0;
-    dm::sincosf_d(e.th0, &s0, &c0);
-    // 지금 위치 칸
-    const float dx = px - e.x0, dy = py - e.y0;
-    const float rf = c0 * dx + s0 * dy, rl = -s0 * dx + c0 * dy;
-    const float half = 0.5f * (float)FAR_H * kFarCell;
-    const int prow = (int)floorf((half - rf) / kFarCell), pcol = (int)floorf((half - rl) / kFarCell);
+    FarFrame ff;
+    far_frame(e, px, py, &ff);
     for (int i = tid; i < FAR_H * FAR_W; i += sim::kThreads) {
-      const int row = i / FAR_W, col = i % FAR_W;
-      F[2 * FAR_H * FAR_W + i] = (row == prow && col == pcol) ? (uint8_t)255 : (uint8_t)0;
-      for (int ch = 3; ch < FAR_C; ++ch) F[ch * FAR_H * FAR_W + i] = 0;   // 물체 📏
-      if (!fd.all) {
-        // 칸 가운데 (점 64 개는 가운데에서 앞·옆 0.35 m 안 → 반지름 0.5 m 안, fd 상자는 0.6 m 넓혀 둠)
-        const float fwd_c = half - ((float)row + 0.5f) * kFarCell, left_c = half - ((float)col + 0.5f) * kFarCell;
-        const float wcx = (e.x0 + c0 * fwd_c) - s0 * left_c, wcy = (e.y0 + s0 * fwd_c) + c0 * left_c;
-        const bool marked = fd.mask && ((fd.mask[i >> 5] >> (i & 31)) & 1u);
-        if (!marked && !(wcx >= fd.x0 && wcx <= fd.x1 && wcy >= fd.y0 && wcy <= fd.y1)) continue;
-      }
-      // 확률 칸 값 = 아는 점의 prob_u8 최댓값. prob_u8 은 로그 오즈에 단조(모름 = kUnknown 이 가장 작음)라 로그 오즈 최댓값 하나만 바꾼다
+      if (!far_cell_head(e, fd, ff, F, i)) continue;
       int lmax = sim::kUnknown, vis = 0;
-      for (int kr = 0; kr < kFarSub; ++kr) {
-        const float fwd = half - ((float)row + ((float)kr + 0.5f) / (float)kFarSub) * kFarCell;
-        const float ax = e.x0 + c0 * fwd, ay = e.y0 + s0 * fwd;
-        for (int kc = 0; kc < kFarSub; ++kc) {
-          const float left = half - ((float)col + ((float)kc + 0.5f) / (float)kFarSub) * kFarCell;
-          const float wx = ax - s0 * left, wy = ay + c0 * left;
-          int cx, cy;
-          const int ci = sim::cell_of(c, m, wx, wy, &cx, &cy);
-          if (ci < 0) continue;
-          const int l = L[ci];
-          lmax = l > lmax ? l : lmax;
-          vis |= visited(M, ci) ? 1 : 0;
-        }
-      }
-      F[i] = prob_u8(c, (int16_t)lmax);
-      F[FAR_H * FAR_W + i] = vis ? (uint8_t)255 : (uint8_t)0;
+      for (int kr = 0; kr < kFarSub; ++kr) far_cell_row(c, m, L, M, e, ff, i, kr, &lmax, &vis);
+      far_cell_put(c, F, i, lmax, vis);
     }
   }
   // 깊이는 픽셀마다 따로 (obs_depth — GPU 는 픽셀 하나 = 스레드 하나인 커널)
@@ -180,7 +207,7 @@ DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
     }
   }
   // 프론티어 칸 (지도에서 건드린 칸 범위 안)
-  {
+  if (whole) {
     int n = 0;
     if (e.kb_x1 >= 0) {
       const mdp::MapView mv{L, c.size, m.gw, m.gh};

@@ -30,6 +30,7 @@ struct TailArgs {
   const float *g1, *g2;
   long ld1, ld2;
   float* dF3;
+  bool zout;  // dF3 대신 dF3 · ELU'(F3)
   float* part;
   bool broken;
 };
@@ -84,17 +85,36 @@ __global__ void __launch_bounds__(kNT) k_tail_fwd(TailArgs a) {
   for (int r = 0; r < 4; ++r)
 #pragma unroll
     for (int c = 0; c < 4; ++c) acc[r][c] = 0.f;
+  // 자식 하나의 입력을 레지스터로 미리 읽어 두고(다음 자식 읽기를 지금 자식 계산과 겹침) 공유 메모리에 쓴다
+  constexpr int NV = (kTRF * Q + kNT - 1) / kNT;
+  float4 xv[NV];
+  auto fetch = [&](int child) {
+#pragma unroll
+    for (int j = 0; j < NV; ++j) {
+      const int e = t + j * kNT;
+      xv[j] = make_float4(0.f, 0.f, 0.f, 0.f);
+      if (e < kTRF * Q) {
+        const int q = e % Q, rr = e / Q;
+        const int o = child_off(sBase[rr], sFlag[rr], child, a.w, C);
+        if (o >= 0) xv[j] = __ldg(reinterpret_cast<const float4*>(a.F3 + o + q * 4));
+      }
+    }
+  };
+  __syncthreads();  // sBase·sFlag
+  fetch(0);
   for (int child = 0; child < 4; ++child) {
-    __syncthreads();
-    for (int e = t; e < kTRF * Q; e += kNT) {
-      const int q = e % Q, rr = e / Q;
-      const int o = child_off(sBase[rr], sFlag[rr], child, a.w, C);
-      float4 v = make_float4(0.f, 0.f, 0.f, 0.f);
-      if (o >= 0) v = __ldg(reinterpret_cast<const float4*>(a.F3 + o + q * 4));
-      float* d = sX + rr * LDX + q * 4;
-      d[0] = v.x, d[1] = v.y, d[2] = v.z, d[3] = v.w;
+    __syncthreads();  // 앞 자식 계산이 sX 를 다 읽음
+#pragma unroll
+    for (int j = 0; j < NV; ++j) {
+      const int e = t + j * kNT;
+      if (e < kTRF * Q) {
+        const int q = e % Q, rr = e / Q;
+        float* d = sX + rr * LDX + q * 4;
+        d[0] = xv[j].x, d[1] = xv[j].y, d[2] = xv[j].z, d[3] = xv[j].w;
+      }
     }
     __syncthreads();
+    if (child < 3) fetch(child + 1);
     if (comp) {
 #pragma unroll 8
       for (int c = 0; c < C; ++c) {
@@ -220,6 +240,14 @@ __global__ void __launch_bounds__(kNT) k_tail_bwd(TailArgs a) {
           for (int j = 0; j < 4; ++j) s[r][j] = fmaf(d, wj[j], s[r][j]);
         }
       }
+      if (a.zout)  // dZ3 = dF3 · ELU'(F3), F3 = 이 스레드가 sX 에 둔 같은 칸
+#pragma unroll
+        for (int r = 0; r < 4; ++r) {
+          const float4 x = *reinterpret_cast<const float4*>(sX + (rg * 4 + r) * K + lane * 4);
+          const float xj[4] = {x.x, x.y, x.z, x.w};
+#pragma unroll
+          for (int j = 0; j < 4; ++j) s[r][j] *= (xj[j] > 0.f || a.broken) ? 1.f : xj[j] + 1.f;
+        }
 #pragma unroll
       for (int r = 0; r < 4; ++r)
         if (xo_cur[r] >= 0) *reinterpret_cast<float4*>(a.dF3 + xo_cur[r]) = make_float4(s[r][0], s[r][1], s[r][2], s[r][3]);
@@ -301,13 +329,14 @@ void cnn_tail_forward(const TailShape& s, const float* F3, const float* Wb, floa
 }
 
 void cnn_tail_backward(const TailShape& s, const float* F3, const float* Wb, const float* Y, long ldy, const float* g1, long ld1,
-                       const float* g2, long ld2, float* dF3, float* gWb, float* part, bool broken_elu, cudaStream_t st) {
+                       const float* g2, long ld2, float* dF3, float* gWb, float* part, bool broken_elu, cudaStream_t st,
+                       bool z_out) {
   if (!cnn_tail_supported(s)) throw std::runtime_error("cnn_tail_backward: 지원 안 하는 모양");
   TailArgs a = make_args(s);
   if (a.rows == 0) return;
   a.F3 = F3, a.Wb = Wb, a.Y = const_cast<float*>(Y), a.ldy = ldy;
   a.g1 = g1, a.ld1 = ld1, a.g2 = g2, a.ld2 = ld2;
-  a.dF3 = dF3, a.part = part, a.broken = broken_elu;
+  a.dF3 = dF3, a.part = part, a.broken = broken_elu, a.zout = z_out;
   const Kern k = kern(s);
   const int grid = grid_bwd(k.bwd);
   k.bwd<<<grid, kNT, 0, st>>>(a);

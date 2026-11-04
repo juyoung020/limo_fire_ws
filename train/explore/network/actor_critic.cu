@@ -142,7 +142,9 @@ __global__ void k_norm_apply(const real* x, int n, int ldx, int D, const real* m
 __global__ void k_bias_elu_h(float* Y, unsigned short* Yh, long rows, int cols, const float* b) {
   long idx = blockIdx.x * (long)blockDim.x + threadIdx.x;
   if (idx >= rows * cols) return;
-  const float z = Y[idx] + b[idx % cols];
+  // 열 번호: 원소 수가 2^32 안이면 32 비트 나머지 (64 비트 나머지는 명령 수십 개)
+  const int c = rows * cols <= 0xffffffffL ? (int)((unsigned)idx % (unsigned)cols) : (int)(idx % cols);
+  const float z = Y[idx] + b[c];
   const float v = z > 0.f ? z : expm1f(z);
   Y[idx] = v;
   Yh[idx] = __bfloat16_as_ushort(__float2bfloat16_rn(v));
@@ -154,7 +156,26 @@ __global__ void k_dy_prep(float* dy, const float* aux, bool broken, long R, int 
   if (c >= C) return;
   const long r0 = blockIdx.x * rpb, r1 = r0 + rpb < R ? r0 + rpb : R;
   float s = 0.f;
-  for (long r = r0; r < r1; ++r) {
+  long r = r0;
+  for (; r + 4 <= r1; r += 4) {  // 네 행을 먼저 다 읽고(지연 겹침) 같은 순서로 더한다
+    float v[4], a[4];
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      v[i] = dy[(r + i) * C + c];
+      a[i] = aux ? aux[(r + i) * C + c] : 1.f;
+    }
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      const long o = (r + i) * C + c;
+      if (aux) {
+        v[i] *= (a[i] > 0.f || broken) ? 1.f : a[i] + 1.f;
+        dy[o] = v[i];
+      }
+      dyh[o] = __bfloat16_as_ushort(__float2bfloat16_rn(v[i]));
+      s += v[i];
+    }
+  }
+  for (; r < r1; ++r) {
     const long o = r * C + c;
     float v = dy[o];
     if (aux) {
@@ -314,6 +335,8 @@ void Net::bind(real* params, real* grads, int max_n) {
     B.tail_fused = !force_ref && cnn_tail_supported(tail_shape(B, 0));
     if (B.tail_fused) part = std::max(part, cnn_tail_part_floats(tail_shape(B, 0)));
     if (B.fused) part = std::max(part, cnn_fused_part_floats(desc(B)));
+    // 융합 합성곱 역방향은 넷째 층 융합 역방향이 쓰는 dZ3 (= dF3 · ELU'(F3)) 를 받는다
+    if (B.fused && !B.tail_fused) throw std::runtime_error("Net::bind: 융합 합성곱에는 융합 넷째 층이 필요");
   }
   if (part) part_ = mk(part);
 #endif
@@ -614,11 +637,11 @@ void Net::backward_feat(cublasHandle_t h, cudaStream_t st, int n, const uint8_t*
   if (img_idx && !cnn_reads_index()) throw std::runtime_error("Net::backward: 이 구조는 img_idx 를 못 읽음 (cnn_reads_index)");
   // 기준 경로의 첫 층 입력은 forward 때 바꿔 둔 B.X 를 쓰고, 융합 경로는 img 를 다시 읽는다
   for (auto& B : br_) {
-    tail_backward(h, st, n, B, g1, ld1, g2, ld2);  // → B.dF3 (기준 경로는 B.dA[2] 와 같은 버퍼)
+    tail_backward(h, st, n, B, g1, ld1, g2, ld2);  // → B.dF3 (융합 합성곱이면 dZ3 = dF3·ELU′(F3); 기준 경로는 B.dA[2] 와 같은 버퍼)
 #ifndef XNET_FP64
     if (B.fused) {
-      cnn_fused_backward(desc(B), P_ + B.L[0].w_off, img, img_idx, n, B.F3, B.dF3, G_ + B.L[0].w_off, part_, st,
-                         g_break_elu_grad, cnn_bf16);
+      cnn_fused_backward(desc(B), P_ + B.L[0].w_off, img, img_idx, n, B.dF3, G_ + B.L[0].w_off, part_, st, g_break_elu_grad,
+                         cnn_bf16);
       continue;
     }
 #endif
@@ -660,7 +683,7 @@ void Net::tail_backward(cublasHandle_t h, cudaStream_t st, int n, Branch& B, con
 #ifndef XNET_FP64
   if (B.tail_fused) {
     cnn_tail_backward(tail_shape(B, n), B.F3, P_ + T.w_off, X0_ + B.flat_off, ldx0_, g1 + B.flat_off, ld1, g2 ? g2 + B.flat_off : nullptr, ld2,
-                      B.dF3, G_ + T.w_off, part_, g_break_elu_grad, st);
+                      B.dF3, G_ + T.w_off, part_, g_break_elu_grad, st, /*z_out=*/B.fused);
     return;
   }
 #endif

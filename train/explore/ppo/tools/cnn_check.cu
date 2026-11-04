@@ -42,8 +42,8 @@ int main() {
       cudaMemset(Ga, 0, 7000 * 4); cudaMemset(Gb, 0, 7000 * 4);
       cnn_fused_forward(br[b], P, img, ix, n, X0a, 0, false);
       cnn_fused_forward(br[b], P, img, ix, n, X0b, 0, true);
-      cnn_fused_backward(br[b], P, img, ix, n, X0a, dX0, Ga, part, 0, false, false);
-      cnn_fused_backward(br[b], P, img, ix, n, X0b, dX0, Gb, part, 0, false, true);
+      cnn_fused_backward(br[b], P, img, ix, n, dX0, Ga, part, 0, false, false);
+      cnn_fused_backward(br[b], P, img, ix, n, dX0, Gb, part, 0, false, true);
       std::vector<float> a(n * feat), c(n * feat), ga(off), gb(off);
       cudaMemcpy(a.data(), X0a, n * feat * 4, cudaMemcpyDeviceToHost); cudaMemcpy(c.data(), X0b, n * feat * 4, cudaMemcpyDeviceToHost);
       cudaMemcpy(ga.data(), Ga, off * 4, cudaMemcpyDeviceToHost); cudaMemcpy(gb.data(), Gb, off * 4, cudaMemcpyDeviceToHost);

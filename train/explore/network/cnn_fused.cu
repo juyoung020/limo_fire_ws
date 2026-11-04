@@ -304,10 +304,7 @@ __global__ void __launch_bounds__(NT) k_cnn_bwd(Args a) {
       int r = e / C2, c = e % C2;
       long g = g0 + r;
       float z = 0.f;
-      if (g < total) {
-        long ix = out_idx(a, g, c, C2);
-        z = a.dX0[ix] * elu_d(a.X0[ix], broken);
-      }
+      if (g < total) z = a.dX0[out_idx(a, g, c, C2)];  // 이미 ELU'(출력)이 곱해진 dZ3
       Z2[e] = z;
     }
     __syncthreads();
@@ -368,7 +365,7 @@ int num_sms() {
   return n;
 }
 
-#include "cnn_fused_tc.cuh"
+#include "cnn_fused_wr.cuh"
 
 // 인스턴스 하나: 커널 설정·격자 크기 (기기마다 고정 → 결정적)
 struct Inst {
@@ -377,10 +374,10 @@ struct Inst {
   void (*bwd)(Args);
   size_t sf, sb;
   int np;
-  void (*fwd_tc)(Args) = nullptr;  // 텐서 코어 판 (채널이 16 의 배수일 때만)
+  int h = 0, w = 0;                // 텐서 코어 판이 컴파일된 입력 크기
+  void (*fwd_tc)(Args) = nullptr;  // 텐서 코어 판 (채널 16-32-32 만, cnn_fused_wr.cuh)
   void (*bwd_tc)(Args) = nullptr;
   size_t sf_tc = 0, sb_tc = 0;
-  int h = 0, w = 0;  // 텐서 코어 판이 컴파일된 입력 크기
   int gf = 0, gb = 0, gf_tc = 0, gb_tc = 0;  // 상주 블록 수 (처음 쓸 때)
   static int resident(void (*k)(Args), size_t sm, int nt = NT) {
     CK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)sm));
@@ -394,8 +391,8 @@ struct Inst {
     gf = resident(fwd, sf);
     gb = resident(bwd, sb);
     if (fwd_tc) {
-      gf_tc = resident(fwd_tc, sf_tc, tc::NTT);
-      gb_tc = resident(bwd_tc, sb_tc, tc::NTT);
+      gf_tc = resident(fwd_tc, sf_tc, wr::NT);
+      gb_tc = resident(bwd_tc, sb_tc, wr::NT);
     }
   }
 };
@@ -405,18 +402,16 @@ struct Inst {
     CI, A, B, C, k_cnn_fwd<CI, A, B, C>, k_cnn_bwd<CI, A, B, C>, smem_fwd<CI, A, B, C>(),               \
         smem_bwd<CI, A, B, C>(), Shape<CI, A, B, C>::NP                                                 \
   }
-#define XNET_CNN_INST_TC(CI, A, B, C, H, W)                                                                    \
+#define XNET_CNN_INST_TC(CI, H, W)                                                                      \
   Inst {                                                                                                \
-    CI, A, B, C, k_cnn_fwd<CI, A, B, C>, k_cnn_bwd<CI, A, B, C>, smem_fwd<CI, A, B, C>(),               \
-        smem_bwd<CI, A, B, C>(), Shape<CI, A, B, C>::NP, tc::k_cnn_fwd_tc<CI, A, B, C, H, W>,           \
-        tc::k_cnn_bwd_tc<CI, A, B, C, H, W>, tc::smem_fwd_tc<CI, A, B, C>(), tc::smem_bwd_tc<CI, A, B, C>(), \
-        H, W                                                                                            \
+    CI, 16, 32, 32, k_cnn_fwd<CI, 16, 32, 32>, k_cnn_bwd<CI, 16, 32, 32>, smem_fwd<CI, 16, 32, 32>(),   \
+        smem_bwd<CI, 16, 32, 32>(), Shape<CI, 16, 32, 32>::NP, H, W, wr::k_fwd<CI, H, W>, wr::k_bwd<CI, H, W>, \
+        wr::smem_fwd<CI>(), wr::smem_bwd<CI>()                                                          \
   }
 
 // 실제 구조(가까운 지도 6·먼 지도 7·깊이 1 채널, 16-32-32)와 기울기 검사의 작은 구조(3-4-4)
 Inst* find_inst(int cin, int c0, int c1, int c2) {
-  static Inst tab[] = {XNET_CNN_INST_TC(6, 16, 32, 32, 64, 64), XNET_CNN_INST_TC(7, 16, 32, 32, 32, 32),
-                       XNET_CNN_INST_TC(1, 16, 32, 32, 40, 64),
+  static Inst tab[] = {XNET_CNN_INST_TC(6, 64, 64), XNET_CNN_INST_TC(7, 32, 32), XNET_CNN_INST_TC(1, 40, 64),
                        XNET_CNN_INST(2, 3, 4, 4),    XNET_CNN_INST(3, 3, 4, 4),    XNET_CNN_INST(1, 3, 4, 4)};
   for (auto& t : tab)
     if (t.cin == cin && t.c0 == c0 && t.c1 == c1 && t.c2 == c2) return &t;
@@ -474,25 +469,24 @@ void cnn_fused_forward(const CnnBranch& b, const float* params, const uint8_t* i
   Args a = make_args(b, params, img, idx, n);
   a.X0 = X0;
   if (tc && t.fwd_tc && t.h == b.h && t.w == b.w)
-    t.fwd_tc<<<grid_for(b, n, t.gf_tc, tc::TPT), tc::NTT, t.sf_tc, st>>>(a);
+    t.fwd_tc<<<grid_for(b, n, t.gf_tc, wr::NW * 16), wr::NT, t.sf_tc, st>>>(a);
   else
     t.fwd<<<grid_for(b, n, t.gf), NT, t.sf, st>>>(a);
   CK(cudaGetLastError());
 }
 
-void cnn_fused_backward(const CnnBranch& b, const float* params, const uint8_t* img, const int* idx, int n, const float* X0,
-                        const float* dX0, float* grads, float* part, cudaStream_t st, bool broken_elu, bool tc) {
+void cnn_fused_backward(const CnnBranch& b, const float* params, const uint8_t* img, const int* idx, int n, const float* dZ3,
+                        float* grads, float* part, cudaStream_t st, bool broken_elu, bool tc) {
   if (n <= 0) return;
   Inst& t = get(b);
   Args a = make_args(b, params, img, idx, n);
-  a.X0 = const_cast<float*>(X0);
-  a.dX0 = dX0;
+  a.dX0 = dZ3;
   a.part = part;
   a.broken = broken_elu;
   const bool use_tc = tc && t.bwd_tc && t.h == b.h && t.w == b.w;
-  int g = use_tc ? grid_for(b, n, t.gb_tc, tc::TPT) : grid_for(b, n, t.gb);
+  int g = use_tc ? grid_for(b, n, t.gb_tc, (wr::NW / 4) * 16) : grid_for(b, n, t.gb);
   if (use_tc)
-    t.bwd_tc<<<g, tc::NTT, t.sb_tc, st>>>(a);
+    t.bwd_tc<<<g, wr::NT, t.sb_tc, st>>>(a);
   else
     t.bwd<<<g, NT, t.sb, st>>>(a);
   CK(cudaGetLastError());

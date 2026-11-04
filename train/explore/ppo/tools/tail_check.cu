@@ -59,6 +59,21 @@ int run(const Case& cs, int n, std::mt19937& rng, double& wmax) {
     CK(cudaMemcpy(gdf[rep].data(), ddF3, f3.size() * 4, cudaMemcpyDeviceToHost));
     CK(cudaMemcpy(gg[rep].data(), dG, wb.size() * 4, cudaMemcpyDeviceToHost));
   }
+  // z_out: dF3 대신 dZ3 = dF3 · ELU'(F3) — 위 dF3 에 같은 fp32 식을 곱한 것과 비트 같아야 한다
+  long zbad = 0;
+  {
+    CK(cudaMemcpy(ddF3, nanv.data(), nanv.size() * 4, cudaMemcpyHostToDevice));
+    CK(cudaMemset(dG, 0, wb.size() * 4));
+    cnn_tail_backward(s, dF3in, dWb, dY + off, ldy, dg1 + off, ld1, dg2 + off, ld2, ddF3, dG, dpart, false, 0, /*z_out=*/true);
+    std::vector<float> gz(f3.size()), gzg(wb.size());
+    CK(cudaMemcpy(gz.data(), ddF3, f3.size() * 4, cudaMemcpyDeviceToHost));
+    CK(cudaMemcpy(gzg.data(), dG, wb.size() * 4, cudaMemcpyDeviceToHost));
+    for (size_t e = 0; e < f3.size(); ++e) {
+      const float x = f3[e], want = gdf[0][e] * ((x > 0.f) ? 1.f : x + 1.f);
+      if (std::memcmp(&want, &gz[e], 4) != 0) ++zbad;
+    }
+    if (std::memcmp(gzg.data(), gg[0].data(), wb.size() * 4) != 0) ++zbad;
+  }
   CK(cudaDeviceSynchronize());
   // host fp64 기준
   std::vector<double> y((size_t)n * P4 * CO), dz(y.size()), df(f3.size(), 0.0), gw(wb.size(), 0.0);
@@ -120,11 +135,11 @@ int run(const Case& cs, int n, std::mt19937& rng, double& wmax) {
   const bool det = std::memcmp(gdf[0].data(), gdf[1].data(), f3.size() * 4) == 0 &&
                    std::memcmp(gg[0].data(), gg[1].data(), wb.size() * 4) == 0;
   const double ry = rel(ey, ny), rd = rel(ed, nd), rw = rel(ew, nw), rb = rel(eb, nb);
-  std::printf("%-6s n %5d: Y %.2e  dF3 %.2e  dW %.2e  db %.2e  | 가지 밖 %g  안 쓴 dF3 %ld  두 번 같음 %s\n", cs.name, n, ry, rd, rw, rb,
-              outside, unwritten, det ? "예" : "아니오");
+  std::printf("%-6s n %5d: Y %.2e  dF3 %.2e  dW %.2e  db %.2e  | 가지 밖 %g  안 쓴 dF3 %ld  두 번 같음 %s  dZ3 다른 칸 %ld\n", cs.name, n, ry,
+              rd, rw, rb, outside, unwritten, det ? "예" : "아니오", zbad);
   for (double v : {ry, rd, rw, rb}) wmax = std::max(wmax, v);
   for (float* p : {dF3in, dWb, dY, dg1, dg2, ddF3, dG, dpart}) cudaFree(p);
-  return (ry < 1e-5 && rd < 1e-5 && rw < 1e-5 && rb < 1e-5 && outside == 0 && unwritten == 0 && det) ? 0 : 1;
+  return (ry < 1e-5 && rd < 1e-5 && rw < 1e-5 && rb < 1e-5 && outside == 0 && unwritten == 0 && det && zbad == 0) ? 0 : 1;
 }
 }  // namespace
 

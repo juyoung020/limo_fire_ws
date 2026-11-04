@@ -468,6 +468,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     b_.dep_side = alloc<float>(2 * px);
     b_.dep_jobs = alloc<int32_t>(2 * px);
     b_.counters = alloc<int32_t>(16);
+    b_.fmap = alloc<uint32_t>((size_t)n_env * hc.cfg.size * ((hc.cfg.size + 31) / 32));
+    b_.fchg = alloc<int32_t>((size_t)n_env * kClassLog);
     const size_t nb = (size_t)kMaxBeams * n_env;
     b_.beam_t = alloc<float>(nb);
     b_.beam_tri = alloc<int32_t>(nb);
@@ -486,13 +488,12 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.rt = rt_;
       const char* ex = std::getenv("SIM_EXACT");
       b_.rt_fast = (ex && std::atoi(ex)) ? 0 : 1;   // 기본 빠른 길, SIM_EXACT=1 이면 정확한 길
-      // 준비 칸: 가장 큰 묶음 = 깊이 옆 광선(픽셀마다 최대 2) — 한 번에 쏘려고 2 · 환경 · DEPTH_SIZE (env_kernel.cu kRtCap)
-      b_.rt_o = alloc<float4>(2 * px);
-      b_.rt_d = alloc<float4>(2 * px);
-      b_.rt_tri0 = alloc<int32_t>(2 * px);
-      b_.rt_t = alloc<float>(2 * px);
     }
 #endif
+    // 장치 사본 (OptiX raygen 이 읽음). 묶음은 여기서 다 정해지고 그 뒤 안 바뀐다
+    EnvBatch* d = alloc<EnvBatch>(1);
+    b_.dev_self = d;
+    cudaMemcpy(d, &b_, sizeof(EnvBatch), cudaMemcpyHostToDevice);
   }
 }
 

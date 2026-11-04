@@ -3,6 +3,7 @@
 
 #include <optix.h>
 #include <optix_function_table_definition.h>
+#include <optix_stack_size.h>
 #include <optix_stubs.h>
 
 #include <algorithm>
@@ -32,9 +33,10 @@ struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) Rec {
 struct OptixRt::Impl {
   OptixDeviceContext ctx = nullptr;
   OptixModule mod = nullptr;
-  OptixProgramGroup pg[4] = {};
+  OptixProgramGroup pg[kRtProgs + 3] = {};   // raygen kRtProgs 개 · miss · 정확한 길 hit · 빠른 길 hit
   OptixPipeline pipe = nullptr;
   OptixShaderBindingTable sbt = {};
+  CUdeviceptr raygen[kRtProgs] = {};
   std::vector<void*> bufs;
   unsigned long long* gas = nullptr;
   unsigned long long* gas_fast = nullptr;   // 하드웨어 삼각형
@@ -131,8 +133,8 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   cudaMemcpy(I.gas_fast, fast.data(), fast.size() * 8, cudaMemcpyHostToDevice);
   I.tris = dalloc<const void*>(dev_tris.size());
   cudaMemcpy(I.tris, dev_tris.data(), dev_tris.size() * sizeof(void*), cudaMemcpyHostToDevice);
-  std::ifstream f(SIM_OPTIXIR, std::ios::binary);
-  if (!f) throw std::runtime_error(std::string("OptiX 모듈 파일 없음: ") + SIM_OPTIXIR);
+  std::ifstream f(SIM_OPTIX_PTX, std::ios::binary);
+  if (!f) throw std::runtime_error(std::string("OptiX 모듈 파일 없음: ") + SIM_OPTIX_PTX);
   const std::string ir((std::istreambuf_iterator<char>(f)), {});
   OptixModuleCompileOptions mo = {};
   OptixPipelineCompileOptions po = {};
@@ -145,35 +147,48 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   size_t ll = sizeof(log);
   ox(optixModuleCreate(I.ctx, &mo, &po, ir.data(), ir.size(), log, &ll, &I.mod), "모듈");
   OptixProgramGroupOptions pgo = {};
-  OptixProgramGroupDesc ds[4] = {};
-  ds[0].kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-  ds[0].raygen.module = I.mod;
-  ds[0].raygen.entryFunctionName = "__raygen__rays";
-  ds[1].kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
-  ds[1].miss.module = I.mod;
-  ds[1].miss.entryFunctionName = "__miss__none";
-  ds[2].kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-  ds[2].hitgroup.moduleIS = I.mod;
-  ds[2].hitgroup.entryFunctionNameIS = "__intersection__tri";
-  ds[3].kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;   // 빠른 길: 하드웨어 삼각형 + 가장 가까운 맞음
-  ds[3].hitgroup.moduleCH = I.mod;
-  ds[3].hitgroup.entryFunctionNameCH = "__closesthit__tri";
+  constexpr int R = kRtProgs, NG = kRtProgs + 3;
+  OptixProgramGroupDesc ds[NG] = {};
+  const char* rg_name[kRtProgs] = {"__raygen__rays", "__raygen__depth", "__raygen__depth_side", "__raygen__beam", "__raygen__beam_side"};
+  for (int k = 0; k < R; ++k) {
+    ds[k].kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    ds[k].raygen.module = I.mod;
+    ds[k].raygen.entryFunctionName = rg_name[k];
+  }
+  ds[R + 0].kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
+  ds[R + 0].miss.module = I.mod;
+  ds[R + 0].miss.entryFunctionName = "__miss__none";
+  ds[R + 1].kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+  ds[R + 1].hitgroup.moduleIS = I.mod;
+  ds[R + 1].hitgroup.entryFunctionNameIS = "__intersection__tri";
+  ds[R + 2].kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;   // 빠른 길: 하드웨어 삼각형 + 가장 가까운 맞음
+  ds[R + 2].hitgroup.moduleCH = I.mod;
+  ds[R + 2].hitgroup.entryFunctionNameCH = "__closesthit__tri";
   ll = sizeof(log);
-  ox(optixProgramGroupCreate(I.ctx, ds, 4, &pgo, log, &ll, I.pg), "프로그램 묶음");
+  ox(optixProgramGroupCreate(I.ctx, ds, NG, &pgo, log, &ll, I.pg), "프로그램 묶음");
   OptixPipelineLinkOptions plo = {};
   plo.maxTraceDepth = 1;
   ll = sizeof(log);
-  ox(optixPipelineCreate(I.ctx, &po, &plo, I.pg, 4, log, &ll, &I.pipe), "파이프라인");
-  Rec rec[4];
-  for (int k = 0; k < 4; ++k) ox(optixSbtRecordPackHeader(I.pg[k], &rec[k]), "SBT");
-  Rec* dr = dalloc<Rec>(4);
+  ox(optixPipelineCreate(I.ctx, &po, &plo, I.pg, NG, log, &ll, &I.pipe), "파이프라인");
+  // 스택 크기: 프로그램마다 잰 값으로 (optix_stack_size.h). 기본값은 raygen 이 광선 여러 개·결과 뒤 단계까지 하는 판에서 모자라 발사가 깨졌다(people_check)
+  {
+    OptixStackSizes ss = {};
+    for (int k = 0; k < NG; ++k) ox(optixUtilAccumulateStackSizes(I.pg[k], &ss, I.pipe), "스택 크기");
+    unsigned dc_trav = 0, dc_state = 0, cont = 0;
+    ox(optixUtilComputeStackSizes(&ss, plo.maxTraceDepth, 0, 0, &dc_trav, &dc_state, &cont), "스택 크기 계산");
+    ox(optixPipelineSetStackSize(I.pipe, dc_trav, dc_state, cont, 1), "스택");
+  }
+  Rec rec[NG];
+  for (int k = 0; k < NG; ++k) ox(optixSbtRecordPackHeader(I.pg[k], &rec[k]), "SBT");
+  Rec* dr = dalloc<Rec>(NG);
   cudaMemcpy(dr, rec, sizeof(rec), cudaMemcpyHostToDevice);
   I.bufs.push_back(dr);
-  I.sbt.raygenRecord = (CUdeviceptr)&dr[0];
-  I.sbt.missRecordBase = (CUdeviceptr)&dr[1];
+  for (int k = 0; k < R; ++k) I.raygen[k] = (CUdeviceptr)&dr[k];
+  I.sbt.raygenRecord = I.raygen[0];
+  I.sbt.missRecordBase = (CUdeviceptr)&dr[R];
   I.sbt.missRecordStrideInBytes = sizeof(Rec);
   I.sbt.missRecordCount = 1;
-  I.sbt.hitgroupRecordBase = (CUdeviceptr)&dr[2];
+  I.sbt.hitgroupRecordBase = (CUdeviceptr)&dr[R + 1];
   I.sbt.hitgroupRecordStrideInBytes = sizeof(Rec);
   I.sbt.hitgroupRecordCount = 2;   // 0 정확한 길(교차 프로그램), 1 빠른 길(하드웨어 삼각형)
   I.dparams = dalloc<RtParams>(1);
@@ -200,8 +215,10 @@ void OptixRt::launch(const RtParams& p0, cudaStream_t st) {
   p.tris = I.tris;
   if (p.n <= 0) return;
   cudaMemcpyAsync(I.dparams, &p, sizeof(p), cudaMemcpyHostToDevice, st);
-  const unsigned dim = p.n_dev ? (unsigned)std::min(p.n, 1 << 19) : (unsigned)p.n;   // 크기가 장치에 있으면 발사 칸 2^19 개가 나눠 쏨
-  ox(optixLaunch(I.pipe, st, (CUdeviceptr)I.dparams, sizeof(RtParams), &I.sbt, dim, 1, 1), "launch");
+  const unsigned dim = (unsigned)std::min(p.n, 1 << 19);   // 발사 칸은 많아야 2^19 개 — raygen 이 칸마다 여러 일을 차례로
+  OptixShaderBindingTable sbt = I.sbt;
+  sbt.raygenRecord = I.raygen[p.prog];
+  ox(optixLaunch(I.pipe, st, (CUdeviceptr)I.dparams, sizeof(RtParams), &sbt, dim, 1, 1), "launch");
 }
 
 }  // namespace sim

@@ -81,18 +81,21 @@ add_executable(env_dump tools/env_dump.cu)
 target_link_libraries(env_dump limo_sim)
 # RT 코어 광선 순회 (OptiX). 헤더(../third_party/optix-dev, README)가 있으면 켠다 — 없으면 소프트웨어 순회만 (같은 답)
 set(OPTIX_INC ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/optix-dev/include)
+# raygen 이 광선 결과 뒤 단계(include/env_rays.h)까지 하므로 시뮬·mdp 헤더 전부에 기댄다
+file(GLOB SIM_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/*.h ${CMAKE_CURRENT_SOURCE_DIR}/../mdp/*.h)
 option(SIM_OPTIX "RT 코어(OptiX)로 깊이 광선" ON)
 if(SIM_OPTIX AND EXISTS ${OPTIX_INC}/optix.h)
-  set(OPTIXIR ${CMAKE_CURRENT_BINARY_DIR}/optix_rays.optixir)
-  add_custom_command(OUTPUT ${OPTIXIR}
-    COMMAND ${CMAKE_CUDA_COMPILER} -optix-ir -arch=sm_${CMAKE_CUDA_ARCHITECTURES} --fmad=false -prec-div=true -prec-sqrt=true -ftz=false -std=c++17
-            -I${OPTIX_INC} -I${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/optix_rays.cu -o ${OPTIXIR}
-    DEPENDS src/optix_rays.cu include/scene.h include/detmath.h include/people_geom.h include/optix_rt.h)
-  add_custom_target(optix_rays_ir ALL DEPENDS ${OPTIXIR})
+  # PTX 로 (optix-ir 이 아니라): PTX 는 곱·합이 mul.rn·add.rn 으로 적혀 OptiX 컴파일러가 fma 로 합치지 않는다 — raygen 의 광선 만들기·결과 뒤 단계가 CPU 와 비트 같게
+  set(OPTIX_PTX ${CMAKE_CURRENT_BINARY_DIR}/optix_rays.ptx)
+  add_custom_command(OUTPUT ${OPTIX_PTX}
+    COMMAND ${CMAKE_CUDA_COMPILER} -ptx -arch=sm_${CMAKE_CUDA_ARCHITECTURES} --fmad=false -prec-div=true -prec-sqrt=true -ftz=false -std=c++17
+            -I${OPTIX_INC} -I${CMAKE_CURRENT_SOURCE_DIR}/include -I${CMAKE_CURRENT_SOURCE_DIR}/../mdp ${CMAKE_CURRENT_SOURCE_DIR}/src/optix_rays.cu -o ${OPTIX_PTX}
+    DEPENDS src/optix_rays.cu ${SIM_HEADERS})
+  add_custom_target(optix_rays_ptx ALL DEPENDS ${OPTIX_PTX})
   target_sources(limo_sim PRIVATE src/optix_rt.cpp)
-  add_dependencies(limo_sim optix_rays_ir)
+  add_dependencies(limo_sim optix_rays_ptx)
   target_include_directories(limo_sim PRIVATE ${OPTIX_INC})
-  target_compile_definitions(limo_sim PUBLIC SIM_OPTIX=1 SIM_OPTIXIR="${OPTIXIR}")
+  target_compile_definitions(limo_sim PUBLIC SIM_OPTIX=1 SIM_OPTIX_PTX="${OPTIX_PTX}")
   target_link_libraries(limo_sim PUBLIC ${CMAKE_DL_LIBS})
   message(STATUS "SIM_OPTIX: RT 코어 깊이 광선 켬 (${OPTIX_INC})")
   # 빠른 길(하드웨어 삼각형) vs 정확한 길 통계 동등성
