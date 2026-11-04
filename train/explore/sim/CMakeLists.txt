@@ -89,9 +89,15 @@ file(GLOB SIM_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/*.h ${CMAKE_CURRENT_SO
 option(SIM_OPTIX "RT 코어(OptiX)로 깊이 광선" ON)
 if(SIM_OPTIX AND EXISTS ${OPTIX_INC}/optix.h)
   # PTX 로 (optix-ir 이 아니라): PTX 는 곱·합이 mul.rn·add.rn 으로 적혀 OptiX 컴파일러가 fma 로 합치지 않는다 — raygen 의 광선 만들기·결과 뒤 단계가 CPU 와 비트 같게
+  # PTX 아키텍처는 89 가 상한: nvcc 13 은 sm_90 이상이면 -ptx 뒤에 ptxas 검사를 돌려 OptiX 내장 함수(_optix_*)를 모른다고 거부한다.
+  # OptiX 가 실행 때 PTX 를 그 GPU(예: RTX 5060 sm_120)로 다시 컴파일하므로 낮은 PTX 로 충분하다.
+  set(OPTIX_PTX_ARCH ${CMAKE_CUDA_ARCHITECTURES})
+  if(OPTIX_PTX_ARCH GREATER 89)
+    set(OPTIX_PTX_ARCH 89)
+  endif()
   set(OPTIX_PTX ${CMAKE_CURRENT_BINARY_DIR}/optix_rays.ptx)
   add_custom_command(OUTPUT ${OPTIX_PTX}
-    COMMAND ${CMAKE_CUDA_COMPILER} -ptx -arch=sm_${CMAKE_CUDA_ARCHITECTURES} --fmad=false -prec-div=true -prec-sqrt=true -ftz=false -std=c++17
+    COMMAND ${CMAKE_CUDA_COMPILER} -ptx -arch=sm_${OPTIX_PTX_ARCH} --fmad=false -prec-div=true -prec-sqrt=true -ftz=false -std=c++17
             -I${OPTIX_INC} -I${CMAKE_CURRENT_SOURCE_DIR}/include -I${CMAKE_CURRENT_SOURCE_DIR}/../mdp ${CMAKE_CURRENT_SOURCE_DIR}/src/optix_rays.cu -o ${OPTIX_PTX}
     DEPENDS src/optix_rays.cu ${SIM_HEADERS})
   add_custom_target(optix_rays_ptx ALL DEPENDS ${OPTIX_PTX})
