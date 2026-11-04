@@ -8,6 +8,8 @@
 # limo_fire 판: 교수님 webots_ros2_limo/protos/LimoFourDiff.proto 복사본. 다른 점은 둘뿐
 #   1. rgb_camera 에 Recognition(분할) — 인식 벤치마크 정답 (limo_fire_sim GtCamera, sim/webots/README.md "인식 정답")
 #   2. 메시 경로를 원본 자리로
+#   3. wheelRadiusScale — 바퀴 접촉 원기둥 반지름 배율. 센서 플러그인(limo_sensors.py)은 반지름 0.045 m 로 거리를 세므로 1 이 아니면
+#      오도메트리 거리가 그만큼 틀린다(시뮬 오도메트리 오차, docs/smoke_mode_plan.md). 기본 1.0 = 원본과 같음
 # 원본이 바뀌면 같이 맞춘다: diff src/external/webots_ros2_limo/protos/LimoFourDiff.proto sim/webots/protos/LimoFire.proto
 PROTO LimoFire [
   field  SFVec3f     translation     0 0 0
@@ -19,6 +21,7 @@ PROTO LimoFire [
   field  SFBool      supervisor      FALSE           # Is `Robot.supervisor`.
   field  SFBool      synchronization TRUE            # Is `Robot.synchronization`.
   field  SFBool      selfCollision   FALSE           # Is `Robot.selfCollision`.
+  field  SFFloat     wheelRadiusScale 1.0            # limo_fire: 바퀴 실제 반지름 = 0.045 m × 이 값 (1.0 = 원본, 시뮬 오도메트리 거리 오차 실험용)
 ]
 {
   Robot {
@@ -229,7 +232,7 @@ PROTO LimoFire [
             rotation 1.000000 0.000000 0.000000 1.570000
             children [
               Cylinder {
-                radius 0.045
+                radius %<= 0.045 * fields.wheelRadiusScale.value >%
                 height 0.045
               }
             ]
@@ -273,7 +276,7 @@ PROTO LimoFire [
             rotation 1.000000 0.000000 0.000000 1.570000
             children [
               Cylinder {
-                radius 0.045
+                radius %<= 0.045 * fields.wheelRadiusScale.value >%
                 height 0.045
               }
             ]
@@ -316,7 +319,7 @@ PROTO LimoFire [
             rotation 1.000000 0.000000 0.000000 1.570000
             children [
               Cylinder {
-                radius 0.045
+                radius %<= 0.045 * fields.wheelRadiusScale.value >%
                 height 0.045
               }
             ]
@@ -360,7 +363,7 @@ PROTO LimoFire [
             rotation 1.000000 0.000000 0.000000 1.570000
             children [
               Cylinder {
-                radius 0.045
+                radius %<= 0.045 * fields.wheelRadiusScale.value >%
                 height 0.045
               }
             ]

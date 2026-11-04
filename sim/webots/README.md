@@ -49,8 +49,15 @@ objects:                       # YOLO 정답 물체. 벤치마크에서 카메�
 - 우리 proto(`FireBillboard` · `ExitSign` · `Candle`(불꽃에만))는 `recognitionColors` 필드에 바로 쓴다.
 - Webots 기본 모델(`FireExtinguisher` · `StraightStairs` · `Door`)은 그 필드가 없어 `Solid { name "gt_<이름>" recognitionColors [...] children [ <모델> ] }` 로 감싼다 (안쪽 모양 전체가 이 색으로 분할된다).
 - `Pedestrian` 은 셔츠 색을 recognitionColors 로 쓰므로 `shirtColor` 에 색 코드를 넣는다(셔츠가 파랗게 보임).
-- 로봇은 `LimoFire`(`protos/LimoFire.proto`, 교수님 `LimoFourDiff` 에 카메라 Recognition 만 더한 판).
+- 로봇은 `LimoFire`(`protos/LimoFire.proto`, 교수님 `LimoFourDiff` 에 카메라 Recognition·`wheelRadiusScale` 을 더한 판).
 - 물체를 더하거나 순서를 바꾸면 월드 데이터 파일의 순서와 색 코드 두 번째 값을 같이 맞춘다.
+
+### 주행 정답 · 오도메트리 오차
+
+- 월드의 `LimoFire` 는 `supervisor TRUE` 다. 그래야 `limo_fire_sim GroundTruthPose` 가 Webots 세계 좌표 정답 자세를 `/sim/ground_truth` 로 낸다
+  (주행 벤치마크 `nav_benchmark` 전용 — 위치 추정에는 안 쓴다). 새 월드도 같게.
+- `LimoFire.proto wheelRadiusScale`: 바퀴 실제 반지름 = 0.045 m × 이 값. 센서 플러그인은 0.045 m 로 거리를 세므로 1 이 아니면 오도메트리 거리가 틀린다.
+  기본 1.0(원본과 같음). 실물 주행 오차를 재기 전 잠정 실험용([docs/smoke_mode_plan.md](../../docs/smoke_mode_plan.md)).
 
 ### 월드를 만들 때 알아둘 것
 - Webots 기본 물체는 `webots://projects/...` 로 설치본 안의 것을 쓴다(인터넷 필요 없음). 교수님 원본 월드는 GitHub 주소를 쓰는데, Jetson 에서 빌드한 Webots(Qt 6.2)는 HTTP/2 다운로드가 17 % 에서 멈춘다.

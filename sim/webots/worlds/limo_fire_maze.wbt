@@ -47,6 +47,7 @@ LimoFire {
   translation -3.3 -2.25 0.145
   name "LIMO"
   controller "<extern>"
+  supervisor TRUE
 }
 Floor {
   size 8 6

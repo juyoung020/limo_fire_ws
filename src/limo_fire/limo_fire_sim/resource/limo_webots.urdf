@@ -31,6 +31,16 @@
             <syncTopic>/camera/color/camera_info</syncTopic>
             <classNames>fire,smoke,fire_extinguisher,exit_sign,person,door,stairs</classNames>
         </plugin>
+        <!-- limo_fire: 시뮬 정답 자세 (limo_fire_sim GroundTruthPose) — 월드에서 LIMO 가 supervisor TRUE 일 때만 켜진다.
+             Webots 세계 좌표 그대로(원점 보정 0). 지도 좌표 변환은 받는 쪽이 월드 데이터 파일 robot_start 로 (nav_benchmark).
+             위치 추정에는 절대 쓰지 않는다 — 평가 전용 -->
+        <plugin type="limo_fire_sim::GroundTruthPose">
+            <originX>0.0</originX>
+            <originY>0.0</originY>
+            <periodMs>50</periodMs>
+            <frameId>webots_world</frameId>
+            <topicName>/sim/ground_truth</topicName>
+        </plugin>
     </webots>
 
     <ros2_control name="WebotsControl" type="system">

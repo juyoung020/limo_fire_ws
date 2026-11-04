@@ -47,3 +47,27 @@ ros2 service call /perception_benchmark/report std_srvs/srv/Trigger             
 - 정답 등장 수는 "장 × 보인 물체"라 오래 보인 물체의 비중이 크다. 물체 하나하나는 물체 지도 표가 센다.
 - 문 정답은 Webots `Door` 모델 전체(문틀 위 벽 0.4 m 포함)라 위아래가 YOLO 상자보다 길다.
 - 사람은 정답 색을 셔츠 색으로 넣어서 셔츠가 파랗다 (sim/webots/README.md "인식 정답").
+
+# 주행 벤치마크 (연기 모드)
+
+연기 모드 1 주차 계획([smoke_mode_plan.md](../smoke_mode_plan.md)) 1 단계 기준선. `limo_fire_navigation nav_benchmark` 가 월드 데이터 파일 순찰점을 Nav2 로 차례로 가며
+Webots 정답 자세(`limo_fire_sim GroundTruthPose`)와 비교한다. 표는 `<날짜>_nav_<조건>_<맵>.md`·`.csv`. 사용법은 [limo_fire_navigation README](../../src/limo_fire/limo_fire_navigation/README.md#주행-벤치마크-nav_benchmark-시뮬-전용).
+
+- 조건: (a) `lidar` 라이다 켬(평소 AMCL) · (b) `wheel_imu` 연기 모드 — 처음 위치를 라이다로 잡은 뒤 라이다·카메라를 끊고 바퀴 + IMU 만, 속도 한도 0.13 m/s
+- 도착 오차 = |정답 − 목표| (Nav2 도착 판정 xy 0.25 m 라 그 안팎), 추정 오차 = |Nav2 자세(map → base_link) − 정답|
+
+## 결과 (2026-11-05, 로봇 Jetson Orin Nano: Humble + Webots R2025a, 맵마다 순찰 한 바퀴)
+
+| 맵 | 목표 | 이동 | (a) 라이다: 성공 · 추정 오차 최대 | (b) 바퀴 + IMU: 성공 · 추정 오차 최대 |
+|---|---|---|---|---|
+| maze | 13 | 45 m | 13/13 · 0.17 m | 13/13 · 0.10 m |
+| office | 14 | 39 m | 14/14 · 0.20 m | 14/14 · 0.09 m |
+| warehouse | 13 | 49 m | 13/13 · 0.13 m | 13/13 · 0.07 m |
+| world | 6 | 17 m | 6/6 · 0.20 m | 6/6 · 0.04 m |
+
+- (b) 는 속도 한도 탓에 시간이 약 2 배.
+- **(b) 가 (a) 보다 정확한 것은 시뮬 오도메트리에 오차가 거의 없어서다** — 거리는 바퀴 엔코더 × 정확한 반지름, 방향은 Webots IMU 방향을 그대로 쓴다(`webots_ros2_limo limo_sensors.py`).
+  이 표가 보이는 것은 "연기 모드의 끊김 처리(위치 붙잡기·라이다 끊기·가상 스캔·속도 한도)가 Nav2 와 같이 돈다" 까지다. 실물 성능의 근거가 아니다.
+- 부딪힘 감지 오탐: 미로 (b) 에서 15 번(실제 충돌 0).
+- 오도메트리 오차 실험(잠정): `LimoFire.proto wheelRadiusScale 1.03`(바퀴가 3 % 커서 오도메트리가 거리를 3 % 덜 셈)으로 미로 (b) 13/13 성공, 추정 오차 0.05~0.25 m.
+  순찰 경로가 갔다 오는 꼴이라 거리 오차가 일부 상쇄된다. 이 한 판은 로봇 작업 폴더에서 다른 세션이 `nav_benchmark` 에 검사를 더한 판으로 돌았다(값 계산은 같음).

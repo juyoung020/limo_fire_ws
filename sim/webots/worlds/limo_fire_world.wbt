@@ -57,6 +57,7 @@ LimoFire {
   translation 6.36 0 0.145
   name "LIMO"
   controller "<extern>"
+  supervisor TRUE
 }
 PottedTree {
   translation 7 -4 0

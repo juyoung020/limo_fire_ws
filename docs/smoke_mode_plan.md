@@ -26,6 +26,15 @@
 
 이번 주 데모 = 1~3 (시뮬). 4 는 여유가 있으면. 5 는 하드웨어 일정에 따른다.
 
+## 진행 (2026-11-05)
+
+- **1 단계 끝**: `smoke_mode`(Nav2 연기 모드) 다시 넣음, `nav_benchmark` · 정답 자세 플러그인 · 월드 supervisor. 맵 4 개 46 목표 (a)·(b) 모두 도착.
+  다만 시뮬 오도메트리가 거의 완벽해 (b) 가 (a) 보다 정확했다 → [benchmarks "주행 벤치마크"](benchmarks/README.md#주행-벤치마크-연기-모드).
+- **시뮬 오도메트리 오차(잠정)**: 실물 주행 오차를 재기 전까지 `LimoFire.proto wheelRadiusScale`(거리 오차, 기본 1.0 = 없음)과 월드 바퀴 마찰(미끄러짐)로 넣는다.
+  방향 오차는 Webots IMU 에 쌓이는 치우침이 없어 실측 전에는 넣지 않는다. 첫 판: 거리 +3 % 미로 (b) 추정 오차 최대 0.25 m.
+- 실행은 Humble 인 로봇 Jetson 에서 한다(이 저장소 기준 환경). Ubuntu 24.04 + Jazzy 데스크톱은 Nav2 플러그인 이름·바퀴 제어기 한도·속도 메시지 형식이 달라 그대로는 안 돈다.
+- 다음: 마찰 단계별 실험 → 2 단계(Webots 초음파 3 개).
+
 ## 3. 시험 (1·3 단계 공통)
 
 - 맵: Webots 4 개 (`limo_fire_maze`·`office`·`warehouse`·`world`, 저장 지도 `limo_fire_navigation/maps/sim/`).
