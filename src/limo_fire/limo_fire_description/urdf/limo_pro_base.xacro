@@ -1,16 +1,19 @@
 <?xml version="1.0"?>
 <!-- LIMO Pro 기본 몸체: 바퀴 4 개(차동) + 라이다 + IMU. 카메라는 orbbec_dabai.xacro, 장착 위치는 limo_fire.urdf.xacro.
-     몸통·바퀴·라이다·IMU 는 WeGo limo_description 의 limo_four_diff.xacro 와 같은 값(매크로도 그것을 씀).
+     몸통·바퀴 치수는 실제 값(2026-11-04): 차체 길이 0.322 m(데이터시트 322 × 220 × 251 mm — Weston Robot LIMO Pro 문서),
+     바퀴 좌우 간격 0.172 m(AgileX 드라이버 limo_driver.h track_, 데이터시트 tread 175 mm), 앞뒤 0.2 m(데이터시트·드라이버 같음),
+     차체 폭 0.13 m = 간격 0.172 − 바퀴 폭 0.045(두 바퀴 사이 몸통 — 바퀴까지 넣은 전체 폭 0.172 + 0.045 = 0.217 ≈ 데이터시트 220).
+     WeGo limo_four_diff.xacro 의 0.13 × 0.12 · 간격 0.13 은 실제보다 작아 바꿈. 몸통 높이 0.1 · 바퀴 지름 0.09 는 WeGo 값 그대로(잠정 — 데이터시트에 없음).
      base_link 는 바닥에서 0.145 m (바퀴 중심 -0.10 + 바퀴 반지름 0.045). base_footprint 는 두지 않는다(실물 드라이버에 없음). -->
 <robot xmlns:xacro="http://ros.org/wiki/xacro">
   <xacro:include filename="$(find limo_description)/urdf/limo_xacro.xacro" />
 
   <xacro:property name="M_PI" value="3.14159265"/>
-  <xacro:property name="base_x_size" value="0.13" />
-  <xacro:property name="base_y_size" value="0.12" />
+  <xacro:property name="base_x_size" value="0.322" />
+  <xacro:property name="base_y_size" value="0.13" />
   <xacro:property name="base_z_size" value="0.1" />
   <xacro:property name="wheelbase" value="0.2"/>
-  <xacro:property name="track" value="0.13"/>
+  <xacro:property name="track" value="0.172"/>
   <xacro:property name="wheel_vertical_offset" value="-0.10" />
   <xacro:property name="base_mass" value="2.1557"/>
   <xacro:property name="wheel_length" value="0.045" />

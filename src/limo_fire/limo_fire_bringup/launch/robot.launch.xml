@@ -1,9 +1,9 @@
 <!-- 실물 LIMO Pro 센서·구동 켜기 (대시보드 "센서" = WeGo wego/teleop_launch.py 와 같은 구성)
-     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [camera_pitch:=0.0] [base:=false]
+     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [camera_pitch:=0.1152] [base:=false]
      URDF(limo_fire_description, 카메라 장착 포함) + 섀시(limo_fire_base: 바퀴·IMU·리모컨) + 깊이 카메라 + 라이다 + EKF
      base:=false 는 센서만(베이스·EKF 끔): 충전 중이나 세워 두고 센서 오차를 잴 때 — 바퀴가 명령을 받지 않는다 -->
 <launch>
-  <arg name="camera_pitch" default="0.0" description="카메라 마운트 틸트 pitch (라디안, 아래로 숙이면 +). WeGo 의 degree 인자"/>
+  <arg name="camera_pitch" default="0.1152" description="카메라 마운트 틸트 pitch (라디안, 아래로 숙이면 +). 기본값은 실측 6.6° (real_limo.md 깊이 절)"/>
   <arg name="viz" default="false"/>
   <arg name="base" default="true" description="false 면 베이스(바퀴·IMU)·EKF 를 켜지 않고 센서만"/>
   <arg name="max_clocks" default="true" description="jetson_clocks 로 CPU·GPU·메모리 클럭을 최대로 고정 (재부팅하면 풀림, sudo 암호 없이 될 때만)"/>

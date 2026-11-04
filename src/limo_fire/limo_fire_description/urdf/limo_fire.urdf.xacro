@@ -16,9 +16,9 @@
   <xacro:limo_pro_base/>
 
   <!-- base_link → camera_link
-       real:   x·y 는 실물 실측(약 0.15, −0.005), z 는 WeGo 틸트 TF 값 그대로(실측 필요). 이전 값: WeGo static TF (0.23, 0.05, 0.06)
+       real:   x·y 는 실물 실측(약 0.15, −0.005). z 0.0431 = 실측 광축 높이 0.1881 m − base_link 0.145 m (train/explore/sim/analysis/real_limo.md 깊이 절, static_1103_floor 맞춤·1103_M_drive1 확인). 이전 값: WeGo 0.06
        webots: Webots 모델의 깊이 렌즈 자리 (LimoFourDiff.proto 주석) -->
-  <xacro:property name="camera_xyz" value="${dict(real='0.15 -0.005 0.06', webots='0.096 0.015 0.03')['$(arg platform)']}"/>
+  <xacro:property name="camera_xyz" value="${dict(real='0.15 -0.005 0.0431', webots='0.096 0.015 0.03')['$(arg platform)']}"/>
   <xacro:orbbec_dabai parent="base_link" name="camera" xyz="${camera_xyz}"
                       pitch="$(arg camera_pitch)" driver_tf="$(arg camera_driver_tf)"/>
 </robot>
