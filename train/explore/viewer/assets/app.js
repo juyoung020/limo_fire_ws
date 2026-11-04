@@ -225,6 +225,7 @@ function chartsSpec() {
       { t: "Success rate (declared ≥ threshold)", ko: "선언 + 기준 덮음 이상", k: ["rollout/success_rate"], pct: 1, refs: () => ref("rollout/success_rate", "target") },
       { t: "Eval success rate", ko: "평가 판 성공률", k: ["eval/success_rate"], pct: 1 },
       { t: "Collision · declared short · truncated", ko: "충돌(종료) · 기준 미달 선언 · 안전 시간 끊김", k: ["rollout/collision_rate", "rollout/declare_short_rate", "rollout/truncation_rate"], pct: 1 },
+      { t: "Person collision rate", ko: "사람과 부딪혀 끝난 판 비율(충돌의 일부)", k: ["rollout/person_collision_rate"], pct: 1 },
       { t: "Declare rate", ko: "끝 선언으로 끝난 판 비율(성공 + 미달)", k: ["rollout/declare_rate"], pct: 1 },
       { t: "Episodes per row", ko: "줄마다 끝난 판 수", k: ["rollout/n_episodes"] },
     ]},

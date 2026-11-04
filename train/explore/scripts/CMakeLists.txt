@@ -19,3 +19,5 @@ add_executable(train train.cpp)
 set_source_files_properties(train.cpp PROPERTIES LANGUAGE CUDA)   # done 매핑 커널 하나
 target_include_directories(train PRIVATE ${EXPLORE}/viewer/include)
 target_link_libraries(train limo_sim explore_ppo)
+# 재생 화면의 로봇 모양: 러너가 시작할 때 URDF(xacro) 치수를 읽어 run.json robot 에 적는다
+target_compile_definitions(train PRIVATE LIMO_URDF_DIR="${EXPLORE}/../../src/limo_fire/limo_fire_description/urdf")

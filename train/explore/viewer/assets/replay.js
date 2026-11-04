@@ -301,15 +301,31 @@ export class Replay {
     };
     if ($("ly_path").checked) path("x", "y", "--s1", false);
     if ($("ly_spath").checked) path("sx", "sy", "--s4", true);
+    // 움직이는 사람 (원기둥 h<k>_x·_y·_r, 없으면 NaN)
+    if ($("ly_people") && $("ly_people").checked)
+      for (let k = 0; X.has("h" + k + "_x"); k++) {
+        const hx = X.v(f, "h" + k + "_x"), hy = X.v(f, "h" + k + "_y"), hr = X.v(f, "h" + k + "_r");
+        if (!(Number.isFinite(hx) && Number.isFinite(hy))) continue;
+        const [px, py] = this.toScreen(hx, hy), pr = Math.max(3, (Number.isFinite(hr) ? hr : 0.25) / X.g.res * v.s);
+        g.fillStyle = cssv("--s6"); g.globalAlpha = 0.8; g.beginPath(); g.arc(px, py, pr, 0, 7); g.fill(); g.globalAlpha = 1;
+        g.strokeStyle = cssv("--ink"); g.lineWidth = 1; g.stroke();
+      }
     // 시작점
     const [s0x, s0y] = this.toScreen(X.v(0, "x"), X.v(0, "y"));
     g.strokeStyle = cssv("--ink2"); g.lineWidth = 1.5; g.beginPath(); g.arc(s0x, s0y, 5, 0, 7); g.stroke();
-    // 로봇(반지름 0.2 m 원 + 방향)
+    // 로봇: run.json robot(sim 충돌 몸통·센서 자리 + URDF 치수)이 있으면 위에서 본 모양, 없으면 원
     const [rx, ry] = this.toScreen(x, y), rr = Math.max(4, 0.2 / X.g.res * v.s);
     const ev = X.v(f, "ev") || 0;
-    g.fillStyle = ev & EV.COLLISION ? cssv("--critical") : cssv("--accent"); g.globalAlpha = 0.85;
-    g.beginPath(); g.arc(rx, ry, rr, 0, 7); g.fill(); g.globalAlpha = 1;
-    g.strokeStyle = cssv("--surface"); g.lineWidth = 2; g.beginPath(); g.moveTo(rx, ry); g.lineTo(rx + Math.cos(yaw) * rr * 1.6, ry - Math.sin(yaw) * rr * 1.6); g.stroke();
+    const RB = this.meta && this.meta.robot && this.meta.robot.sim;
+    if (RB && $("ly_body").checked) {
+      // 지도 자세(정책이 본 자세 = 참값 + 오차) 유령 먼저, 참 자세를 위에
+      if (X.has("sx")) this.drawRobot(g, X.v(f, "sx"), X.v(f, "sy"), X.v(f, "syaw"), true, -1);
+      this.drawRobot(g, x, y, yaw, false, this.contactEdge(f));
+    } else {
+      g.fillStyle = ev & EV.COLLISION ? cssv("--critical") : cssv("--accent"); g.globalAlpha = 0.85;
+      g.beginPath(); g.arc(rx, ry, rr, 0, 7); g.fill(); g.globalAlpha = 1;
+      g.strokeStyle = cssv("--surface"); g.lineWidth = 2; g.beginPath(); g.moveTo(rx, ry); g.lineTo(rx + Math.cos(yaw) * rr * 1.6, ry - Math.sin(yaw) * rr * 1.6); g.stroke();
+    }
     // 행동 화살표(지령 v, vy — 로봇 기준 → 세계)
     if (X.has("a_v")) {
       const av = X.v(f, "a_v"), avy = X.v(f, "a_vy") || 0, k = 1.0 / X.g.res * v.s;
@@ -320,6 +336,74 @@ export class Replay {
     const m1 = 1 / X.g.res * v.s, bx = 14, by = cv.clientHeight - 14;
     g.strokeStyle = cssv("--ink"); g.lineWidth = 2; g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + m1, by); g.stroke();
     g.fillStyle = cssv("--ink"); g.font = "11px system-ui, sans-serif"; g.fillText("1 m", bx, by - 5);
+  }
+
+  // 로봇 위에서 본 모양 (로봇 좌표 u 앞·v 왼쪽 → 세계 → 화면). ghost: 지도 자세 유령(반투명 점선). hit: 빨갛게 칠할 sim 몸통 변(0 앞 1 뒤 2 왼 3 오른, −1 없음)
+  drawRobot(g, x, y, yaw, ghost, hit) {
+    const R = this.meta.robot, S = R.sim, U = R.urdf, c = Math.cos(yaw), s = Math.sin(yaw);
+    const P = (u, w) => this.toScreen(x + c * u - s * w, y + s * u + c * w);
+    const poly = (pts, fill, stroke, lw, dash) => {
+      g.beginPath(); pts.forEach(([u, w], k) => { const [px, py] = P(u, w); k ? g.lineTo(px, py) : g.moveTo(px, py); }); g.closePath();
+      if (fill) { g.fillStyle = fill; g.fill(); }
+      if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw; g.setLineDash(dash || []); g.stroke(); g.setLineDash([]); }
+    };
+    const rect = (cu, cw, l, w) => [[cu + l / 2, cw + w / 2], [cu - l / 2, cw + w / 2], [cu - l / 2, cw - w / 2], [cu + l / 2, cw - w / 2]];
+    const L = S.footprint[0], W = S.footprint[1];
+    g.save();
+    if (ghost) g.globalAlpha = 0.35;
+    // 센서 시야 (얇게): 라이다 220° 부채꼴, 깊이 카메라 수평 시야 — 화면용 반지름 1 m·1.5 m
+    if (!ghost && $("ly_fov").checked) {
+      const fan = (mu, mw, a0, a1, r, css) => {
+        const [ox, oy] = P(mu, mw); g.beginPath(); g.moveTo(ox, oy);
+        for (let k = 0; k <= 40; k++) { const a = a0 + (a1 - a0) * k / 40; g.lineTo(...P(mu + r * Math.cos(a), mw + r * Math.sin(a))); }
+        g.closePath(); g.fillStyle = css; g.globalAlpha = 0.10; g.fill(); g.globalAlpha = 0.6; g.strokeStyle = css; g.lineWidth = 1; g.stroke(); g.globalAlpha = 1;
+      };
+      fan(S.lidar[0], S.lidar[1], -S.lidar_fov / 2, S.lidar_fov / 2, Math.min(1.0, S.lidar_range), cssv("--s2"));
+      if (S.camera_hfov) fan(S.camera[0], S.camera[1], -S.camera_hfov[1], S.camera_hfov[0], Math.min(1.5, S.camera_range || 1.5), cssv("--s7"));
+    }
+    // sim 충돌 몸통(실선) — 충돌·끝에서 닿은 변은 빨갛게
+    poly(rect(0, 0, L, W), ghost ? null : cssv("--accent") + "55", ghost ? cssv("--s4") : cssv("--accent"), 2, ghost ? [4, 3] : null);
+    if (hit >= 0) {
+      const e = [[[L / 2, W / 2], [L / 2, -W / 2]], [[-L / 2, W / 2], [-L / 2, -W / 2]], [[L / 2, W / 2], [-L / 2, W / 2]], [[L / 2, -W / 2], [-L / 2, -W / 2]]][hit];
+      g.strokeStyle = cssv("--critical"); g.lineWidth = 5; g.beginPath(); g.moveTo(...P(...e[0])); g.lineTo(...P(...e[1])); g.stroke();
+    }
+    // URDF: 바퀴 4 개·차체 상자 (sim 몸통 위에)
+    if (U) {
+      for (const [wu, ww] of U.wheels) poly(rect(wu, ww, U.wheel_diameter, U.wheel_width), cssv("--ink2"), null);
+      poly(rect(0, 0, U.base_box[0], U.base_box[1]), null, cssv("--ink"), 1.2, [3, 2]);
+    }
+    // 앞 표시 (몸통 앞 변 가운데 삼각형)
+    poly([[L / 2 + 0.06, 0], [L / 2 - 0.03, 0.05], [L / 2 - 0.03, -0.05]], ghost ? cssv("--s4") : cssv("--critical"), null);
+    // 센서 자리: 라이다(주황 점)·카메라(보라 점)
+    if (!ghost) {
+      const dot = (u, w, css) => { const [px, py] = P(u, w); g.fillStyle = css; g.beginPath(); g.arc(px, py, 3.5, 0, 7); g.fill(); };
+      dot(S.lidar[0], S.lidar[1], cssv("--s2"));
+      dot(S.camera[0], S.camera[1], cssv("--s7"));
+    }
+    g.restore();
+  }
+  // 충돌로 끝난 판의 마지막 프레임: sim 몸통 변 중 벽(정답 맵)·사람에 가장 가까운 변 (−1 = 해당 없음)
+  contactEdge(f) {
+    const X = this.X, m = X.head.meta || {}, S = this.meta.robot.sim;
+    if (f !== X.n - 1 || !(m.collided || m.outcome === "collision")) return -1;
+    const x = X.v(f, "x"), y = X.v(f, "y"), yaw = X.v(f, "yaw"), c = Math.cos(yaw), s = Math.sin(yaw), L = S.footprint[0] / 2, W = S.footprint[1] / 2;
+    // 점 (wx, wy) 을 로봇 좌표로 → 몸통 직사각형 변까지 거리 중 가장 짧은 변
+    let best = 1e9, side = -1;
+    const test = (wx, wy, pad) => {
+      const dx = wx - x, dy = wy - y, u = c * dx + s * dy, w = -s * dx + c * dy;
+      const cu = Math.max(-L, Math.min(L, u)), cw = Math.max(-W, Math.min(W, w));
+      const d = Math.hypot(u - cu, w - cw) - pad;
+      if (d < best) { best = d; const ex = Math.abs(u) / L, ey = Math.abs(w) / W; side = ex >= ey ? (u > 0 ? 0 : 1) : (w > 0 ? 2 : 3); }
+    };
+    const G = X.g, r = Math.ceil(0.8 / G.res), ci = Math.floor((x - G.ox) / G.res), cj = Math.floor((y - G.oy) / G.res);
+    for (let j = Math.max(0, cj - r); j <= Math.min(X.H - 1, cj + r); j++)
+      for (let i = Math.max(0, ci - r); i <= Math.min(X.W - 1, ci + r); i++)
+        if (X.gt[j * X.W + i] === 1) test(G.ox + (i + 0.5) * G.res, G.oy + (j + 0.5) * G.res, G.res / 2);
+    for (let k = 0; X.has("h" + k + "_x"); k++) {
+      const hx = X.v(f, "h" + k + "_x"), hy = X.v(f, "h" + k + "_y"), hr = X.v(f, "h" + k + "_r");
+      if (Number.isFinite(hx)) test(hx, hy, hr || 0.2);
+    }
+    return best < 0.5 ? side : -1;
   }
 
   hud() {

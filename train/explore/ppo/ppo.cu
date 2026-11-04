@@ -337,6 +337,14 @@ void PPO::act(const uint8_t* img, const real* obs1d, const real* priv, real* act
   ++act_calls_;
 }
 
+void PPO::last_act_info(int n, real* logit, real* value) const {
+  if (n > N_) throw std::runtime_error("last_act_info: n > num_envs");
+  const long k0 = (long)step_ * N_;
+  CK(cudaMemcpyAsync(logit, s_logit_ + k0, n * sizeof(real), cudaMemcpyDeviceToHost, ac_->stream));
+  CK(cudaMemcpyAsync(value, s_val_ + k0, n * sizeof(real), cudaMemcpyDeviceToHost, ac_->stream));
+  CK(cudaStreamSynchronize(ac_->stream));
+}
+
 void PPO::store(const real* reward, const int* done) {
   long k0 = (long)step_ * N_;
   k_store<<<nblk(N_, 128), 128, 0, ac_->stream>>>(reward, done, s_val_ + k0, cfg_.gamma, N_, s_rew_ + k0,

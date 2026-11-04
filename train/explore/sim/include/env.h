@@ -133,7 +133,7 @@ struct EnvState {
   int32_t kb_x0, kb_y0, kb_x1, kb_y1;   // 지도에서 건드린 칸 범위 (프론티어 요약을 이 안에서만)
   int32_t lid_head, delay;     // 라이다 링 최신 칸, 이 판 관측 지연 (걸음)
   int32_t stage, cur_n;        // 커리큘럼 단계, 최근 판 기록 수
-  uint32_t cur_hist;           // 최근 판 성공 비트
+  uint32_t cur_hist;           // 최근 판 끝 덮음 ×1000 합 (curriculums.h on_episode_end)
   int32_t t95_step;            // 덮음 95 % 처음 닿은 걸음 (−1 아직)
   float err_scale;             // 이 판 자세 오차·자이로 잡음 배율 (단계)
   float reward, coverage, floor_cov;   // coverage = seen_wall / n_wall, floor_cov = seen_floor / n_floor
@@ -805,7 +805,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
     I.collided = e.collided;
     I.stage = e.stage;
     I.map = e.map;
-    if (c.curriculum) mdp::cur::on_episode_end(&e.stage, &e.cur_hist, &e.cur_n, e.done == mdp::cur::kDeclareOk, b.max_stage);
+    if (c.curriculum) mdp::cur::on_episode_end(&e.stage, &e.cur_hist, &e.cur_n, cov, b.max_stage);
   }
 }
 

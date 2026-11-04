@@ -60,16 +60,20 @@ int main(int argc, char** argv) {
     else scenes.push_back(a);
   }
   if (scenes.empty() && list.empty()) { std::fprintf(stderr, "env_verify <장면.scene> [장면 …] [--list 목록] [--envs 8] [--steps 80] [--negative]\n"); return 2; }
-  // 커리큘럼 오르내림 규칙 (curriculums.h on_episode_end): 8 판 중 6 성공 → 올림, 2 성공 → 내림, 4 성공 → 그대로, 최고·최저 단계에서 멈춤
+  // 커리큘럼 오르내림 규칙 (curriculums.h on_episode_end): 최근 8 판 끝 덮음 평균 ≥ 0.8 → 올림, < 0.4 → 내림, 그 사이 → 그대로,
+  // 7 판까지는 안 바뀜, 최고·최저 단계에서 멈춤
   {
-    auto run = [](int stage, int succ, int max_stage) {
+    auto run = [](int stage, std::vector<float> covs, int max_stage) {
       int32_t s = stage, n = 0;
       uint32_t h = 0;
-      for (int i = 0; i < mdp::cur::kWindow; ++i) mdp::cur::on_episode_end(&s, &h, &n, i < succ, max_stage);
+      for (float c : covs) mdp::cur::on_episode_end(&s, &h, &n, c, max_stage);
       return s;
     };
-    const bool ok = run(1, 6, 3) == 2 && run(1, 2, 3) == 0 && run(1, 4, 3) == 1 && run(3, 8, 3) == 3 && run(0, 0, 3) == 0 && run(1, 3, 3) == 1;
-    std::printf("커리큘럼 규칙 %s (6/8 → 올림, 2/8 → 내림, 3·4/8 → 그대로, 끝 단계에서 멈춤)\n", ok ? "통과" : "실패");
+    const std::vector<float> hi(8, 0.85f), lo(8, 0.3f), mid(8, 0.6f), edge(8, 0.8f), seven(7, 1.0f);
+    std::vector<float> mixed = {1.f, 1.f, 1.f, 1.f, 0.6f, 0.6f, 0.6f, 0.6f};   // 평균 0.8 → 올림
+    const bool ok = run(1, hi, 3) == 2 && run(1, lo, 3) == 0 && run(1, mid, 3) == 1 && run(1, edge, 3) == 2 && run(1, mixed, 3) == 2 &&
+                    run(1, seven, 3) == 1 && run(3, hi, 3) == 3 && run(0, lo, 3) == 0;
+    std::printf("커리큘럼 규칙 %s (8 판 덮음 평균 ≥ 0.8 → 올림, < 0.4 → 내림, 그 사이·7 판까지 → 그대로, 끝 단계에서 멈춤)\n", ok ? "통과" : "실패");
     if (!ok) return 1;
   }
   sim::EnvHostCfg hc = sim::load_env_cfg(env_path);

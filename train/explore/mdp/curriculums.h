@@ -6,12 +6,15 @@
 //   한 걸음에 충돌과 선언이 같이 오면 충돌.
 //
 // 단계 (환경마다 하나, legged_gym terrain curriculum 꼴: legged_gym/envs/base/legged_robot.py _update_terrain_curriculum —
-//   환경마다 지형 단계를 두고 판 끝에 잘했으면 올리고 못했으면 내림. 여기선 "잘함" = 최근 kWindow 판 성공률)
+//   환경마다 지형 단계를 두고 판 끝에 잘했으면 올리고 못했으면 내림. 여기선 "잘함" = 최근 kWindow 판의 끝 벽 덮음 평균 — 진행량)
 //   단계 s 의 맵 = 갈 수 있는 바닥 넓이가 kStages[s].max_area 이하이고 kStages[s−1].max_area 보다 큰 맵 (없으면 아래 단계 맵으로 내려감).
 //   오차 배율 = 지도 자세 오차(OU σ)·자이로 잡음에 곱함. 사람 수 = 판마다 0 ~ max_people 명(people.h k_max, 커리큘럼이 켜져 있으면
 //   Env::set_people_max 대신 이 값).
-//   오르내림: 판 끝마다 결과를 환경의 최근 kWindow 판 기록에 넣고, kWindow 판이 차면 성공률 > kUp 이면 올림, < kDown 이면 내림, 그리고 기록을 비움.
-//   잠정 값: kUp 0.7 · kDown 0.3 · kWindow 8 (8 판이면 0.7 초과 = 6 판 이상 성공, 0.3 미만 = 2 판 이하).
+//   오르내림(진행량, legged_gym/envs/base/legged_robot.py:421-440 _update_terrain_curriculum 꼴 — 거기선 판마다 걸어간 거리가 지형 길이의
+//   절반을 넘으면 올리고, 요구 거리의 절반 아래면 내림): 판 끝마다 끝 벽 덮음을 환경의 최근 kWindow 판 기록에 더하고, kWindow 판이 차면
+//   덮음 평균 ≥ kProgUp 이면 올림, < kProgDown(= kProgUp 의 절반) 이면 내림, 그리고 기록을 비움. 한 판 운으로 오르지 않게 창으로 본다.
+//   값(2026-11-04 비교, ppo/README "커리큘럼 비교"): kWindow 8 · kProgUp 0.8 · kProgDown 0.4. 옛 규칙(최근 8 판 성공 6 이상 올림)은 학습 성공률
+//   0.4 근처에서 거의 못 올라 단계 0 에 갇혔고(시험 맵 성공 0), 판마다 바로 올리는 진행량 규칙은 씨앗에 따라 판을 끝내지 않는 쪽으로 무너졌다.
 //   넓이 경계 30·80·150 m² = 학습 맵 묶음(S2, scenes/train/list.tsv grade 열)의 등급 경계와 같게 (등급별 143·143·142·92 맵).
 //   목록 파일에 등급 열이 있으면 그 값을 단계로 쓴다(env_host.cpp load_scene_list).
 #pragma once
@@ -44,7 +47,7 @@ DEV int people_of(int s) {
   return s <= 0 ? kStages[0].max_people : (s == 1 ? kStages[1].max_people : (s == 2 ? kStages[2].max_people : kStages[3].max_people));
 }
 constexpr int kWindow = 8;
-constexpr float kUp = 0.7f, kDown = 0.3f;
+constexpr float kProgUp = 0.8f, kProgDown = 0.4f;   // 창 평균 끝 덮음 문턱 (위 머리말)
 
 // 넓이 → 맵 단계 (호스트)
 inline int stage_of_area(float area_m2) {
@@ -53,16 +56,14 @@ inline int stage_of_area(float area_m2) {
   return kNumStages - 1;
 }
 
-// 판 끝: 기록에 넣고 단계를 고침. hist = 최근 결과 비트(1 = 성공), n = 기록 수. max_stage = 맵이 있는 가장 높은 단계
-DEV void on_episode_end(int32_t* stage, uint32_t* hist, int32_t* n, bool success, int max_stage) {
-  *hist = (*hist << 1) | (success ? 1u : 0u);
+// 판 끝: 끝 덮음 cov 를 기록에 더하고(hist = 덮음×1000 합, n = 기록 수) kWindow 판이 차면 단계를 고침. max_stage = 맵이 있는 가장 높은 단계
+DEV void on_episode_end(int32_t* stage, uint32_t* hist, int32_t* n, float cov, int max_stage) {
+  *hist += (uint32_t)(cov * 1000.f + 0.5f);
   *n += 1;
   if (*n < kWindow) return;
-  int k = 0;
-  for (int i = 0; i < kWindow; ++i) k += (int)((*hist >> i) & 1u);
-  const float rate = (float)k / (float)kWindow;
-  if (rate > kUp && *stage < max_stage) *stage += 1;
-  else if (rate < kDown && *stage > 0) *stage -= 1;
+  const float avg = (float)*hist / (1000.f * (float)kWindow);
+  if (avg >= kProgUp && *stage < max_stage) *stage += 1;
+  else if (avg < kProgDown && *stage > 0) *stage -= 1;
   *hist = 0u;
   *n = 0;
 }

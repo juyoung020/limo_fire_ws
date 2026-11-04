@@ -23,6 +23,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("rollout/ep_len_mean", "판 길이(걸음) 평균"),
     ("rollout/success_rate", "선언 + 기준 덮음 이상 비율"),
     ("rollout/collision_rate", "충돌로 끝난 비율"),
+    ("rollout/person_collision_rate", "사람과 부딪혀 끝난 비율(충돌의 일부)"),
     ("rollout/truncation_rate", "안전 시간으로 끊긴 비율"),
     ("rollout/declare_rate", "끝 선언으로 끝난 비율(성공 + 미달)"),
     ("rollout/declare_short_rate", "기준 미달 선언 비율"),

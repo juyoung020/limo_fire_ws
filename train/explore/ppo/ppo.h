@@ -62,6 +62,8 @@ class PPO {
   void act(const uint8_t* img, const real* obs1d, const real* priv, real* actions);
   // reward float [N], done int [N]. 끊김(3)이면 rsl_rl 처럼 r += γ·V(s_t).
   void store(const real* reward, const int* done);
+  // 바로 앞 act 의 환경 0 … n−1 선언 로짓·가치를 호스트로 (뷰어 재생용 — store 전에 부른다)
+  void last_act_info(int n, real* logit, real* value) const;
   // 롤아웃이 가득 찬 뒤 마지막 관측으로 가치를 메워 GAE (update 가 부른다; 검사 도구도 따로 부른다)
   void compute_returns(const uint8_t* img, const real* obs1d, const real* priv);
   // 롤아웃이 가득 찬 뒤. 마지막 관측(다음 걸음 관측)으로 가치를 메워 GAE·PPO 갱신. 반복 수 +1.

@@ -300,6 +300,7 @@ inline constexpr const char* EP_REW_MEAN = "rollout/ep_rew_mean";
 inline constexpr const char* EP_LEN_MEAN = "rollout/ep_len_mean";
 inline constexpr const char* SUCCESS_RATE = "rollout/success_rate";
 inline constexpr const char* COLLISION_RATE = "rollout/collision_rate";
+inline constexpr const char* PERSON_COLLISION_RATE = "rollout/person_collision_rate";   // 사람과 부딪혀 끝난 비율 (충돌의 일부)
 inline constexpr const char* TRUNCATION_RATE = "rollout/truncation_rate";
 inline constexpr const char* DECLARE_RATE = "rollout/declare_rate";
 inline constexpr const char* DECLARE_SHORT_RATE = "rollout/declare_short_rate";

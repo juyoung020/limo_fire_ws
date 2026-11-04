@@ -64,7 +64,7 @@ target/release/trainview --root /tmp/tv/runs
 ```
 
 - **잰 것만 쓴다**: 그 줄 동안 판이 하나도 안 끝났으면 비율 키를 **뺀다**(0·null 을 쓰지 않음). `Row::mean_w(k, v, 판 수)` 가 판 수 0 이면 알아서 뺀다.
-- **run.json**: `schema`, `kind`(`explore_ppo`), `name`, `pid`, `pid_start`(`/proc/<pid>/stat` 22 번째 칸), `started`, `segments`(재개마다 `{started, pid, from_iter, from_steps, trimmed_progress_lines, trimmed_episode_lines, set_aside_files}` 덧붙임), `git`(commit·dirty), 끝나면 `ended`. 러너가 넣는 칸: `group`, `seed`, `n_envs`, `rollout_T`, `log_envs`, `ctrl_hz`, `gamma`, `target_kl`, `reward_terms`, `curriculum.stages[{name}]`, `refs`(곡선 기준선, 키 → 값), `success_coverage`, `t_safe_s`, `action_limits{v,vy,w}`, `area_bins`(표의 맵 넓이 칸 경계, m²), `checks`(건강 검사 문턱 덮어쓰기). 화면의 기준선·이름은 전부 여기서 읽는다.
+- **run.json**: `schema`, `kind`(`explore_ppo`), `name`, `pid`, `pid_start`(`/proc/<pid>/stat` 22 번째 칸), `started`, `segments`(재개마다 `{started, pid, from_iter, from_steps, trimmed_progress_lines, trimmed_episode_lines, set_aside_files}` 덧붙임), `git`(commit·dirty), 끝나면 `ended`. 러너가 넣는 칸: `group`, `seed`, `n_envs`, `rollout_T`, `log_envs`, `ctrl_hz`, `gamma`, `target_kl`, `reward_terms`, `curriculum.stages[{name}]`, `refs`(곡선 기준선, 키 → 값), `success_coverage`, `t_safe_s`, `action_limits{v,vy,w}`, `robot{sim{footprint, lidar, lidar_fov, lidar_range, camera, camera_hfov, camera_range}, urdf{base_box, wheels, wheel_diameter, wheel_width, laser, camera, source} | urdf_error}`(재생의 위에서 본 로봇 — sim 충돌 몸통 실선·URDF 차체 점선·바퀴·센서 시야, 없으면 원), `area_bins`(표의 맵 넓이 칸 경계, m²), `checks`(건강 검사 문턱 덮어쓰기). 화면의 기준선·이름은 전부 여기서 읽는다.
 - **재개(resume)**: `Options.resume = true; resume_iter = <체크포인트 이터>`. 열 때 progress·모든 줄기의 episodes 에서 `time/iterations`·`iter` 가 그 값 이상인 줄(과 해석 못 하는 반쪽 줄)을 지우고(`.tmp` 후 rename), 그 구간의 재생·평가 표를 `*_rewound/` 로 옮긴다. 판 번호는 지운 줄까지 포함한 가장 큰 번호 다음부터(파일 이름이 안 겹침), `time/time_elapsed` 는 앞 구간에 이어 센다. 뷰어도 `total_timesteps` 가 줄어드는 줄을 한 번 더 거르고(`rewound`), 파일이 새로 쓰이면 SSE `reset` 으로 화면이 처음부터 다시 받는다.
 - **학습 상태 불**(목록·머리줄, SSE `status` 2 초마다): `training` 초록 = `pid` 가 살아 있고 `/proc/<pid>/stat` 시작 시각이 `pid_start` 와 같고(pid 재사용 거름) 60 s 안에 기록, `stalled` 노랑 = 살아 있는데 60 s 넘게 기록 없음, `finished` 회색 = `ended` 있음, `crashed` 빨강 = 프로세스 없음 + `ended` 없음, `unknown` = pid 없음.
 
@@ -97,7 +97,7 @@ target/release/trainview --root /tmp/tv/runs
 
 ```
 "XRP1"  u32 head_len  head(JSON)  [0 채움 → 8 정렬] = 데이터 시작 D, 섹션은 D + off (head.sections)
-frames : n_frames × n_cols × f32     열 이름 = head.cols. 필수 t x y yaw. 선택 sx sy syaw v vy w a_v a_vy a_w p_end a_end value r_<항> ret coverage known_m2 ev
+frames : n_frames × n_cols × f32     열 이름 = head.cols. 필수 t x y yaw. 선택 sx sy syaw v vy w a_v a_vy a_w p_end a_end value r_<항> ret coverage known_m2 ev h<k>_x h<k>_y h<k>_r(사람 k 원기둥, 없으면 NaN)
 gt     : w × h × u8                  정답 맵 한 번: 0 빈 곳, 1 벽, 2 맵 밖
 obs    : [u32 frame][i32 x0 y0 x1 y1][i8 칸…] 이어짐   관측 지도(−1 모름, 0–100 %): frame 0 전체 한 번 + 그 뒤 16×16 타일마다 바뀐 칸 사각형
 cov    : [u32 frame][u32 n][u32 칸 × n] 이어짐          새로 덮인 칸(늘기만 함)
