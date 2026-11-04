@@ -9,6 +9,8 @@
 //   fp32 로 직접 차분하면 손실 반올림(~1e-7)/h 잡음이 작은 층(합성곱 편향 등)에서 1e-3 을 넘는다 — 그래서 차분은 fp64 로,
 //   fp32 는 fp64 해석값과 비교한다. fp32 직접 차분 결과도 참고로 찍는다(--fp32-fd).
 //
+//   덧붙여 σ 범위: 마지막 성분 log σ 를 상한(ln std_max) 위에 두고 차분 비교, 범위 밖 log σ 로 update 한 번 뒤 범위 안인지(PPOConfig std_min/std_max).
+//
 //   gradcheck            작은 구조(같은 코드 길, 작은 크기)
 //   gradcheck --full     obs_layout.h 실제 크기 구조
 //   gradcheck --negative ELU 역방향을 일부러 틀리게 → 검사가 잡아야(실패를 찾아야) 종료 0
@@ -78,7 +80,12 @@ int main(int argc, char** argv) {
   std::printf("\n층 종류별 최대 [2] fp32 vs fp64 해석:");
   for (auto& [k, v] : wk2) std::printf("  %s %.2e", k.c_str(), v);
   std::printf("\n");
-  bool pass = w1 < 1e-3 && w2 < 1e-3;
+  for (const GcOut* r : {&r64, &r32}) {
+    std::printf("σ 범위 투영 (%s): log σ (+3, −10, +0.5) → update 뒤", r == &r64 ? "fp64" : "fp32");
+    for (double l : r->proj_ls) std::printf(" %.4f", l);
+    std::printf("  [%.4f, %.4f] %s\n", r->proj_lo, r->proj_hi, r->proj_ok ? "안" : "← 밖");
+  }
+  bool pass = w1 < 1e-3 && w2 < 1e-3 && r64.proj_ok && r32.proj_ok;
   if (negative) {
     bool caught = w1 >= 1e-3;
     std::printf("%s: 틀린 기울기를 %s ([1] 최대 %.2e)\n", caught ? "통과" : "실패", caught ? "잡음" : "못 잡음", w1);

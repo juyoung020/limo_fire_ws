@@ -81,3 +81,13 @@ mapvel:
 intensity:
   fit: intensity_fit.yaml
   validate: intensity_validate.yaml
+
+# 라이다 먼 거리 빠짐 (sensor_model.yaml lidar.dropout.far) — tools/far_check (--fit 은 fit 표로). 실측 표·묶음 자세는 real_far_stats.yaml
+# (일회성 분석으로 만듦 — 만든 법은 그 파일 머리). 장면: 정지 묶음 돌아온 점 지도 ~/limo_bags/maps/far_1104.yaml →
+#   ./build/map2scene ~/limo_bags/maps/far_1104.yaml <data>/far_1104.scene
+#   far_check <data>/far_1104.scene --role fit --fit   /   far_check <data>/far_1104.scene --role validate
+# 같은 실험실 두 묶음 무리로 나눔: 세워 둔 녹화 + mecanum 멈춤은 맞춤, mix 멈춤은 확인
+far:
+  - {bag: 1104_R_static_aligned, role: fit}      # 세워 둔 580 장 (벽 3~9 m)
+  - {bag: 1104_M_cmd_mecanum, role: fit}         # 명령 사이 멈춤 23 곳 (각 8~79 장)
+  - {bag: 1104_M_cmd_mix, role: validate}        # 명령 사이 멈춤 36 곳 (각 11~71 장, 크게 돈 뒤 맞추기 실패 5 곳 뺌)

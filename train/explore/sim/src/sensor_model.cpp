@@ -42,6 +42,17 @@ LidarModel load_lidar_model(const std::string& path) {
   N.spot_size = d["spot"][0].as<float>();
   N.f_spot = d["spot"][1].as<float>();
   N.f_spot_mid = d["spot"][2].as<float>();
+  const YAML::Node fr = d["far"];
+  if (!fr || fr["r"].size() != (size_t)kFarNodes || fr["keep"].size() != (size_t)kFarNodes)
+    throw std::runtime_error(path + ": lidar.dropout.far.r·keep 는 " + std::to_string(kFarNodes) + " 개");
+  for (int i = 0; i < kFarNodes; ++i) {
+    N.far_r[i] = fr["r"][i].as<float>();
+    N.far_keep[i] = fr["keep"][i].as<float>();
+    if (i > 0 && !(N.far_r[i] > N.far_r[i - 1])) throw std::runtime_error(path + ": lidar.dropout.far.r 는 오름차순");
+  }
+  N.far_patch = fr["patch"].as<float>();
+  N.far_flicker = fr["flicker"].as<float>();
+  if (!(N.far_flicker > 0.f)) throw std::runtime_error(path + ": lidar.dropout.far.flicker > 0");
   const YAML::Node e = l["edge"];
   N.footprint = e["footprint"].as<float>();
   N.edge_gap = e["gap"].as<float>();
@@ -60,6 +71,7 @@ LidarModel load_lidar_model(const std::string& path) {
   m.r_sigma = range2(r["sigma"]);
   m.r_dropout = range2(r["dropout"]);
   m.r_edge_drop = range2(r["edge_drop"]);
+  m.r_far_range = range2(r["far_range"]);
   return m;
 }
 

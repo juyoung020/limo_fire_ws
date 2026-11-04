@@ -96,7 +96,8 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
     f += 0.15f * G(rng) * (std::fabs(f) + 0.05f);
     v = f;
   }
-  for (int j = 0; j < spec.n_cont; ++j) params[ac.logstd_off + j] = -0.3f + 0.2f * j;
+  // log σ = −0.3, −0.1, 0 — 마지막 성분은 정확히 상한 ln std_max = 0 위 (투영은 Adam 뒤에만이라 손실 자체는 clamp 없음 → 상한 위 기울기도 매끈한 값)
+  for (int j = 0; j < spec.n_cont; ++j) params[ac.logstd_off + j] = std::min(-0.3f + 0.2f * j, std::log(cfg.std_max));
   CK(cudaMemcpy(ac.d_params, params.data(), NP * sizeof(real), cudaMemcpyHostToDevice));
 
   int S = N * cfg.steps_per_env;
@@ -137,6 +138,24 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
         out.fd.push_back((Lp - Lm) / ((double)vp - (double)vm));
       }
     }
+  }
+  // σ 범위 투영: log σ 를 범위 밖(위·아래)에 두고 update 한 번(Adam 5 걸음) → 모두 [ln std_min, ln std_max] 안이어야
+  {
+    const float bad[] = {3.f, -10.f, 0.5f, -4.f};
+    for (int j = 0; j < spec.n_cont; ++j) params[ac.logstd_off + j] = bad[j % 4];
+    CK(cudaMemcpy(ac.d_params, params.data(), NP * sizeof(real), cudaMemcpyHostToDevice));
+    ac.params_changed();
+    ppo.update(d_img, d1, dp);
+    std::vector<real> ls(spec.n_cont);
+    CK(cudaMemcpy(ls.data(), ac.log_std(), spec.n_cont * sizeof(real), cudaMemcpyDeviceToHost));
+    const double lo = std::log((double)cfg.std_min), hi = std::log((double)cfg.std_max);
+    out.proj_ok = true;
+    for (real l : ls) {
+      out.proj_ls.push_back((double)l);
+      if (!((double)l >= lo - 1e-6 && (double)l <= hi + 1e-6)) out.proj_ok = false;
+    }
+    out.proj_lo = lo;
+    out.proj_hi = hi;
   }
   cudaFree(d_img);
   cudaFree(d1);

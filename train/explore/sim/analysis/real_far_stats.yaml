@@ -1,0 +1,85 @@
+# 라이다 먼 거리 돌아옴 — 실측 (tools/far_check 가 읽음). 2026-11-04, 1104 실험실 (넓은 곳, 벽 3~9 m).
+# 만든 법 (일회성 분석, scratchpad far/ 의 Python: dump·curve·reg·gt·curve2·export):
+#   1. 정지 묶음: 1104_R_static_aligned 전체 580 장(오도메트리 없음 = 세워 둠), 1104_M_cmd_mecanum·1104_M_cmd_mix 는
+#      /odom |vx|+|vy|+0.2|ω| < 0.01 이 1 s 넘는 멈춤마다 (앞 0.3 s · 뒤 0.1 s 뺌, 8 장 이상).
+#   2. 각도 칸: 빔을 드라이버 각도(angle_min + j·간격)로 2π/405 칸에 넣는다 (장마다 빔 수 239~258 이 바뀌어도 같은 방향끼리).
+#      칸마다 돌아온 장 k / 장 n, 돌아온 값 중앙값.
+#   3. 묶음 맞추기: 돌아온 칸 중앙값 점(7 m 안)을 static 묶음에 ICP (첫 짐작은 motion_export 의 라이다 몸 자세 lo_*).
+#      맞춘 점 5 cm 안 몫 < 0.5 인 묶음 5 곳(cmd_mix @47.8·59.9·65.7·71.4·120.9 — 크게 돈 뒤)은 뺌 → 60 곳.
+#   4. 정답 거리: 모든 묶음의 돌아온 점(+ 같은 묶음 이웃 칸이 이어지면 선)으로 5 cm 격자 지도(~/limo_bags/maps/far_1104.pgm)를 만들고,
+#      돌아온 칸은 그 중앙값, 한 번도 안 돌아온 칸은 이 지도에 쏜 거리(다른 자리에서 본 면) — 어느 자리에서도 안 보인 방향(열린 곳이거나
+#      늘 안 돌아오는 면)은 거리를 몰라 뺀다. 이웃 칸 정답 거리가 max(0.15 m, 0.04·r) 넘게 다르면 모서리라 뺀다 (모서리 모델은 따로).
+#   5. 구간마다 ret = Σk / Σn (장마다 돌아오는 몫), mid = 칸별 유효율 5~95 % 인 칸 몫 (깜빡임), beams = 칸 수(묶음 × 칸).
+# 역할: fit = 1104_R_static_aligned + 1104_M_cmd_mecanum 멈춤 23 곳, validate = 1104_M_cmd_mix 멈춤 36 곳 (analysis/calibration.yaml far:).
+# 한계: 9.4 m 넘는 돌아옴은 1104 녹화 모두(3,100 장)에 하나도 없고, 그 너머 방향은 정답 거리를 몰라 9.5 m 넘는 구간은 비어 있다.
+#   0 빔의 정답 거리는 다른 자리에서 그 면이 보였을 때만 있다 — 어디서도 안 보인 먼 면은 이 표에서 빠진다(먼 빠짐을 덜 셈).
+bins: [3, 5, 6, 7, 8, 8.5, 9, 9.5, 12]
+sets:
+  - {role: fit, name: "1104_R_static_aligned@0.0", pose: [0.000, 0.000, 0.0000], scans: 580}
+  - {role: fit, name: "1104_M_cmd_mecanum@0.4", pose: [-0.002, -0.000, -0.0003], scans: 36}
+  - {role: fit, name: "1104_M_cmd_mecanum@6.2", pose: [0.446, 0.040, 0.0575], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@9.3", pose: [0.001, 0.002, 0.0155], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@11.9", pose: [0.359, 0.097, 0.2046], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@14.4", pose: [0.054, 0.050, 0.0060], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@16.6", pose: [0.414, 0.155, 0.2117], scans: 8}
+  - {role: fit, name: "1104_M_cmd_mecanum@18.7", pose: [0.320, 0.108, -0.1027], scans: 10}
+  - {role: fit, name: "1104_M_cmd_mecanum@21.9", pose: [0.815, 0.076, -0.0974], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@25.0", pose: [0.319, 0.110, -0.0965], scans: 10}
+  - {role: fit, name: "1104_M_cmd_mecanum@27.5", pose: [0.879, 0.061, -0.0860], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@30.0", pose: [0.342, 0.095, -0.0932], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@32.1", pose: [0.926, 0.023, -0.1167], scans: 8}
+  - {role: fit, name: "1104_M_cmd_mecanum@36.9", pose: [0.995, 0.025, -0.1023], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@39.8", pose: [0.331, 0.071, -0.1272], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@42.1", pose: [0.542, 0.043, -0.1580], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@44.4", pose: [0.319, 0.073, -0.1011], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@52.0", pose: [0.325, 0.065, -0.0715], scans: 10}
+  - {role: fit, name: "1104_M_cmd_mecanum@59.9", pose: [0.314, 0.066, -0.0257], scans: 10}
+  - {role: fit, name: "1104_M_cmd_mecanum@64.6", pose: [0.313, 0.051, -0.0623], scans: 9}
+  - {role: fit, name: "1104_M_cmd_mecanum@69.2", pose: [0.305, 0.061, 0.0180], scans: 11}
+  - {role: fit, name: "1104_M_cmd_mecanum@72.9", pose: [0.312, 0.046, -0.0418], scans: 10}
+  - {role: fit, name: "1104_M_cmd_mecanum@76.5", pose: [0.296, 0.062, 0.0882], scans: 10}
+  - {role: fit, name: "1104_M_cmd_mecanum@79.7", pose: [0.699, 0.327, 0.7054], scans: 79}
+  - {role: validate, name: "1104_M_cmd_mix@0.5", pose: [-0.492, 0.120, -0.0017], scans: 54}
+  - {role: validate, name: "1104_M_cmd_mix@7.8", pose: [0.146, 0.175, 0.0292], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@11.0", pose: [-0.544, 0.085, 0.0565], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@13.8", pose: [-0.020, 0.161, 0.0673], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@16.5", pose: [-0.553, 0.066, 0.0635], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@19.2", pose: [-0.210, 0.207, 0.2770], scans: 12}
+  - {role: validate, name: "1104_M_cmd_mix@21.9", pose: [-0.567, 0.067, 0.1637], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@24.5", pose: [-0.217, 0.193, 0.2325], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@27.2", pose: [-0.536, 0.083, 0.2210], scans: 12}
+  - {role: validate, name: "1104_M_cmd_mix@30.2", pose: [-0.196, 0.181, 0.1897], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@33.4", pose: [-0.516, 0.100, 0.2690], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@36.2", pose: [-0.196, 0.186, 0.2062], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@39.0", pose: [-0.457, 0.124, 0.2859], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@41.6", pose: [-0.649, 0.026, 0.2983], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@44.4", pose: [-0.461, 0.144, 0.3513], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@51.3", pose: [-0.447, 0.119, 0.3260], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@54.1", pose: [-0.101, 0.441, 0.9334], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@57.0", pose: [-0.450, 0.104, 0.2712], scans: 12}
+  - {role: validate, name: "1104_M_cmd_mix@62.9", pose: [-0.442, 0.077, 0.2420], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@68.5", pose: [-0.411, 0.092, 0.1941], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@74.4", pose: [-0.337, 0.102, 0.2271], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@77.9", pose: [-0.171, 0.214, 0.8169], scans: 15}
+  - {role: validate, name: "1104_M_cmd_mix@81.3", pose: [-0.293, 0.105, 0.2896], scans: 15}
+  - {role: validate, name: "1104_M_cmd_mix@84.8", pose: [-0.485, 0.057, -0.2710], scans: 15}
+  - {role: validate, name: "1104_M_cmd_mix@88.3", pose: [-0.298, 0.113, 0.3806], scans: 15}
+  - {role: validate, name: "1104_M_cmd_mix@91.4", pose: [-0.245, 0.177, 0.7825], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@94.4", pose: [-0.309, 0.112, 0.3966], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@97.7", pose: [0.038, 0.404, 0.8047], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@100.8", pose: [-0.336, 0.088, 0.4659], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@104.1", pose: [-0.135, 0.100, -0.1549], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@107.2", pose: [-0.328, 0.091, 0.4527], scans: 14}
+  - {role: validate, name: "1104_M_cmd_mix@110.1", pose: [-0.044, 0.353, 0.7413], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@112.9", pose: [-0.411, 0.044, 0.5523], scans: 11}
+  - {role: validate, name: "1104_M_cmd_mix@115.5", pose: [-0.136, 0.330, 0.8155], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@118.2", pose: [-0.346, 0.072, 0.5105], scans: 13}
+  - {role: validate, name: "1104_M_cmd_mix@123.7", pose: [-0.362, 0.138, 0.6563], scans: 71}
+fit:
+  beams: [2432, 68, 25, 5, 79, 49, 1, 0]
+  ret: [0.9213, 0.7522, 0.6690, 0.5319, 0.8550, 0.3147, 0.0127, 0.0000]
+  mid: [0.178, 0.618, 0.600, 1.000, 0.291, 0.612, 0.000, 0.000]
+validate:
+  beams: [3781, 268, 105, 3, 101, 105, 8, 0]
+  ret: [0.9234, 0.8747, 0.6226, 0.4000, 0.8079, 0.7491, 0.3393, 0.0000]
+  mid: [0.191, 0.276, 0.686, 1.000, 0.257, 0.448, 0.750, 0.000]

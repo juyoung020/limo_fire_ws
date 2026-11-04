@@ -18,7 +18,10 @@
 //           그 경계 ± graze_flicker 안이면 장마다 반반(깜빡임).
 //         점: 모든 표면(큰 벽 포함)에 빔 크기 칸(spot_size), f_spot 은 늘 안 보이고 f_spot_mid 는 가끔 빠진다 — 실물은 정지·주행 모두
 //           이웃 둘은 보이는데 혼자 0 인 빔이 장마다 7~8 % (정지에선 같은 빔이 늘 0), 정지 빔별 유효율 50~99 % 인 빔이 23 %.
-//         빠짐 = 1 − (1 − 무작위)(1 − 점)(1 − 재질)(1 − 비스듬함). 잡음 σ = (sigma0 + sigma1·r)·배율 가우스, quantum(1 mm) 반올림, [min, max) 밖은 0.
+//         먼 거리: 반사가 약한 면부터 먼 데서 안 돌아온다(자료 12 m @ 반사율 80 %). 표면 조각(far_patch 칸)마다 반사 순위 u 를 정하고
+//           거리 r 의 보이는 몫 F(r)(표, 1104 실험실 정지 묶음으로 맞춤) 보다 u 가 작으면 보이고, 경계 ± far_flicker 안은 장마다 깜빡임
+//           (실물: 같은 먼 면이 늘 보이거나 늘 안 보이고, 경계의 빔은 장마다 일부만 돌아옴). far_drop_prob.
+//         빠짐 = 1 − (1 − 무작위)(1 − 점)(1 − 재질)(1 − 비스듬함)(1 − 먼 거리). 잡음 σ = (sigma0 + sigma1·r)·배율 가우스, quantum(1 mm) 반올림, [min, max) 밖은 0.
 #pragma once
 #include <cstdint>
 
@@ -27,6 +30,7 @@
 namespace sim {
 
 constexpr int kMaxBeams = 272;        // N ≤ 445 까지
+constexpr int kFarNodes = 6;          // 먼 거리 보이는 몫 표 마디 수
 constexpr float kTwoPi = 6.28318531f;
 
 struct LidarNoise {
@@ -43,6 +47,8 @@ struct LidarNoise {
   float patch_size, p_graze, graze_flicker;   // 비스듬함 빠짐: 조각 칸(m), 기울기, 깜빡임 폭
   float spot_size, f_spot, f_spot_mid;   // 점: 모든 표면에 spot_size 칸, f_spot 은 늘 빠짐, f_spot_mid 는 가끔(빠짐 확률 mid_lo~mid_hi)
   float footprint, edge_gap, p_edge_drop, p_mix;
+  float far_r[kFarNodes], far_keep[kFarNodes];   // 먼 거리 보이는 몫 F(r): 마디 거리(m, 오름)·몫 (사이 선형, 양 끝 밖은 끝값)
+  float far_patch, far_flicker;        // 먼 거리 반사 순위 조각 칸(m)·경계 깜빡임 반폭
   float int_r[5], int_c;               // 세기 평균 = 거리 표(kIntensityR 마디 사이 선형) + c·(입사 cos − 0.8) (lidar_intensity)
   float int_obj, int_sigma, int_drop;  // 물체마다 세기 차 σ, 장마다 흔들림 σ, 빠진 빔이 내는 세기
 };
@@ -119,7 +125,34 @@ DEV float patch_rank(float size, uint64_t salt, uint64_t world_seed, uint16_t ob
   return dm::rand01(h);
 }
 
-constexpr uint64_t kSaltGraze = 0x0, kSaltSpot = 0x5bd1e995abcdef12ull;
+constexpr uint64_t kSaltGraze = 0x0, kSaltSpot = 0x5bd1e995abcdef12ull, kSaltFar = 0x2545F4914F6CDD1Dull;
+
+// 먼 거리 보이는 몫 F(r) — 표 사이 선형
+DEV float far_visible(const LidarNoise& N, float r) {
+  if (r <= N.far_r[0]) return N.far_keep[0];
+  for (int i = 0; i + 1 < kFarNodes; ++i)
+    if (r < N.far_r[i + 1]) return N.far_keep[i] + (N.far_keep[i + 1] - N.far_keep[i]) * ((r - N.far_r[i]) / (N.far_r[i + 1] - N.far_r[i]));
+  return N.far_keep[kFarNodes - 1];
+}
+// 반사 순위 u 인 조각이 거리 r 에서 빠질 확률: F ≥ 1 이면 0, F ≤ 0 이면 1, 그 사이는 u 가 F 를 넘을수록 (± far_flicker 안 선형)
+DEV float far_drop_prob(const LidarNoise& N, float u, float r) {
+  const float F = far_visible(N, r);
+  if (F >= 1.f) return 0.f;
+  if (F <= 0.f) return 1.f;
+  const float x = (u - F) / (2.f * N.far_flicker) + 0.5f;
+  return x < 0.f ? 0.f : (x > 1.f ? 1.f : x);
+}
+// 조각 순위 u ~ 균등 [0, 1) 위 평균 빠짐 (replay_check·far_check 기대값) — 가운데 띠가 [0, 1] 안이면 1 − F
+DEV float far_drop_mean(const LidarNoise& N, float r) {
+  const float F = far_visible(N, r);
+  if (F >= 1.f) return 0.f;
+  if (F <= 0.f) return 1.f;
+  const float w = N.far_flicker, a = F - w, b = F + w;
+  // ∫₀¹ clamp((u − a)/(2w)) du
+  const float lo = a < 0.f ? 0.f : a, hi = b > 1.f ? 1.f : b;
+  const float ramp = (hi > lo) ? ((hi - a) * (hi - a) - (lo - a) * (lo - a)) / (4.f * w) : 0.f;
+  return ramp + (b < 1.f ? 1.f - b : 0.f);
+}
 
 // 스캔 중 시각 t 의 빔 방향(세계): 시작 자세의 센서 방향을 세계 z 축으로 w·t 만큼 돌린다
 DEV V3 beam_dir(const ScanIn& in, float a, float sw, float cw) {
@@ -219,7 +252,8 @@ DEV float expected_drop(const LidarNoise& N, const BeamGeom& g, float obj_size) 
   const float pm = obj_size >= N.structure_size ? 0.f : N.f_dark * N.p_dark + N.f_mid * 0.5f * (N.mid_lo + N.mid_hi);
   const float pg = dm::minf(1.f, dm::maxf(0.f, N.p_graze * (1.f - g.cosi)));
   const float ps = N.f_spot + N.f_spot_mid * 0.5f * (N.mid_lo + N.mid_hi);
-  return pe + (1.f - pe) * (1.f - (1.f - N.p_random) * (1.f - ps) * (1.f - pm) * (1.f - pg));
+  const float pf = far_drop_mean(N, g.r);
+  return pe + (1.f - pe) * (1.f - (1.f - N.p_random) * (1.f - ps) * (1.f - pm) * (1.f - pg) * (1.f - pf));
 }
 
 // ROS 순서 j 번째 빔 (m, 0 = 없음). j ≥ scan_beams 면 0. ray 가 있으면 이 빔의 참 광선(원점·방향, 스캔 중 움직임 포함)을 넣는다 —
@@ -259,7 +293,9 @@ DEV int beam_mid(const SceneView& s, const LidarNoise& N, const ScanIn& in, cons
   if (us < N.f_spot) return 0;   // 안 보이는 점
   // 가끔 빠지는 점: 그 점의 빠짐 확률은 순위로 정해져 늘 같다
   const float p_spot = us < N.f_spot + N.f_spot_mid ? N.mid_lo + (N.mid_hi - N.mid_lo) * ((us - N.f_spot) / N.f_spot_mid) : 0.f;
-  const float keep = (1.f - N.p_random) * (1.f - p_spot) * (1.f - mat->p_drop) * (1.f - p_graze);
+  // 먼 거리: 조각 반사 순위로 (가까우면 F = 1 이라 순위를 안 뽑음)
+  const float p_far = far_visible(N, geo.r) >= 1.f ? 0.f : far_drop_prob(N, patch_rank(N.far_patch, kSaltFar, in.world_seed, geo.obj, hitp), geo.r);
+  const float keep = (1.f - N.p_random) * (1.f - p_spot) * (1.f - mat->p_drop) * (1.f - p_graze) * (1.f - p_far);
   if (w.u_drop >= keep) return 0;
   float pe_max = 0.f;
   for (int k = 0; k <= 5; ++k) {

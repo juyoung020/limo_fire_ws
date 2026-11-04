@@ -207,6 +207,12 @@ __global__ void k_put_1d(const real* __restrict__ x, int ldx, int d, int n, real
     dst[(long)i * ldd + j] = v;
 }
 
+// log σ 변수를 [lo, hi] 로 투영 (Adam 걸음·불러오기 뒤) — ppo.h PPOConfig std_min/std_max
+__global__ void k_clamp_logstd(real* ls, int n, real lo, real hi) {
+  int i = threadIdx.x;
+  if (i < n) ls[i] = fmin(fmax(ls[i], lo), hi);
+}
+
 __global__ void k_add_const(real* x, int n, real c) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) x[i] += c;
@@ -245,6 +251,9 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   ac_->enc.cnn_bf16 = bf;
   CKB(cublasSetMathMode(ac_->cublas2, cfg.tf32 ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH));
   ac_->set_mlp_mode(sizeof(real) == 4 ? cfg.mlp : 0);
+  if (!(cfg.std_min > 0.f && cfg.std_min <= cfg.std_max)) throw std::runtime_error("PPOConfig: 0 < std_min ≤ std_max 이어야 함");
+  if (spec.init_log_std < std::log(cfg.std_min) || spec.init_log_std > std::log(cfg.std_max))
+    throw std::runtime_error("ACSpec init_log_std 가 PPOConfig σ 범위 밖");
   N_ = cfg.num_envs;
   T_ = cfg.steps_per_env;
   S_ = N_ * T_;
@@ -496,6 +505,7 @@ UpdateStats PPO::update(const uint8_t* img, const real* obs1d, const real* priv)
       real bc1 = 1.f - std::pow(cfg_.adam_b1, (real)adam_t_), bc2 = 1.f - std::pow(cfg_.adam_b2, (real)adam_t_);
       k_adam<<<nblk(ac_->n_params), 256, 0, st>>>(ac_->d_params, ac_->d_grads, m_, v_, ac_->n_params, lr_,
                                                   cfg_.adam_b1, cfg_.adam_b2, cfg_.adam_eps, bc1, bc2, gscale);
+      clamp_std();  // σ 범위 투영 (params_changed 가 bf16 사본을 만들기 전에)
       ac_->params_changed();
       acc_s += s[0] / mb;
       acc_v += s[1] / mb;
@@ -575,6 +585,11 @@ void PPO::save(const std::string& path) const {
   if (std::rename(tmp.c_str(), path.c_str()) != 0) throw std::runtime_error("체크포인트 이름 바꾸기 실패");
 }
 
+void PPO::clamp_std() {
+  k_clamp_logstd<<<1, 32, 0, ac_->stream>>>(ac_->log_std(), NC_, (real)std::log(cfg_.std_min), (real)std::log(cfg_.std_max));
+  CK(cudaGetLastError());
+}
+
 void PPO::load(const std::string& path) {
   std::ifstream f(path, std::ios::binary);
   if (!f) throw std::runtime_error("체크포인트 없음: " + path);
@@ -627,6 +642,7 @@ void PPO::load(const std::string& path) {
   CK(cudaMemcpy(ac_->norm.d_mean, nm.data(), D * sizeof(real), cudaMemcpyHostToDevice));
   CK(cudaMemcpy(ac_->norm.d_var, nv.data(), D * sizeof(real), cudaMemcpyHostToDevice));
   ac_->norm.count = cnt;
+  clamp_std();  // 옛 체크포인트(σ 상한 전, explore_v3 σ 99.6)도 범위 안으로
   ac_->params_changed();
   adam_t_ = at;
   iter_ = it;

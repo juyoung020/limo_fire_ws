@@ -7,7 +7,7 @@ ros2 launch limo_fire_bringup robot.launch.xml [base:=false]      # base:=false 
 ros2 launch limo_fire_bringup record.launch.xml name:=MMDD_상황 [depth:=false]
 ```
 
-무엇을 왜 담는지는 [data_plan.md](data_plan.md). 녹화마다 아래 표에 한 줄 적는다(배터리 전압·바닥·줄자 값 포함). 쓰는 도구: `scan_stats_bag`(정지 라이다 통계), `bag_export` → `replay_check`(같은 자세로 시뮬을 돌려 실물과 빔마다 비교), `motion_export` → `motion_check`·`imu_check`·`mapvel_check`(구동·IMU·지도 속도), `depth_stats_bag` → `depth_check`(깊이), `intensity_stats_bag` → `intensity_check`(라이다 세기). 어느 녹화로 맞추고 확인하는지는 [calibration.yaml](calibration.yaml).
+무엇을 왜 담는지는 [data_plan.md](data_plan.md). 녹화마다 아래 표에 한 줄 적는다(배터리 전압·바닥·줄자 값 포함). 쓰는 도구: `scan_stats_bag`(정지 라이다 통계), `bag_export` → `replay_check`(같은 자세로 시뮬을 돌려 실물과 빔마다 비교), `motion_export` → `motion_check`·`imu_check`·`mapvel_check`(구동·IMU·지도 속도), `depth_stats_bag` → `depth_check`(깊이), `intensity_stats_bag` → `intensity_check`(라이다 세기), 정지 묶음 → `far_check`(라이다 먼 거리, `real_far_stats.yaml`). 어느 녹화로 맞추고 확인하는지는 [calibration.yaml](calibration.yaml).
 
 | 이름 | 날짜 | 장소·상황 | 길이 | 담긴 것 | 쓰는 곳 |
 |---|---|---|---|---|---|
@@ -20,9 +20,9 @@ ros2 launch limo_fire_bringup record.launch.xml name:=MMDD_상황 [depth:=false]
 | `1103_M_cmd1` | 11-03 | 사무실, 리모컨 오토 모드에서 `/cmd_vel` 명령 계단(±0.5·±0.3 m/s, ±1·±2 rad/s, 곡선), 186.3~188.2 s 첫 +0.5 m/s 에 바퀴 안 돎(앞이 막힘 추정), 배터리 11.1 V | 227 s | 전부 + `/cmd_vel` 1,536 | ROS 명령 경로 구동 응답(R² v 0.98 · ω 0.995), 회전 1.00, IMU·지도 속도 확인(validate) |
 | `1103_M_cmd2` | 11-03 | 사무실, 오토 모드 `/cmd_vel` 세게 (±3 rad/s 급반전, 2.5 rad/s 0.3 s 펄스, 1 m/s 0.3 s, 0.8 m/s + 2 rad/s), 0.6 m 안. 0~4.7 s 명령 녹화 빠짐 | 28 s | 전부 + `/cmd_vel` 629 | 가속 때 헛돎(바퀴 ω / 자이로 1.1~1.4), 모터 두 갈래 응답, IMU·지도 속도 맞춤(fit) |
 | `1103_R1_spot1~3` | 11-03 | 사무실 세 자리, 세워 둔 채(섀시 켬, 명령 없음) 서랍장·칸막이 모서리가 1~2 m 안에 보이게, 배터리 9.8 V | 각 30 s | 전부 (깊이 없음) | 정지 라이다 통계(모서리·비스듬함 표본 늘림). spot1·2: IMU 정지·지도 속도 정지·라이다 세기 맞춤(fit), spot3: 확인(validate) |
-| `1104_M_cmd_mecanum` | 11-04 | 실험실(반들한 바닥), 오토 모드 `/cmd_vel` 계단: 옆 ±0.3·±0.5·±0.8, 앞뒤 ±0.3·±0.6·±1.0 m/s, 앞뒤+옆 0.3, 제자리 ±1·±2·±3 rad/s, (0.2, 1), 파랑 모드, 배터리 11.2 → 11.1 V | 88 s | 전부 (깊이 정렬 켬 640 × 480) | 몸 참값 구동 맞춤(fit, `motion_check --body`), 멈출 때 응답, 실험실 바닥 비, 깊이 확인(validate, 멈춘 구간), IMU 느림 확인. **옆 명령에 몸이 앞뒤로 감** — 바퀴 확인 필요 (real_limo.md 구동 절) |
-| `1104_M_cmd_mix` | 11-04 | 실험실, 오토 모드 `/cmd_vel` 조합 계단: 앞뒤+옆 (±0.3·±0.6), 앞뒤+회전 (±0.3·±0.6, ±1·±2), 옆+회전, 앞뒤+옆+회전, 옆 ±0.8, 배터리 11.1 → 11.0 V | 131 s | 전부 (깊이 정렬 켬) | 몸 참값 구동 확인(validate, 앞뒤+회전 10 구간), IMU 느림 확인 |
-| `1104_R_static_aligned` | 11-04 | 실험실 바닥, 세워 둔 채 (깊이 정렬 켬 첫 정지 녹화) | 58 s | 깊이 1,733 장 640 × 480 | 깊이 정렬 켬 맞춤(fit): 카메라 자세·유효 영역·가까운 σ·실험실 바닥 구멍 |
+| `1104_M_cmd_mecanum` | 11-04 | 실험실(반들한 바닥), 오토 모드 `/cmd_vel` 계단: 옆 ±0.3·±0.5·±0.8, 앞뒤 ±0.3·±0.6·±1.0 m/s, 앞뒤+옆 0.3, 제자리 ±1·±2·±3 rad/s, (0.2, 1), 파랑 모드, 배터리 11.2 → 11.1 V | 88 s | 전부 (깊이 정렬 켬 640 × 480) | 몸 참값 구동 맞춤(fit, `motion_check --body`), 멈출 때 응답, 실험실 바닥 비, 깊이 확인(validate, 멈춘 구간), IMU 느림 확인, 라이다 먼 거리 맞춤(fit, 멈춤 23 곳). **옆 명령에 몸이 앞뒤로 감** — 바퀴 확인 필요 (real_limo.md 구동 절) |
+| `1104_M_cmd_mix` | 11-04 | 실험실, 오토 모드 `/cmd_vel` 조합 계단: 앞뒤+옆 (±0.3·±0.6), 앞뒤+회전 (±0.3·±0.6, ±1·±2), 옆+회전, 앞뒤+옆+회전, 옆 ±0.8, 배터리 11.1 → 11.0 V | 131 s | 전부 (깊이 정렬 켬) | 몸 참값 구동 확인(validate, 앞뒤+회전 10 구간), IMU 느림 확인, 라이다 먼 거리 확인(validate, 멈춤 36 곳) |
+| `1104_R_static_aligned` | 11-04 | 실험실 바닥, 세워 둔 채 (깊이 정렬 켬 첫 정지 녹화) | 58 s | 깊이 1,733 장 640 × 480 | 깊이 정렬 켬 맞춤(fit): 카메라 자세·유효 영역·가까운 σ·실험실 바닥 구멍, 라이다 먼 거리 맞춤(fit, 벽 3~9 m, `far_check`) |
 
 지도: `~/limo_bags/maps/map_1026_1902` (`mapping_1026_1900` 의 Cartographer 지도).
 

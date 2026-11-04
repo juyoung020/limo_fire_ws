@@ -33,7 +33,14 @@ struct PPOConfig {
   float lam = 0.95f;
   float value_coef = 1.0f;
   bool clipped_value = true;
-  float entropy_coef = 0.005f;  // 가우시안 성분만
+  float entropy_coef = 0.001f;  // 가우시안 성분만. 0.005 → 0.001 (2026-11-05): 행동을 [−1, 1] 로 자르는 환경에서 σ 를 키워도 손해가 없어
+                                // 0.005 는 σ 를 상한까지 밀었다(explore_v3 σ 1 → 99.6). ppo/README "σ 범위"
+  // 정책 σ 범위 [std_min, std_max] — 매 Adam 걸음 뒤·체크포인트 불러오기 뒤에 log σ 변수를 [ln std_min, ln std_max] 로 투영(사영 경사 하강).
+  // 변수 자체가 늘 범위 안이라 샘플·log π·엔트로피·KL·체크포인트·onnx_export·재생이 모두 같은 σ 를 쓰고 손실 기울기는 clamp 없는 정확한 값.
+  // std_max = 1: 정책 출력은 정규 단위(env.h apply_action 이 clip1 후 한도를 곱함)라 세 성분 모두 행동 한계 반폭 = 1 (= 초기 σ).
+  // std_min = 0.05: 잠정 — 반폭의 5 %(ω 0.16 rad/s, v 0.05 m/s). 이보다 작으면 log π 의 1/σ 민감도가 커지고 탐사가 사라짐. 평가는 평균 행동이라 영향 없음.
+  // 방식 비교·출처(rsl_rl GaussianDistribution std_range, SB3 SAC LOG_STD_MIN/MAX)는 ppo/README "σ 범위".
+  float std_min = 0.05f, std_max = 1.0f;
   float lr = 1.0e-3f;
   float desired_kl = 0.01f;     // adaptive 학습률
   float lr_min = 1e-5f, lr_max = 1e-2f;  // KL 적응 학습률 한계 (rsl_rl ppo.py:291,293)
@@ -87,6 +94,7 @@ class PPO {
   double loss_and_grad(const int* d_idx, int n, bool backward);
 
  private:
+  void clamp_std();  // log σ 변수를 [ln std_min, ln std_max] 로 (Adam 걸음·불러오기 뒤)
   void concat_norm(const real* obs1d, const real* priv, int n, bool upd, real* out_norm);
   void encode(int n, const uint8_t* img, const int* idx, const real* x1d);
   double minibatch(const int* d_idx, int n, int mb_size, bool backward, double stats[4]);

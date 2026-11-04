@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "../../mdp/obs_layout.h"
+#include "../../ppo/ppo.h"
 #include "actor_critic.h"
 
 namespace {
@@ -310,7 +311,13 @@ int main(int argc, char** argv) {
     // log σ: 상태 무관 변수 — 출력으로 그대로
     {
       const auto* L = data("log_std", sp.n_cont);
-      G.init("log_std", F::DT_FLOAT, {sp.n_cont}, L ? raw_f32(*L) : "", "가우시안 log σ (v, vy, ω) — 상태 무관");
+      // 학습과 같은 σ 범위로 (ppo.h PPOConfig std_min/std_max — 새 체크포인트는 이미 범위 안, 옛 체크포인트만 바뀜)
+      std::vector<float> ls;
+      if (L) {
+        const XPPO_NS::PPOConfig pc;
+        for (float l : *L) ls.push_back(std::fmin(std::fmax(l, std::log(pc.std_min)), std::log(pc.std_max)));
+      }
+      G.init("log_std", F::DT_FLOAT, {sp.n_cont}, L ? raw_f32(ls) : "", "가우시안 log σ (v, vy, ω) — 상태 무관, [ln σ_min, ln σ_max]");
       G.node("Identity", "actor/log_std", {"log_std"}, {"log_std_out"});
     }
     G.output("actor_out", {-1, sp.actor.out}, "v·vy·ω 평균 (가우시안, 정규 단위) + 끝 선언 로짓 (베르누이)");

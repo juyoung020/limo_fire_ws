@@ -273,7 +273,8 @@ int main(int argc, char** argv) {
         .set("n_params", (long long)ppo.ac().n_params)
         .set("ppo", rf::Json::object().set("epochs", pc.epochs).set("minibatches", pc.minibatches).set("clip", pc.clip)
                         .set("gamma", pc.gamma).set("lam", pc.lam).set("entropy_coef", pc.entropy_coef).set("lr", pc.lr)
-                        .set("desired_kl", pc.desired_kl).set("max_grad_norm", pc.max_grad_norm));
+                        .set("desired_kl", pc.desired_kl).set("max_grad_norm", pc.max_grad_norm)
+                        .set("std_min", pc.std_min).set("std_max", pc.std_max));
     rf::RunFolder::Options opt;
     opt.every_s = 0;
     if (a.resume) {

@@ -16,6 +16,7 @@ struct LidarModel {
   LidarNoise nominal{};
   float latency = 0.f;
   Range2 r_sigma, r_dropout, r_edge_drop;
+  Range2 r_far_range;   // 먼 거리 표 마디 거리 배율 (장소·면마다 다름)
 };
 
 LidarModel load_lidar_model(const std::string& yaml_path);
@@ -145,6 +146,8 @@ DEV LidarNoise randomize(const LidarModel& m, uint64_t& rng) {
   N.p_graze = clamp01(N.p_graze * kd);
   N.f_spot = clamp01(N.f_spot * kd);
   N.f_spot_mid = clamp01(N.f_spot_mid * kd);
+  const float kf = dm::rand_range(rng, m.r_far_range.lo, m.r_far_range.hi);
+  for (int i = 0; i < kFarNodes; ++i) N.far_r[i] = N.far_r[i] * kf;
   return N;
 }
 

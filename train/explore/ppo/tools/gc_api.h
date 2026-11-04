@@ -16,6 +16,9 @@ struct GcOut {
   std::vector<GcBlock> blocks;
   std::vector<long> fd_ids;   // 차분한 변수
   std::vector<double> fd;     // 차분 기울기
+  bool proj_ok = false;       // σ 범위 투영: 범위 밖에서 update 한 번 뒤 log σ 가 [proj_lo, proj_hi] 안인가
+  double proj_lo = 0, proj_hi = 0;
+  std::vector<double> proj_ls;
 };
 
 namespace xppo {
