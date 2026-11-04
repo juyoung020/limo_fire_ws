@@ -13,5 +13,17 @@
 
 LIMO Webots 시뮬(`webots_ros2_limo`)은 쓰는 코드라 `src/external/` 에 있다.
 
-## papers/, datasheets/
-논문, 부품 데이터시트(MLX90640, HLK-LD2450, HC-SR04 …).
+## papers/ — 선행 연구 (2026-11-04 받음)
+
+주제마다 폴더 하나, 폴더의 `README.md` 에 논문별 링크·방법 요약·우리에게 쓸 점. PDF 는 합법 공개본만 받았고 공개본이 없으면 링크만 적었다.
+
+PDF 는 git 에 넣지 않는다. `refs/papers/fetch.sh` 가 `sources.tsv` 의 공개본을 같은 자리에 받고 체크섬으로 확인한다(`fetch.sh smoke` 처럼 일부만도 됨). 출판사가 봇 확인을 거는 3 편은 끝에 주소를 알려 주니 브라우저로 받아 둔다. 우리 시스템에 어떻게 쓸지는 `docs/prior_work_*.md`.
+
+| 폴더 | 주제 |
+|---|---|
+| [`papers/launcher`](papers/launcher/README.md) | 탁구공 발사로 불 모양 표적 맞추기 — 조준·탄도(항력)·탄착 피드백·학습 보정·RL |
+| [`papers/exploration`](papers/exploration/README.md) | 실내 프론티어 탐사 — 고전 프론티어·NBV·계층 플래너·RL 탐사·지표 |
+| [`papers/smoke`](papers/smoke/README.md) | 연기 모드 — 연기 속 센서 실측·라이다 연기 거르기·저시정 융합·초음파 MCL·열화 주입 |
+
+## datasheets/
+부품 데이터시트(MLX90640, HLK-LD2450, HC-SR04 …).

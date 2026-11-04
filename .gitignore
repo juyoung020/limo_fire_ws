@@ -36,8 +36,10 @@ archive/explore_env/build/
 train/detect/data/*
 !train/detect/data/README.md
 
-# 참고 코드(출처는 refs/README.md)
+# 참고 코드(출처는 refs/README.md), 논문 PDF(refs/papers/fetch.sh 로 받음)
 refs/code/*/
+refs/papers/**/*.pdf
+refs/papers/**/*.part
 train/detect/tools/*/target/
 
 # AutoCrawler 실행 환경
