@@ -151,7 +151,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   c.gyro_sigma = imu["gyro_sigma"].as<float>();
   c.gyro_bias = imu["gyro_bias"].as<float>();
   // 판 끝·보상·관측 크기는 mdp/ 코드 안 (rewards.h·curriculums.h·obs_layout.h)
-  c.max_steps = (int)std::lround(mdp::rew::kSafeTime / (c.substeps * c.dt));
+  c.max_steps = (int)std::lround(mdp::cur::kSafeTime / (c.substeps * c.dt));
   c.depth_w = mdp::obs::DEPTH_W;
   c.depth_h = mdp::obs::DEPTH_H;
   c.depth = load_depth_model(dir + need(y, "sensor_model", path).as<std::string>());

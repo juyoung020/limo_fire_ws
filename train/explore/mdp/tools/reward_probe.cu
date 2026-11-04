@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
   bool all_ok = true;
   std::printf("가중치: 덮음 %.1f · 시간 %.2f/T_ref(초당) · 벽 충돌 %.1f · 선언 성공 %+.1f / 실패 %.1f~%.1f · 헛돎 %.2f/rad · 안전 시간 %.0f s\n",
               mdp::rew::kCov, mdp::rew::kTime, mdp::rew::kCollWall, mdp::rew::kDeclareSuccess, mdp::rew::kDeclareFail, mdp::rew::kDeclareNear,
-              mdp::rew::kSlip, mdp::rew::kSafeTime);
+              mdp::rew::kSlip, mdp::cur::kSafeTime);
   for (const auto& path : scenes) {
     const sim::World W = sim::build_world(path, sim::load_scene(path), hc0);
     std::printf("== 맵 %s: 벽 면 칸 %d, T_ref %.0f s, 환경 %d\n", path.c_str(), W.n_wall, mdp::rew::t_ref(W.n_wall), n_env);

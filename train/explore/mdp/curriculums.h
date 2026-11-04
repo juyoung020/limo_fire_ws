@@ -2,7 +2,7 @@
 //
 // 판 끝 (done 코드, 러너는 terminal() 로 "종료(뒤 가치 0)" 와 "끊김(가치로 메움)" 을 가른다)
 //   0 진행 · 1 선언 성공(선언 때 벽 덮음 ≥ 95 %) · 2 벽 충돌 · 3 끊김(안전 시간) · 4 선언 실패(기준 미달) · 5 사람 충돌
-//   · 6 진행 없음(지도에서 새 칸을 mdp::rew::kIdleTime 동안 못 봄 — 종료, rewards.h '진행 없음')
+//   · 6 진행 없음(지도에서 새 칸을 mdp::cur::kIdleTime 동안 못 봄 — 종료, rewards.h '진행 없음')
 //   1·2·4·5·6 = 종료, 3 = 끊김 (rsl_rl time_outs, IsaacLab is_finite_horizon=False 와 같은 쓰임).
 //   한 걸음에 충돌과 선언이 같이 오면 충돌.
 //
@@ -28,6 +28,19 @@ namespace mdp::cur {
 enum Done : int32_t { kRunning = 0, kDeclareOk = 1, kCollision = 2, kTruncated = 3, kDeclareShort = 4, kCollisionPerson = 5, kNoProgress = 6,
                       kNumDone = 7 };
 DEV bool terminal(int32_t d) { return d != kRunning && d != kTruncated; }   // 종료 (뒤 가치 0)
+
+// ============================================================================================================
+// 판 끝 조건 (사람이 바꾸는 값 — 보상 점수는 rewards.h)
+// ============================================================================================================
+constexpr float kSafeTime = 1200.f;   // 안전 시간 (s): 이만큼 지나면 끊김(3, 가치로 메움). 맵과 무관. frontier_nav2 가장 긴 판 1040 s 보다 넉넉히
+constexpr float kIdleTime = 60.f;     // 진행 없음 (s): 새 벽 면 칸을 이만큼 못 보면 종료(6) + rewards.h kIdlePenalty
+constexpr float kSuccessCov = 0.95f;  // 성공 기준: 끝 선언 때 벽 덮음 ≥ 이것이면 선언 성공(1), 아래면 선언 실패(4) (mdp/README)
+//   진행 없음 끝을 둔 까닭: 끊김(안전 시간)은 time-out 이라 V 로 메워, 버티는 판의 값은 걸음당 시간 감점 할인 합
+//   (작은 맵 ≈ 0.0004/(1−γ) ≈ 0.14)뿐 — 충돌(−10)·미달 선언(−3)보다 훨씬 싸서 '판을 안 끝내는' 붕괴가 남(cur-fix (ii) 씨앗 2, B·C 실험 씨앗 1 모두).
+//   출처: Go-Explore (Ecoffet et al., Nature 2021, arXiv 2004.12919 Methods) "we terminate the episode early … if no new cells are
+//   discovered for 1,000 steps (while exploring)".
+//   kIdleTime 근거: (ii-a) 씨앗 3 반복 300 체크포인트, 학습 맵 15,318 판(학습식 표집)에서 판 최대 '새 벽 없는 간격' ≥ 60 s 는
+//   성공 0.4 %·미달 선언 0.5 %·충돌 0.3 %, 시험 맵에서 1,200 s 끊긴 판은 28/28 이 걸림 (diag 측정).
 
 struct Stage {
   float max_area;    // 이 단계 맵의 갈 수 있는 바닥 넓이 상한 (m²)

@@ -281,7 +281,7 @@ DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh) {
     P[i] = now;
   }
   for (int i = 0; i < mdp::act::DIM * 4; ++i) O[LAST_ACT + i] = e.last_act[i];
-  O[ELAPSED] = (float)e.step * dt_act / mdp::rew::kSafeTime;
+  O[ELAPSED] = (float)e.step * dt_act / mdp::cur::kSafeTime;
   // 연기 모드: 라이다·세기를 가리고 SMOKE 칸 표시 (mdp/smoke.h). 자세·지도 그리는 자리는 이미 추측 항법 오차가 든 지도 자세(env.h physics_step)
   mdp::smoke::mask_policy_1d(e.smoke, b.obs_1d + (size_t)env * POLICY_1D);
   // 가치 전용 참값

@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
     rf::Json meta = rf::Json::object();
     meta.set("robot", robot);
     meta.set("kind", "explore_ppo").set("group", a.name).set("seed", (unsigned long long)a.seed).set("n_envs", N)
-        .set("ctrl_hz", 1.0 / dt_act).set("success_coverage", mdp::rew::kSuccessCov).set("action_limits", limits)
+        .set("ctrl_hz", 1.0 / dt_act).set("success_coverage", mdp::cur::kSuccessCov).set("action_limits", limits)
         .set("reward_terms", terms).set("n_train_maps", (unsigned long long)worlds.size()).set("test_maps", tests_meta)
         .set("scene_list", a.list).set("steps_per_env", pc.steps_per_env).set("lr_max", a.lr_max)
         .set("n_params", (long long)ppo.ac().n_params)
