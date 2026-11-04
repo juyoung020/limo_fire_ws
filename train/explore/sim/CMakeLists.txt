@@ -95,4 +95,9 @@ if(SIM_OPTIX AND EXISTS ${OPTIX_INC}/optix.h)
   target_compile_definitions(limo_sim PUBLIC SIM_OPTIX=1 SIM_OPTIXIR="${OPTIXIR}")
   target_link_libraries(limo_sim PUBLIC ${CMAKE_DL_LIBS})
   message(STATUS "SIM_OPTIX: RT 코어 깊이 광선 켬 (${OPTIX_INC})")
+  # 빠른 길(하드웨어 삼각형) vs 정확한 길 통계 동등성
+  add_executable(rt_fastcheck tools/rt_fastcheck.cu)
+  target_link_libraries(rt_fastcheck limo_sim)
 endif()
+# CPU 참조판은 이 기기에 맞춰 최적화(-O3 -march=native)하되 곱·합을 합치지 않아(-ffp-contract=off) GPU 와 비트 같음 그대로 — env_bench --cpu 속도 비교용
+set_source_files_properties(src/env_ref.cpp PROPERTIES COMPILE_OPTIONS "-O3;-march=native;-ffp-contract=off")

@@ -165,6 +165,7 @@ struct Shared {
   int new_wall, new_floor, d_known, n_new;   // 이번 행동 동안 합 (scan_apply)
   // 먼 지도 다시 그릴 곳 (GPU): 이번 행동에 지도·지나간 곳이 바뀐 칸 범위, 지난번 그린 판(시작 자세·맵)
   int dx0, dy0, dx1, dy1, far_ok, far_map;
+  uint32_t far_mask[mdp::obs::FAR_H * mdp::obs::FAR_W / 32];   // 이번 행동에 로그 오즈 값이 바뀐 지도 칸이 덮는 먼 지도 칸 (비트)
   float far_key[3];
 };
 
@@ -213,6 +214,7 @@ struct EnvBatch {
   int32_t* counters;           // [kCounters] (env_kernel.cu)
   // RT 코어 (OptiX, 선택): 있으면 깊이 가운데 광선을 하드웨어로 (include/optix_rt.h). 광선 준비 칸 [env · DEPTH_SIZE]
   void* rt;                    // OptixRt* (호스트 객체, 없으면 nullptr)
+  int rt_fast;                 // 1: 빠른 길(하드웨어 삼각형, 학습 기본) · 0: 정확한 길(SIM_EXACT=1 — GPU == CPU 비트 같음). include/optix_rt.h
   void* rt_o;                  // float4
   void* rt_d;                  // float4
   int32_t* rt_tri0;
@@ -700,11 +702,40 @@ DEV void scan_beam(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
   scan_beam_mark(b, e, env, sh, j, r, ray);
 }
 
+// 먼 지도 칸 표시: 지도 칸 묶음 [cx0, cx1] × {cy} (같은 줄 4 칸 낱말) 안에서 로그 오즈가 바뀌면 그 칸들 안 점을 읽는 먼 지도 칸
+// (시작 자세 기준 0.8 m)을 더럽힘. 칸 안 점은 칸 가운데에서 반 대각(3.5 cm) 안 → 묶음 가운데에서 반 길이 + 반 칸 + 둘레 5 cm 안을 걸치는
+// 먼 칸(가로·세로 최대 2 칸씩) 모두. 이미 켜진 비트는 원자 연산 없이 넘어감. s0·c0 = 시작 방향 sin·cos
+constexpr float kFarCellM = 0.8f;   // mdp::obsgen::kFarCell 과 같아야 함 (observations.h 가 확인)
+DEV void far_mark_cells(const EnvCfg& c, const MapDev& m, const EnvState& e, float s0, float c0, uint32_t* mask, int cx0, int cx1, int cy) {
+  using namespace mdp::obs;
+  const float wx = m.ox + (0.5f * (float)(cx0 + cx1) + 0.5f) * c.res, wy = m.oy + ((float)cy + 0.5f) * c.res;
+  const float dx = wx - e.x0, dy = wy - e.y0;
+  const float rf = c0 * dx + s0 * dy, rl = -s0 * dx + c0 * dy;
+  const float half = 0.5f * (float)FAR_H * kFarCellM;
+  const float mg = (0.5f * (float)(cx1 - cx0) + 0.5f) * c.res * 1.41421356f + 0.05f;   // 묶음 반 대각 + 둘레
+  const int r0 = (int)floorf((half - rf - mg) / kFarCellM), r1 = (int)floorf((half - rf + mg) / kFarCellM);
+  const int q0 = (int)floorf((half - rl - mg) / kFarCellM), q1 = (int)floorf((half - rl + mg) / kFarCellM);
+  for (int r = r0; r <= r1; ++r)
+    for (int q = q0; q <= q1; ++q) {
+      if (r < 0 || q < 0 || r >= FAR_H || q >= FAR_W) continue;
+      const int i = r * FAR_W + q;
+      const uint32_t bit = 1u << (i & 31);
+      if (mask[i >> 5] & bit) continue;
+#ifdef __CUDA_ARCH__
+      atomicOr(&mask[i >> 5], bit);
+#else
+      mask[i >> 5] |= bit;
+#endif
+    }
+}
+
 // 스레드 tid / nthreads: 표시된 칸을 한 번씩 갱신(맞음 우선)하고 이번 장 표시(bit0~2)를 지운다. 판 동안 남는 표시(bit3 본 벽 면 칸, bit4 지나간 바닥 칸)를
 // 처음 켤 때 센다. 칸 낱말(4 칸)마다 스레드 하나만 만지므로 나누는 방식과 무관하게 지도·합이 같다
-DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const Shared& sh, int tid, int nthreads) {
+DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const Shared& sh, int tid, int nthreads, uint32_t* far_mask = nullptr) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
+  float s0 = 0.f, c0 = 1.f;
+  if (far_mask) dm::sincosf_d(e.th0, &s0, &c0);
   int n_wall = 0, n_floor = 0, d_known = 0, n_new = 0;
   // 연기 속: 이번 장 표시(bit0~2)는 지우되 지도·덮음은 갱신하지 않는다 (mdp/smoke.h — 라이다를 안 씀, 연기 전 지도를 그대로 둠)
   const bool upd = mdp::smoke::map_update(e.smoke);
@@ -719,6 +750,7 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
       const uint32_t word = M[wi];
       if ((word & 0x07070707u) == 0u) continue;
       uint32_t keep = word & 0x38383838u;   // 판 동안 남는 bit3·4·5
+      int ch_lo = 1 << 30, ch_hi = -1;
       for (int q = 0; q < 4; ++q) {
         const uint32_t mk = (word >> (8 * q)) & 0xffu;
         if (!(mk & 7u)) continue;
@@ -734,6 +766,10 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
             L[ci] = (int16_t)(v < c.l_min ? c.l_min : (v > c.l_max ? c.l_max : v));
           }
           d_known += (int)(mdp::cell_class(L[ci]) == mdp::kFree) - (int)(mdp::cell_class(old) == mdp::kFree);
+          if (L[ci] != old) {   // 이 낱말에서 바뀐 칸 범위 (먼 지도 칸 표시는 낱말마다 한 번)
+            ch_lo = cx < ch_lo ? cx : ch_lo;
+            ch_hi = cx > ch_hi ? cx : ch_hi;
+          }
         }
         if (upd && (mk & 1u) && !(mk & 16u) && cx < m.gw && (m.grid[cy * m.gw + cx] & kCellFloor)) {
           keep |= 16u << (8 * q);
@@ -745,6 +781,7 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
         }
       }
       M[wi] = keep;
+      if (far_mask && ch_hi >= 0) far_mark_cells(c, m, e, s0, c0, far_mask, ch_lo, ch_hi, cy);   // 먼 지도 칸 더럽힘
     }
   }
   return ApplyCount{n_wall, n_floor, d_known, n_new};

@@ -42,6 +42,7 @@ constexpr float kErrXyNorm = 0.1f, kErrThNorm = 0.05f, kRemainNorm = 5000.f;
 //   세기 / 100: 실측 평균 15~53 (0.75 m 에서 가장 밝음), 물체마다 σ 6 → [0, 1] 안
 constexpr float kAccNorm = 10.f, kGravity = 9.81f, kTiltNorm = 0.1f, kGyroXyNorm = 0.2f, kIntensityNorm = 100.f;
 constexpr float kNearCell = 0.10f, kFarCell = 0.8f;
+static_assert(kFarCell == sim::kFarCellM, "먼 지도 칸 크기 (env.h far_mark_cell)");
 constexpr int kFarSub = 8;   // 먼 지도 칸 안 점 8 × 8 (0.1 m)
 // 메카넘 바퀴 4 개 (바퀴 선속도 = v ∓ vy ∓ k·ω): k = (축간 0.2 + 윤거 0.13) / 2 m — limo_fire_description urdf/limo_pro_base.xacro:12-13
 constexpr float kWheelK = 0.165f;
@@ -60,8 +61,47 @@ DEV bool visited(const uint32_t* M, int ci) { return ((M[ci >> 2] >> (8 * (ci & 
 // (나머지 칸은 지난 걸음 값 그대로 — 그 칸이 읽는 지도 칸이 안 바뀌었으므로 같은 값. GPU 가 쓴다, CPU 참조판은 늘 전부)
 struct FarDirty {
   int all;
-  float x0, y0, x1, y1;
+  float x0, y0, x1, y1;          // 지나간 곳 표시 상자 (세계)
+  const uint32_t* mask;          // 로그 오즈가 바뀐 먼 칸 (비트, nullptr = 없음)
 };
+
+// 먼 지도 다시 그릴 곳 (GPU 마무리 커널·CPU 참조판이 같은 규칙으로) — g 는 환경마다 걸음을 넘어 남는 칸(EnvBatch::scratch)
+DEV void far_dirty_clear(Shared& g) {   // 행동 시작
+  g.dx0 = g.dy0 = 1 << 30;
+  g.dx1 = g.dy1 = -1;
+  for (int k = 0; k < mdp::obs::FAR_H * mdp::obs::FAR_W / 32; ++k) g.far_mask[k] = 0u;
+}
+DEV void far_dirty_add(Shared& g, int x0, int y0, int x1, int y1) {   // 바뀐 지도 칸 범위 (장 갱신 상자 · 지나간 곳 표시)
+  g.dx0 = x0 < g.dx0 ? x0 : g.dx0;
+  g.dy0 = y0 < g.dy0 ? y0 : g.dy0;
+  g.dx1 = x1 > g.dx1 ? x1 : g.dx1;
+  g.dy1 = y1 > g.dy1 ? y1 : g.dy1;
+}
+DEV void far_dirty_robot(const EnvBatch& b, const EnvState& e, Shared& g) {   // finish_step 의 지나간 곳 표시 (로봇 칸 ±2)
+  int rx, ry;
+  sim::cell_of(b.cfg, b.maps[e.map], e.x + e.ex, e.y + e.ey, &rx, &ry);
+  far_dirty_add(g, rx - 2, ry - 2, rx + 2, ry + 2);
+}
+// 관측 직전 (리셋 뒤 상태 e): 판이 바뀌었거나(리셋·처음·밖에서 상태를 바꿈) 아니면 바뀐 칸 범위 둘레 0.6 m 만
+DEV FarDirty far_dirty_take(const EnvBatch& b, const EnvState& e, Shared& g, bool was_done) {
+  const bool same = g.far_ok && g.far_map == e.map && g.far_key[0] == e.x0 && g.far_key[1] == e.y0 && g.far_key[2] == e.th0;
+  const sim::MapDev& m = b.maps[e.map];
+  const float res = b.cfg.res, pad = 0.6f;
+  FarDirty fd;
+  fd.all = (was_done || !same) ? 1 : 0;
+  fd.x0 = (m.ox + (float)g.dx0 * res) - pad;
+  fd.y0 = (m.oy + (float)g.dy0 * res) - pad;
+  fd.x1 = (m.ox + (float)(g.dx1 + 1) * res) + pad;
+  fd.y1 = (m.oy + (float)(g.dy1 + 1) * res) + pad;
+  if (g.dx1 < g.dx0) fd.x1 = fd.x0 - 1.f;   // 바뀐 칸 없음
+  fd.mask = g.far_mask;
+  g.far_ok = 1;
+  g.far_map = e.map;
+  g.far_key[0] = e.x0;
+  g.far_key[1] = e.y0;
+  g.far_key[2] = e.th0;
+  return fd;
+}
 
 DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int tid, const FarDirty& fd) {
   using namespace mdp::obs;
@@ -102,7 +142,8 @@ DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
         // 칸 가운데 (점 64 개는 가운데에서 앞·옆 0.35 m 안 → 반지름 0.5 m 안, fd 상자는 0.6 m 넓혀 둠)
         const float fwd_c = half - ((float)row + 0.5f) * kFarCell, left_c = half - ((float)col + 0.5f) * kFarCell;
         const float wcx = (e.x0 + c0 * fwd_c) - s0 * left_c, wcy = (e.y0 + s0 * fwd_c) + c0 * left_c;
-        if (!(wcx >= fd.x0 && wcx <= fd.x1 && wcy >= fd.y0 && wcy <= fd.y1)) continue;
+        const bool marked = fd.mask && ((fd.mask[i >> 5] >> (i & 31)) & 1u);
+        if (!marked && !(wcx >= fd.x0 && wcx <= fd.x1 && wcy >= fd.y0 && wcy <= fd.y1)) continue;
       }
       // 확률 칸 값 = 아는 점의 prob_u8 최댓값. prob_u8 은 로그 오즈에 단조(모름 = kUnknown 이 가장 작음)라 로그 오즈 최댓값 하나만 바꾼다
       int lmax = sim::kUnknown, vis = 0;

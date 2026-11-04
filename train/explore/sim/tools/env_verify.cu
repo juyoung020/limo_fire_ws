@@ -9,6 +9,7 @@
 //            SMOKE 칸 = 1, 명령이 연기 속도 한도 안인지 본다
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -41,6 +42,7 @@ void range_1d(int i, float* lo, float* hi) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  setenv("SIM_EXACT", "1", 0);   // GPU == CPU·옛 빌드 비교는 정확한 길로 (RT 코어 빠른 길은 tools/rt_fastcheck 로 통계 확인)
   std::vector<std::string> scenes;
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", dump, list;
   int n_env = 8, n_steps = 80;
@@ -62,6 +64,7 @@ int main(int argc, char** argv) {
     else if (a == "--model" && i + 1 < argc) model_path = argv[++i];
     else if (a == "--dump" && i + 1 < argc) dump = argv[++i];
     else if (a == "--list" && i + 1 < argc) list = argv[++i];
+    else if (a == "--threads" && i + 1 < argc) sim::set_cpu_threads(std::stoi(argv[++i]));   // CPU 참조판 스레드 수
     else scenes.push_back(a);
   }
   if (scenes.empty() && list.empty()) { std::fprintf(stderr, "env_verify <장면.scene> [장면 …] [--list 목록] [--envs 8] [--steps 80] [--negative]\n"); return 2; }

@@ -32,11 +32,12 @@ struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) Rec {
 struct OptixRt::Impl {
   OptixDeviceContext ctx = nullptr;
   OptixModule mod = nullptr;
-  OptixProgramGroup pg[3] = {};
+  OptixProgramGroup pg[4] = {};
   OptixPipeline pipe = nullptr;
   OptixShaderBindingTable sbt = {};
   std::vector<void*> bufs;
   unsigned long long* gas = nullptr;
+  unsigned long long* gas_fast = nullptr;   // 하드웨어 삼각형
   const void** tris = nullptr;
   RtParams* dparams = nullptr;
 };
@@ -52,7 +53,32 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   ox(optixInit(), "init");
   OptixDeviceContextOptions co = {};
   ox(optixDeviceContextCreate(0, &co, &I.ctx), "context");
-  std::vector<unsigned long long> handles;
+  std::vector<unsigned long long> handles, fast;
+  auto build_gas = [&](const OptixBuildInput& bi) {   // GAS 하나 (compaction)
+    OptixAccelBuildOptions ao = {};
+    ao.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    ao.operation = OPTIX_BUILD_OPERATION_BUILD;
+    OptixAccelBufferSizes sz;
+    ox(optixAccelComputeMemoryUsage(I.ctx, &ao, &bi, 1, &sz), "GAS 크기");
+    char* tmp = dalloc<char>(sz.tempSizeInBytes);
+    char* out = dalloc<char>(sz.outputSizeInBytes);
+    size_t* csz = dalloc<size_t>(1);
+    OptixAccelEmitDesc em = {};
+    em.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+    em.result = (CUdeviceptr)csz;
+    OptixTraversableHandle h;
+    ox(optixAccelBuild(I.ctx, 0, &ao, &bi, 1, (CUdeviceptr)tmp, sz.tempSizeInBytes, (CUdeviceptr)out, sz.outputSizeInBytes, &h, &em, 1), "GAS");
+    size_t cs = 0;
+    cudaMemcpy(&cs, csz, sizeof(size_t), cudaMemcpyDeviceToHost);
+    char* comp = dalloc<char>(cs);
+    ox(optixAccelCompact(I.ctx, 0, h, (CUdeviceptr)comp, cs, &h), "GAS compaction");
+    cudaDeviceSynchronize();
+    cudaFree(tmp);
+    cudaFree(out);
+    cudaFree(csz);
+    I.bufs.push_back(comp);
+    return (unsigned long long)h;
+  };
   for (const Scene* s : scenes) {
     const size_t nt = s->tris.size();
     // 삼각형 상자를 1 mm + 상대 1e−5 키움: 상자 시험 반올림으로 ray_tri 가 맞히는 삼각형을 놓치지 않게
@@ -81,33 +107,28 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
     bi.customPrimitiveArray.numPrimitives = (unsigned)nt;
     bi.customPrimitiveArray.flags = &flags;
     bi.customPrimitiveArray.numSbtRecords = 1;
-    OptixAccelBuildOptions ao = {};
-    ao.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
-    ao.operation = OPTIX_BUILD_OPERATION_BUILD;
-    OptixAccelBufferSizes sz;
-    ox(optixAccelComputeMemoryUsage(I.ctx, &ao, &bi, 1, &sz), "GAS 크기");
-    char* tmp = dalloc<char>(sz.tempSizeInBytes);
-    char* out = dalloc<char>(sz.outputSizeInBytes);
-    size_t* csz = dalloc<size_t>(1);
-    OptixAccelEmitDesc em = {};
-    em.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-    em.result = (CUdeviceptr)csz;
-    OptixTraversableHandle h;
-    ox(optixAccelBuild(I.ctx, 0, &ao, &bi, 1, (CUdeviceptr)tmp, sz.tempSizeInBytes, (CUdeviceptr)out, sz.outputSizeInBytes, &h, &em, 1), "GAS");
-    size_t cs = 0;
-    cudaMemcpy(&cs, csz, sizeof(size_t), cudaMemcpyDeviceToHost);
-    char* comp = dalloc<char>(cs);
-    ox(optixAccelCompact(I.ctx, 0, h, (CUdeviceptr)comp, cs, &h), "GAS compaction");
-    cudaDeviceSynchronize();
-    cudaFree(tmp);
-    cudaFree(out);
-    cudaFree(csz);
+    handles.push_back(build_gas(bi));
     cudaFree(dbb);
-    I.bufs.push_back(comp);
-    handles.push_back((unsigned long long)h);
+    // 빠른 길: 같은 삼각형을 하드웨어 삼각형으로 (꼭짓점 3 개씩, 번호 = 삼각형 번호)
+    float* dv = dalloc<float>(nt * 9);
+    cudaMemcpy(dv, s->tris.data(), nt * 36, cudaMemcpyHostToDevice);
+    CUdeviceptr tv = (CUdeviceptr)dv;
+    OptixBuildInput ti = {};
+    ti.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+    ti.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+    ti.triangleArray.vertexStrideInBytes = 12;
+    ti.triangleArray.numVertices = (unsigned)(nt * 3);
+    ti.triangleArray.vertexBuffers = &tv;
+    ti.triangleArray.flags = &flags;
+    ti.triangleArray.numSbtRecords = 1;
+    fast.push_back(build_gas(ti));
+    cudaFree(dv);
   }
+
   I.gas = dalloc<unsigned long long>(handles.size());
   cudaMemcpy(I.gas, handles.data(), handles.size() * 8, cudaMemcpyHostToDevice);
+  I.gas_fast = dalloc<unsigned long long>(fast.size());
+  cudaMemcpy(I.gas_fast, fast.data(), fast.size() * 8, cudaMemcpyHostToDevice);
   I.tris = dalloc<const void*>(dev_tris.size());
   cudaMemcpy(I.tris, dev_tris.data(), dev_tris.size() * sizeof(void*), cudaMemcpyHostToDevice);
   std::ifstream f(SIM_OPTIXIR, std::ios::binary);
@@ -119,12 +140,12 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   po.numPayloadValues = 9;
   po.numAttributeValues = 2;
   po.pipelineLaunchParamsVariableName = "params";
-  po.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM;
+  po.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM | OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE;
   char log[4096];
   size_t ll = sizeof(log);
   ox(optixModuleCreate(I.ctx, &mo, &po, ir.data(), ir.size(), log, &ll, &I.mod), "모듈");
   OptixProgramGroupOptions pgo = {};
-  OptixProgramGroupDesc ds[3] = {};
+  OptixProgramGroupDesc ds[4] = {};
   ds[0].kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
   ds[0].raygen.module = I.mod;
   ds[0].raygen.entryFunctionName = "__raygen__rays";
@@ -134,15 +155,18 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   ds[2].kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
   ds[2].hitgroup.moduleIS = I.mod;
   ds[2].hitgroup.entryFunctionNameIS = "__intersection__tri";
+  ds[3].kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;   // 빠른 길: 하드웨어 삼각형 + 가장 가까운 맞음
+  ds[3].hitgroup.moduleCH = I.mod;
+  ds[3].hitgroup.entryFunctionNameCH = "__closesthit__tri";
   ll = sizeof(log);
-  ox(optixProgramGroupCreate(I.ctx, ds, 3, &pgo, log, &ll, I.pg), "프로그램 묶음");
+  ox(optixProgramGroupCreate(I.ctx, ds, 4, &pgo, log, &ll, I.pg), "프로그램 묶음");
   OptixPipelineLinkOptions plo = {};
   plo.maxTraceDepth = 1;
   ll = sizeof(log);
-  ox(optixPipelineCreate(I.ctx, &po, &plo, I.pg, 3, log, &ll, &I.pipe), "파이프라인");
-  Rec rec[3];
-  for (int k = 0; k < 3; ++k) ox(optixSbtRecordPackHeader(I.pg[k], &rec[k]), "SBT");
-  Rec* dr = dalloc<Rec>(3);
+  ox(optixPipelineCreate(I.ctx, &po, &plo, I.pg, 4, log, &ll, &I.pipe), "파이프라인");
+  Rec rec[4];
+  for (int k = 0; k < 4; ++k) ox(optixSbtRecordPackHeader(I.pg[k], &rec[k]), "SBT");
+  Rec* dr = dalloc<Rec>(4);
   cudaMemcpy(dr, rec, sizeof(rec), cudaMemcpyHostToDevice);
   I.bufs.push_back(dr);
   I.sbt.raygenRecord = (CUdeviceptr)&dr[0];
@@ -151,7 +175,7 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   I.sbt.missRecordCount = 1;
   I.sbt.hitgroupRecordBase = (CUdeviceptr)&dr[2];
   I.sbt.hitgroupRecordStrideInBytes = sizeof(Rec);
-  I.sbt.hitgroupRecordCount = 1;
+  I.sbt.hitgroupRecordCount = 2;   // 0 정확한 길(교차 프로그램), 1 빠른 길(하드웨어 삼각형)
   I.dparams = dalloc<RtParams>(1);
 }
 
@@ -163,6 +187,7 @@ OptixRt::~OptixRt() {
   if (I.ctx) optixDeviceContextDestroy(I.ctx);
   for (void* p : I.bufs) cudaFree(p);
   cudaFree(I.gas);
+  cudaFree(I.gas_fast);
   cudaFree(I.tris);
   cudaFree(I.dparams);
   delete impl_;
@@ -171,11 +196,12 @@ OptixRt::~OptixRt() {
 void OptixRt::launch(const RtParams& p0, cudaStream_t st) {
   Impl& I = *impl_;
   RtParams p = p0;
-  p.gas = I.gas;
+  p.gas = p.fast ? I.gas_fast : I.gas;
   p.tris = I.tris;
   if (p.n <= 0) return;
   cudaMemcpyAsync(I.dparams, &p, sizeof(p), cudaMemcpyHostToDevice, st);
-  ox(optixLaunch(I.pipe, st, (CUdeviceptr)I.dparams, sizeof(RtParams), &I.sbt, (unsigned)p.n, 1, 1), "launch");
+  const unsigned dim = p.n_dev ? (unsigned)std::min(p.n, 1 << 19) : (unsigned)p.n;   // 크기가 장치에 있으면 발사 칸 2^19 개가 나눠 쏨
+  ox(optixLaunch(I.pipe, st, (CUdeviceptr)I.dparams, sizeof(RtParams), &I.sbt, dim, 1, 1), "launch");
 }
 
 }  // namespace sim

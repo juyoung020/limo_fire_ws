@@ -131,6 +131,8 @@ inline void to_normalized(const EnvCfg& c, float v, float vy, float w, float dec
 // 한 걸음 (src/env_kernel.cu, src/env_ref.cpp)
 void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);   // actions: [N][mdp::act::DIM]
 void env_step_cpu(const EnvBatch& b, const float* actions);
+// CPU 참조판 스레드 수 (기본 1). 환경을 스레드에 나눠 돌린다 — 결과는 스레드 수와 무관하게 같다
+void set_cpu_threads(int n);
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st = 0);
 void env_reset_cpu(const EnvBatch& b);
 

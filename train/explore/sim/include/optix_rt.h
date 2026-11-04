@@ -1,4 +1,7 @@
-// RT 코어 광선 순회 (OptiX, 선택 — CMake SIM_OPTIX). 하드웨어는 삼각형마다 조금 키운 상자만 순회하고, 상자에 든 삼각형은 교차 프로그램이
+// RT 코어 광선 순회 (OptiX, 선택 — CMake SIM_OPTIX). 두 길:
+//   빠른 길(학습 기본): 하드웨어 삼각형 교차로 가장 가까운 삼각형을 고르고, 거리는 그 삼각형에 우리 ray_tri 를 다시 써서 낸다(MT 가 못 맞히면
+//     하드웨어 거리). 모서리·정확한 동점에서 정확한 길과 다른 삼각형을 고를 수 있다 — 통계 동등성은 tools/rt_fastcheck 로 확인.
+//   정확한 길(SIM_EXACT=1): 아래 — GPU == CPU 비트 같음 (env_verify·env_dump 는 이 길로). 하드웨어는 삼각형마다 조금 키운 상자만 순회하고, 상자에 든 삼각형은 교차 프로그램이
 // scene.h ray_tri(같은 식·같은 반올림)로 잰다. 고르는 규칙은 소프트웨어 순회와 같다: (t, 삼각형 번호) 사전순 최소, 사람 원기둥이
 // 먼저 정한 best 보다 엄격히 가까워야 이김 — 그래서 CPU 참조판(raycast)과 같은 답.
 #pragma once
@@ -23,6 +26,7 @@ struct RtParams {
   int n;
   const int32_t* n_dev;            // 있으면 묶음 크기가 장치에 (광선 번호 off + i ≥ *n_dev 는 안 쏨)
   int off;
+  int fast;                        // 1: 빠른 길(하드웨어 삼각형) — 아래 설명
 };
 
 class OptixRt {

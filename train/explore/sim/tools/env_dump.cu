@@ -2,6 +2,7 @@
 // 끝에 지도·덮음 표시의 해시(FNV-1a 64)를 한 줄씩 찍는다. 커널을 고친 뒤 두 빌드의 출력을 diff 하면 시뮬 결과가 비트까지 같은지 안다.
 // env_dump <장면.scene> [장면 …] [--list 목록] [--envs 256] [--steps 60] [--people 0] [--declare 0.01] [--seed 7]
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@ uint64_t fnv_v(const std::vector<T>& v) { return fnv(v.data(), v.size() * sizeof
 }  // namespace
 
 int main(int argc, char** argv) {
+  setenv("SIM_EXACT", "1", 0);   // GPU == CPU·옛 빌드 비교는 정확한 길로 (RT 코어 빠른 길은 tools/rt_fastcheck 로 통계 확인)
   std::vector<std::string> scenes;
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", list;
   int n_env = 256, n_steps = 60, people = 0;

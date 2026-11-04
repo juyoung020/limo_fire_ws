@@ -482,10 +482,13 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       }
       rt_ = new OptixRt(sc, dt);
       b_.rt = rt_;
-      b_.rt_o = alloc<float4>(px);
-      b_.rt_d = alloc<float4>(px);
-      b_.rt_tri0 = alloc<int32_t>(px);
-      b_.rt_t = alloc<float>(px);
+      const char* ex = std::getenv("SIM_EXACT");
+      b_.rt_fast = (ex && std::atoi(ex)) ? 0 : 1;   // 기본 빠른 길, SIM_EXACT=1 이면 정확한 길
+      // 준비 칸: 가장 큰 묶음 = 깊이 옆 광선(픽셀마다 최대 2) — 한 번에 쏘려고 2 · 환경 · DEPTH_SIZE (env_kernel.cu kRtCap)
+      b_.rt_o = alloc<float4>(2 * px);
+      b_.rt_d = alloc<float4>(2 * px);
+      b_.rt_tri0 = alloc<int32_t>(2 * px);
+      b_.rt_t = alloc<float>(2 * px);
     }
 #endif
   }
