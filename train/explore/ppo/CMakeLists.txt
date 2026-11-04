@@ -14,7 +14,8 @@ find_package(CUDAToolkit REQUIRED)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 
 set(NET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../network)
-add_library(explore_net STATIC ${NET_DIR}/common.cu ${NET_DIR}/actor_critic.cu ${NET_DIR}/cnn_fused.cu ${NET_DIR}/gemm_fused.cu)
+add_library(explore_net STATIC ${NET_DIR}/common.cu ${NET_DIR}/actor_critic.cu ${NET_DIR}/cnn_fused.cu ${NET_DIR}/cnn_tail.cu
+            ${NET_DIR}/gemm_fused.cu)
 target_include_directories(explore_net PUBLIC ${NET_DIR})
 target_link_libraries(explore_net PUBLIC CUDA::cudart CUDA::cublas)
 
@@ -41,8 +42,8 @@ foreach(t toy_train bench gemm_bench)
   add_executable(${t} tools/${t}.cu)
   target_link_libraries(${t} explore_ppo)
 endforeach()
-# 합성곱 융합 커널 정확도(텐서 코어 vs fp32)·속도
-foreach(t cnn_check cnn_bench)
+# 합성곱 융합 커널 정확도(텐서 코어 vs fp32)·속도, 넷째 층 융합 커널 vs fp64 기준
+foreach(t cnn_check cnn_bench tail_check)
   add_executable(${t} tools/${t}.cu)
   target_link_libraries(${t} explore_net)
 endforeach()

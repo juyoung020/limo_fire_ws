@@ -30,6 +30,13 @@ recordings:
     floor: office
     skip: [[42, 43.5], [55, 57.5], [59, 61]]   # 부딪힌 순간 (수평 가속 7 · 92 · 26 m/s²)
 
+# 몸 참값 — motion_check --set analysis/calibration.yaml fit|validate --body [--fit] [--table]. CSV 는 motion_export (라이다 스캔 맞추기 몸 자세 lo_* 열).
+# 명령 → 몸 움직임(라이다 몸 vx · 자이로 ω · 정지→정지 이동)과 멈춤 응답. 옆(vy) 명령 구간은 도구가 스스로 뺀다 (시뮬은 정상 메카넘 가정, real_limo.md 구동 절).
+# 맞춤은 앞뒤 단독 ±0.3·±0.6·±1.0 m/s 와 제자리 ±1·±2·±3 rad/s 가 다 든 mecanum (넓은 범위), 확인은 v·ω 조합만 든 mix
+body:
+  - {name: 1104_M_cmd_mecanum, bag: 1104_M_cmd_mecanum, role: fit, floor: lab}
+  - {name: 1104_M_cmd_mix, bag: 1104_M_cmd_mix, role: validate, floor: lab}
+
 # IMU (가속도 x·y·z, 자이로 x·y, roll·pitch) — tools/imu_check (--fit 은 fit 녹화로). CSV 는 data 폴더의 <bag>.csv:
 #   ros2 run limo_fire_sim motion_export ~/limo_bags/<bag> <data>/<bag>.csv   (IMU 원값·지도 자세 열 — 지도 속도 mapvel: 도 같은 파일)
 # kind rest: 세워 둔 녹화(바닥 기울기·정지 잡음), drive: 주행(진동·기울기 응답). 정지 맞춤은 spot1·2·mapping 정지, 확인은 spot3.
@@ -42,13 +49,20 @@ imu:
   - {bag: 1103_R1_spot3, role: validate, kind: rest}
   - {bag: 1103_M_cmd1, role: validate, kind: drive, skip: [[186.3, 188.2]]}
   - {bag: 1103_M_drive1, role: validate, kind: drive}
+  # 1104 실험실 명령 계단 (옆 명령 구간은 imu_check 가 스스로 뺌): 느린 속도 진동 확인만. 실험실 바닥은 주행 진동이 사무실보다 작아
+  # (움직일 때 분산 0.3~0.5 배) 한 모델로는 못 맞춤 — 다시 맞춘 세 가지 모두 확인 녹화에서 기준 밖이라 설정은 1103 맞춤 그대로 (real_limo.md IMU 절)
+  - {bag: 1104_M_cmd_mecanum, role: validate, kind: drive}
+  - {bag: 1104_M_cmd_mix, role: validate, kind: drive}
 
 # 깊이 카메라 — tools/depth_check (--fit 은 fit 녹화로). 통계는 녹화마다 data 폴더에:
 #   depth_stats_bag <data>/<bag>.depth.yaml ~/limo_bags/<bag> [--static] --cam-h 0.1881 --cam-pitch 0.1152
 #   (--cam-h·--cam-pitch 는 바닥 구멍 통계용 카메라 자세 — 먼저 기본값으로 돌려 나온 floor_plane 을 넣는다)
+# 2026-11-04 부터 깊이를 컬러에 정렬(depth_registration true, 640 × 480 의 위 400 행) — 정렬 켬 녹화만 쓴다 (--rows 400):
+#   depth_stats_bag <data>/<bag>.depth.yaml ~/limo_bags/<bag> [--static] --rows 400 --cam-h 0.1869 --cam-pitch 0.0902
+# 정렬 안 한 예전 녹화(static_1103_floor fit · 1103_M_drive1 validate)는 사무실 바닥 구멍 범위(sensor_model.yaml depth.holes.floor)의 근거로만 남긴다
 depth:
-  - {bag: static_1103_floor, role: fit}     # 세워 둔 61 s: 시간 σ · 바닥·모서리 구멍 · 카메라 자세
-  - {bag: 1103_M_drive1, role: validate}    # 주행 75 s: 멈춘 구간 2 개로 시간 σ, 장마다 구멍
+  - {bag: 1104_R_static_aligned, role: fit}   # 실험실 세워 둔 58 s: 시간 σ · 바닥·모서리 구멍 · 카메라 자세 · 유효 영역
+  - {bag: 1104_M_cmd_mecanum, role: validate} # 실험실 명령 계단 88 s: 멈춘 구간 2 개로 시간 σ, 장마다 구멍
 
 # 지도 속도 (Cartographer 지도 자세 0.1 s 미분) — tools/mapvel_check (--fit 은 fit 녹화로). CSV 는 motion_export (map_* · mo_* 열).
 # 정지 녹화는 Cartographer 가 돌던 사무실 세 자리 (spot1·2 fit, spot3 validate).

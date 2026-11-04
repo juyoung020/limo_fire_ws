@@ -1,4 +1,5 @@
 // 탐사 RL PPO — 롤아웃 버퍼·GAE·손실·Adam·KL 적응 학습률·체크포인트. rsl_rl 2.3.1 algorithms/ppo.py·storage/rollout_storage.py 꼴.
+#include <cuda_bf16.h>
 #include <curand_kernel.h>
 
 #include <algorithm>
@@ -96,7 +97,7 @@ __global__ void k_affine(real* x, long n, real m, real inv) {
   if (i < n) x[i] = (x[i] - m) * inv;
 }
 
-// 미니배치 모으기 한 번에: 정규화 1D 행 [D] + 롤아웃 값 8 가지(폭 w[g]) → dst_obs [n][D], dst[g] [n][w[g]]
+// 미니배치 모으기 한 번에: 정규화 1D 행 [D] + 롤아웃 값 8 가지(폭 w[g]) → dst_obs [n][ld_obs] 의 앞 D 열(fp32, 또는 dst_h 면 bf16 만), dst[g] [n][w[g]]
 struct GatherSet {
   const real* src[8];
   real* dst[8];
@@ -104,14 +105,18 @@ struct GatherSet {
   int W;  // 폭 합
 };
 __global__ void k_gather_mb(const real* __restrict__ obs, int D, const int* __restrict__ idx, int n, real* dst_obs,
-                            GatherSet gs) {
+                            long ld_obs, __nv_bfloat16* dst_h, GatherSet gs) {
   long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
   const int R = D + gs.W;
   if (k >= (long)n * R) return;
   int i = (int)(k / R), j = (int)(k % R);
   const long r = idx[i];
   if (j < D) {
-    dst_obs[(long)i * D + j] = obs[r * D + j];
+    const real v = obs[r * D + j];
+    if (dst_h)
+      dst_h[(long)i * ld_obs + j] = __float2bfloat16_rn(v);
+    else
+      dst_obs[(long)i * ld_obs + j] = v;
     return;
   }
   j -= D;
@@ -190,20 +195,16 @@ __global__ void k_loss(LossArgs p) {
   p.stat[i * 4 + 3] = r;
 }
 
-// MLP 입력 [F | 1D]: dst[i][j] = j < nf ? F[i·nf + j] : x[i·ldx + j − nf]  (dst 행 길이 nf + d)
-__global__ void k_cat_feat(const real* __restrict__ F, int nf, const real* __restrict__ x, int ldx, int d, int n, real* dst) {
+// MLP 입력 [F | 1D] 의 1D 열: dst[i·ldd + j] = x[i·ldx + j] (j < d), dst_h 면 bf16 만. F 열은 인코더가 바로 쓴다
+__global__ void k_put_1d(const real* __restrict__ x, int ldx, int d, int n, real* dst, __nv_bfloat16* dst_h, long ldd) {
   long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  const int W = nf + d;
-  if (k >= (long)n * W) return;
-  int i = (int)(k / W), j = (int)(k % W);
-  dst[k] = j < nf ? F[(long)i * nf + j] : x[(long)i * ldx + (j - nf)];
-}
-// 인코더 특징 기울기 = actor 몫 + critic 몫 (고정 순서): dF[i][j] = a[i·lda + j] + c[i·ldc + j]
-__global__ void k_sum_dfeat(const real* __restrict__ a, long lda, const real* __restrict__ c, long ldc, int nf, int n, real* dF) {
-  long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  if (k >= (long)n * nf) return;
-  int i = (int)(k / nf), j = (int)(k % nf);
-  dF[k] = a[(long)i * lda + j] + c[(long)i * ldc + j];
+  if (k >= (long)n * d) return;
+  int i = (int)(k / d), j = (int)(k % d);
+  const real v = x[(long)i * ldx + j];
+  if (dst_h)
+    dst_h[(long)i * ldd + j] = __float2bfloat16_rn(v);
+  else
+    dst[(long)i * ldd + j] = v;
 }
 
 __global__ void k_add_const(real* x, int n, real c) {
@@ -235,8 +236,9 @@ T* dmalloc(long n, size_t& acc) {
 }  // namespace
 
 PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), seed_(seed), lr_(cfg.lr) {
+  if (cfg_.chunk <= 0) cfg_.chunk = std::max(1, cfg_.num_envs * cfg_.steps_per_env / std::max(1, cfg_.minibatches));  // 미니배치 하나
   if (spec.n_cont > MAXC) throw std::runtime_error("n_cont > MAXC");
-  ac_ = new ActorCritic(spec, seed, cfg.chunk);
+  ac_ = new ActorCritic(spec, seed, cfg_.chunk);
   CKB(cublasSetMathMode(ac_->cublas, cfg.tf32 ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH));
   bool bf = cfg.cnn_bf16;
   if (const char* e = std::getenv("XNET_CNN_BF16")) bf = std::atoi(e) != 0;  // TODO(제거): 정밀도 A/B 실측용
@@ -271,12 +273,11 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   s_done_ = dmalloc<real>(S_, b);
   s_ret_ = dmalloc<real>(S_, b);
   s_adv_ = dmalloc<real>(S_, b);
-  int C = cfg.chunk;
+  int C = cfg_.chunk;
   raw_ = dmalloc<real>((long)N_ * D_, b);
   last_obs_ = dmalloc<real>((long)N_ * D_, b);
   last_val_ = dmalloc<real>(N_, b);
   c_img_ = dmalloc<uint8_t>((long)C * IMG_, b);
-  c_obs_ = dmalloc<real>((long)C * D_, b);
   c_aout_ = dmalloc<real>((long)C * A_, b);
   c_v_ = dmalloc<real>(C, b);
   c_da_ = dmalloc<real>((long)C * A_, b);
@@ -285,7 +286,9 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   c_stat_ = dmalloc<real>((long)C * 4, b);
   c_red_ = dmalloc<real>(16, b);
   c_x_ = dmalloc<real>((long)C * (NF_ + D_), b);
-  c_df_ = dmalloc<real>((long)C * NF_, b);
+  // bf16 MLP(mlp 2)는 첫 층이 cuBLAS bf16 이라 입력 bf16 사본 c_xh_ 를 둔다 (1D 열은 사본에만, F 열은 둘 다 — fp32 는 넷째 층 ELU' 용)
+  if (sizeof(real) == 4 && cfg_.mlp == 2) c_xh_ = dmalloc<uint16_t>((long)C * (NF_ + D_), b);
+  ac_->enc.set_x0(c_x_, NF_ + D_, c_xh_);  // 인코더가 특징을 MLP 입력 [F | 1D] 의 앞 열에 바로 쓴다 (모으는 복사 없음)
   c_gat_ = dmalloc<real>((long)C * (A_ + 5 + 2 * NC_), b);
   d_perm_ = dmalloc<int>(S_, b);
 }
@@ -293,16 +296,18 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
 PPO::~PPO() {
   for (void* p : std::initializer_list<void*>{m_, v_, s_img_, s_obs_, s_act_, s_logp_, s_val_, s_mu_, s_logit_, s_sd_,
                                               s_rew_, s_done_, s_ret_, s_adv_, raw_, last_obs_, last_val_, c_img_,
-                                              c_obs_, c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_df_})
+                                              c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_})
     cudaFree(p);
   delete ac_;
 }
 
-// 공유 인코더 정방향 → c_x_ = [F | x1d (D_ 열)] (actor 는 앞 nf + 정책 1D 열, critic 은 전부)
+// 공유 인코더 정방향 → c_x_ = [F | x1d (D_ 열)] (actor 는 앞 nf + 정책 1D 열, critic 은 전부).
+// x1d = nullptr 이면 1D 열은 이미 c_x_ 에 있음 (미니배치 모으기가 바로 씀)
 void PPO::encode(int n, const uint8_t* img, const int* idx, const real* x1d) {
   auto st = ac_->stream;
   ac_->enc.forward(ac_->cublas, st, n, img, nullptr, 0, nullptr, idx);
-  k_cat_feat<<<nblk((long)n * (NF_ + D_)), 256, 0, st>>>(ac_->enc.x0(), NF_, x1d, D_, D_, n, c_x_);
+  if (x1d)
+    k_put_1d<<<nblk((long)n * D_), 256, 0, st>>>(x1d, D_, D_, n, c_x_ + NF_, c_xh_ ? (__nv_bfloat16*)c_xh_ + NF_ : nullptr, NF_ + D_);
 }
 
 void PPO::concat_norm(const real* obs1d, const real* priv, int n, bool upd, real* out) {
@@ -326,8 +331,8 @@ void PPO::act(const uint8_t* img, const real* obs1d, const real* priv, real* act
     const real* ob = obs + (long)c0 * D_;
     encode(n, im, nullptr, ob);
     ac_->fork();
-    ac_->critic.forward(ac_->cublas2, ac_->stream2, n, nullptr, c_x_, NF_ + D_, s_val_ + k0 + c0);
-    ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_);
+    ac_->critic.forward(ac_->cublas2, ac_->stream2, n, nullptr, c_x_, NF_ + D_, s_val_ + k0 + c0, nullptr, c_xh_);
+    ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     ac_->join();
     long k = k0 + c0;
     k_sample<<<nblk(n, 128), 128, 0, st>>>(c_aout_, ac_->log_std(), n, NC_, seed_, act_calls_, c0, actions + (long)c0 * A_,
@@ -362,7 +367,7 @@ void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, in
   for (int c0 = 0; c0 < n_all; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, n_all - c0);
     encode(n, img + (long)c0 * IMG_, nullptr, raw_ + (long)c0 * D_);
-    ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_);
+    ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     k_mean_act<<<nblk(n, 128), 128, 0, st>>>(c_aout_, n, NC_, actions + (long)c0 * A_);
   }
 }
@@ -374,7 +379,7 @@ void PPO::compute_returns(const uint8_t* img, const real* obs1d, const real* pri
   for (int c0 = 0; c0 < N_; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, N_ - c0);
     encode(n, img + (long)c0 * IMG_, nullptr, last_obs_ + (long)c0 * D_);
-    ac_->critic.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, last_val_ + c0);
+    ac_->critic.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, last_val_ + c0, nullptr, c_xh_);
   }
   k_gae<<<nblk(N_, 128), 128, 0, st>>>(s_rew_, s_done_, s_val_, last_val_, T_, N_, cfg_.gamma, cfg_.lam, s_ret_,
                                        s_adv_);
@@ -411,11 +416,12 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
       cur += (long)n * gs.w[g];
       gs.W += gs.w[g];
     }
-    k_gather_mb<<<nblk((long)n * (D_ + gs.W)), 256, 0, st>>>(s_obs_, D_, ix, n, c_obs_, gs);
-    encode(n, im, imx, c_obs_);
+    k_gather_mb<<<nblk((long)n * (D_ + gs.W)), 256, 0, st>>>(s_obs_, D_, ix, n, c_x_ + NF_, NF_ + D_,
+                                                                   c_xh_ ? (__nv_bfloat16*)c_xh_ + NF_ : nullptr, gs);
+    encode(n, im, imx, nullptr);
     ac.fork();
-    ac.critic.forward(ac.cublas2, ac.stream2, n, nullptr, c_x_, NF_ + D_, c_v_);
-    ac.actor.forward(ac.cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_);
+    ac.critic.forward(ac.cublas2, ac.stream2, n, nullptr, c_x_, NF_ + D_, c_v_, nullptr, c_xh_);
+    ac.actor.forward(ac.cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     ac.join();
     LossArgs p{c_aout_, c_v_, ac.log_std(), off[0], off[1], off[2], off[3], off[4], off[5], off[6], off[7], n, NC_,
                cfg_.clip, cfg_.value_coef, 1.f / mb, cfg_.clipped_value, c_da_, c_dv_, c_dls_, c_stat_};
@@ -425,10 +431,9 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
       ac.critic.backward(ac.cublas2, ac.stream2, n, nullptr, c_dv_);
       ac.actor.backward(ac.cublas, st, n, nullptr, c_da_);
       ac.join();
-      // 공유 인코더: 두 MLP 의 특징 기울기를 더해 합성곱 역방향으로 (rsl_rl·공유 인코더 PPO 와 같은 합 손실)
-      k_sum_dfeat<<<nblk((long)n * NF_), 256, 0, st>>>(ac.actor.dx0(), ac.actor.feat(), ac.critic.dx0(), ac.critic.feat(), NF_, n,
-                                                       c_df_);
-      ac.enc.backward(ac.cublas, st, n, im, c_df_, imx);
+      // 공유 인코더: 두 MLP 의 특징 기울기(actor + critic, 고정 순서)를 합성곱 역방향으로 (rsl_rl·공유 인코더 PPO 와 같은 합 손실).
+      // 더하기는 넷째 층 역방향이 읽으면서 한다 (모으는 버퍼 없음)
+      ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), ac.critic.dx0(), ac.critic.feat());
       col_sum(c_dls_, n, NC_, NC_, ac.log_std_grad(), true, st);
     }
     col_sum(c_stat_, n, 4, 4, c_red_, false, st);

@@ -1,4 +1,4 @@
-// 시뮬 = 현실 (IMU): 실물 녹화의 몸통 움직임(바퀴 // 잡음: s0 = 정지 σ. 움직일 때 (q1, qv, qw) = 잔차² 을 [1, |v|, |ω|] 로 최소제곱 (분산의 치우침 없는 맞춤). 음수 계수는 빼고 다시, 자이로 ω, v 변화 a)을 학습 시뮬 IMU 모델(imu.h — 학습 환경이 쓰는 그 함수)에
+// 시뮬 = 현실 (IMU): 실물 녹화의 몸통 움직임(바퀴 v, 자이로 ω, v 변화 a)을 학습 시뮬 IMU 모델(imu.h — 학습 환경이 쓰는 그 함수)에
 // 넣어 가속도 x·y·z, 자이로 x·y, roll·pitch 를 만들고, 실물 /imu 와 같은 통계 코드로 비교한다. --fit 은 맞춤 녹화로 모델 값을 정해
 // sensor_model.yaml imu 에 넣을 줄을 낸다.
 //   imu_check [--set analysis/calibration.yaml] [--role fit|validate] [--model config/sensor_model.yaml] [--fit]
@@ -63,6 +63,10 @@ Rec load(const std::string& path, const std::string& name, const std::string& ki
     throw std::runtime_error(path + ": 열 " + k + " 없음 (새 motion_export 로 다시 만든다)");
   };
   const int ct = col("t"), cv = col("odom_v"), cw = col("odom_w"), cg = col("gyro_w"), cn = col("imu_n");
+  // 메카넘 옆(vy) 명령: 시뮬은 정상 메카넘 가정이라 실물 옆 이동(바퀴 확인 필요 — real_limo.md 구동 절)은 비교에서 뺀다 — 명령 중과 뒤 1.5 s
+  int cvy = -1;
+  for (size_t i = 0; i < head.size(); ++i) if (head[i] == "cmd_vy") cvy = (int)i;
+  double vy_until = -1;
   int cm[sim::kImuCh];
   for (int k = 0; k < sim::kImuCh; ++k) cm[k] = col(kName[k]);
   long last_n = -1;
@@ -83,6 +87,8 @@ Rec load(const std::string& path, const std::string& name, const std::string& ki
     r.fresh = n != last_n;   // 오도메트리 50 Hz · IMU 100 Hz: 같은 IMU 메시지를 두 줄이 같이 보면 뒤 줄은 통계에서 뺀다
     last_n = n;
     for (const auto& [a, b] : skip) r.skip = r.skip || (r.t >= a && r.t <= b);
+    if (cvy >= 0 && x[cvy] != 0.0) vy_until = r.t + 1.5;
+    r.skip = r.skip || r.t <= vy_until;
     rec.rows.push_back(r);
   }
   // 몸통 직진 가속: 바퀴 v 를 ±0.1 s 로 미분 (바퀴 v 1 mm/s 단위 계단을 누름). 정지 판정은 바퀴 v·ω
@@ -354,7 +360,8 @@ int main(int argc, char** argv) {
   const Stats R = stats(m, recs, real_meas(recs));
   const Stats S = stats(m, recs, sim_meas(m, recs, 2026));
   const YAML::Node tol = YAML::LoadFile(model_path)["check"];
-  const double t_sd = tol["imu_sigma_ratio"].as<double>(), t_acf = tol["imu_acf"].as<double>(), t_raw = tol["imu_raw_ratio"].as<double>();
+  const double t_sd = tol["imu_sigma_ratio"].as<double>(), t_acf = tol["imu_acf"].as<double>(), t_raw = tol["imu_raw_ratio"].as<double>(),
+               t_slow = tol["imu_slow_ratio"].as<double>();
   std::printf("\n줄 수: 정지 %ld · 느림 %ld · 빠름 %ld (실물 같은 줄을 시뮬로)\n\n| 통로 | 항목 | 시뮬 | 실물 | 차이 | 허용 | |\n|---|---|---|---|---|---|---|\n",
               R.n[0], R.n[1], R.n[2]);
   bool pass = true;
@@ -367,7 +374,7 @@ int main(int argc, char** argv) {
     std::printf("| %s | %s | %.5f | %.5f | %s%.3f | %.2f | %s |\n", kName[k], item, s, r, ratio ? "×" : "", d, t, ok ? "통과" : "**넘음**");
   };
   for (int k = 0; k < sim::kImuCh; ++k) {
-    for (int b = 0; b < 3; ++b) if (R.n[b] > 50) row(k, bn[b], S.sd[k][b], R.sd[k][b], true, t_sd);
+    for (int b = 0; b < 3; ++b) if (R.n[b] > 50) row(k, bn[b], S.sd[k][b], R.sd[k][b], true, b == 1 ? t_slow : t_sd);
     if (R.n[1] + R.n[2] > 50) {
       row(k, "0.1 s 자기상관 (움직임)", S.acf[k], R.acf[k], false, t_acf);
       row(k, "원값 σ (움직임)", S.raw_sd[k], R.raw_sd[k], true, t_raw);

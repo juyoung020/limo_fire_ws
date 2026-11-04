@@ -24,7 +24,8 @@ struct LidarSpec {
 struct DepthSpec {
   int w = 640, h = 400;
   float fx = 478.02396f, fy = 478.02396f, cx = 323.43732f, cy = 199.33777f;
-  float min_z = 0.3f, max_z = 3.0f;      // Dabai DC1 0.3~3 m
+  float min_z = 0.3f, max_z = 3.0f;      // 센서가 내는 값 범위 (m) — 실물 정렬 켬은 5 m 까지 냄 (sensor_model.yaml depth.range)
+  float obs_max_z = 3.0f;                // 관측 변환(depth_u8)이 자르는 거리 (m) — 시뮬·실물 같은 규칙
   int valid_row0 = 0, valid_row1 = 400;  // 유효 영역 [row0, row1) × [col0, col1)
   int valid_col0 = 0, valid_col1 = 640;
 };

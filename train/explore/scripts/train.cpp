@@ -49,7 +49,7 @@ struct Args {
   double minutes = 0;
   uint64_t seed = 1;
   float lr_max = 1e-3f;
-  int mlp = 2, chunk = 0;  // chunk 0 = PPOConfig 기본
+  int mlp = 2, chunk = 0;  // chunk 0 = PPOConfig 기본 (미니배치 하나)
   bool resume = false;
   std::string name = "explore", root = "train/explore/runs", list = "train/explore/scenes/train/list.tsv";
   std::vector<std::string> test = {"train/explore/scenes/test/bookstore.scene", "train/explore/scenes/test/small-house.scene"};
@@ -257,7 +257,7 @@ int main(int argc, char** argv) {
       simb.set("footprint", rf::Json::array(std::vector<double>{2.0 * c.half_len, 2.0 * c.half_wid}))
           .set("lidar", rf::Json::array(std::vector<double>{c.mount_x, c.mount_y})).set("lidar_fov", (double)kLidarFov).set("lidar_range", (double)kLidarMax)
           .set("camera", rf::Json::array(std::vector<double>{c.cam_x, c.cam_y})).set("camera_hfov", rf::Json::array(std::vector<double>{a0, a1}))
-          .set("camera_range", (double)D.max_z);
+          .set("camera_range", (double)D.obs_max_z);   // 관측이 보는 거리 (센서는 더 멀리도 냄 — sensor_model.yaml depth)
       robot.set("sim", simb);
       std::string err;
       rf::Json u = read_urdf_robot(LIMO_URDF_DIR, &err);

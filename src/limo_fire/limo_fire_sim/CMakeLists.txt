@@ -40,9 +40,10 @@ add_executable(bag_export src/bag_export.cpp)
 target_compile_features(bag_export PUBLIC cxx_std_17)
 ament_target_dependencies(bag_export rclcpp rosbag2_cpp sensor_msgs nav_msgs tf2_msgs)
 
-# 실물 녹화 → 구동 응답 표(CSV): 학습 시뮬 motion_check 가 시뮬 구동 모델을 실물 명령·속도에 맞춘다
+# 실물 녹화 → 구동 응답 표(CSV): 학습 시뮬 motion_check 가 시뮬 구동 모델을 실물 명령·속도에 맞춘다 (몸 이동 참값은 라이다 스캔 맞추기 scan_match.hpp)
 add_executable(motion_export src/motion_export.cpp)
 target_compile_features(motion_export PUBLIC cxx_std_17)
+target_include_directories(motion_export PRIVATE include)
 ament_target_dependencies(motion_export rclcpp rosbag2_cpp sensor_msgs nav_msgs geometry_msgs limo_msgs tf2_msgs)
 
 # 깊이 오차 통계: 녹화 → YAML. 같은 통계 코드(depth_stats.hpp)를 학습 시뮬 depth_check 도 쓴다

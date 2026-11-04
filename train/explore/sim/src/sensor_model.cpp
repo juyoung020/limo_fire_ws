@@ -76,12 +76,17 @@ DepthModel load_depth_model(const std::string& path) {
   D.cy = d["intrinsics"][3].as<float>();
   D.min_z = d["range"][0].as<float>();
   D.max_z = d["range"][1].as<float>();
+  D.obs_max_z = d["obs_max"].as<float>();
+  if (!(D.obs_max_z > D.min_z && D.obs_max_z <= D.max_z)) throw std::runtime_error(path + ": depth.obs_max 는 range 안");
   const YAML::Node vr = d["valid_rect"];   // [row0, row1, col0, col1) — 실물 가장자리 늘 0 인 띠
   D.valid_row0 = vr[0].as<int>();
   D.valid_row1 = vr[1].as<int>();
   D.valid_col0 = vr[2].as<int>();
   D.valid_col1 = vr[3].as<int>();
   m.k = d["sigma_at_1m"].as<float>();
+  m.near_x = d["sigma_near"][0].as<float>();
+  m.near_z0 = d["sigma_near"][1].as<float>();
+  m.near_z1 = d["sigma_near"][2].as<float>();
   m.quantum = d["quantum"].as<float>();
   const YAML::Node h = d["holes"];
   auto fill = [&](const char* key, float* out, int n) {
@@ -90,6 +95,9 @@ DepthModel load_depth_model(const std::string& path) {
   };
   fill("floor_cos", m.floor_cos, kDepthFloorBins + 1);
   fill("floor", m.floor_hole, kDepthFloorBins);
+  fill("floor_hi", m.floor_hole_hi, kDepthFloorBins);
+  for (int i = 0; i < kDepthFloorBins; ++i)
+    if (m.floor_hole_hi[i] < m.floor_hole[i]) throw std::runtime_error(path + ": depth.holes.floor_hi 는 floor 보다 작지 않게");
   fill("edge_z", m.edge_z, kDepthEdgeBins + 1);
   fill("edge", m.edge_hole, kDepthEdgeBins);
   m.other_hole = h["other"].as<float>();

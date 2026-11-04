@@ -4,8 +4,9 @@
 // 2D 시뮬이라 몸통 기울기·가속은 구동 모델이 낸 몸통 속도(v, ω)와 그 변화(a)에서 만들고, 나머지는 실측 잡음·진동 모델로 채운다.
 //   roll  = roll0  + b_roll · v·ω          (원심 가속에 몸통·자세 추정이 기움. roll0·pitch0 = 판마다 바닥 기울기 N(0, tilt_sigma))
 //   pitch = pitch0 + b_pitch · a
-//   ax = k_ax · a   − g · pitch            (소각: 중력이 기울기만큼 앞뒤로 섞임, 실측 정지 평균이 이 식과 1 mrad 안)
-//   ay = k_ay · v·ω + g · roll
+//   ax = k_ax · (a − vy·ω)   − g · pitch   (소각: 중력이 기울기만큼 앞뒤로 섞임, 실측 정지 평균이 이 식과 1 mrad 안)
+//   ay = k_ay · (v·ω + a_y) + g · roll
+//   vy·a_y 는 메카넘 옆 이동(몸 옆 속도·옆 가속) — 실물 옆 이동 녹화가 정상 응답이 아니라(바퀴 확인 필요) 배율은 앞뒤·원심 값을 그대로 씀 (잠정 📏)
 //   az = g                                  (실측 정지 크기 10.03 m/s² — 장치 배율 몫 포함)
 //   gx, gy = 판마다 바이어스
 // 각 통로에 잡음 n = σ(v, ω) · u. 정지면 σ = s0, 움직이면 분산 σ² = q1 + qv·|v| + qw·|ω| (주행 진동은 바퀴가 돌면 바로 생기고
@@ -45,12 +46,12 @@ struct ImuState {
   float out[kImuCh];          // 이번 걸음 측정 (ax, ay, az, gx, gy, roll, pitch)
 };
 
-// 결정적 몫 (잡음 빼고) — 확인 도구가 실측 잔차를 낼 때도 같은 식을 쓴다
-DEV void imu_mean(const ImuModel& m, const ImuState& s, float v, float w, float a, float* mean) {
+// 결정적 몫 (잡음 빼고) — 확인 도구가 실측 잔차를 낼 때도 같은 식을 쓴다. vy·ay: 메카넘 옆 속도·옆 가속 (차동이면 0)
+DEV void imu_mean(const ImuModel& m, const ImuState& s, float v, float w, float a, float* mean, float vy = 0.f, float ay = 0.f) {
   const float c = v * w;
   const float roll = s.roll0 + m.b_roll * c, pitch = s.pitch0 + m.b_pitch * a;
-  mean[0] = m.k_ax * a - m.g * pitch;
-  mean[1] = m.k_ay * c + m.g * roll;
+  mean[0] = m.k_ax * (a - vy * w) - m.g * pitch;
+  mean[1] = m.k_ay * (c + ay) + m.g * roll;
   mean[2] = m.g;
   mean[3] = s.bgx;
   mean[4] = s.bgy;
@@ -86,10 +87,12 @@ DEV void imu_reset(const ImuModel& m, ImuState& s, uint64_t& rng) {
   for (int k = 0; k < kImuCh; ++k) { s.u[k] = imu_gauss(rng); s.out[k] = 0.f; }
 }
 
-// 한 걸음 (imu_set_dt 의 dt): 몸통 속도 v, ω 와 몸통 직진 가속 a 에서 측정을 out 에
-DEV void imu_step(const ImuModel& m, ImuState& s, float v, float w, float a, uint64_t& rng) {
+// 한 걸음 (imu_set_dt 의 dt): 몸통 속도 v, ω 와 몸통 직진 가속 a (+ 옆 속도 vy·옆 가속 ay) 에서 측정을 out 에.
+// 진동 σ 는 바퀴가 도는 빠르기로: 옆 이동도 바퀴를 같은 만큼 돌려 |v| + |vy|
+DEV void imu_step(const ImuModel& m, ImuState& s, float v, float w, float a, uint64_t& rng, float vy = 0.f, float ay = 0.f) {
   float mean[kImuCh];
-  imu_mean(m, s, v, w, a, mean);
+  imu_mean(m, s, v, w, a, mean, vy, ay);
+  const float vs = dm::absf(v) + dm::absf(vy);
   for (int k = 0; k < kImuCh; ++k) {
     const ImuChannel& c = m.ch[k];
     const float n = imu_gauss(rng);
@@ -98,7 +101,7 @@ DEV void imu_step(const ImuModel& m, ImuState& s, float v, float w, float a, uin
     } else {
       s.u[k] = n;
     }
-    s.out[k] = mean[k] + imu_sigma(c, v, w) * s.u[k];
+    s.out[k] = mean[k] + imu_sigma(c, vs, w) * s.u[k];
   }
 }
 

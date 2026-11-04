@@ -495,7 +495,7 @@ __device__ void depth_px(const EnvBatch& b, int px, int final, const float* side
   uint64_t seed = mdp::obsgen::depth_seed(e, i);
   const float u_hole = dm::rand01(seed);
   float p_edge, p_flat;
-  depth_hole_probs(sv, M, depth_dir(M.spec, cam, u, v), z, tri, &p_edge, &p_flat);
+  depth_hole_probs(sv, M, depth_dir(M.spec, cam, u, v), z, tri, e.depth_floor, &p_edge, &p_flat);
   int hole = depth_hole_decided(u_hole, p_edge, p_flat);
   if (!final) {
     if (hole < 0) {

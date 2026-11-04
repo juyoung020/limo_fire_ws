@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
   CK(cudaMemGetInfo(&free1, &total));
   long S = (long)N * cfg.steps_per_env;
   std::printf("환경 %d, 걸음/반복 %d (샘플 %ld), 덩이 %d, 에포크 %d × 미니배치 %d, 변수 %ld 개 (%.1f MB)\n", N,
-              cfg.steps_per_env, S, cfg.chunk, cfg.epochs, cfg.minibatches, ac.n_params, ac.n_params * 4 / 1e6);
+              cfg.steps_per_env, S, ppo.config().chunk, cfg.epochs, cfg.minibatches, ac.n_params, ac.n_params * 4 / 1e6);
   std::printf("act 한 번 (환경 %d 개, 샘플·기록·정규화 갱신): %.2f ms\n", N, t_act / reps);
   std::printf("act_inference 한 번: %.2f ms\n", t_inf / reps);
   std::printf("update 한 번 (GAE + %d 에포크 × %d 미니배치, 샘플 %ld): %.0f ms → %.0f 샘플·에포크/s\n", cfg.epochs,

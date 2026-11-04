@@ -112,6 +112,8 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   drv.slow_w = dr["slow"][1].as<float>();
   drv.tau_slow_v = dr["tau_slow"][0].as<float>();
   drv.tau_slow_w = dr["tau_slow"][1].as<float>();
+  drv.tau_slow_down_v = need(dr, "tau_slow_down", path)[0].as<float>();   // 줄어들 때 (멈춤·감속)
+  drv.tau_slow_down_w = dr["tau_slow_down"][1].as<float>();
   drv.v_max = dr["max"][0].as<float>();
   drv.w_max = dr["max"][1].as<float>();
   // rc_v·rc_w 는 리모컨 녹화를 다시 돌릴 때만(motion_check, drive.rc) — 학습 환경은 /cmd_vel 경로

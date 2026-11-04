@@ -1,8 +1,9 @@
 // 녹화(rosbag2)의 깊이 영상 오차 통계 → YAML (depth_stats.hpp). 학습 시뮬 depth_check 가 이 YAML 로 깊이 모델을 맞추고 확인한다.
 //   depth_stats_bag <출력.yaml> <녹화 폴더> [녹화 폴더 …] [--topic /camera/depth/image_raw] [--static] [--every 1] [--cam-h 0.205] [--cam-pitch 0]
-//                   [--dump 첫장.pgm]
+//                   [--rows 400] [--dump 첫장.pgm]
 // 픽셀별 시간 σ: --static 이면 녹화 전체를 한 구간으로, 아니면 /odom 바퀴 v·ω 가 0.5 s 넘게 0 인 구간(3 s 이상)마다.
-// 내부값은 녹화의 /camera/depth/camera_info (정렬 안 한 640 × 400). --cam-h·--cam-pitch: 바닥 구멍 통계에 쓰는 카메라 광축 높이 (m)·아래로 숙인 각 (rad). 출력 floor_plane 이 녹화로 잰 값.
+// 내부값은 녹화의 /camera/depth/camera_info. --rows N: 위 N 행만 쓴다 — 컬러에 정렬한 깊이(depth_registration true, 640 × 480)는
+// 아래 80 행이 늘 비어 위 400 행만 학습 관측(sensor_model.yaml depth.size 640 × 400)으로 쓴다 (내부값 cy 는 그대로). --cam-h·--cam-pitch: 바닥 구멍 통계에 쓰는 카메라 광축 높이 (m)·아래로 숙인 각 (rad). 출력 floor_plane 이 녹화로 잰 값.
 #include <algorithm>
 #include <cstdio>
 #include <string>
@@ -21,7 +22,7 @@ int main(int argc, char ** argv)
   std::string out, topic = "/camera/depth/image_raw", dump;
   std::vector<std::string> bags;
   bool is_static = false;
-  int every = 1;
+  int every = 1, rows = 0;
   float cam_h = 0.205f, cam_pitch = 0.f;
   for (int i = 1; i < argc; ++i) {
     const std::string k = argv[i];
@@ -35,6 +36,8 @@ int main(int argc, char ** argv)
       cam_pitch = std::stof(argv[++i]);
     } else if (k == "--cam-h" && i + 1 < argc) {
       cam_h = std::stof(argv[++i]);
+    } else if (k == "--rows" && i + 1 < argc) {
+      rows = std::stoi(argv[++i]);
     } else if (k == "--dump" && i + 1 < argc) {
       dump = argv[++i];
     } else if (out.empty()) {
@@ -44,7 +47,7 @@ int main(int argc, char ** argv)
     }
   }
   if (out.empty() || bags.empty()) {
-    std::fprintf(stderr, "depth_stats_bag <출력.yaml> <녹화 폴더> [녹화 폴더 …] [--topic ..] [--static] [--every 1] [--cam-h 0.205] [--dump ..]\n");
+    std::fprintf(stderr, "depth_stats_bag <출력.yaml> <녹화 폴더> [녹화 폴더 …] [--topic ..] [--static] [--every 1] [--cam-h 0.205] [--rows 400] [--dump ..]\n");
     return 2;
   }
   depth_stats::Acc acc;
@@ -63,7 +66,7 @@ int main(int argc, char ** argv)
     long n = 0, used = 0, bad = 0;
     std::vector<sensor_msgs::msg::Image> early;   // 내부값보다 먼저 온 영상
     auto use = [&](const sensor_msgs::msg::Image & im) {
-        if (im.encoding != "16UC1" || static_cast<int>(im.width) != K.w || static_cast<int>(im.height) != K.h || im.step != im.width * 2) {
+        if (im.encoding != "16UC1" || static_cast<int>(im.width) != K.w || static_cast<int>(im.height) < K.h || im.step != im.width * 2) {
           ++bad;
           return;
         }
@@ -96,6 +99,7 @@ int main(int argc, char ** argv)
         info_ser.deserialize_message(&raw, &ci);
         K = {static_cast<float>(ci.k[0]), static_cast<float>(ci.k[4]), static_cast<float>(ci.k[2]), static_cast<float>(ci.k[5]),
           static_cast<int>(ci.width), static_cast<int>(ci.height), cam_h, cam_pitch};
+        if (rows > 0 && rows < K.h) {K.h = rows;}   // 위 rows 행 (행 우선이라 같은 포인터로 앞쪽만)
         have_k = true;
         for (const auto & im : early) {use(im);}
         early.clear();

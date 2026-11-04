@@ -143,6 +143,7 @@ struct EnvState {
   ImuState imu;                // IMU 나머지 측정 (imu.out: ax, ay, az, gx, gy, roll, pitch — REP-103, 물리 걸음마다)
   float slip_acc;              // 이번 행동 동안 |바퀴 ω − 몸통 ω| · dt 합 (헛돎 감점)
   LidarNoise noise;            // 이 판 라이다 오차 (무작위화)
+  float depth_floor;           // 이 판 깊이 바닥 구멍 표 위치 [0, 1] (sensor_model.h DepthModel floor_hole ~ floor_hole_hi)
   People people;              // 이 판 움직이는 사람 (people.h)
   int32_t smoke;               // 연기 모드 (mdp/smoke.h): 라이다·깊이 가림, 지도 고정, 추측 항법 자세, 안전층 대신 속도 한도. Env::set_smoke, 리셋이 0 으로
   int32_t smoke_steps;         // 연기가 낀 뒤 걸음 수 (켜고 끌 때 0). 구조체 끝을 8 바이트로 채워 패딩이 없게(env_verify 가 memcmp)
@@ -302,6 +303,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.gy = e.y;
   e.world_seed = dm::splitmix64(e.rng);
   e.noise = randomize(b.lidar, e.rng);
+  e.depth_floor = dm::rand01(e.rng);
   e.step = 0;
   e.seen_wall = 0;
   e.seen_floor = 0;
@@ -489,11 +491,12 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
     cmd_w = e.ws;
   }
   // 섀시 구동: 명령 → 바퀴 → 몸통 (바닥 미끄러짐)
-  const float v_prev = e.v;
+  const float v_prev = e.v, vy_prev = e.vy;
   const float x_prev = e.x, y_prev = e.y, th_prev = e.th;   // 연기 속 추측 항법 오차 (이번 걸음 참 이동)
   e.vy = drive_lat(c.drive, e.drive, c.action_mode == kActVelocity ? e.cmd_vy : 0.f, c.dt, e.ground);
   drive_step(c.drive, e.drive, cmd_v, cmd_w, c.dt, e.ground, &e.v, &e.w);
   const float acc = (e.v - v_prev) / c.dt;   // 몸통 직진 가속 (IMU)
+  const float acc_y = (e.vy - vy_prev) / c.dt;   // 몸통 옆 가속 (메카넘, IMU)
   // 적분 (가운데 방향). 옆 속도 vy 는 로봇 기준 왼쪽
   const float thm = e.th + 0.5f * e.w * c.dt;
   float s, co;
@@ -513,9 +516,8 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   e.people.near_d = people_gap(c, e.people, e.x, e.y, e.th);
   // 자이로 측정·헛돎 (실물 정책도 바퀴 오도메트리 ω 와 IMU 자이로를 본다)
   e.gyro = (e.w + e.gyro_bias) + (c.gyro_sigma * e.err_scale) * gauss(e.rng);
-  // IMU 나머지. 옆 이동(vy)의 옆 가속은 아직 안 넣음 — imu.h 는 2D 몸통 v·ω·직진 가속만 받고(ay = k_ay·v·ω + g·roll), vy 명령 녹화가 없어
-  // 옆 가속 배율을 못 맞춤 📏 (vy 계단 녹화로 imu_check 를 늘린 뒤 넣는다)
-  imu_step(c.imu, e.imu, e.v, e.w, acc, e.rng);   // 부딪혀 멈춘 걸음은 v·ω 0 (충돌 충격은 모델에 없음)
+  // IMU 나머지: 몸통 v·ω·직진 가속 + 옆 이동(vy·옆 가속, 정상 메카넘 가정 — 배율은 앞뒤 값 그대로 잠정 📏, imu.h)
+  imu_step(c.imu, e.imu, e.v, e.w, acc, e.rng, e.vy, acc_y);   // 부딪혀 멈춘 걸음은 v·ω 0 (충돌 충격은 모델에 없음)
   e.slip_acc = e.slip_acc + dm::absf(e.drive.ww - e.w) * c.dt;
   if (e.smoke) {
     // 연기 속 지도 자세 = 들어갈 때 지도 자세 ∘ 바퀴 + IMU 이동: 오차가 이동량만큼 쌓인다 (mdp/smoke.h drift_step, 잠정 계수)

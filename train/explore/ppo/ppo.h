@@ -39,7 +39,8 @@ struct PPOConfig {
   float lr_min = 1e-5f, lr_max = 1e-2f;  // KL 적응 학습률 한계 (rsl_rl ppo.py:291,293)
   float max_grad_norm = 1.0f;
   float adam_b1 = 0.9f, adam_b2 = 0.999f, adam_eps = 1e-8f;  // torch.optim.Adam 기본
-  int chunk = 4096;             // 한 번에 신경망에 넣는 샘플 수 (메모리 한도 — 기울기는 더해진다). 합성곱 융합 뒤 작업 공간이 작아 1024 → 4096: update −10 % (ppo/README "속도")
+  int chunk = 0;                // 한 번에 신경망에 넣는 샘플 수 (메모리 한도 — 넘는 미니배치는 나눠 기울기를 더한다). 0 = 미니배치 하나(N·T/미니배치 수)를 한 번에:
+                                // 2048 환경이면 12 288, update 717 → 690 ms (4096 대비, ppo/README "속도 4"), GPU 메모리 +0.7 GB
   bool cnn_bf16 = true;         // 합성곱 가지를 텐서 코어(bf16 입력·fp32 누산)로. false = fp32 융합 커널(정확 경로, 기울기 검사가 씀). network/README "계산 방식"
   bool tf32 = false;            // cuBLAS TF32 텐서 코어. 2026-11-04 실측: update 6.5 → 7.1 s 로 오히려 느려 기본 끔 (ppo/README "속도")
   int mlp = 2;                  // MLP 계산: 0 cuBLAS(옛 길), 1 융합 GEMM fp32(정확, 기울기 검사), 2 융합 GEMM bf16 텐서 코어·fp32 누산 (ppo/README "속도")
@@ -105,8 +106,9 @@ class PPO {
   // 작업 공간 (chunk)
   real *raw_, *last_obs_, *last_val_;
   uint8_t* c_img_;
-  real *c_obs_, *c_aout_, *c_v_, *c_da_, *c_dv_, *c_dls_, *c_stat_, *c_red_, *c_gat_;
-  real *c_x_ = nullptr, *c_df_ = nullptr;  // MLP 입력 [F | 1D], 인코더 특징 기울기
+  real *c_aout_, *c_v_, *c_da_, *c_dv_, *c_dls_, *c_stat_, *c_red_, *c_gat_;
+  real* c_x_ = nullptr;  // MLP 입력 [F | 1D] (인코더가 F 열을, 모으기·act 가 1D 열을 바로 씀)| 1D], 인코더 특징 기울기
+  uint16_t* c_xh_ = nullptr;  // 그 bf16 사본 (bf16 MLP 만 — 첫 층 cuBLAS bf16 입력)
   int* d_perm_;
   size_t storage_bytes_ = 0;
 };

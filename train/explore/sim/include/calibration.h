@@ -16,13 +16,14 @@ struct CalRec {
   std::string csv, lfrec, map, scene;   // data 폴더 안 파일
 };
 
-// role 이 빈 문자열이면 전부
-inline std::vector<CalRec> load_calibration(const std::string& path, const std::string& role) {
+// role 이 빈 문자열이면 전부. section: recordings (구동·다시 돌리기) 또는 body (라이다 몸 참값 — motion_check --body)
+inline std::vector<CalRec> load_calibration(const std::string& path, const std::string& role, const std::string& section = "recordings") {
   const YAML::Node y = YAML::LoadFile(path);
   const std::string dir = path.substr(0, path.find_last_of('/') + 1);
   const std::string data = dir + y["data"].as<std::string>() + "/";
   std::vector<CalRec> out;
-  for (const auto& r : y["recordings"]) {
+  if (!y[section]) throw std::runtime_error(path + ": " + section + " 목록 없음");
+  for (const auto& r : y[section]) {
     CalRec c;
     c.name = r["name"].as<std::string>();
     c.bag = r["bag"].as<std::string>();

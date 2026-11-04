@@ -21,14 +21,18 @@ struct LidarModel {
 LidarModel load_lidar_model(const std::string& yaml_path);
 
 // 깊이 카메라 (sensor_model.yaml depth, 실물 녹화로 맞춤 — tools/depth_check): 핀홀 내부값, 유효 영역(가장자리 늘 0 인 띠),
-// 시간 σ = k·z², 구멍: 바닥(수평 면) 입사 cos 구간 표, 모서리(옆 픽셀 깊이가 끊김) 거리 구간 표, 그 밖 면 한 값
+// 시간 σ = k·z² × 가까운 거리 배율(near_x, near_z0 아래 전부 · near_z1 까지 1 로 줄어듦),
+// 구멍: 바닥(수평 면) 입사 cos 구간 표 — 바닥마다 다름(반들한 실험실이 사무실보다 많음)이라 [lo, hi] 사이에서 판마다 한 값(EnvState::depth_floor),
+// 모서리(옆 픽셀 깊이가 끊김) 거리 구간 표, 그 밖 면 한 값
 constexpr int kDepthFloorBins = 7, kDepthEdgeBins = 6;
 struct DepthModel {
   DepthSpec spec{};
-  float k = 0.f;        // σ(z) = k·z² (m)
+  float k = 0.f;        // σ(z) = k·z² (m) × near(z)
+  float near_x = 1.f, near_z0 = 0.f, near_z1 = 0.f;   // 가까운 거리 σ 배율: z ≤ near_z0 에서 near_x, near_z1 에서 1 (선형)
   float quantum = 0.001f;
   float floor_cos[kDepthFloorBins + 1];   // 바닥 입사 cos 구간 경계
-  float floor_hole[kDepthFloorBins];
+  float floor_hole[kDepthFloorBins];      // 바닥 구멍 [lo] — 판마다 lo + u·(hi − lo)
+  float floor_hole_hi[kDepthFloorBins];
   float edge_z[kDepthEdgeBins + 1];       // 모서리 거리 구간 경계 (m)
   float edge_hole[kDepthEdgeBins];
   float other_hole = 0.f;
@@ -53,7 +57,8 @@ DEV V3 depth_dir(const DepthSpec& D, const Pose& cam, float u, float v) { return
 DEV float depth_tmax(const DepthSpec& D) { return D.max_z + 1.f; }
 
 // 구멍 확률: 모서리면 거리 구간 표(p_edge), 아니면 면 종류(사람·바닥 입사 cos·그 밖, p_flat). d = 가운데 광선 방향, tri = 맞은 삼각형
-DEV void depth_hole_probs(const SceneView& s, const DepthModel& M, V3 d, float z, int tri, float* p_edge, float* p_flat) {
+// floor_u: 이 판 바닥 구멍 표 위치 [0, 1] (EnvState::depth_floor)
+DEV void depth_hole_probs(const SceneView& s, const DepthModel& M, V3 d, float z, int tri, float floor_u, float* p_edge, float* p_flat) {
   {
     const int b = depth_bin(M.edge_z, kDepthEdgeBins, z);
     *p_edge = b >= 0 ? M.edge_hole[b] : 0.f;
@@ -67,7 +72,7 @@ DEV void depth_hole_probs(const SceneView& s, const DepthModel& M, V3 d, float z
     if (dm::absf(nrm.z) > 0.9f * nn) {   // 바닥 (수평 면)
       const float c = dm::absf(dot(nrm, d)) / (nn * sqrtf(dot(d, d)));
       const int b = depth_bin(M.floor_cos, kDepthFloorBins, c);
-      *p_flat = b >= 0 ? M.floor_hole[b] : 0.f;
+      *p_flat = b >= 0 ? M.floor_hole[b] + floor_u * (M.floor_hole_hi[b] - M.floor_hole[b]) : 0.f;
     } else {
       *p_flat = M.other_hole;
     }
@@ -84,16 +89,23 @@ DEV int depth_hole_decided(float u_hole, float p_edge, float p_flat) {
 // 옆 광선 하나(좌우 edge_px 옆)의 깊이 zs 가 끊김인가 (실측 정의: 둘레 p90 − p10 > 0.05·z + 0.02). 모서리 = 왼쪽 또는 오른쪽
 DEV bool depth_edge(float z, float zs) { return !(zs < kInf) || dm::absf(zs - z) > 0.05f * z + 0.02f; }
 
+// 시간 σ(z) (m)
+DEV float depth_sigma(const DepthModel& M, float z) {
+  const float t = M.near_z1 > M.near_z0 ? (z - M.near_z0) / (M.near_z1 - M.near_z0) : 1.f;
+  const float g = t <= 0.f ? M.near_x : (t >= 1.f ? 1.f : M.near_x + t * (1.f - M.near_x));
+  return ((M.k * z) * z) * g;
+}
+
 // 구멍이 아닌 픽셀 값: 시간 잡음·범위·양자화. seed 는 u_hole 을 뽑은 뒤의 상태
 DEV float depth_value(const DepthModel& M, float z, uint64_t& seed) {
   const DepthSpec& D = M.spec;
   const float n = gauss(seed);
-  const float zz = (z + (M.k * z) * z * n);
+  const float zz = z + depth_sigma(M, z) * n;
   if (!(zz >= D.min_z && zz <= D.max_z)) return 0.f;
   return (float)(int)(zz / M.quantum + 0.5f) * M.quantum;
 }
 
-DEV float depth_pixel_real(const SceneView& s, const DepthModel& M, const Pose& cam, float u, float v, uint64_t seed) {
+DEV float depth_pixel_real(const SceneView& s, const DepthModel& M, const Pose& cam, float u, float v, uint64_t seed, float floor_u) {
   const DepthSpec& D = M.spec;
   if (!depth_valid(D, u, v)) return 0.f;
   const V3 d = depth_dir(D, cam, u, v);
@@ -103,7 +115,7 @@ DEV float depth_pixel_real(const SceneView& s, const DepthModel& M, const Pose& 
   if (tri == -1) return 0.f;   // 못 맞음 (tri < −1 = 움직이는 사람 원기둥, scene.h raycast)
   const float u_hole = dm::rand01(seed);
   float p_edge, p_flat;
-  depth_hole_probs(s, M, d, z, tri, &p_edge, &p_flat);
+  depth_hole_probs(s, M, d, z, tri, floor_u, &p_edge, &p_flat);
   // 옆 광선은 모서리인지가 구멍 여부를 바꿀 때만 쏜다 — u_hole 이 두 확률 모두보다 작거나 모두 이상이면 답이 같다(값은 늘 같음)
   int hole = depth_hole_decided(u_hole, p_edge, p_flat);
   if (hole < 0) {

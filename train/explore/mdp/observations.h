@@ -44,8 +44,9 @@ constexpr float kAccNorm = 10.f, kGravity = 9.81f, kTiltNorm = 0.1f, kGyroXyNorm
 constexpr float kNearCell = 0.10f, kFarCell = 0.8f;
 static_assert(kFarCell == sim::kFarCellM, "먼 지도 칸 크기 (env.h far_mark_cell)");
 constexpr int kFarSub = 8;   // 먼 지도 칸 안 점 8 × 8 (0.1 m)
-// 메카넘 바퀴 4 개 (바퀴 선속도 = v ∓ vy ∓ k·ω): k = (축간 0.2 + 윤거 0.13) / 2 m — limo_fire_description urdf/limo_pro_base.xacro:12-13
-constexpr float kWheelK = 0.165f;
+// 메카넘 바퀴 4 개 (바퀴 선속도 = v ∓ vy ∓ k·ω): k = 0.200 m — 실측 (1104 녹화 /motor_states 모터 rad/s × 바퀴 반지름 0.0476 m 를
+// 바퀴 v·ω 에 회귀, 섀시 펌웨어 값도 0.2). URDF 치수로 셈한 (축간 0.2 + 윤거 0.13) / 2 = 0.165 와 다름 — sim/analysis/real_limo.md 구동 절
+constexpr float kWheelK = 0.200f;
 
 using sim::EnvBatch;
 using sim::EnvState;
@@ -226,8 +227,12 @@ DEV void depth_uv(const sim::DepthModel& DM, int i, float* u, float* v) {
 DEV uint64_t depth_seed(const EnvState& e, int i) {
   return e.rng ^ ((uint64_t)(i + 1) * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)(e.tick + 1) * 0xD1B54A32D192ED03ull);
 }
+// 깊이 → 관측 칸: 0 = 구멍, 1~255 = min_z → obs_max_z. 센서는 obs_max_z(3 m) 넘는 값도 내고(실물 정렬 켬 5 m 까지) 그건 255 로 자른다 —
+// 실물 정책 입력도 이 함수 그대로 (시뮬·실물 같은 규칙)
 DEV uint8_t depth_u8(const sim::DepthModel& DM, float z) {
-  return z <= 0.f ? (uint8_t)0 : (uint8_t)(1 + (int)((z - DM.spec.min_z) * 254.f / (DM.spec.max_z - DM.spec.min_z)));
+  if (z <= 0.f) return (uint8_t)0;
+  const float zc = z < DM.spec.obs_max_z ? z : DM.spec.obs_max_z;
+  return (uint8_t)(1 + (int)((zc - DM.spec.min_z) * 254.f / (DM.spec.obs_max_z - DM.spec.min_z)));
 }
 DEV uint8_t* depth_out(const EnvBatch& b, int env) { return b.obs_img + (size_t)env * mdp::obs::IMG_SIZE + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE; }
 
@@ -240,7 +245,7 @@ DEV void obs_depth(const EnvBatch& b, const EnvState& e, int env, int i) {
     depth_out(b, env)[i] = mdp::smoke::depth_px(e.smoke, 0);
     return;
   }
-  const float z = sim::depth_pixel_real(sim::with_people(m.scene, e.people), c.depth, depth_camera(c, e), u, v, depth_seed(e, i));   // 사람 원기둥도 보임
+  const float z = sim::depth_pixel_real(sim::with_people(m.scene, e.people), c.depth, depth_camera(c, e), u, v, depth_seed(e, i), e.depth_floor);   // 사람 원기둥도 보임
   depth_out(b, env)[i] = depth_u8(c.depth, z);
 }
 

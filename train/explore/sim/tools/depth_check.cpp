@@ -5,7 +5,8 @@
 //   depth_stats_bag <data>/<bag>.depth.yaml ~/limo_bags/<bag> [--static] --cam-h <h> --cam-pitch <p>
 // 비교 (허용 차이는 sensor_model.yaml check.depth_*):
 //   카메라 자세 (바닥 면으로 잰 광축 높이·숙인 각) vs env.yaml body.camera_mount·camera_pitch 와 같은 값인 depth.mount 확인값
-//   유효 영역 (늘 0 인 가장자리 띠), 시간 σ(z) = k·z² (거리 구간 가운데), 바닥 구멍 비율(입사 cos 구간), 모서리 구멍 비율(거리 구간),
+//   유효 영역 (늘 0 인 가장자리 띠), 시간 σ(z) = k·z² × 가까운 거리 배율 (거리 구간 가운데), 바닥 구멍 비율(입사 cos 구간 — 모델은 바닥마다
+//   다른 [floor, floor_hi] 범위라 실측이 범위 ± 허용 안이면 통과), 모서리 구멍 비율(거리 구간),
 //   벽·물체(바닥 아님, 모서리 아님) 구멍 비율
 #include <yaml-cpp/yaml.h>
 
@@ -102,20 +103,29 @@ int main(int argc, char** argv) {
   const auto rect = vec(st[0].y["valid_rect"]);
 
   if (do_fit) {
-    // σ = k·z²: 거리 구간 가운데 z 로 최소제곱 (픽셀 수 가중)
-    double a = 0, b = 0;
+    const sim::DepthModel M0 = sim::load_depth_model(model_path);
+    // σ = k·z² × near(z): k 는 먼 구간(z ≥ near_z1)으로, 가까운 배율 near_x 는 z ≤ near_z0 구간의 실측 / (k·z²) 로 (픽셀 수 가중).
+    // 구간 픽셀이 5 천 아래면 그 몫은 설정값 그대로
+    double a = 0, b = 0, nf = 0, ra = 0, rn = 0;
     for (size_t i = 0; i < tsd.size(); ++i) {
-      if (!std::isfinite(tsd[i])) continue;
+      if (!std::isfinite(tsd[i]) || tn[i] < 5000) continue;
       const double z = 0.5 * (ze[i] + ze[i + 1]), z2 = z * z;
-      a += tn[i] * tsd[i] * z2;
-      b += tn[i] * z2 * z2;
+      if (ze[i] >= M0.near_z1) { a += tn[i] * tsd[i] * z2; b += tn[i] * z2 * z2; nf += tn[i]; }
     }
-    std::printf("\n# sensor_model.yaml depth 에 넣을 값 (depth_check --fit)\n  sigma_at_1m: %.5f\n  valid_rect: [%.0f, %.0f, %.0f, %.0f]\n", a / b, rect[0],
-                rect[1], rect[2], rect[3]);
+    const double k = nf > 0 ? a / b : M0.k;
+    for (size_t i = 0; i < tsd.size(); ++i) {
+      if (!std::isfinite(tsd[i]) || tn[i] < 5000 || ze[i + 1] > M0.near_z0 + 1e-6) continue;
+      const double z = 0.5 * (ze[i] + ze[i + 1]);
+      ra += tn[i] * tsd[i] / (k * z * z);
+      rn += tn[i];
+    }
+    std::printf("\n# sensor_model.yaml depth 에 넣을 값 (depth_check --fit)\n  sigma_at_1m: %.5f   # %s\n  sigma_near: [%.2f, %.2f, %.2f]   # %s\n"
+                "  valid_rect: [%.0f, %.0f, %.0f, %.0f]\n", k, nf > 0 ? "먼 구간으로 맞춤" : "먼 구간 표본 부족 — 설정값 그대로", rn > 0 ? ra / rn : M0.near_x,
+                M0.near_z0, M0.near_z1, rn > 0 ? "가까운 구간으로 맞춤" : "가까운 구간 표본 부족 — 설정값", rect[0], rect[1], rect[2], rect[3]);
     std::printf("  holes:\n    floor_cos: [");
     for (size_t i = 0; i < fce.size(); ++i) std::printf("%s%.2f", i ? ", " : "", fce[i]);
-    std::printf("]\n    floor: [");
-    for (size_t i = 0; i < fh.size(); ++i) std::printf("%s%.4f", i ? ", " : "", std::isfinite(fh[i]) ? fh[i] : 0.0);
+    std::printf("]\n    이 바닥 구멍 (floor·floor_hi 범위에 넣음, 표본 없는 칸은 nan): [");
+    for (size_t i = 0; i < fh.size(); ++i) std::printf("%s%.4f", i ? ", " : "", fh[i]);
     std::printf("]\n    other: %.4f\n    edge_z: [", oh);
     for (size_t i = 0; i < ze.size(); ++i) std::printf("%s%.2f", i ? ", " : "", ze[i]);
     std::printf("]\n    edge: [");
@@ -147,12 +157,14 @@ int main(int argc, char** argv) {
     if (!std::isfinite(tsd[i]) || tn[i] < 5000) continue;
     const double z = 0.5 * (ze[i] + ze[i + 1]);
     std::snprintf(buf, sizeof(buf), "시간 σ z %.1f~%.1f m (픽셀 %.0f)", ze[i], ze[i + 1], tn[i]);
-    row(buf, M.k * z * z, tsd[i], true, t_sd);
+    row(buf, sim::depth_sigma(M, (float)z), tsd[i], true, t_sd);
   }
   for (size_t i = 0; i < fh.size(); ++i) {
     if (!std::isfinite(fh[i]) || fn[i] < 1e5) continue;
-    std::snprintf(buf, sizeof(buf), "바닥 구멍 cos %.2f~%.2f", fce[i], fce[i + 1]);
-    row(buf, M.floor_hole[i], fh[i], false, t_hole);
+    std::snprintf(buf, sizeof(buf), "바닥 구멍 cos %.2f~%.2f (모델 범위 %.3f~%.3f)", fce[i], fce[i + 1], M.floor_hole[i], M.floor_hole_hi[i]);
+    // 범위 안이면 차 0, 밖이면 가까운 끝까지
+    const double lo = M.floor_hole[i], hi = M.floor_hole_hi[i];
+    row(buf, fh[i] < lo ? lo : (fh[i] > hi ? hi : fh[i]), fh[i], false, t_hole);
   }
   for (size_t i = 0; i < eh.size(); ++i) {
     if (!std::isfinite(eh[i]) || en[i] < 1e4) continue;

@@ -11,8 +11,11 @@
 //     train/explore/sim/analysis/real_limo.md IMU 절). imu_n (지금까지 받은 /imu 수 — 같은 메시지가 두 줄에 걸쳤는지)
 //   지도 자세 (Cartographer map → odom ∘ EKF odom → base_link, 그 시각 보간): map_x, map_y, map_yaw,
 //     mo_x, mo_y, mo_yaw (map → odom 그 시각 직전 값 — 스캔 매칭 보정이 계단으로 보인다), mo_n (지금까지 받은 map → odom 수). 없으면 nan
+//   메카넘 옆·모터: cmd_vy (/cmd_vel linear.y, 직전 값), odom_vy (바퀴로 계산한 옆 속도), m1~m4 (/motor_states 모터 속도, 직전 값)
+//   라이다 몸 자세 (scan_match.hpp 스캔 맞추기, 녹화 처음 기준 base_link — 바퀴와 따로 잰 몸 이동 참값): lo_x, lo_y, lo_yaw (그 시각 보간, 없으면 nan)
 // 명령·자이로는 그 시각 직전 값(명령) · 선형 보간(자이로)
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -24,8 +27,12 @@
 #include <rclcpp/serialization.hpp>
 #include <rosbag2_cpp/reader.hpp>
 #include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <sensor_msgs/msg/joy.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
+
+#include "limo_fire_sim/scan_match.hpp"
 
 namespace
 {
@@ -83,6 +90,15 @@ int main(int argc, char ** argv)
   std::vector<S> odom, gyro, rc, cmd, mode;
   std::vector<Imu> imu;
   std::vector<P> map_odom, odom_base;
+  std::vector<S> odom_vy, cmd_vy;   // 메카넘 옆 (바퀴로 계산한 vy · 명령 vy)
+  struct Motor { double t; double w[4]; };
+  std::vector<Motor> motors;
+  struct Scan { double t; std::string frame; sensor_msgs::msg::LaserScan s; };
+  std::vector<Scan> scans;
+  struct Static { std::string parent; scan_match::Pose p; };
+  std::map<std::string, Static> statics;   // 자식 → (부모, 평면 자세) — /tf_static
+  rclcpp::Serialization<sensor_msgs::msg::LaserScan> scan_ser;
+  rclcpp::Serialization<sensor_msgs::msg::JointState> joint_ser;
   while (reader.has_next()) {
     const auto m = reader.read_next();
     rclcpp::SerializedMessage raw(*m->serialized_data);
@@ -91,6 +107,7 @@ int main(int argc, char ** argv)
       nav_msgs::msg::Odometry o;
       odom_ser.deserialize_message(&raw, &o);
       odom.push_back({stamp(o.header.stamp), o.twist.twist.linear.x, o.twist.twist.angular.z});
+      odom_vy.push_back({stamp(o.header.stamp), o.twist.twist.linear.y, 0});
     } else if (m->topic_name == "/imu") {
       sensor_msgs::msg::Imu i;
       imu_ser.deserialize_message(&raw, &i);
@@ -109,10 +126,29 @@ int main(int argc, char ** argv)
       geometry_msgs::msg::Twist c;
       twist_ser.deserialize_message(&raw, &c);
       cmd.push_back({tb, c.linear.x, c.angular.z});
+      cmd_vy.push_back({tb, c.linear.y, 0});
     } else if (m->topic_name == "/limo_status") {
       limo_msgs::msg::LimoStatus s;
       status_ser.deserialize_message(&raw, &s);
       mode.push_back({tb, double(s.control_mode), 0});   // stamp 은 원본 드라이버 버그로 못 씀 → 받은 시각
+    } else if (m->topic_name == "/scan") {
+      Scan sc;
+      scan_ser.deserialize_message(&raw, &sc.s);
+      sc.t = stamp(sc.s.header.stamp);
+      sc.frame = sc.s.header.frame_id;
+      scans.push_back(std::move(sc));
+    } else if (m->topic_name == "/motor_states") {
+      sensor_msgs::msg::JointState j;
+      joint_ser.deserialize_message(&raw, &j);
+      if (j.velocity.size() >= 4) {motors.push_back({stamp(j.header.stamp), {j.velocity[0], j.velocity[1], j.velocity[2], j.velocity[3]}});}
+    } else if (m->topic_name == "/tf_static") {
+      tf2_msgs::msg::TFMessage tf;
+      tf_ser.deserialize_message(&raw, &tf);
+      for (const auto & t : tf.transforms) {
+        const auto & q = t.transform.rotation;
+        statics[t.child_frame_id] = {t.header.frame_id, {t.transform.translation.x, t.transform.translation.y,
+            std::atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))}};
+      }
     } else if (m->topic_name == "/tf") {
       tf2_msgs::msg::TFMessage tf;
       tf_ser.deserialize_message(&raw, &tf);
@@ -129,12 +165,67 @@ int main(int argc, char ** argv)
     std::fprintf(stderr, "/odom 이 녹화에 없음\n");
     return 1;
   }
-  for (auto * v : {&odom, &gyro, &rc, &cmd, &mode}) {
+  for (auto * v : {&odom, &gyro, &rc, &cmd, &mode, &odom_vy, &cmd_vy}) {
     std::sort(v->begin(), v->end(), [](const S & a, const S & b) {return a.t < b.t;});
   }
   std::sort(imu.begin(), imu.end(), [](const Imu & a, const Imu & b) {return a.t < b.t;});
   for (auto * v : {&map_odom, &odom_base}) {
     std::sort(v->begin(), v->end(), [](const P & a, const P & b) {return a.t < b.t;});
+  }
+  std::sort(motors.begin(), motors.end(), [](const Motor & a, const Motor & b) {return a.t < b.t;});
+  std::sort(scans.begin(), scans.end(), [](const Scan & a, const Scan & b) {return a.t < b.t;});
+  // 라이다 오도메트리 (scan_match.hpp): 몸이 실제로 움직인 자세 lo_* — 바퀴(/odom)와 따로. 빔마다 시각(time_increment)만큼
+  // 몸 움직임(바퀴 v·vy, 자이로 ω)을 되돌려 한 시각으로 모은 뒤, 스캔 프레임 → base_link 는 /tf_static.
+  // 빔 시각은 **마지막 빔이 먼저** (라이다가 시계 방향으로 돌고 드라이버가 각도 순으로 담음): 1103_M_cmd1 제자리 ±1·±2 rad/s 회전 네 번을
+  // 자이로 적분과 비교하면 이 순서로 0.97~1.01, 빔 순서 = 시각이면 0.93~1.08 (방향마다 반대로 틀림), 안 되돌리면 0.97~1.05
+  std::vector<P> lo;
+  size_t lo_fail = 0;
+  {
+    auto to_base = [&](const std::string & frame, scan_match::Pose & out) {
+        out = {0, 0, 0};
+        std::string cur = frame;
+        for (int k = 0; k < 8 && cur != "base_link"; ++k) {
+          const auto it = statics.find(cur);
+          if (it == statics.end()) {return false;}
+          out = scan_match::compose(it->second.p, out);
+          cur = it->second.parent;
+        }
+        return cur == "base_link";
+      };
+    scan_match::Odom od;
+    double unwrapped = 0, last_th = 0;
+    for (size_t k = 0; k < scans.size(); ++k) {
+      const auto & s = scans[k].s;
+      scan_match::Pose mount;
+      if (!to_base(scans[k].frame, mount)) {
+        std::fprintf(stderr, "/tf_static 에 base_link → %s 없음 — 라이다 몸 자세 안 냄\n", scans[k].frame.c_str());
+        lo.clear();
+        break;
+      }
+      const double t = scans[k].t, vx = lerp(odom, t), vy = lerp(odom_vy, t), w = lerp(gyro, t);
+      std::vector<scan_match::Pt> pts;
+      for (size_t i = 0; i < s.ranges.size(); ++i) {
+        const double r = s.ranges[i];
+        if (!std::isfinite(r) || r < std::max(0.12, double(s.range_min)) || r > std::min(8.0, double(s.range_max))) {continue;}
+        const double a = s.angle_min + i * s.angle_increment, ti = double(s.ranges.size() - 1 - i) * s.time_increment;
+        const scan_match::Pt pb = scan_match::apply(mount, {r * std::cos(a), r * std::sin(a)});
+        pts.push_back(scan_match::apply({vx * ti, vy * ti, w * ti}, pb));   // 장 시작 시각 몸 좌표로
+      }
+      // 지난 장에서 이번 장까지 바퀴 v·vy · 자이로로 짐작
+      scan_match::Pose g{0, 0, 0};
+      if (k > 0) {
+        const double t_prev = scans[k - 1].t;
+        const int n = 10;
+        for (int j = 0; j < n; ++j) {
+          const double tm = t_prev + (j + 0.5) * (t - t_prev) / n, dt = (t - t_prev) / n;
+          g = scan_match::compose(g, {lerp(odom, tm) * dt, lerp(odom_vy, tm) * dt, lerp(gyro, tm) * dt});
+        }
+      }
+      if (!od.add(pts, g)) {++lo_fail;}
+      unwrapped += std::remainder(od.pose.th - last_th, 2 * M_PI);
+      last_th = od.pose.th;
+      lo.push_back({t, od.pose.x, od.pose.y, unwrapped});
+    }
   }
   FILE * f = std::fopen(argv[2], "w");
   if (!f) {std::perror(argv[2]); return 1;}
@@ -145,7 +236,7 @@ int main(int argc, char ** argv)
     if (std::fabs(o.a) < 1e-3 && std::fabs(o.b) < 1e-3) {acc0 += lerp(gyro, o.t, true); ++n0;}
   }
   acc0 = n0 ? acc0 / n0 : 0;
-  std::fprintf(f, "t,mode,rc_v,rc_w,cmd_v,cmd_w,odom_v,odom_w,gyro_w,stamp,acc_x,ax,ay,az,gx,gy,roll,pitch,imu_n,map_x,map_y,map_yaw,mo_x,mo_y,mo_yaw,mo_n\n");
+  std::fprintf(f, "t,mode,rc_v,rc_w,cmd_v,cmd_w,odom_v,odom_w,gyro_w,stamp,acc_x,ax,ay,az,gx,gy,roll,pitch,imu_n,map_x,map_y,map_yaw,mo_x,mo_y,mo_yaw,mo_n,cmd_vy,odom_vy,m1,m2,m3,m4,lo_x,lo_y,lo_yaw\n");
   const double t0 = odom.front().t;
   for (const S & o : odom) {
     const S * r = before(rc, o.t), * c = before(cmd, o.t), * md = before(mode, o.t);
@@ -160,14 +251,21 @@ int main(int argc, char ** argv)
     if (mi > 0 && interp(odom_base, o.t, ob) && interp(map_odom, o.t, mo)) {
       const double c = std::cos(mo.yaw), sn = std::sin(mo.yaw);
       const P & last = map_odom[mi - 1];
-      std::fprintf(f, ",%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%ld\n", mo.x + c * ob.x - sn * ob.y, mo.y + sn * ob.x + c * ob.y,
+      std::fprintf(f, ",%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%ld", mo.x + c * ob.x - sn * ob.y, mo.y + sn * ob.x + c * ob.y,
         std::remainder(mo.yaw + ob.yaw, 2 * M_PI), last.x, last.y, last.yaw, long(mi));
     } else {
-      std::fprintf(f, ",nan,nan,nan,nan,nan,nan,%ld\n", long(mi));
+      std::fprintf(f, ",nan,nan,nan,nan,nan,nan,%ld", long(mi));
     }
+    // 메카넘 옆·모터·라이다 몸 자세
+    const S * cy = before(cmd_vy, o.t);
+    const auto mt = std::upper_bound(motors.begin(), motors.end(), o.t, [](double x, const Motor & s) {return x < s.t;}) - motors.begin();
+    const Motor mm = mt > 0 ? motors[mt - 1] : Motor{0, {NAN, NAN, NAN, NAN}};
+    std::fprintf(f, ",%.3f,%.4f,%.3f,%.3f,%.3f,%.3f", cy ? cy->a : 0.0, lerp(odom_vy, o.t), mm.w[0], mm.w[1], mm.w[2], mm.w[3]);
+    P lp;
+    if (interp(lo, o.t, lp)) {std::fprintf(f, ",%.5f,%.5f,%.6f\n", lp.x, lp.y, lp.yaw);} else {std::fprintf(f, ",nan,nan,nan\n");}
   }
   std::fclose(f);
-  std::printf("%s: 오도메트리 %zu 줄 (%.1f s), 리모컨 %zu, /cmd_vel %zu, 자이로 %zu → %s\n", argv[1], odom.size(),
-    odom.back().t - t0, rc.size(), cmd.size(), gyro.size(), argv[2]);
+  std::printf("%s: 오도메트리 %zu 줄 (%.1f s), 리모컨 %zu, /cmd_vel %zu, 자이로 %zu, 라이다 %zu 장 (맞추기 실패 %zu) → %s\n", argv[1], odom.size(),
+    odom.back().t - t0, rc.size(), cmd.size(), gyro.size(), lo.size(), lo_fail, argv[2]);
   return 0;
 }
