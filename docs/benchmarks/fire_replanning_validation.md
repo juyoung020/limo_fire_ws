@@ -172,6 +172,17 @@ colcon test-result --test-result-base build/limo_fire_perception --verbose
 
 Wego `env.sh`에서 Conda를 deactivate한 뒤 `PYTHONHOME`과 `PYTHONPATH`도 unset하도록 보강했다. 이로써 ROS 2 Humble Python이 Conda의 NumPy/rclpy 패키지를 먼저 읽는 경로를 제거한다. Humble `controller_manager` import와 `spawner --help`를 확인했다.
 
+처음 빌드하거나 소스를 수정한 경우 Wego에서 한 번 빌드한다. 이미 설치된 소스를 그대로 시험한다면 재빌드는 생략한다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/limo_fire_ws/env.sh
+cd ~/limo_fire_ws
+colcon build --symlink-install \
+  --packages-up-to limo_fire_bt limo_fire_bridge webots_ros2_limo limo_fire_perception
+source ~/limo_fire_ws/install/setup.bash
+```
+
 GUI가 기동된 후 확인된 상태:
 
 - `/odom` 발행 중, `diffdrive_controller` active
