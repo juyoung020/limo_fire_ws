@@ -10,6 +10,7 @@
 <launch>
   <arg name="world_file"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
+  <arg name="gui" default="true" description="true: Webots GUI 표시, false: 화면 없는 batch 실행"/>
   <arg name="port" default="1234"/>
   <arg name="velocity_topic" default="/cmd_vel"/>
   <arg name="limo_share" default="$(find-pkg-share webots_ros2_limo)" description="교수님 Webots LIMO 패키지 (ros2_control 설정)"/>
@@ -17,7 +18,9 @@
        description="드라이버 설정: 교수님 limo.urdf 에 인식 벤치마크 정답 카메라(/gt/*)를 더한 우리 판"/>
 
   <!-- Webots. 창을 닫으면 launch 전체가 끝난다 -->
-  <executable cmd="$(env WEBOTS_HOME)/webots --port=$(var port) --batch --mode=$(var mode) $(var world_file)"
+  <executable if="$(var gui)" cmd="$(env WEBOTS_HOME)/webots --port=$(var port) --mode=$(var mode) $(var world_file)"
+              name="webots" output="screen" on_exit="shutdown"/>
+  <executable unless="$(var gui)" cmd="$(env WEBOTS_HOME)/webots --port=$(var port) --batch --mode=$(var mode) $(var world_file)"
               name="webots" output="screen" on_exit="shutdown"/>
 
   <!-- /clock (Webots 시각). 월드 안 Ros2Supervisor 로봇의 컨트롤러 -->

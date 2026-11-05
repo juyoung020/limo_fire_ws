@@ -20,6 +20,7 @@
   <arg name="report_dir" default="$(env HOME)/limo_fire_ws/docs/benchmarks"/>
   <arg name="rviz" default="true"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
+  <arg name="gui" default="true" description="true: Webots GUI 표시, false: 화면 없는 batch 실행"/>
   <arg name="fire_params" default="$(find-pkg-share limo_fire_navigation)/config/nav2_sim.yaml"/>
   <arg name="nav_params_file" default="$(find-pkg-share limo_fire_navigation)/config/nav2_params.yaml"/>
   <arg name="sim_velocity_topic" default="/cmd_vel"/>
@@ -32,6 +33,7 @@
     <include file="$(find-pkg-share limo_fire_bringup)/launch/sim_robot.launch.xml">
       <arg name="world_file" value="$(var world_dir)/$(var world).wbt"/>
       <arg name="mode" value="$(var mode)"/>
+      <arg name="gui" value="$(var gui)"/>
       <arg name="velocity_topic" value="$(var sim_velocity_topic)"/>
     </include>
   </group>

@@ -2,6 +2,7 @@
 
 시뮬은 실물과 같은 launch(지도 만들기·Nav2·인식)를 쓰고, 로봇 켜기만 Webots 로 바꾼다(`limo_fire_bringup/launch/sim_robot.launch.xml`).
 LIMO 모델·센서 플러그인은 교수님 `webots_ros2_limo` 를 고치지 않고 쓴다.
+기본 실행(`gui:=true`)은 Webots GUI를 표시하고, 무창 실행은 `gui:=false`를 지정한다. SSH에서 GUI를 띄우려면 Wego 데스크톱의 `DISPLAY`와 `XAUTHORITY`가 설정된 터미널에서 실행한다.
 
 ```bash
 source ~/limo_fire_ws/env.sh
