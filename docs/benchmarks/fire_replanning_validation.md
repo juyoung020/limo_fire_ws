@@ -165,3 +165,55 @@ colcon test-result --test-result-base build/limo_fire_perception --verbose
 도착 오차를 엄격하게 한 뒤 정상 독립 실행은 총 3회 PASS이며, 마지막 오차는 아래 CSV 원문을 따른다.
 최종 자동 회귀 시험도 11+1개 모두 PASS했다. 언로드 SIGSEGV는 여전히 별도 미해결이며 주행 PASS로 숨기지 않는다.
 로그는 가독성과 git 공백 검사를 위해 줄 끝 공백만 제거했다.
+
+## Wego Humble GUI·Action 실행 점검 — 2026-11-05
+
+이번 실행은 전체 임무 성공 검증이 아니라 Wego Humble의 GUI·Action 배선 진단이다. SSH 셸에서 `DISPLAY`가 비어 있으면 Webots와 RViz가 `xcb` 초기화 오류로 종료한다. GUI 시험은 Wego 데스크톱 터미널 또는 동작하는 X11 forwarding 세션에서 한다. Fast DDS `Failed init_port`는 단독으로 치명 오류라 판단하지 않는다.
+
+Wego `env.sh`에서 Conda를 deactivate한 뒤 `PYTHONHOME`과 `PYTHONPATH`도 unset하도록 보강했다. 이로써 ROS 2 Humble Python이 Conda의 NumPy/rclpy 패키지를 먼저 읽는 경로를 제거한다. Humble `controller_manager` import와 `spawner --help`를 확인했다.
+
+GUI가 기동된 후 확인된 상태:
+
+- `/odom` 발행 중, `diffdrive_controller` active
+- Nav2 계획 경로 표시 및 `/fire/cmd_vel_input` 약 `-0.05 m/s`
+- `/fire/cmd_vel_safe`는 0
+- `/fire/mission_navigate_to_pose`: server `/fire_manager`, client 0
+- `/navigate_to_pose`: server `/bt_navigator`, client에 `/fire_demo` 포함
+
+원인은 `fire_demo`가 Fire Manager mission action을 통하지 않고 Nav2 action에 직접 목표를 보낸 것이다. Fire Manager는 활성 mission handle이 없는 상태에서 안전 출력 `/fire/cmd_vel_safe`를 0으로 유지한다. 아래처럼 명시적으로 mission action을 지정해 재실행한다.
+
+터미널 1:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/limo_fire_ws/env.sh
+source ~/limo_fire_ws/install/setup.bash
+export WEBOTS_HOME=/usr/local/webots
+
+cat > /tmp/fire_manager_action_fix.yaml <<'EOF'
+fire_manager:
+  ros__parameters:
+    backend_action: /navigate_to_pose
+    mission_action: /fire/mission_navigate_to_pose
+EOF
+
+ros2 launch limo_fire_bt fire_sim.launch.xml \
+  world:=limo_fire_replan rviz:=true perception:=true \
+  use_mujoco_extinguisher:=true show_mujoco_gui:=true \
+  scenario_params:=/tmp/fire_manager_action_fix.yaml
+```
+
+터미널 2:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/limo_fire_ws/env.sh
+source ~/limo_fire_ws/install/setup.bash
+ros2 run limo_fire_bt fire_demo --ros-args \
+  --params-file "$HOME/limo_fire_ws/install/limo_fire_bt/share/limo_fire_bt/config/fire_manager.yaml" \
+  --params-file /tmp/fire_manager_action_fix.yaml \
+  -p use_sim_time:=true \
+  -p mission_action:=/fire/mission_navigate_to_pose
+```
+
+실행 중 `ros2 action info /fire/mission_navigate_to_pose`에서 client 1개가 보여야 한다. 이 수정 인자를 적용한 뒤 로봇 이동·발사·명중·전도는 아직 확인하지 않았다. `perception:=true`는 YOLO를 켜지만, 고정 좌표 Fire Demo 자체는 실제 카메라 검출 성공을 뜻하지 않는다. 엔진 파일과 그래픽 디스플레이가 준비되어야 한다.

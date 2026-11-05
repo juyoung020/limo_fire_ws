@@ -1,6 +1,7 @@
 # 워크스페이스 환경: source ~/limo_fire_ws/env.sh
 # conda Python 이 ROS 2 Humble(rclpy, python3.10)과 충돌하므로 PATH 에서 뺀다
 conda deactivate 2>/dev/null
+unset PYTHONHOME PYTHONPATH
 export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v miniconda3 | paste -sd:)
 source /opt/ros/humble/setup.bash
 # 실물 LIMO: WeGo 가 빌드한 드라이버(limo_base·orbbec_camera·ydlidar·robot_localization)를 밑에 깔고,

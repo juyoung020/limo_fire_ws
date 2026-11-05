@@ -79,7 +79,9 @@ office 월드의 fire_floor 폭은 0.70m, Candle 불꽃은 0.07×0.8=0.056m (메
 
 [Jazzy 실행 절차와 실패 대응 시험 명령](benchmarks/fire_replanning_validation.md#실행-명령)을 따른다.
 Humble 기본 경로는 `source env.sh` 후 기존 Webots 의존성·메시지·패키지를 빌드하고
-`ros2 launch limo_fire_bt demo.launch.xml`이다. **Humble 실행 결과는 아직 없다.**
+`ros2 launch limo_fire_bt demo.launch.xml`이다. 2026-11-05 Wego Humble에서는 GUI·Nav2 Action 경로의 시작 문제를 진단했으나,
+수정 Action 경로로 이동·발사까지 재실행하지 않아 Humble 전체 임무 성공은 아직 검증되지 않았다.
+재현 명령과 확인된 상태는 [Wego Humble 실행 점검](benchmarks/fire_replanning_validation.md#wego-humble-guiaction-실행-점검--2026-11-05)을 참고한다.
 
 자동 데모는 알려진 map 위치/폭의 화재 관측을 주입한다. YOLO 정확도 시험이 아니다.
 PASS는 Action 성공만으로 내지 않는다. 독립 정답 위치의 높이·신선도·이동거리·침범·최종 오차 <0.30m,
