@@ -33,7 +33,11 @@ add_executable(nav_benchmark src/nav_benchmark_node.cpp)
 ament_target_dependencies(nav_benchmark rclcpp rclcpp_action geometry_msgs nav2_msgs std_srvs tf2 tf2_ros tf2_geometry_msgs yaml_cpp_vendor)
 target_link_libraries(nav_benchmark yaml-cpp)
 
-install(TARGETS smoke_mode nav_benchmark DESTINATION lib/${PROJECT_NAME})
+# 초음파 Range 여럿 → base_link 스캔 (연기 모드 sonar 위치 추정·장애물)
+add_executable(sonar_scan src/sonar_scan_node.cpp)
+ament_target_dependencies(sonar_scan rclcpp sensor_msgs tf2 tf2_ros tf2_geometry_msgs)
+
+install(TARGETS smoke_mode nav_benchmark sonar_scan DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config maps DESTINATION share/${PROJECT_NAME})
 

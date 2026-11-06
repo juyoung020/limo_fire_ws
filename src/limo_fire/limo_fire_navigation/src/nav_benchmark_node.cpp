@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -48,7 +49,7 @@ struct Row {
   int i;
   double gx, gy;
   std::string result;
-  double t, tx, ty, ex, ey, arrive, est_err, dist, dist_total;
+  double t, tx, ty, ex, ey, arrive, est_err, dist, dist_total, clear;
 };
 
 class Bench : public rclcpp::Node {
@@ -61,6 +62,12 @@ class Bench : public rclcpp::Node {
     report_dir_ = declare_parameter<std::string>("report_dir", ".");
     truth_topic_ = declare_parameter<std::string>("truth_topic", "/sim/ground_truth");
     max_goals_ = declare_parameter<int>("max_goals", 0);
+    smoke_loc_ = declare_parameter<std::string>("smoke_localization", "hold");   // smoke:=true 일 때 연기 속 위치 (hold · sonar)
+    // 지도에 없는 장애물(4 단계): Webots 세계 좌표 [x, y, 가로, 세로] (m, 축 정렬). 비면 안 잰다.
+    // 몸통 가운데에서 상자 가장자리까지 거리의 최솟값을 재고, collide_clearance 보다 작으면 부딪힘으로 센다
+    obstacle_ = declare_parameter<std::vector<double>>("obstacle_box", std::vector<double>{});
+    collide_clear_ = declare_parameter<double>("collide_clearance", 0.12);   // 잠정: 몸통 반폭 0.11 m + 1 cm
+    if (!obstacle_.empty() && obstacle_.size() != 4) throw std::invalid_argument("nav_benchmark: obstacle_box 는 [x, y, 가로, 세로]");
     if (world_file_.empty()) throw std::invalid_argument("nav_benchmark: world_file 파라미터가 비었음");
 
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
@@ -75,6 +82,11 @@ class Bench : public rclcpp::Node {
           const Pose2 p = to_map(w);
           if (truth_) dist_ += std::hypot(p.x - truth_->x, p.y - truth_->y);
           truth_ = p;
+          if (obstacle_.size() == 4) {   // 세계 좌표에서 상자 가장자리까지
+            const double dx = std::max(0.0, std::fabs(w.x - obstacle_[0]) - 0.5 * obstacle_[2]);
+            const double dy = std::max(0.0, std::fabs(w.y - obstacle_[1]) - 0.5 * obstacle_[3]);
+            clear_ = std::min(clear_, std::hypot(dx, dy));
+          }
         });
   }
 
@@ -84,7 +96,7 @@ class Bench : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "월드 %s: 출발 (%.2f, %.2f, %.2f rad), 순찰점 %zu 개, 조건 '%s'%s", world_.c_str(), start_.x,
                 start_.y, start_.yaw, goals_.size(), label_.c_str(), smoke_ ? " (연기 모드)" : "");
     if (!wait_ready()) return 1;
-    if (smoke_ && !set_smoke(true)) return 2;
+    if (smoke_ && (!set_localization() || !set_smoke(true))) return 2;
     double total0 = traveled();
     for (size_t i = 0; i < goals_.size() && rclcpp::ok(); ++i) {
       if (max_goals_ > 0 && (int)i >= max_goals_) break;
@@ -153,6 +165,22 @@ class Bench : public rclcpp::Node {
     return false;
   }
 
+  // 연기 모드 노드의 smoke_localization 을 바꾼다 (연기 모드가 꺼져 있을 때만 받아 준다)
+  bool set_localization() {
+    auto cli = std::make_shared<rclcpp::AsyncParametersClient>(this, "smoke_mode");
+    if (!cli->wait_for_service(std::chrono::seconds(5))) {
+      RCLCPP_ERROR(get_logger(), "smoke_mode 파라미터 서비스가 없음");
+      return false;
+    }
+    auto f = cli->set_parameters({rclcpp::Parameter("smoke_localization", smoke_loc_)});
+    if (f.wait_for(std::chrono::seconds(10)) != std::future_status::ready || !f.get().at(0).successful) {
+      RCLCPP_ERROR(get_logger(), "smoke_localization=%s 설정 실패", smoke_loc_.c_str());
+      return false;
+    }
+    RCLCPP_INFO(get_logger(), "연기 속 위치: %s", smoke_loc_.c_str());
+    return true;
+  }
+
   bool set_smoke(bool on) {
     auto req = std::make_shared<std_srvs::srv::SetBool::Request>();
     req->data = on;
@@ -182,6 +210,10 @@ class Bench : public rclcpp::Node {
     goal.pose.pose.orientation.z = std::sin(yaw / 2);
     goal.pose.pose.orientation.w = std::cos(yaw / 2);
     const double d0 = traveled();
+    {
+      std::lock_guard<std::mutex> l(mu_);
+      clear_ = std::numeric_limits<double>::infinity();
+    }
     const rclcpp::Time t0 = now();
     auto gh_f = nav_->async_send_goal(goal);
     if (gh_f.wait_for(std::chrono::seconds(10)) != std::future_status::ready || !gh_f.get()) {
@@ -217,6 +249,10 @@ class Bench : public rclcpp::Node {
     r.est_err = std::hypot(r.ex - r.tx, r.ey - r.ty);
     r.dist = traveled() - d0;
     r.dist_total = traveled() - total0;
+    {
+      std::lock_guard<std::mutex> l(mu_);
+      r.clear = clear_;
+    }
     return r;
   }
 
@@ -234,12 +270,13 @@ class Bench : public rclcpp::Node {
       if (std::isfinite(r.est_err)) max_est = std::max(max_est, r.est_err);
     }
     std::ofstream csv(base + ".csv");
-    csv << "goal,goal_x,goal_y,result,time_s,truth_x,truth_y,est_x,est_y,arrive_err_m,est_err_m,dist_m,dist_total_m\n";
+    csv << "goal,goal_x,goal_y,result,time_s,truth_x,truth_y,est_x,est_y,arrive_err_m,est_err_m,dist_m,dist_total_m,obstacle_clear_m\n";
     for (const auto& r : rows_)
       csv << r.i << ',' << r.gx << ',' << r.gy << ',' << r.result << ',' << r.t << ',' << r.tx << ',' << r.ty << ',' << r.ex
-          << ',' << r.ey << ',' << r.arrive << ',' << r.est_err << ',' << r.dist << ',' << r.dist_total << '\n';
+          << ',' << r.ey << ',' << r.arrive << ',' << r.est_err << ',' << r.dist << ',' << r.dist_total << ',' << r.clear << '\n';
     std::ofstream md(base + ".md");
-    md << "# 주행 벤치마크 — " << world_ << " · " << label_ << (smoke_ ? " (연기 모드: 라이다·카메라 끊음)" : "") << "\n\n";
+    md << "# 주행 벤치마크 — " << world_ << " · " << label_
+       << (smoke_ ? " (연기 모드: 라이다·카메라 끊음, 위치 " + smoke_loc_ + ")" : std::string()) << "\n\n";
     md << "- 날짜: " << ts << ", 도구: `limo_fire_navigation nav_benchmark`, 정답: Webots supervisor (" << truth_topic_ << ")\n";
     md << "- 목표: 월드 데이터 파일 순찰점 " << rows_.size() << " 개 (지도 좌표), 시간 한도 " << goal_timeout_ << " s (시뮬)\n";
     md << "- 도착 오차 = |정답 − 목표|, 추정 오차 = |Nav2 자세(map → base_link) − 정답|, 이동 = 정답으로 잰 거리\n\n";
@@ -253,10 +290,22 @@ class Bench : public rclcpp::Node {
     std::snprintf(line, sizeof line, "\n**요약**: 성공 %d / %zu, 성공한 목표의 평균 도착 오차 %.2f m, 가장 큰 추정 오차 %.2f m\n", ok,
                   rows_.size(), ok ? sum_arr / ok : NAN, max_est);
     md << line;
+    if (obstacle_.size() == 4) {
+      double mc = std::numeric_limits<double>::infinity();
+      for (const auto& r : rows_) mc = std::min(mc, r.clear);
+      char ob[320];
+      std::snprintf(ob, sizeof ob,
+                    "\n**지도에 없는 장애물**: 상자 세계 (%.2f, %.2f) 크기 %.2f × %.2f m — 몸통 가운데에서 상자 가장자리까지 가장 가까운 거리 %.2f m → %s "
+                    "(기준 %.2f m 미만이면 부딪힘, 잠정)\n",
+                    obstacle_[0], obstacle_[1], obstacle_[2], obstacle_[3], mc, mc < collide_clear_ ? "**부딪힘**" : "안 부딪힘",
+                    collide_clear_);
+      md << ob;
+      RCLCPP_INFO(get_logger(), "%s", ob);
+    }
     RCLCPP_INFO(get_logger(), "표: %s.md (%s.csv)%s", base.c_str(), base.c_str(), line);
   }
 
-  std::string world_file_, label_, report_dir_, truth_topic_, world_;
+  std::string world_file_, label_, report_dir_, truth_topic_, world_, smoke_loc_;
   bool smoke_;
   double goal_timeout_;
   int max_goals_;
@@ -265,6 +314,8 @@ class Bench : public rclcpp::Node {
   std::vector<Row> rows_;
   std::mutex mu_;
   std::optional<Pose2> truth_;
+  std::vector<double> obstacle_;
+  double collide_clear_ = 0.12, clear_ = std::numeric_limits<double>::infinity();
   bool loaded_ = false;
   double dist_ = 0.0;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;

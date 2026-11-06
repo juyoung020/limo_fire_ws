@@ -1,0 +1,13 @@
+# ESP32 다리 (limo_fire_esp32_bridge). 펌웨어 firmware/limo_fire_esp32 와 맞춘다
+esp32_bridge:
+  ros__parameters:
+    # 포트: udev 규칙으로 /dev/esp32 를 만든다(README "udev"). 없으면 1 초마다 다시 열며 알린다
+    port: /dev/esp32
+    baud: 115200                 # 펌웨어 config.h kBaud
+    heartbeat_timeout: 3.0       # s, 펌웨어 살아 있음 줄 1 s 마다
+    ultrasonic:
+      # 펌웨어 초음파 번호 순서 = 이 이름 순서 → /ultrasonic/<이름>, 프레임 ultrasonic_<이름>_link (URDF ultrasonic.xacro, 시뮬과 같음)
+      names: ["front", "left", "right"]
+      field_of_view: 0.2618      # 15°, HC-SR04 데이터시트 감지 각
+      min_range: 0.02            # 데이터시트 2 cm
+      max_range: 4.0             # 데이터시트 400 cm

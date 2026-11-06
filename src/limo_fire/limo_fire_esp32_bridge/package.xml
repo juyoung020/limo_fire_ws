@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>limo_fire_esp32_bridge</name>
+  <version>0.1.0</version>
+  <description>ESP32 USB 시리얼 ↔ ROS (지금은 초음파 HC-SR04 × 3 → sensor_msgs/Range). 펌웨어는 firmware/limo_fire_esp32</description>
+  <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

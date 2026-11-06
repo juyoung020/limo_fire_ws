@@ -70,6 +70,23 @@ class SmokeModeNode : public rclcpp::Node {
 
     bump_accel_ = declare_parameter<double>("bump.accel", 4.0);
     bump_holdoff_ = declare_parameter<double>("bump.holdoff", 1.0);
+    // 연기 속 위치: hold = 들어갈 때 map → odom 을 붙잡고 바퀴 + IMU 만 따라감 · sonar = AMCL 에 라이다 대신 초음파 스캔(sonar_scan 노드)을 넣어
+    // AMCL 이 계속 고친다 (docs/smoke_mode_plan.md 3 단계). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
+    localization_ = declare_parameter<std::string>("smoke_localization", "hold");
+    if (localization_ != "hold" && localization_ != "sonar")
+      throw std::invalid_argument("smoke_mode: smoke_localization 은 hold 또는 sonar");
+    param_cb_ = add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& ps) {
+      rcl_interfaces::msg::SetParametersResult r;
+      r.successful = true;
+      for (const auto& p : ps) {
+        if (p.get_name() != "smoke_localization") continue;
+        const std::string v = p.get_type() == rclcpp::ParameterType::PARAMETER_STRING ? p.as_string() : "";
+        if (smoke_) { r.successful = false; r.reason = "연기 모드 중에는 바꿀 수 없음"; }
+        else if (v != "hold" && v != "sonar") { r.successful = false; r.reason = "hold 또는 sonar"; }
+        else localization_ = v;
+      }
+      return r;
+    });
 
     if (tf_rate_ <= 0.0 || scan_rate_ <= 0.0 || scan_angle_inc_ <= 0.0 || scan_angle_max_ <= scan_angle_min_ ||
         scan_range_max_ <= scan_range_min_ || speed_limit_ <= 0.0) {
@@ -91,6 +108,10 @@ class SmokeModeNode : public rclcpp::Node {
 
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
         "scan", rclcpp::SensorDataQoS(), std::bind(&SmokeModeNode::on_scan, this, _1));
+    sonar_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
+        "sonar_scan", rclcpp::SensorDataQoS(), [this](sensor_msgs::msg::LaserScan::SharedPtr m) {
+          if (smoke_ && localization_ == "sonar") scan_loc_pub_->publish(*m);   // 연기 속 AMCL 은 초음파만 본다
+        });
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
         "imu", rclcpp::SensorDataQoS(), std::bind(&SmokeModeNode::on_imu, this, _1));
     map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
@@ -166,8 +187,8 @@ class SmokeModeNode : public rclcpp::Node {
     clear_costmaps();
     publish_active();
     publish_speed_limit();
-    RCLCPP_WARN(get_logger(), "연기 모드 켬: 라이다·카메라를 쓰지 않고 바퀴 + IMU 로만 움직임, 속도 한도 %.2f m/s",
-                speed_limit_);
+    RCLCPP_WARN(get_logger(), "연기 모드 켬: 라이다·카메라를 쓰지 않고 %s, 속도 한도 %.2f m/s",
+                localization_ == "sonar" ? "바퀴 + IMU + 초음파(AMCL)로 위치를 잡음" : "바퀴 + IMU 로만 움직임", speed_limit_);
     return true;
   }
 
@@ -176,7 +197,8 @@ class SmokeModeNode : public rclcpp::Node {
     // 상태를 먼저 내린다: 이 노드도 /initialpose 를 받으므로(연기 속 사람 보정용) 자기 메시지를 사람 보정으로 받지 않게
     const auto est = estimate(now());
     smoke_ = false;
-    if (est) initialpose_pub_->publish(*est);
+    // sonar 면 AMCL 이 연기 속에서도 계속 위치를 고쳐 왔으므로 다시 넣지 않는다 (넣으면 입자를 흩뜨림)
+    if (est && localization_ == "hold") initialpose_pub_->publish(*est);
     clear_costmaps();
     publish_active();
     publish_speed_limit();
@@ -186,7 +208,8 @@ class SmokeModeNode : public rclcpp::Node {
 
   // ---- 위치 ----------------------------------------------------------------------------------------
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
-    if (smoke_) return;  // 연기 속에서는 스캔을 끊어 AMCL 이 새 자세를 내지 않지만, 혹시 와도 쓰지 않는다
+    // hold: 연기 속에서는 스캔을 끊어 AMCL 이 새 자세를 내지 않지만, 혹시 와도 쓰지 않는다. sonar: 초음파로 고친 자세를 그대로 씀
+    if (smoke_ && localization_ == "hold") return;
     set_map_pose(*msg, rclcpp::Time(msg->header.stamp));
   }
 
@@ -396,7 +419,9 @@ class SmokeModeNode : public rclcpp::Node {
   rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr bump_pub_;
   rclcpp::Publisher<nav2_msgs::msg::SpeedLimit>::SharedPtr speed_pub_;
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_loc_pub_, scan_obs_pub_;
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_, sonar_sub_;
+  std::string localization_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr amcl_sub_, initialpose_sub_;

@@ -35,6 +35,65 @@
 - 실행은 Humble 인 로봇 Jetson 에서 한다(이 저장소 기준 환경). Ubuntu 24.04 + Jazzy 데스크톱은 Nav2 플러그인 이름·바퀴 제어기 한도·속도 메시지 형식이 달라 그대로는 안 돈다.
 - 다음: 마찰 단계별 실험 → 2 단계(Webots 초음파 3 개).
 
+## 진행 (2026-11-06) — 2~5 단계 코드 다 만듦, 첫 시뮬 측정: 3·4 단계 효과 없음
+
+코드·설정과 시뮬 없이 되는 시험을 한 뒤, 로봇 Jetson 에서 팀원 시뮬과 같이(포트 1235) 첫 측정을 돌렸다.
+결과: [benchmarks "결과 2"](benchmarks/README.md) —
+**초음파 위치 추정(`sonar`)이 바퀴 + IMU(`hold`)보다 네 맵 모두 나빴고(office·warehouse 에서 위치를 잃음), 상자는 초음파를 켜도 못 피했다.**
+
+| 단계 | 만든 것 | 확인한 것 | 남은 것 |
+|---|---|---|---|
+| 2 초음파 3 개 (시뮬) | `LimoFire.proto` `ultrasonic`(기본 FALSE) — Webots sonar 3 개(15°, 2~400 cm, 잡음 1 % 잠정), `/ultrasonic/front·left·right` (`sensor_msgs/Range`, 10 Hz), `urdf/ultrasonic.xacro` 프레임 (잠정 자리: 앞 0.16 m, 왼·오른 옆면 0.11 m, 바닥 위 약 0.115 m) | URDF 링크 3 개, 시뮬에서 토픽이 나와 3 단계가 씀 | 값 확인(확인 스크립트 오류로 숫자 못 얻음) |
+| 3 초음파 위치 추정 | `sonar_scan` 노드(초음파 → base_link 60 칸 스캔, 원뿔에 점 3 개), `smoke_mode` `smoke_localization: sonar`(연기 속 AMCL 에 초음파), `nav_benchmark` `smoke_localization` | 가짜 Range 로: 앞 1 m → −6°·0°·+6° 칸 1.16 m, 왼 0.5 m → 90° 근처 0.61 m. 맵 4 개 측정: **(c) 가 (b) 보다 나쁨** | 아래 "고쳐서 다시 잴 것" 1 |
+| 4 초음파 장애물 | 전역·지역 장애물 지도에 `sonar` 관측원(찍기만), `nav_benchmark` `obstacle_box`(정답으로 상자까지 가장 가까운 거리, 0.12 m 미만 = 부딪힘, 잠정) | 상자 2 판: **둘 다 닿음(초음파로 못 피함)**, 부딪힘 기준이 틀렸음 | 아래 2·3·4 |
+| 5 실물 초음파 | `firmware/limo_fire_esp32`(HC-SR04 × 3 차례로, 체크섬 줄), `limo_fire_esp32_bridge`(시리얼 → 시뮬과 같은 토픽·프레임), `robot.launch.xml esp32:=true` | 펌웨어 빌드(경고 0), 다리 단위 테스트, 가짜 ESP32(pty) 끝까지 | 실물 배선·장착·천 씌우고 주행 |
+
+공통: `sim.launch.xml port:=` (한 컴퓨터에 시뮬 둘), 데스크톱 빌드 경고 0.
+
+### 다음에 돌릴 것 (로봇 Jetson, Humble — 아무도 시뮬을 안 쓸 때)
+
+로봇 `~/smoke_ws2` 가 이 작업판(main + 위 코드)이다. 남의 시뮬과 안 겹치게 **Webots 포트 1235 · `ROS_DOMAIN_ID=57`**.
+
+1. 빌드: `cd ~/smoke_ws2 && colcon build --symlink-install --packages-select limo_fire_description limo_fire_navigation limo_fire_bringup limo_fire_sim --packages-ignore <실물 드라이버들>`
+2. 실험 월드: 원본 월드에서 `LimoFire` 에 `wheelRadiusScale 1.03`(거리 +3 %) · `ultrasonic TRUE` 를 넣은 사본을 같은 폴더에(상대 EXTERNPROTO 그대로). 4 단계는 고정 상자
+   `Solid { translation -2.3 -2.45 0.15  boundingObject Box { size 0.4 0.5 0.3 } … }` 를 미로 월드 끝에 더한다(물리 없음, 출발 직후 통로, 위로 0.65 m 틈).
+   로봇의 `~/smoke_run2/mkworld.sh <월드> 1.03 1.0 TRUE [x,y,가로,세로]` 가 이것을 만든다.
+3. 시뮬: `ros2 launch limo_fire_bringup sim.launch.xml world:=<실험 월드> port:=1235 rviz:=false map:=<원본 월드 지도>.yaml`
+4. 측정: `ros2 run limo_fire_navigation nav_benchmark --ros-args -p use_sim_time:=true -p world_file:=sim/webots/worlds/<원본 월드>.yaml -p smoke:=true -p smoke_localization:=<hold|sonar> -p label:=<이름> -p report_dir:=docs/benchmarks`
+   (4 단계는 `-p max_goals:=1 -p "obstacle_box:=[-2.3,-2.45,0.4,0.5]"`)
+   로봇의 `~/smoke_run2/run_one.sh` 가 3·4 를 한 번에, `when_free.sh` 가 아래 목록 전부를 (빈 때를 기다렸다가) 돈다.
+
+| 순서 | 무엇 | 월드 | 조건 | 기대 |
+|---|---|---|---|---|
+| 1 | 2 단계 확인 | maze, 초음파 켬 | — | 초음파 ≈ 같은 방향 라이다 빔 (앞은 장착 차이 0.057 m) |
+| 2~9 | 3 단계 | 맵 4 개, 거리 +3 % · 초음파 켬 | (b) `hold` · (c) `sonar` | (c) 추정 오차 < (b) |
+| 10 | 4 단계 | maze + 상자, 초음파 켬 | `sonar`, 첫 목표만 | 상자를 돌아 도착, 안 부딪힘 |
+| 11 | 4 단계 기준 | maze + 상자, 초음파 끔 | `hold`, 첫 목표만 | 상자를 못 봄 (부딪힘 예상) |
+
+걸리는 시간: 맵마다 시뮬 켜기 약 75 s + 순찰 5~10 분 → 전부 약 1 시간 40 분.
+
+### 다음에 고쳐서 다시 잴 것
+
+원인 후보는 확인 전이다. 하나씩 바꾸고 위 표를 다시 돈다(로봇 `~/smoke_run2/run_now.sh` = 기다림 없이 전부, 약 1 시간 40 분).
+
+1. **초음파 AMCL 설정** — 지금은 라이다용 AMCL 값(sigma_hit 0.2, z_hit 0.5·z_rand 0.5, likelihood_max_dist 2.0) 그대로 점 9 개짜리 초음파 스캔을 믿어
+   엉뚱한 자리로 끌려간다(office·warehouse). 초음파일 때 측정 잡음을 크게(sigma_hit↑·z_rand↑), 갱신을 덜 믿게(update_min_d↑) 한 AMCL 판을 쓰거나,
+   AMCL 대신 바퀴 + IMU 를 기본으로 두고 초음파는 벽까지 거리가 지도와 많이 다를 때만 작게 고치는 방식을 비교한다.
+2. **초음파 장애물이 안 지워짐** — `nav2_params.yaml` `sonar` 관측원이 찍기만 해서 잡음이 장애물 지도에 쌓였을 수 있다(office (b) 가 위치는 맞는데 끝에서 경로를 못 냄).
+   Nav2 의 초음파용 층(`nav2_costmap_2d::RangeSensorLayer`, 확률로 찍고 지움)으로 바꾸거나 지우기를 켠다.
+3. **장애물을 늦게 봄** — 앞 초음파 하나(15°, 10 Hz)로 0.13 m/s 에서도 못 피했다. 연기 모드에서 앞 초음파 거리가 짧으면 속도를 줄이거나 멈추는 규칙,
+   초음파 개수·방향(앞 대각선 2 개 등)을 비교한다.
+4. **측정 도구 부딪힘 기준** — 가운데에서 거리(0.12 m)가 아니라 몸통 사각형(0.32 × 0.22 m, 자세 방향)과 상자가 겹치는지로 센다. 먼저 고친다.
+5. **2 단계 확인 스크립트** — `ros2 topic echo --full-length` 로 배열을 줄이지 않게 하거나 C++ 확인 도구로.
+
+### 남은 것
+
+- 위 "고쳐서 다시 잴 것" 1~5 → 다시 측정 → 결과를 `docs/benchmarks/` 와 이 문서에.
+- 실물: 초음파 3 개 장착 자리 정하기(지금 값 잠정) → 배선(Echo 5 V 전압 분배) → `esp32:=true` 로 토픽 확인 → 라이다·카메라에 천을 씌우고 같은 목표 주행.
+- 실물 주행 오차(1 m 직진·360° 회전) 측정 → 시뮬 `wheelRadiusScale`·마찰을 실측값으로.
+- 부딪힘 감지 문턱(잠정 4 m/s²) 다시 정하기 — 1 단계에서 오탐 15 번.
+- 로봇 `~/smoke_ws` 의 `nav_benchmark`·`smoke_mode` 에 누가 검사를 더했는지 확인(11-05 05:44 접속, 06:02~06:05 수정) — 이 저장소에는 안 들어가 있다.
+
 ## 3. 시험 (1·3 단계 공통)
 
 - 맵: Webots 4 개 (`limo_fire_maze`·`office`·`warehouse`·`world`, 저장 지도 `limo_fire_navigation/maps/sim/`).

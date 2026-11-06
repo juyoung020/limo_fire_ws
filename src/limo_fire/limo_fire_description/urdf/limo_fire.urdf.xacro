@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!-- 화재 대응 LIMO Pro 조립. 모듈마다 xacro 하나, 장착 위치는 여기 한 곳에만 둔다.
-     열화상·레이더·초음파·노즐(팬·틸트)은 배치가 정해지면 모듈 xacro 를 더하고 여기서 부른다.
+     열화상·레이더·노즐(팬·틸트)은 배치가 정해지면 모듈 xacro 를 더하고 여기서 부른다.
      xacro limo_fire.urdf.xacro platform:=real camera_pitch:=0.0 camera_driver_tf:=false -->
 <robot name="limo_fire" xmlns:xacro="http://ros.org/wiki/xacro">
   <!-- real: 실물 LIMO, webots: 교수님 Webots 모델(webots_ros2_limo LimoFourDiff.proto). 둘이 다른 장착 위치만 여기서 고른다 -->
@@ -12,6 +12,7 @@
 
   <xacro:include filename="$(find limo_fire_description)/urdf/limo_pro_base.xacro"/>
   <xacro:include filename="$(find limo_fire_description)/urdf/orbbec_dabai.xacro"/>
+  <xacro:include filename="$(find limo_fire_description)/urdf/ultrasonic.xacro"/>
 
   <xacro:limo_pro_base/>
 
@@ -21,4 +22,10 @@
   <xacro:property name="camera_xyz" value="${dict(real='0.15 -0.005 0.0431', webots='0.096 0.015 0.03')['$(arg platform)']}"/>
   <xacro:orbbec_dabai parent="base_link" name="camera" xyz="${camera_xyz}"
                       pitch="$(arg camera_pitch)" driver_tf="$(arg camera_driver_tf)"/>
+
+  <!-- 초음파 HC-SR04 × 3 (연기 모드, docs/smoke_mode_plan.md 2 단계). 잠정 자리 — 실물 장착 전이라 실측 아님, 시뮬 LimoFire.proto ultrasonic 과 같은 값.
+       앞: 범퍼 앞 0.16 m, 왼·오른: 옆면 0.11 m. 높이 base_link −0.03 m = 바닥 위 약 0.115 m (라이다 0.111 m 와 비슷 — 같은 벽 높이를 봄) -->
+  <xacro:ultrasonic parent="base_link" name="ultrasonic_front" xyz="0.16 0 -0.03" yaw="0"/>
+  <xacro:ultrasonic parent="base_link" name="ultrasonic_left" xyz="0 0.11 -0.03" yaw="${pi/2}"/>
+  <xacro:ultrasonic parent="base_link" name="ultrasonic_right" xyz="0 -0.11 -0.03" yaw="${-pi/2}"/>
 </robot>

@@ -1,5 +1,5 @@
 <!-- 실물 LIMO Pro 센서·구동 켜기 (대시보드 "센서" = WeGo wego/teleop_launch.py 와 같은 구성)
-     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [camera_pitch:=0.1152] [base:=false]
+     ros2 launch limo_fire_bringup robot.launch.xml [viz:=true] [camera_pitch:=0.1152] [base:=false] [esp32:=true]
      URDF(limo_fire_description, 카메라 장착 포함) + 섀시(limo_fire_base: 바퀴·IMU·리모컨) + 깊이 카메라 + 라이다 + EKF
      base:=false 는 센서만(베이스·EKF 끔): 충전 중이나 세워 두고 센서 오차를 잴 때 — 바퀴가 명령을 받지 않는다 -->
 <launch>
@@ -7,6 +7,7 @@
   <arg name="viz" default="false"/>
   <arg name="base" default="true" description="false 면 베이스(바퀴·IMU)·EKF 를 켜지 않고 센서만"/>
   <arg name="max_clocks" default="true" description="jetson_clocks 로 CPU·GPU·메모리 클럭을 최대로 고정 (재부팅하면 풀림, sudo 암호 없이 될 때만)"/>
+  <arg name="esp32" default="false" description="ESP32 다리(초음파 HC-SR04 × 3 → /ultrasonic/*). 초음파·ESP32 를 단 뒤 true (limo_fire_esp32_bridge README)"/>
 
   <!-- 클럭 고정: 카메라처럼 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려가 YOLO 가 21 ms → 고정하면 11 ms -->
   <executable cmd="sudo -n /usr/bin/jetson_clocks" name="jetson_clocks" output="screen" if="$(var max_clocks)"/>
@@ -39,6 +40,11 @@
   <!-- 라이다 YDLIDAR T-mini Plus -->
   <node pkg="ydlidar_ros2_driver" exec="ydlidar_ros2_driver_node" name="ydlidar_ros2_driver_node" namespace="/" output="screen" emulate_tty="true">
     <param from="$(find-pkg-share limo_fire_bringup)/config/ydlidar.yaml"/>
+  </node>
+
+  <!-- ESP32: 초음파 HC-SR04 × 3 → /ultrasonic/front·left·right (sensor_msgs/Range). 펌웨어 firmware/limo_fire_esp32 -->
+  <node pkg="limo_fire_esp32_bridge" exec="esp32_bridge" name="esp32_bridge" output="screen" if="$(var esp32)">
+    <param from="$(find-pkg-share limo_fire_esp32_bridge)/config/esp32_bridge.yaml"/>
   </node>
 
   <!-- EKF: /odom + /imu → /odometry/filtered, odom → base_link -->

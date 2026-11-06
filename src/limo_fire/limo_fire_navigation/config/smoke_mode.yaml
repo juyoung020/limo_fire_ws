@@ -2,6 +2,8 @@
 # navigation.launch.xml 이 저장 지도 위치 추정(localization:=true)일 때 늘 띄운다. 켜기: ros2 service call /smoke_mode/set std_srvs/srv/SetBool "{data: true}"
 smoke_mode:
   ros__parameters:
+    # 연기 속 위치: hold = 바퀴 + IMU 만(들어갈 때 위치를 붙잡음) · sonar = AMCL 에 초음파 스캔(아래 sonar_scan). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
+    smoke_localization: hold
     global_frame: map
     odom_frame: odom
     base_frame: base_link
@@ -38,3 +40,13 @@ smoke_mode:
     bump:
       accel: 4.0
       holdoff: 1.0               # s, 한 번 부딪힘을 여러 번 알리지 않게
+
+# 초음파 3 개 → base_link 스캔 (sonar_scan 노드, docs/smoke_mode_plan.md 3 단계)
+sonar_scan:
+  ros__parameters:
+    range_topics: ["/ultrasonic/front", "/ultrasonic/left", "/ultrasonic/right"]
+    base_frame: base_link
+    bins: 60            # AMCL max_beams(60) 이하 — 넘으면 AMCL 이 솎으며 몇 안 되는 유효 칸을 버린다
+    rays_per_cone: 3    # 원뿔(15°) 폭에 점 3 개 (어디서 반사됐는지 모르므로)
+    rate: 10.0          # 초음파 10 Hz 와 같게
+    max_age: 0.5        # 이보다 오래된 거리는 안 씀 (센서 끊김)

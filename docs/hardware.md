@@ -15,10 +15,10 @@
 | 오디오 | USB PnP Audio (JMTek 0c76:161f) | USB | — | 장착, 스피커·마이크 여부 확인 필요 |
 | 열화상 | GY-MCU90640 (MLX90640 BAB 55°, 32×24) | ESP32 UART | 예정 | 부품 대기 |
 | 레이더 | HLK-LD2450 24GHz | ESP32 UART 256000baud | 예정 | 부품 대기 |
-| 초음파 | HC-SR04 × 최대 3 | ESP32 GPIO | 예정 `sensor_msgs/Range` | 키트 보유 |
+| 초음파 | HC-SR04 × 3 | ESP32 GPIO | `/ultrasonic/front·left·right` (`sensor_msgs/Range`) | 키트 보유 · 펌웨어·다리 준비(실물 시험 전), 시뮬엔 있음 |
 | 노즐 팬·틸트 | MG996R(팬) + DS3218 PRO 20kg(틸트) | ESP32 PWM | 예정 `/joint_states` | 부품 대기 |
 | 펌프 | DP-521 12V 다이어프램 + D4184 MOSFET | ESP32 GPIO | 예정 `std_srvs/SetBool` | 부품 대기 |
-| 제어 보드 | ESP32 | USB 시리얼 | 예정 `limo_fire_esp32_bridge` | 보유 확인 필요 |
+| 제어 보드 | ESP32 | USB 시리얼 115200 (`/dev/esp32`) | `limo_fire_esp32_bridge` (펌웨어 `firmware/limo_fire_esp32`) | 보유 확인 필요 |
 
 ## LIMO Pro 기본 모듈 (실측)
 

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!-- 초음파 HC-SR04 모듈 하나 (연기 모드 위치 추정·장애물). <name>_link: x 앞이 측정 방향(sensor_msgs/Range 규약).
+     실물은 ESP32 다리, 시뮬은 Webots DistanceSensor(sim/webots/protos/LimoFire.proto ultrasonic) 가 같은 프레임으로 Range 를 낸다. -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:macro name="ultrasonic" params="parent name xyz yaw">
+    <link name="${name}_link"/>
+    <joint name="${name}_joint" type="fixed">
+      <origin xyz="${xyz}" rpy="0 0 ${yaw}"/>
+      <parent link="${parent}"/>
+      <child link="${name}_link"/>
+    </joint>
+  </xacro:macro>
+</robot>

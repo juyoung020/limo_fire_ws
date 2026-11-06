@@ -19,12 +19,14 @@
   <arg name="report_dir" default="$(env HOME)/limo_fire_ws/docs/benchmarks"/>
   <arg name="rviz" default="true"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
+  <arg name="port" default="1234" description="Webots 포트 — 한 컴퓨터에서 시뮬을 둘 띄울 때 다르게"/>
 
   <!-- include 에 준 인자는 Humble 에서 바깥으로 새어 나와 다음 include 의 값을 바꾸므로 하나씩 group 으로 가둔다 -->
   <group>
     <include file="$(find-pkg-share limo_fire_bringup)/launch/sim_robot.launch.xml">
       <arg name="world_file" value="$(var world_dir)/$(var world).wbt"/>
       <arg name="mode" value="$(var mode)"/>
+      <arg name="port" value="$(var port)"/>
     </include>
   </group>
 
