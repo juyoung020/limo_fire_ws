@@ -188,11 +188,19 @@ global_costmap:
       robot_radius: 0.2
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "range_layer", "inflation_layer"]
+      # 초음파 HC-SR04 × 3 (/ultrasonic/*) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
+      # 점으로 찍기만 해 잡음이 쌓였다. 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다. 값은 Nav2 기본 + 메아리 없음(최대 거리) = 지움
+      range_layer:
+        plugin: "nav2_costmap_2d::RangeSensorLayer"
+        enabled: True
+        topics: ["/ultrasonic/front", "/ultrasonic/left", "/ultrasonic/right"]
+        clear_on_max_reading: True
+        input_sensor_type: "ALL"
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        observation_sources: scan sonar
+        observation_sources: scan
         max_obstacle_height: 0.1
         min_obstacle_height: -0.5
         combination_method: 1
@@ -206,17 +214,6 @@ global_costmap:
           max_obstacle_height: 0.1
           min_obstacle_height: -0.5
           clearing: True
-          marking: True
-          data_type: "LaserScan"
-        # 초음파(sonar_scan 노드: /ultrasonic/* 3 개를 base_link 스캔으로) — 연기 모드에서 라이다가 끊겨도 가까운 새 장애물을 찍는다(4 단계).
-        # 찍기만 하고 지우지 않는다(원뿔이 넓고 메아리 없음은 +inf = 정보 없음). 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다
-        sonar:
-          topic: /sonar_scan
-          obstacle_max_range: 2.0
-          obstacle_min_range: 0.0
-          max_obstacle_height: 0.1
-          min_obstacle_height: -0.5
-          clearing: False
           marking: True
           data_type: "LaserScan"
       static_layer:
@@ -244,7 +241,15 @@ local_costmap:
       resolution: 0.05
       footprint: "[[-0.16, -0.11], [-0.16, 0.11], [0.16, 0.11], [0.16, -0.11]]"
       footprint_padding: 0.02
-      plugins: ["obstacle_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "range_layer", "inflation_layer"]
+      # 초음파 HC-SR04 × 3 (/ultrasonic/*) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
+      # 점으로 찍기만 해 잡음이 쌓였다. 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다. 값은 Nav2 기본 + 메아리 없음(최대 거리) = 지움
+      range_layer:
+        plugin: "nav2_costmap_2d::RangeSensorLayer"
+        enabled: True
+        topics: ["/ultrasonic/front", "/ultrasonic/left", "/ultrasonic/right"]
+        clear_on_max_reading: True
+        input_sensor_type: "ALL"
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -252,7 +257,7 @@ local_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        observation_sources: scan sonar
+        observation_sources: scan
         max_obstacle_height: 0.1
         min_obstacle_height: -0.5
         combination_method: 1
@@ -266,17 +271,6 @@ local_costmap:
           max_obstacle_height: 0.1
           min_obstacle_height: -0.5
           clearing: True
-          marking: True
-          data_type: "LaserScan"
-        # 초음파(sonar_scan 노드: /ultrasonic/* 3 개를 base_link 스캔으로) — 연기 모드에서 라이다가 끊겨도 가까운 새 장애물을 찍는다(4 단계).
-        # 찍기만 하고 지우지 않는다(원뿔이 넓고 메아리 없음은 +inf = 정보 없음). 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다
-        sonar:
-          topic: /sonar_scan
-          obstacle_max_range: 2.0
-          obstacle_min_range: 0.0
-          max_obstacle_height: 0.1
-          min_obstacle_height: -0.5
-          clearing: False
           marking: True
           data_type: "LaserScan"
       always_send_full_costmap: True

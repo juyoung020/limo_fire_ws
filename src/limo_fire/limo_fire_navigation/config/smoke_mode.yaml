@@ -4,6 +4,17 @@ smoke_mode:
   ros__parameters:
     # 연기 속 위치: hold = 바퀴 + IMU 만(들어갈 때 위치를 붙잡음) · sonar = AMCL 에 초음파 스캔(아래 sonar_scan). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
     smoke_localization: hold
+    # sonar 일 때 초음파 AMCL 자세를 받는 문 (잠정): 바퀴 + IMU 추정과 0.5 m · 0.3 rad 안일 때만 30 % 씩 끌어당김,
+    # 5 번 잇달아 어긋나면 AMCL 을 지금 추정 자리로 다시 놓음. 2026-11-06 엔 그대로 믿어 office·warehouse 에서 위치를 잃었다
+    # 앞 초음파가 0.6 m 보다 가까우면 연기 모드 속도 한도를 0.05 m/s 로 (장애물을 늦게 봐 상자를 못 피함)
+    sonar:
+      gate_xy: 0.5
+      gate_yaw: 0.3
+      blend: 0.3
+      reseed_after: 5
+      front_topic: /ultrasonic/front
+      slow_distance: 0.6
+      slow_speed: 0.05
     global_frame: map
     odom_frame: odom
     base_frame: base_link

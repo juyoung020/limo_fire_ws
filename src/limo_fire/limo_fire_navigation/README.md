@@ -41,16 +41,16 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 
 | 할 일 | 평상시 | 연기 모드 |
 |---|---|---|
-| `map → odom` TF | AMCL 자세(`/amcl_pose`)로 계산해 냄 | `hold`: 들어갈 때 값을 붙잡아 냄 → 위치는 EKF(바퀴 + IMU) 만 따라감 · `sonar`: 계속 AMCL 자세로 |
+| `map → odom` TF | AMCL 자세(`/amcl_pose`)로 계산해 냄 | `hold`: 들어갈 때 값을 붙잡아 냄 → 위치는 EKF(바퀴 + IMU) 만 따라감 · `sonar`: 바퀴 + IMU 추정과 가까운 AMCL 자세만 조금씩 반영(`sonar.gate_*`·`blend`), 잇달아 어긋나면 AMCL 을 추정 자리로 다시 놓음 |
 | AMCL 이 받는 스캔 `scan_localization` | `/scan` 그대로 | `hold`: 끊음 · `sonar`: 초음파 스캔(`sonar_scan`) |
 | 장애물 지도가 받는 라이다 `scan_obstacles` | `/scan` 그대로 | 저장 지도에서 광선을 쏜 **가상 스캔** — 지도의 벽만 남고 연기가 찍은 가짜 장애물은 지워짐 |
-| 최고 속도 (`speed_limit`) | 한도 없음 | 0.13 m/s (잠정) |
+| 최고 속도 (`speed_limit`) | 한도 없음 | 0.13 m/s, 앞 초음파 0.6 m 안이면 0.05 m/s (잠정) |
 | 추정 자세 `smoke_mode/pose` | — | 자세 + 이동·회전에 비례해 커지는 불확실성 |
 | 부딪힘 `smoke_mode/bump` | — | IMU 수평 가속도가 4 m/s² (잠정) 넘으면 그 지도 위치 |
 
 - 연기 속 위치 방식 `smoke_localization`(`config/smoke_mode.yaml`, 기본 `hold`)은 연기 모드가 꺼져 있을 때만 바꿀 수 있다: `ros2 param set /smoke_mode smoke_localization sonar`.
 - `sonar_scan` 노드: 초음파 3 개 Range → base_link 기준 60 칸 스캔(원뿔 15° 폭에 점 3 개, 나머지 칸 +inf = AMCL 이 안 씀). 칸 수가 AMCL `max_beams`(60) 이하라야 AMCL 이 몇 안 되는 점을 버리지 않는다.
-- 초음파는 장애물 지도(전역·지역)에도 들어간다(`nav2_params.yaml` `sonar` 관측원, 찍기만 함) — 연기 속 지도에 없는 장애물(4 단계).
+- 초음파는 장애물 지도(전역·지역)의 `range_layer`(`nav2_costmap_2d::RangeSensorLayer`, 확률로 찍고 지움)로도 들어간다 — 연기 속 지도에 없는 장애물(4 단계).
 - `map → odom` 은 이 노드 하나만 낸다. 그래서 AMCL 은 `tf_broadcast: false` 다(`nav2_params.yaml`).
 - 들어갈 때·나올 때 장애물 지도를 비운다(연기 전·후의 라이다 흔적을 지움).
 - 나올 때 지금 추정 자세를 쌓인 불확실성과 함께 `/initialpose` 로 AMCL 에 넘긴다. AMCL 은 다시 들어오는 라이다로 그 근처에서 맞춘다.
@@ -59,7 +59,7 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 
 ### 한계
 
-- 연기 속에서는 새 장애물(쓰러진 물건, 사람)을 미리 못 본다. 장애물 지도에는 저장 지도의 벽만 있다. 부딪힌 뒤에야 IMU 로 안다.
+- 라이다·카메라가 없으니 새 장애물(쓰러진 물건, 사람)은 초음파로만 본다. 초음파가 없으면 장애물 지도에는 저장 지도의 벽만 있어 부딪힌 뒤에야 IMU 로 안다. 초음파를 켜도 시뮬 상자에 3 판 중 1 판은 닿았다.
 - 위치는 이동할수록 흐려진다. 오차가 얼마나 빨리 커지는지는 바퀴 오도메트리 주행 시험(1 m 직진·360° 회전, hardware.md "확인할 것") 뒤에 `drift.*` 를 맞춘다.
 - 연기를 스스로 알아채지 않는다. 켜고 끄기는 서비스로 한다(시연 버튼, 나중에 BT).
 - 잠정 값(`config/smoke_mode.yaml`): 속도 한도, 불확실성 계수, 부딪힘 문턱. 메카넘 바퀴 주행 진동을 재서 부딪힘 문턱을 다시 정한다.
@@ -73,7 +73,8 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 - 부딪힘 감지는 미로 맵 (b) 에서 15 번 떴고 모두 오탐(실제 충돌 0) — 제자리 회전·출발 가속에 걸린다. 문턱(잠정 4 m/s²)을 다시 정해야 한다.
 - 2026-11-06 (로봇 Jetson, 거리 −3 % · 초음파 켬): **`smoke_localization: sonar` 가 `hold` 보다 네 맵 모두 나빴다**(office·warehouse 에서 위치를 잃음),
   지도에 없는 상자는 초음파를 켜도 못 피했다 → [docs/benchmarks "결과 2"](../../../docs/benchmarks/README.md). `sonar` 는 실험 단계 — 연기 모드 기본은 `hold`.
-  고칠 것: [smoke_mode_plan.md "다음에 고쳐서 다시 잴 것"](../../../docs/smoke_mode_plan.md).
+- 2026-11-06 오후 (같은 조건, 고친 뒤): `hold` 는 네 맵 다 끝까지 갔다. `sonar` 는 나아졌지만 여전히 네 맵 모두 `hold` 보다 부정확했다(warehouse 11/13, 최대 1.70 m).
+  상자는 초음파 끔 3/3 닿음 → 초음파 켬 1/3 닿음(`hold`·`sonar` 같음). 물체가 있어도 초음파 메아리가 없는 때가 21~39 % 다 → [docs/benchmarks "결과 3"](../../../docs/benchmarks/README.md). 다음 할 일: [smoke_mode_plan.md "다음에 볼 것"](../../../docs/smoke_mode_plan.md).
 - **아직 안 함**: 실물 주행, 실물 수준 오도메트리 오차에서의 측정.
 
 ## 주행 벤치마크 `nav_benchmark` (시뮬 전용)

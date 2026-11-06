@@ -11,6 +11,7 @@
 // 정답은 평가에만 쓴다 — 주행·위치 추정에 들어가지 않는다.
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -64,9 +65,12 @@ class Bench : public rclcpp::Node {
     max_goals_ = declare_parameter<int>("max_goals", 0);
     smoke_loc_ = declare_parameter<std::string>("smoke_localization", "hold");   // smoke:=true 일 때 연기 속 위치 (hold · sonar)
     // 지도에 없는 장애물(4 단계): Webots 세계 좌표 [x, y, 가로, 세로] (m, 축 정렬). 비면 안 잰다.
-    // 몸통 가운데에서 상자 가장자리까지 거리의 최솟값을 재고, collide_clearance 보다 작으면 부딪힘으로 센다
+    // 몸통 사각형(footprint, 자세 방향)과 상자 사이 가장 좁은 간격을 재고, collide_gap 보다 작으면 부딪힘으로 센다.
+    // (2026-11-06 판은 몸통 가운데 거리 0.12 m 로 셌다 — 앞 범퍼가 가운데에서 0.16 m 라 닿아도 안 닿았다고 나왔다)
     obstacle_ = declare_parameter<std::vector<double>>("obstacle_box", std::vector<double>{});
-    collide_clear_ = declare_parameter<double>("collide_clearance", 0.12);   // 잠정: 몸통 반폭 0.11 m + 1 cm
+    collide_clear_ = declare_parameter<double>("collide_gap", 0.01);
+    foot_l_ = declare_parameter<double>("footprint_length", 0.32);   // nav2_params.yaml local_costmap footprint 와 같게
+    foot_w_ = declare_parameter<double>("footprint_width", 0.22);
     if (!obstacle_.empty() && obstacle_.size() != 4) throw std::invalid_argument("nav_benchmark: obstacle_box 는 [x, y, 가로, 세로]");
     if (world_file_.empty()) throw std::invalid_argument("nav_benchmark: world_file 파라미터가 비었음");
 
@@ -82,11 +86,7 @@ class Bench : public rclcpp::Node {
           const Pose2 p = to_map(w);
           if (truth_) dist_ += std::hypot(p.x - truth_->x, p.y - truth_->y);
           truth_ = p;
-          if (obstacle_.size() == 4) {   // 세계 좌표에서 상자 가장자리까지
-            const double dx = std::max(0.0, std::fabs(w.x - obstacle_[0]) - 0.5 * obstacle_[2]);
-            const double dy = std::max(0.0, std::fabs(w.y - obstacle_[1]) - 0.5 * obstacle_[3]);
-            clear_ = std::min(clear_, std::hypot(dx, dy));
-          }
+          if (obstacle_.size() == 4) clear_ = std::min(clear_, footprint_gap(w));   // 세계 좌표에서
         });
   }
 
@@ -120,6 +120,39 @@ class Bench : public rclcpp::Node {
     if (goals_.empty()) throw std::runtime_error(world_file_ + ": patrol 이 비었음");
     std::lock_guard<std::mutex> l(mu_);
     loaded_ = true;
+  }
+
+  // 몸통 사각형(가운데 w, 방향 w.yaw)과 축 정렬 상자 사이 가장 좁은 간격 (겹치면 0). 두 볼록 사각형: 겹침이 아니면 꼭짓점-변 거리의 최솟값
+  double footprint_gap(const Pose2& w) const {
+    const double c = std::cos(w.yaw), s = std::sin(w.yaw), hl = 0.5 * foot_l_, hw = 0.5 * foot_w_;
+    const double bx0 = obstacle_[0] - 0.5 * obstacle_[2], bx1 = obstacle_[0] + 0.5 * obstacle_[2];
+    const double by0 = obstacle_[1] - 0.5 * obstacle_[3], by1 = obstacle_[1] + 0.5 * obstacle_[3];
+    double fx[4], fy[4];
+    const double lx[4] = {hl, hl, -hl, -hl}, ly[4] = {hw, -hw, -hw, hw};
+    for (int i = 0; i < 4; ++i) {
+      fx[i] = w.x + c * lx[i] - s * ly[i];
+      fy[i] = w.y + s * lx[i] + c * ly[i];
+    }
+    const double bxs[4] = {bx0, bx1, bx1, bx0}, bys[4] = {by0, by0, by1, by1};
+    // 상자 꼭짓점이 몸통 안이면 겹침
+    for (int k = 0; k < 4; ++k) {
+      const double dx = bxs[k] - w.x, dy = bys[k] - w.y;
+      if (std::fabs(c * dx + s * dy) <= hl && std::fabs(-s * dx + c * dy) <= hw) return 0.0;
+    }
+    auto seg = [](double px, double py, double ax, double ay, double bx, double by) {
+      const double vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+      const double t = l2 > 0 ? std::clamp(((px - ax) * vx + (py - ay) * vy) / l2, 0.0, 1.0) : 0.0;
+      return std::hypot(px - (ax + t * vx), py - (ay + t * vy));
+    };
+    double g = std::numeric_limits<double>::infinity();
+    for (int i = 0; i < 4; ++i) {
+      if (fx[i] >= bx0 && fx[i] <= bx1 && fy[i] >= by0 && fy[i] <= by1) return 0.0;   // 몸통 꼭짓점이 상자 안
+      const double dx = std::max({bx0 - fx[i], 0.0, fx[i] - bx1}), dy = std::max({by0 - fy[i], 0.0, fy[i] - by1});
+      g = std::min(g, std::hypot(dx, dy));                                            // 몸통 꼭짓점 → 상자
+      const int j = (i + 1) % 4;
+      for (int k = 0; k < 4; ++k) g = std::min(g, seg(bxs[k], bys[k], fx[i], fy[i], fx[j], fy[j]));   // 상자 꼭짓점 → 몸통 변
+    }
+    return g;
   }
 
   // 세계 → 지도: 지도 원점 = robot_start
@@ -293,11 +326,11 @@ class Bench : public rclcpp::Node {
     if (obstacle_.size() == 4) {
       double mc = std::numeric_limits<double>::infinity();
       for (const auto& r : rows_) mc = std::min(mc, r.clear);
-      char ob[320];
+      char ob[400];
       std::snprintf(ob, sizeof ob,
-                    "\n**지도에 없는 장애물**: 상자 세계 (%.2f, %.2f) 크기 %.2f × %.2f m — 몸통 가운데에서 상자 가장자리까지 가장 가까운 거리 %.2f m → %s "
-                    "(기준 %.2f m 미만이면 부딪힘, 잠정)\n",
-                    obstacle_[0], obstacle_[1], obstacle_[2], obstacle_[3], mc, mc < collide_clear_ ? "**부딪힘**" : "안 부딪힘",
+                    "\n**지도에 없는 장애물**: 상자 세계 (%.2f, %.2f) 크기 %.2f × %.2f m — 몸통 사각형(%.2f × %.2f m)과 상자 사이 가장 좁은 간격 %.3f m → %s "
+                    "(%.2f m 미만이면 부딪힘)\n",
+                    obstacle_[0], obstacle_[1], obstacle_[2], obstacle_[3], foot_l_, foot_w_, mc, mc < collide_clear_ ? "**부딪힘**" : "안 부딪힘",
                     collide_clear_);
       md << ob;
       RCLCPP_INFO(get_logger(), "%s", ob);
@@ -315,7 +348,7 @@ class Bench : public rclcpp::Node {
   std::mutex mu_;
   std::optional<Pose2> truth_;
   std::vector<double> obstacle_;
-  double collide_clear_ = 0.12, clear_ = std::numeric_limits<double>::infinity();
+  double collide_clear_ = 0.01, foot_l_ = 0.32, foot_w_ = 0.22, clear_ = std::numeric_limits<double>::infinity();
   bool loaded_ = false;
   double dist_ = 0.0;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;

@@ -13,6 +13,7 @@
 //
 // 켜고 끄기: 서비스 smoke_mode/set (std_srvs/SetBool). 상태는 smoke_mode/active (std_msgs/Bool, 마지막 값 유지).
 // 나올 때 지금 추정 자세를 쌓인 불확실성과 함께 /initialpose 로 AMCL 에 넘겨 다시 맞추게 한다.
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -28,6 +29,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "sensor_msgs/msg/range.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 #include "tf2/LinearMath/Quaternion.h"
@@ -72,6 +74,19 @@ class SmokeModeNode : public rclcpp::Node {
     bump_holdoff_ = declare_parameter<double>("bump.holdoff", 1.0);
     // 연기 속 위치: hold = 들어갈 때 map → odom 을 붙잡고 바퀴 + IMU 만 따라감 · sonar = AMCL 에 라이다 대신 초음파 스캔(sonar_scan 노드)을 넣어
     // AMCL 이 계속 고친다 (docs/smoke_mode_plan.md 3 단계). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
+    // sonar 일 때 AMCL 자세를 그대로 믿지 않는다(2026-11-06 측정: 그대로 믿으면 office·warehouse 에서 위치를 잃음). 바퀴 + IMU 추정과
+    // gate_xy·gate_yaw 안으로 맞을 때만 blend 만큼 끌어당기고, reseed_after 번 잇달아 어긋나면 AMCL 을 지금 추정 자리로 다시 놓는다 (잠정 값)
+    gate_xy_ = declare_parameter<double>("sonar.gate_xy", 0.5);
+    gate_yaw_ = declare_parameter<double>("sonar.gate_yaw", 0.3);
+    blend_ = declare_parameter<double>("sonar.blend", 0.3);
+    reseed_after_ = declare_parameter<int>("sonar.reseed_after", 5);
+    // 앞 초음파가 slow_distance 보다 가까우면 연기 모드 속도 한도를 slow_speed 로 (장애물을 늦게 봐 상자를 못 피함 — 2026-11-06)
+    front_topic_ = declare_parameter<std::string>("sonar.front_topic", "/ultrasonic/front");
+    slow_dist_ = declare_parameter<double>("sonar.slow_distance", 0.6);
+    slow_speed_ = declare_parameter<double>("sonar.slow_speed", 0.05);
+    if (gate_xy_ <= 0.0 || gate_yaw_ <= 0.0 || blend_ <= 0.0 || blend_ > 1.0 || reseed_after_ < 1 || slow_dist_ <= 0.0 ||
+        slow_speed_ <= 0.0)
+      throw std::invalid_argument("smoke_mode: sonar.* 파라미터 확인 (blend 는 (0, 1])");
     localization_ = declare_parameter<std::string>("smoke_localization", "hold");
     if (localization_ != "hold" && localization_ != "sonar")
       throw std::invalid_argument("smoke_mode: smoke_localization 은 hold 또는 sonar");
@@ -111,6 +126,14 @@ class SmokeModeNode : public rclcpp::Node {
     sonar_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
         "sonar_scan", rclcpp::SensorDataQoS(), [this](sensor_msgs::msg::LaserScan::SharedPtr m) {
           if (smoke_ && localization_ == "sonar") scan_loc_pub_->publish(*m);   // 연기 속 AMCL 은 초음파만 본다
+        });
+    front_sub_ = create_subscription<sensor_msgs::msg::Range>(
+        front_topic_, rclcpp::SensorDataQoS(), [this](sensor_msgs::msg::Range::SharedPtr m) {
+          const bool close = std::isfinite(m->range) && m->range > m->min_range && m->range < slow_dist_;
+          if (close != front_close_) {
+            front_close_ = close;
+            if (smoke_) publish_speed_limit();
+          }
         });
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
         "imu", rclcpp::SensorDataQoS(), std::bind(&SmokeModeNode::on_imu, this, _1));
@@ -210,16 +233,66 @@ class SmokeModeNode : public rclcpp::Node {
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
     // hold: 연기 속에서는 스캔을 끊어 AMCL 이 새 자세를 내지 않지만, 혹시 와도 쓰지 않는다. sonar: 초음파로 고친 자세를 그대로 씀
     if (smoke_ && localization_ == "hold") return;
+    if (smoke_) {   // sonar: 문 지킴 (위 파라미터 주석)
+      gated_update(*msg);
+      return;
+    }
     set_map_pose(*msg, rclcpp::Time(msg->header.stamp));
   }
 
   void on_initialpose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
     if (!smoke_) return;
+    if (reseeding_) {   // 방금 이 노드가 AMCL 을 다시 놓은 메시지
+      reseeding_ = false;
+      return;
+    }
     if (set_map_pose(*msg, rclcpp::Time(0, 0, get_clock()->get_clock_type()))) {
       dist_m_ = 0.0;
       turn_rad_ = 0.0;
       RCLCPP_INFO(get_logger(), "연기 모드: 사람이 준 자세로 옮김, 쌓인 불확실성 초기화");
     }
+  }
+
+  // 연기 속 sonar: AMCL(초음파) 자세가 지금 추정(붙잡은 map → odom · 바퀴 + IMU)과 문 안이면 blend 만큼만 끌어당긴다
+  void gated_update(const geometry_msgs::msg::PoseWithCovarianceStamped& msg) {
+    if (msg.header.frame_id != global_frame_ || !map_odom_) return;
+    geometry_msgs::msg::TransformStamped t;
+    try {
+      t = tf_buffer_->lookupTransform(odom_frame_, base_frame_, rclcpp::Time(msg.header.stamp), rclcpp::Duration::from_seconds(0.2));
+    } catch (const tf2::TransformException& e) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "자세 시각의 odom → base TF 없음: %s", e.what());
+      return;
+    }
+    tf2::Transform ob, cand;
+    tf2::fromMsg(t.transform, ob);
+    tf2::fromMsg(msg.pose.pose, cand);
+    const tf2::Transform cur = *map_odom_ * ob;
+    const double dx = cand.getOrigin().x() - cur.getOrigin().x(), dy = cand.getOrigin().y() - cur.getOrigin().y();
+    const double cy = tf2::getYaw(cur.getRotation());
+    const double dyaw = std::atan2(std::sin(tf2::getYaw(cand.getRotation()) - cy), std::cos(tf2::getYaw(cand.getRotation()) - cy));
+    if (std::hypot(dx, dy) > gate_xy_ || std::fabs(dyaw) > gate_yaw_) {
+      ++rejects_;
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "초음파 AMCL 자세가 추정과 %.2f m · %.2f rad 어긋나 버림 (%d 번째)",
+                           std::hypot(dx, dy), dyaw, rejects_);
+      if (rejects_ >= reseed_after_) {   // AMCL 입자를 지금 추정 자리로 다시 모은다
+        rejects_ = 0;
+        geometry_msgs::msg::PoseWithCovarianceStamped p;
+        p.header.stamp = msg.header.stamp;
+        p.header.frame_id = global_frame_;
+        tf2::toMsg(cur, p.pose.pose);
+        p.pose.covariance[0] = p.pose.covariance[7] = 0.15 * 0.15;
+        p.pose.covariance[35] = 0.1 * 0.1;
+        reseeding_ = true;   // 이 노드도 /initialpose 를 받으므로 자기 메시지를 사람 보정으로 세지 않게
+        initialpose_pub_->publish(p);
+        RCLCPP_WARN(get_logger(), "초음파 AMCL 을 추정 자리 (%.2f, %.2f) 로 다시 놓음", cur.getOrigin().x(), cur.getOrigin().y());
+      }
+      return;
+    }
+    rejects_ = 0;
+    tf2::Quaternion q;
+    q.setRPY(0, 0, cy + blend_ * dyaw);
+    const tf2::Transform next(q, tf2::Vector3(cur.getOrigin().x() + blend_ * dx, cur.getOrigin().y() + blend_ * dy, 0.0));
+    map_odom_ = next * ob.inverse();
   }
 
   // map 에서 본 base_link 자세 → map → odom = map_T_base · (odom_T_base)⁻¹ (같은 시각의 odom_T_base)
@@ -368,7 +441,7 @@ class SmokeModeNode : public rclcpp::Node {
     m.header.stamp = now();
     m.header.frame_id = global_frame_;
     m.percentage = false;
-    m.speed_limit = smoke_ ? speed_limit_ : 0.0;
+    m.speed_limit = !smoke_ ? 0.0 : (front_close_ ? std::min(speed_limit_, slow_speed_) : speed_limit_);
     speed_pub_->publish(m);
   }
 
@@ -421,6 +494,11 @@ class SmokeModeNode : public rclcpp::Node {
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_loc_pub_, scan_obs_pub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_, sonar_sub_;
   std::string localization_;
+  double gate_xy_, gate_yaw_, blend_, slow_dist_, slow_speed_;
+  int reseed_after_, rejects_ = 0;
+  bool reseeding_ = false, front_close_ = false;
+  std::string front_topic_;
+  rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr front_sub_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
