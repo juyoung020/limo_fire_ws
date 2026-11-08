@@ -37,7 +37,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 ```
 
 - 패키지는 역할마다 하나, 이름은 `limo_fire_<역할>`. 새 패키지는 위 목록에 맞춰 만들고, 목록에 없는 역할이면 이 목록부터 고친다.
-- 지금 있는 패키지는 description·bringup·base·navigation·perception·sim·esp32_bridge 다. 나머지는 만들 때 위 이름을 쓴다.
+- 지금 있는 패키지는 description·bringup·base·navigation·perception·sim·esp32_bridge·bt 다. 나머지는 만들 때 위 이름을 쓴다.
 - 패키지 안: `include/<패키지명>/`, `src/`, `launch/`, `config/`, `test/` (ROS 2 기본 배치).
 - 실행 파일·파라미터를 바꾸고 싶은 외부 패키지는 고치지 말고 `limo_fire_bringup` 에 우리 판을 만든다. 코드(플러그인)가 필요한 Webots 쪽 우리 판은 `limo_fire_sim`.
 

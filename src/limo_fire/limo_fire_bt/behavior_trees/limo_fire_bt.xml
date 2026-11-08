@@ -1,0 +1,552 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LIMO Pro 소방 순찰 로봇 - 상위 Behavior Tree (BehaviorTree.CPP v4)
+  노드가 읽고 쓰는 토픽은 docs/sensor_topics.md 의 실제 토픽에 맞췄다.
+  상태: 초안. 노드 플러그인은 아직 없고, 시뮬에서 눈으로 확인하는 순서는 docs/bt_sim_plan.md.
+  BehaviorTree.CPP v4 형식(Script·_onFailure·_autoremap)이다. Nav2 bt_navigator(Humble, v3) 안이 아니라
+  따로 도는 임무 노드가 실행하고, 주행은 Nav2 navigate_to_pose 액션을 부른다.
+
+  원칙
+  - 고급 모드 시도 -> 실패 시 베이직 모드 (graceful degradation) 는 그대로.
+  - 노드마다 읽는/쓰는 토픽을 port 로 드러낸다 (이름을 바꾸면 XML 만 고치면 됨).
+  - 센서가 살아 있는지는 "토픽이 정해진 주기로 들어오는가" 로 판단한다 (IsTopicAlive).
+    min_hz 는 sensor_topics.md 실측 주기의 약 70~80 %.
+
+  지금 있는 토픽 (sensor_topics.md, 실측)
+    /scan                      sensor_msgs/LaserScan        10 Hz   ydlidar          -> AMCL, costmap
+    /imu                       sensor_msgs/Imu             100 Hz   limo_fire_base   -> EKF
+    /odom                      nav_msgs/Odometry            50 Hz   limo_fire_base   -> EKF
+    /odometry/filtered         nav_msgs/Odometry            30 Hz   EKF              -> Nav2
+    /rc_state                  sensor_msgs/Joy              40 Hz   limo_fire_base   (SWB 위 = 오토 모드여야 /cmd_vel 을 받음)
+    /limo_status               limo_msgs/LimoStatus          2 Hz   limo_fire_base
+    /camera/color/image_raw    sensor_msgs/Image (640x480)  30 Hz   Orbbec           -> yolo_detector
+    /camera/depth/image_raw    sensor_msgs/Image (16UC1)    30 Hz   Orbbec           -> object_mapper
+    /yolo_detector/detections  vision_msgs/Detection2DArray 매 장  yolo_detector    (fire, smoke, fire_extinguisher, exit_sign, person, door, stairs)
+    /object_mapper/markers     visualization_msgs/MarkerArray        object_mapper   (지도 frame 의 물체 위치, min_hits 5)
+    /cmd_vel                   geometry_msgs/Twist                  limo_fire_base 가 구독
+
+  월드·실물 구성에 따라 있는 토픽
+    /ultrasonic/front          sensor_msgs/Range       10 Hz   Webots ultrasonic TRUE 또는 esp32_bridge. 없으면 연기 모드에 진입하지 않는다
+
+  아직 없는 센서 (ESP32, 부품 대기) - 토픽 이름은 "잠정". 없으면 해당 고급 모드는 진입하지 않는다.
+    /joint_states              sensor_msgs/JointState  노즐 서보 (CLAUDE.md 규칙)
+    /pump/set                  std_srvs/SetBool        펌프 (CLAUDE.md 규칙)
+    /thermal/image_raw         잠정, 열화상
+    /radar/people              잠정, 레이더 사람 추적
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <!-- ================================================================ -->
+  <!-- 최상위: 센서 점검 -> 베이직 순찰 -> 사건 판별 -> 베이직 신고 -> [고급 모드 | 베이직 복귀] -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="MainTree">
+    <Sequence name="Boot">
+      <Script name="InitBlackboard"
+              code="incident_id:=0; active_mode:='BASIC'; failed_mode:='NONE'; fail_reason:=''; fail_history:=''; reported_119:=false; water_failed:=false; smoke_failed:=false; frontier_failed:=false; depth_aligned:=false"/>
+      <LoadPatrolRoute map="saved_map.yaml" route="{patrol_route}"/>
+      <SubTree ID="CheckDepthAlignment" _autoremap="true"/>
+      <Repeat num_cycles="-1">
+        <!-- 한 사이클이 어떻게 끝나든 다음 순찰로 돌아간다 (트리 자체는 절대 종료되지 않음) -->
+        <ForceSuccess>
+          <Sequence name="MissionCycle">
+            <SubTree ID="PreflightSensors" _autoremap="true"/>
+            <SubTree ID="BasicPatrol" _autoremap="true"/>
+            <SubTree ID="IncidentManager" _autoremap="true"/>
+            <SubTree ID="BasicEmergencyReport" _autoremap="true"/>
+            <Fallback name="GracefulDegradation">
+              <SubTree ID="AdvancedModes" _autoremap="true"/>
+              <SubTree ID="BasicFallback" _autoremap="true"/>
+            </Fallback>
+          </Sequence>
+        </ForceSuccess>
+      </Repeat>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- 순찰에 꼭 필요한 토픽이 다 들어오는지 확인. 하나라도 없으면 관리자 알림 후 이번 사이클 FAILURE -->
+  <!-- (MainTree 의 ForceSuccess + Repeat 때문에 5 초 뒤 다시 점검) -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="PreflightSensors">
+    <Fallback name="PreflightOrWait">
+      <Sequence name="RequiredTopics">
+        <!-- 주행: AMCL·costmap 은 /scan, Nav2 는 /odometry/filtered, EKF 는 /odom + /imu -->
+        <IsTopicAlive topic="/scan"               min_hz="7"  window_s="2.0" _onFailure="fail_reason:='LIDAR_TOPIC_LOST'"/>
+        <IsTopicAlive topic="/odom"               min_hz="35" window_s="1.0" _onFailure="fail_reason:='ODOM_TOPIC_LOST'"/>
+        <IsTopicAlive topic="/imu"                min_hz="70" window_s="1.0" _onFailure="fail_reason:='IMU_TOPIC_LOST'"/>
+        <IsTopicAlive topic="/odometry/filtered"  min_hz="20" window_s="1.0" _onFailure="fail_reason:='EKF_TOPIC_LOST'"/>
+        <!-- 감지: 컬러 영상 -> yolo_detector (탐지는 영상 한 장마다 발행) -->
+        <IsTopicAlive topic="/camera/color/image_raw"   min_hz="20" window_s="1.0" _onFailure="fail_reason:='CAMERA_TOPIC_LOST'"/>
+        <IsTopicAlive topic="/yolo_detector/detections" min_hz="10" window_s="1.0" _onFailure="fail_reason:='DETECTOR_TOPIC_LOST'"/>
+        <!-- 위치: object_mapper 는 깊이 영상으로 3D 를 잰다 -->
+        <IsTopicAlive topic="/camera/depth/image_raw"   min_hz="20" window_s="1.0" _onFailure="fail_reason:='DEPTH_TOPIC_LOST'"/>
+        <!-- 섀시: 리모컨 SWB 위(오토)여야 /cmd_vel 을 받는다 -->
+        <IsAutoMode rc_topic="/rc_state" _onFailure="fail_reason:='RC_NOT_AUTO_MODE'"/>
+      </Sequence>
+      <Sequence name="SensorFault">
+        <ForceSuccess>
+          <NotifyAdmin event="SENSOR_FAULT" incident="{incident_id}" reason="{fail_reason}"/>
+        </ForceSuccess>
+        <StopRobot cmd_vel_topic="/cmd_vel"/>
+        <Sleep msec="5000"/>
+        <AlwaysFailure/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- 깊이가 컬러에 정렬돼 있는지 (sensor_topics.md 주의 1). -->
+  <!-- 정렬 = frame_id camera_color_optical_frame, 640x480. 아니면 object_mapper 위치를 믿지 않고 -->
+  <!-- 로봇 위치 + 카메라 방향으로 대략 위치를 잡는다 (depth_aligned=false) -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="CheckDepthAlignment">
+    <Fallback>
+      <Sequence>
+        <IsDepthAlignedToColor depth_topic="/camera/depth/image_raw"
+                               expected_frame="camera_color_optical_frame"
+                               expected_width="640" expected_height="480"/>
+        <Script code="depth_aligned:=true"/>
+      </Sequence>
+      <ForceSuccess>
+        <Sequence>
+          <Script code="depth_aligned:=false"/>
+          <NotifyAdmin event="DEPTH_NOT_ALIGNED" reason="depth_registration off: fire location falls back to robot pose"/>
+        </Sequence>
+      </ForceSuccess>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- [베이직] 저장된 지도로 순찰 (Nav2 navigate_to_pose). 불/연기가 감지되면 순찰을 멈추고 SUCCESS -->
+  <!-- 순찰 중에도 라이다·EKF 가 끊기면 즉시 멈춘다 -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="BasicPatrol">
+    <Sequence>
+      <Script code="active_mode:='BASIC'"/>
+      <ReactiveFallback name="PatrolUntilHazard">
+        <SubTree ID="DetectHazard" _autoremap="true"/>
+        <ReactiveSequence name="PatrolWithWatchdog">
+          <IsTopicAlive topic="/scan"              min_hz="7"  window_s="2.0" _onFailure="fail_reason:='LIDAR_TOPIC_LOST'"/>
+          <IsTopicAlive topic="/odometry/filtered" min_hz="20" window_s="1.0" _onFailure="fail_reason:='EKF_TOPIC_LOST'"/>
+          <Repeat num_cycles="-1">
+            <Sequence name="PatrolStep">
+              <GetNextWaypoint route="{patrol_route}" goal="{patrol_goal}"/>
+              <Fallback name="NavigateOrSkip">
+                <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
+                <LogPatrolIssue goal="{patrol_goal}"/>
+              </Fallback>
+            </Sequence>
+          </Repeat>
+        </ReactiveSequence>
+      </ReactiveFallback>
+      <StopRobot cmd_vel_topic="/cmd_vel"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- 불 또는 연기 감지: yolo_detector 탐지(class, score) + object_mapper 지도 위치 -->
+  <BehaviorTree ID="DetectHazard">
+    <Fallback name="IsHazardDetected">
+      <IsFireDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
+                      markers_topic="/object_mapper/markers" use_depth="{depth_aligned}"
+                      location="{fire_location}" size="{fire_size}"/>
+      <IsSmokeDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
+                       markers_topic="/object_mapper/markers" use_depth="{depth_aligned}"
+                       location="{fire_location}"/>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- 같은 화재인지 판별. 새 화재일 때만 "고급 모드 실패 이력"을 초기화 -->
+  <!-- radius_m 3.0 은 object_mapper merge_radius(fire 0.8 m)보다 넓게: 번진 불도 같은 사건 -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="IncidentManager">
+    <Sequence>
+      <Script name="ResetCycleResult" code="failed_mode:='NONE'; fail_reason:=''"/>
+      <Fallback name="SameOrNewIncident">
+        <IsSameIncident incident="{incident_id}" location="{fire_location}" radius_m="3.0"/>
+        <Sequence name="NewIncident">
+          <CreateIncident incident="{incident_id}" location="{fire_location}"/>
+          <Script name="ResetIncidentFlags"
+                  code="fail_history:=''; reported_119:=false; water_failed:=false; smoke_failed:=false; frontier_failed:=false"/>
+        </Sequence>
+      </Fallback>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- [베이직] 관리자 알림 + 119 신고(사건당 1회) + 위치·사진 기록. 고급 모드보다 먼저 실행 -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="BasicEmergencyReport">
+    <Sequence>
+      <ForceSuccess>
+        <Fallback name="ReportOncePerIncident">
+          <ScriptCondition code="reported_119 == true"/>
+          <Sequence name="FirstReport">
+            <ForceSuccess>
+              <RetryUntilSuccessful num_attempts="3">
+                <NotifyAdmin event="HAZARD_DETECTED" incident="{incident_id}" location="{fire_location}"/>
+              </RetryUntilSuccessful>
+            </ForceSuccess>
+            <RetryUntilSuccessful num_attempts="5">
+              <Call119 incident="{incident_id}" location="{fire_location}"/>
+            </RetryUntilSuccessful>
+            <Script code="reported_119:=true"/>
+          </Sequence>
+        </Fallback>
+      </ForceSuccess>
+      <ForceSuccess>
+        <!-- 지도 위치(map frame) + 탐지 영상(/yolo_detector/image) 한 장 저장 -->
+        <RecordFireLocation incident="{incident_id}" location="{fire_location}" map_frame="map"
+                            image_topic="/yolo_detector/image"/>
+      </ForceSuccess>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- 고급 모드: 진입 조건으로 "하나만" 고른 뒤 실행. 실행 실패 시 다른 고급 모드로 넘어가지 않고 FAILURE -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="AdvancedModes">
+    <Sequence>
+      <SubTree ID="SelectAdvancedMode" _autoremap="true"/>
+      <Switch3 variable="{active_mode}" case_1="SMOKE" case_2="WATER" case_3="FRONTIER">
+        <SubTree ID="SmokeMode" _autoremap="true"/>
+        <SubTree ID="WaterMode" _autoremap="true"/>
+        <SubTree ID="FrontierMode" _autoremap="true"/>
+        <AlwaysFailure/>
+      </Switch3>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- 진입 조건으로 고급 모드 하나를 골라 active_mode 에 기록. 해당 없음이면 FAILURE -->
+  <!-- 진입 조건에 "그 모드가 쓰는 하드웨어 토픽/서비스가 있는가" 를 넣어, 부품이 없으면 아예 고르지 않는다 -->
+  <BehaviorTree ID="SelectAdvancedMode">
+    <Fallback name="SelectMode" _onFailure="fail_reason:='NO_ELIGIBLE_ADVANCED_MODE'">
+      <!-- 우선순위 1: 연기 (인명 대피가 최우선). 연기 속에서는 초음파로 장애물을 본다 -->
+      <Sequence name="SmokeEntry">
+        <IsSmokeDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
+                         markers_topic="/object_mapper/markers" use_depth="{depth_aligned}"
+                         location="{fire_location}"/>
+        <ScriptCondition code="smoke_failed == false"/>
+        <IsTopicAlive topic="/ultrasonic/front" min_hz="5" window_s="1.0"/>
+        <Script code="active_mode:='SMOKE'"/>
+      </Sequence>
+      <!-- 우선순위 2: 작은 불 진압. 펌프 서비스와 노즐 서보 상태가 있어야 한다 -->
+      <Sequence name="WaterEntry">
+        <IsFireDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
+                        markers_topic="/object_mapper/markers" use_depth="{depth_aligned}"
+                        location="{fire_location}" size="{fire_size}"/>
+        <IsSmallFire size="{fire_size}" max_size="0.3"/>
+        <!-- 깊이가 정렬돼야 불 위치(조준점)를 믿을 수 있다 -->
+        <ScriptCondition code="depth_aligned == true"/>
+        <ScriptCondition code="water_failed == false"/>
+        <IsServiceAvailable service="/pump/set"/>
+        <IsTopicAlive topic="/joint_states" min_hz="5" window_s="1.0"/>
+        <Script code="active_mode:='WATER'"/>
+      </Sequence>
+      <!-- 우선순위 3: 미지 영역 / 요구조자 탐색. 카메라(person) 만으로도 가능 -->
+      <Sequence name="FrontierEntry">
+        <Fallback>
+          <HasUnexploredFrontier near="{fire_location}" map_topic="/map"/>
+          <IsSurvivorSearchRequested/>
+        </Fallback>
+        <IsLocalizationStable pose_topic="/amcl_pose" max_xy_std_m="0.3" max_yaw_std_rad="0.2"/>
+        <ScriptCondition code="frontier_failed == false"/>
+        <Script code="active_mode:='FRONTIER'"/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- 물 발사 모드. 실패 조건: PUMP_ERROR / SPRAY_RETRY_EXCEEDED / FIRE_NOT_SUPPRESSED -->
+  <!-- 진압 확인: 열화상이 있으면 온도 하강, 없으면 YOLO 로 fire 가 hold_s 동안 안 보이는지 -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="WaterMode">
+    <Fallback name="WaterMode_OrFail">
+      <Sequence name="WaterMode_Body">
+        <ReactiveSequence name="SprayWithPumpMonitor">
+          <IsServiceAvailable service="/pump/set" _onFailure="fail_reason:='PUMP_ERROR'"/>
+          <RetryUntilSuccessful num_attempts="3" _onFailure="fail_reason:='SPRAY_RETRY_EXCEEDED'">
+            <Sequence name="AimAndSpray">
+              <!-- 불 위치(map) -> 노즐 frame 으로 TF 변환해 서보 각도 계산, /joint_states 로 도달 확인 -->
+              <AimNozzle target="{fire_location}" joint_states_topic="/joint_states" nozzle_frame="nozzle_link"/>
+              <SprayWater pump_service="/pump/set" duration_ms="3000"/>
+            </Sequence>
+          </RetryUntilSuccessful>
+        </ReactiveSequence>
+        <Sleep msec="5000"/>
+        <Fallback name="VerifySuppressed" _onFailure="fail_reason:='FIRE_NOT_SUPPRESSED'">
+          <Sequence>
+            <IsTopicAlive topic="/thermal/image_raw" min_hz="2" window_s="2.0"/>
+            <IsTemperatureDropped target="{fire_location}" thermal_topic="/thermal/image_raw" min_drop_c="10"/>
+          </Sequence>
+          <IsFireGone detections_topic="/yolo_detector/detections" target="{fire_location}"
+                      min_score="0.35" hold_s="5.0"/>
+        </Fallback>
+        <ForceSuccess>
+          <NotifyAdmin event="FIRE_SUPPRESSED" incident="{incident_id}" location="{fire_location}"/>
+        </ForceSuccess>
+      </Sequence>
+      <Sequence name="WaterMode_OnFailure">
+        <StopPump pump_service="/pump/set"/>
+        <Script code="water_failed:=true; failed_mode:='WATER'; fail_history:=fail_history .. 'WATER:' .. fail_reason .. ' '"/>
+        <AlwaysFailure/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- 연기 모드. 실패 조건: ULTRASONIC_FAULT / SPEAKER_FAULT / NAVIGATION_FAILED -->
+  <!-- 연기 속에서는 라이다·카메라가 끊기는 것이 전제라(smoke_mode_plan.md) /scan 생존은 검사하지 않는다. -->
+  <!-- 노드를 구현할 때 SweepSmokeZone 은 limo_fire_navigation smoke_mode(/smoke_mode/set)를 켜고 주행한다 -->
+  <!-- 사람 추적: 레이더가 있으면 레이더, 없으면 YOLO person (연기 속에서는 약함) -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="SmokeMode">
+    <Fallback name="SmokeMode_OrFail">
+      <Sequence name="SmokeMode_Body">
+        <ReactiveSequence name="SweepWithSensorMonitor">
+          <IsTopicAlive topic="/ultrasonic/front" min_hz="5" window_s="1.0" _onFailure="fail_reason:='ULTRASONIC_FAULT'"/>
+          <Parallel success_count="1" failure_count="1" name="EvacuateAndSearch">
+            <PlayEvacuationGuidance _onFailure="fail_reason:='SPEAKER_FAULT'"/>
+            <Fallback name="TrackPeople">
+              <Sequence>
+                <IsTopicAlive topic="/radar/people" min_hz="5" window_s="1.0"/>
+                <TrackPeopleRadar radar_topic="/radar/people" people="{detected_people}"/>
+              </Sequence>
+              <TrackPeopleCamera detections_topic="/yolo_detector/detections" markers_topic="/object_mapper/markers"
+                                 min_score="0.5" people="{detected_people}"/>
+            </Fallback>
+            <SweepSmokeZone zone="{fire_location}" scan_topic="/scan" ultrasonic_topic="/ultrasonic/front"
+                            min_range_m="0.25" action_name="/navigate_to_pose"
+                            _onFailure="fail_reason:='NAVIGATION_FAILED'"/>
+          </Parallel>
+        </ReactiveSequence>
+        <ForceSuccess>
+          <NotifyAdmin event="EVACUATION_SWEEP_DONE" incident="{incident_id}" location="{fire_location}" people="{detected_people}"/>
+        </ForceSuccess>
+      </Sequence>
+      <Sequence name="SmokeMode_OnFailure">
+        <StopRobot cmd_vel_topic="/cmd_vel"/>
+        <Script code="smoke_failed:=true; failed_mode:='SMOKE'; fail_history:=fail_history .. 'SMOKE:' .. fail_reason .. ' '"/>
+        <AlwaysFailure/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- 프론티어 탐사 모드. 실패 조건: LOCALIZATION_UNSTABLE / EXPLORATION_TIMEOUT / EXPLORATION_FAILED -->
+  <!-- 요구조자: YOLO person + object_mapper 위치 -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="FrontierMode">
+    <Fallback name="FrontierMode_OrFail">
+      <Sequence name="FrontierMode_Body">
+        <StartMissionTimer start_time="{frontier_start}"/>
+        <ReactiveSequence name="ExploreWithMonitors">
+          <IsLocalizationStable pose_topic="/amcl_pose" max_xy_std_m="0.3" max_yaw_std_rad="0.2"
+                                _onFailure="fail_reason:='LOCALIZATION_UNSTABLE'"/>
+          <IsTopicAlive topic="/scan" min_hz="7" window_s="2.0" _onFailure="fail_reason:='LIDAR_TOPIC_LOST'"/>
+          <IsWithinTimeLimit start_time="{frontier_start}" limit_sec="300"
+                             _onFailure="fail_reason:='EXPLORATION_TIMEOUT'"/>
+          <ExploreFrontiers map_topic="/map" action_name="/navigate_to_pose"
+                            detections_topic="/yolo_detector/detections" markers_topic="/object_mapper/markers"
+                            survivors="{survivors}" _onFailure="fail_reason:='EXPLORATION_FAILED'"/>
+        </ReactiveSequence>
+        <ForceSuccess>
+          <NotifyAdmin event="EXPLORATION_DONE" incident="{incident_id}" location="{fire_location}" people="{survivors}"/>
+        </ForceSuccess>
+      </Sequence>
+      <Sequence name="FrontierMode_OnFailure">
+        <StopRobot cmd_vel_topic="/cmd_vel"/>
+        <Script code="frontier_failed:=true; failed_mode:='FRONTIER'; fail_history:=fail_history .. 'FRONTIER:' .. fail_reason .. ' '"/>
+        <AlwaysFailure/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <!-- [베이직] 복귀: 실패 사유를 포함해 관리자 알림 -> 위치 기록 -> 안전거리 감시 후 순찰 재개 -->
+  <!-- 안전거리 2.0 m = object_mapper fire_zone_radius(1.0 m) 의 2 배, 카메라 max_depth 5 m 안 -->
+  <!-- ================================================================ -->
+  <BehaviorTree ID="BasicFallback">
+    <ForceSuccess>
+      <Sequence>
+        <Script code="active_mode:='BASIC'"/>
+        <ForceSuccess>
+          <RetryUntilSuccessful num_attempts="3">
+            <NotifyAdmin event="FALLBACK_TO_BASIC" incident="{incident_id}" location="{fire_location}"
+                         mode="{failed_mode}" reason="{fail_reason}" history="{fail_history}"/>
+          </RetryUntilSuccessful>
+        </ForceSuccess>
+        <ForceSuccess>
+          <RecordFireLocation incident="{incident_id}" location="{fire_location}" map_frame="map"
+                              image_topic="/yolo_detector/image"/>
+        </ForceSuccess>
+        <ForceSuccess>
+          <Timeout msec="60000">
+            <MonitorFromSafeDistance location="{fire_location}" safe_distance_m="2.0"
+                                     action_name="/navigate_to_pose" detections_topic="/yolo_detector/detections"/>
+          </Timeout>
+        </ForceSuccess>
+      </Sequence>
+    </ForceSuccess>
+  </BehaviorTree>
+
+  <!-- ================================================================ -->
+  <TreeNodesModel>
+    <Action ID="AimNozzle">
+      <input_port name="target">불 위치 (map frame)</input_port>
+      <input_port name="joint_states_topic" default="/joint_states">노즐 서보 상태 (잠정)</input_port>
+      <input_port name="nozzle_frame" default="nozzle_link">URDF 의 노즐 링크</input_port>
+    </Action>
+    <Action ID="Call119">
+      <input_port name="incident"/>
+      <input_port name="location"/>
+    </Action>
+    <Action ID="CreateIncident">
+      <output_port name="incident"/>
+      <input_port name="location"/>
+    </Action>
+    <Action ID="ExploreFrontiers">
+      <input_port name="map_topic" default="/map"/>
+      <input_port name="action_name" default="/navigate_to_pose"/>
+      <input_port name="detections_topic" default="/yolo_detector/detections"/>
+      <input_port name="markers_topic" default="/object_mapper/markers"/>
+      <output_port name="survivors"/>
+    </Action>
+    <Action ID="GetNextWaypoint">
+      <output_port name="goal"/>
+      <input_port name="route"/>
+    </Action>
+    <Condition ID="HasUnexploredFrontier">
+      <input_port name="near"/>
+      <input_port name="map_topic" default="/map"/>
+    </Condition>
+    <Condition ID="IsAutoMode">
+      <input_port name="rc_topic" default="/rc_state">sensor_msgs/Joy, SWB 위 = 오토</input_port>
+    </Condition>
+    <Condition ID="IsDepthAlignedToColor">
+      <input_port name="depth_topic" default="/camera/depth/image_raw"/>
+      <input_port name="expected_frame" default="camera_color_optical_frame"/>
+      <input_port name="expected_width" default="640"/>
+      <input_port name="expected_height" default="480"/>
+    </Condition>
+    <Condition ID="IsFireDetected">
+      <input_port name="detections_topic" default="/yolo_detector/detections">vision_msgs/Detection2DArray, class fire</input_port>
+      <input_port name="markers_topic" default="/object_mapper/markers">지도 위 위치</input_port>
+      <input_port name="min_score" default="0.5"/>
+      <input_port name="min_hits" default="5"/>
+      <input_port name="use_depth">false 면 로봇 위치 + 방향으로 대략 위치</input_port>
+      <output_port name="location"/>
+      <output_port name="size"/>
+    </Condition>
+    <Condition ID="IsFireGone">
+      <input_port name="detections_topic" default="/yolo_detector/detections"/>
+      <input_port name="target"/>
+      <input_port name="min_score" default="0.35"/>
+      <input_port name="hold_s" default="5.0"/>
+    </Condition>
+    <Condition ID="IsLocalizationStable">
+      <input_port name="pose_topic" default="/amcl_pose">geometry_msgs/PoseWithCovarianceStamped</input_port>
+      <input_port name="max_xy_std_m" default="0.3"/>
+      <input_port name="max_yaw_std_rad" default="0.2"/>
+    </Condition>
+    <Condition ID="IsSameIncident">
+      <input_port name="incident"/>
+      <input_port name="location"/>
+      <input_port name="radius_m"/>
+    </Condition>
+    <Condition ID="IsServiceAvailable">
+      <input_port name="service"/>
+    </Condition>
+    <Condition ID="IsSmallFire">
+      <input_port name="max_size"/>
+      <input_port name="size"/>
+    </Condition>
+    <Condition ID="IsSmokeDetected">
+      <input_port name="detections_topic" default="/yolo_detector/detections">class smoke</input_port>
+      <input_port name="markers_topic" default="/object_mapper/markers"/>
+      <input_port name="min_score" default="0.5"/>
+      <input_port name="min_hits" default="5"/>
+      <input_port name="use_depth"/>
+      <output_port name="location"/>
+    </Condition>
+    <Condition ID="IsSurvivorSearchRequested"/>
+    <Condition ID="IsTemperatureDropped">
+      <input_port name="target"/>
+      <input_port name="thermal_topic" default="/thermal/image_raw">잠정</input_port>
+      <input_port name="min_drop_c"/>
+    </Condition>
+    <Condition ID="IsTopicAlive">
+      <input_port name="topic"/>
+      <input_port name="min_hz">window_s 동안 평균 주기가 이 이상</input_port>
+      <input_port name="window_s" default="1.0"/>
+    </Condition>
+    <Condition ID="IsWithinTimeLimit">
+      <input_port name="limit_sec"/>
+      <input_port name="start_time"/>
+    </Condition>
+    <Action ID="LoadPatrolRoute">
+      <input_port name="map"/>
+      <output_port name="route"/>
+    </Action>
+    <Action ID="LogPatrolIssue">
+      <input_port name="goal"/>
+    </Action>
+    <Action ID="MonitorFromSafeDistance">
+      <input_port name="location"/>
+      <input_port name="safe_distance_m" default="2.0"/>
+      <input_port name="action_name" default="/navigate_to_pose"/>
+      <input_port name="detections_topic" default="/yolo_detector/detections"/>
+    </Action>
+    <Action ID="NavigateToWaypoint">
+      <input_port name="goal"/>
+      <input_port name="action_name" default="/navigate_to_pose">nav2_msgs/action/NavigateToPose</input_port>
+    </Action>
+    <Action ID="NotifyAdmin">
+      <input_port name="event"/>
+      <input_port name="history"/>
+      <input_port name="incident"/>
+      <input_port name="location"/>
+      <input_port name="mode"/>
+      <input_port name="people"/>
+      <input_port name="reason"/>
+    </Action>
+    <Action ID="PlayEvacuationGuidance"/>
+    <Action ID="RecordFireLocation">
+      <input_port name="incident"/>
+      <input_port name="location"/>
+      <input_port name="map_frame" default="map"/>
+      <input_port name="image_topic" default="/yolo_detector/image"/>
+    </Action>
+    <Action ID="SprayWater">
+      <input_port name="pump_service" default="/pump/set">std_srvs/SetBool (잠정)</input_port>
+      <input_port name="duration_ms"/>
+    </Action>
+    <Action ID="StartMissionTimer">
+      <output_port name="start_time"/>
+    </Action>
+    <Action ID="StopPump">
+      <input_port name="pump_service" default="/pump/set"/>
+    </Action>
+    <Action ID="StopRobot">
+      <input_port name="cmd_vel_topic" default="/cmd_vel">geometry_msgs/Twist 0 발행 + Nav2 목표 취소</input_port>
+    </Action>
+    <Action ID="SweepSmokeZone">
+      <input_port name="zone"/>
+      <input_port name="scan_topic" default="/scan"/>
+      <input_port name="ultrasonic_topic" default="/ultrasonic/front">sensor_msgs/Range (잠정)</input_port>
+      <input_port name="min_range_m" default="0.25"/>
+      <input_port name="action_name" default="/navigate_to_pose"/>
+    </Action>
+    <Action ID="TrackPeopleCamera">
+      <input_port name="detections_topic" default="/yolo_detector/detections">class person</input_port>
+      <input_port name="markers_topic" default="/object_mapper/markers"/>
+      <input_port name="min_score" default="0.5"/>
+      <output_port name="people"/>
+    </Action>
+    <Action ID="TrackPeopleRadar">
+      <input_port name="radar_topic" default="/radar/people">잠정</input_port>
+      <output_port name="people"/>
+    </Action>
+  </TreeNodesModel>
+
+</root>

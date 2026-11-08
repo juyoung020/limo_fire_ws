@@ -19,7 +19,7 @@
 | 인식 노드 (YOLO TensorRT 10 ms · 물체 지도) | 됨 | `limo_fire_perception` |
 | 시뮬 통합 (Webots 맵 4 · 실물과 같은 지도·Nav2·인식 launch · 운용 화면) | 됨 — Nav2 설정은 실물 확인 남음 | [simulation.md](simulation.md) |
 | 인식 벤치마크 (상자·마스크 P·R·F1·mAP·IoU · 속도 · 물체 지도) | 됨 | [benchmarks](benchmarks/README.md) |
-| ROS 노드 (BT·연기 모드·보고) | 할 일 | `src/limo_fire` |
+| ROS 노드 (BT·연기 모드·보고) | BT 트리 초안 — 노드 구현·시뮬 확인 남음, [계획](bt_sim_plan.md) | `src/limo_fire` |
 | ESP32 모듈 | 부품 오면 | `firmware/` |
 
 ## 1. 워크스페이스
