@@ -1,18 +1,21 @@
 cmake_minimum_required(VERSION 3.22)
 # 탐사 RL 학습 시뮬레이터: 삼각형 장면 + BVH 광선 추적 센서. CPU 참조판과 비트까지 같으려고 fmad 를 끄고 나눗셈·제곱근을 정확하게 한다.
 # 빌드 대상: 젯슨 Orin(sm_87) 검증, 데스크톱 RTX 5070 Ti(sm_120) 학습. 따로 안 주면 이 기기에 맞춘다
+# GPU 아키텍처 기본값은 project() 앞에서 정한다 — project() 가 CUDA 를 켜며 nvcc 기본값(75)을 넣어 버려, 뒤에서 "없으면" 을 보면 늘 있다.
+# -DCMAKE_CUDA_ARCHITECTURES=… 나 환경 변수 CUDAARCHS 를 주면 그 값을 쓴다.
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
+  cmake_host_system_information(RESULT _host_arch QUERY OS_PLATFORM)
+  if(_host_arch MATCHES "aarch64")
+    set(CMAKE_CUDA_ARCHITECTURES 87)    # Jetson Orin
+  else()
+    set(CMAKE_CUDA_ARCHITECTURES 120)   # RTX 50 시리즈
+  endif()
+endif()
 project(limo_fire_sim LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
-endif()
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-    set(CMAKE_CUDA_ARCHITECTURES 87)
-  else()
-    set(CMAKE_CUDA_ARCHITECTURES 120)
-  endif()
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -ffp-contract=off")
 set(CMAKE_CUDA_FLAGS_RELEASE "-O3 --fmad=false -prec-div=true -prec-sqrt=true -ftz=false")
