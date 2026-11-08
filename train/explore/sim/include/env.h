@@ -29,7 +29,6 @@
 #include "lidar_real.h"
 #include "obs_layout.h"    // mdp/ — 관측·행동 크기
 #include "rewards.h"       // mdp/ — 보상 항
-#include "smoke.h"         // mdp/ — 연기 모드 (센서 가림·속도 한도·추측 항법 오차)
 #include "people.h"
 #include "sensor_model.h"
 #include "sensors.h"
@@ -146,8 +145,6 @@ struct EnvState {
   LidarNoise noise;            // 이 판 라이다 오차 (무작위화)
   float depth_floor;           // 이 판 깊이 바닥 구멍 표 위치 [0, 1] (sensor_model.h DepthModel floor_hole ~ floor_hole_hi)
   People people;              // 이 판 움직이는 사람 (people.h)
-  int32_t smoke;               // 연기 모드 (mdp/smoke.h): 라이다·깊이 가림, 지도 고정, 추측 항법 자세, 안전층 대신 속도 한도. Env::set_smoke, 리셋이 0 으로
-  int32_t smoke_steps;         // 연기가 낀 뒤 걸음 수 (켜고 끌 때 0). 구조체 끝을 8 바이트로 채워 패딩이 없게(env_verify 가 memcmp)
 };
 
 // 블록 안 공유 (GPU __shared__, CPU 는 지역 변수)
@@ -342,8 +339,6 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.delay = (int)(dm::rand01(e.rng) * 150.f) / 100;
   if (e.delay > c.max_delay) e.delay = c.max_delay;
   e.t95_step = -1;
-  e.smoke = 0;   // 판은 연기 없이 시작 (켜는 쪽: Env::set_smoke)
-  e.smoke_steps = 0;
   if (c.curriculum) e.people.k_max = mdp::cur::people_of(e.stage);   // 단계별 사람 수 (curriculums.h)
   people_reset(b, e);   // 사람 놓기 (로봇 자세·world_seed 뒤)
 }
@@ -424,9 +419,7 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
         w = w * k;
       }
     }
-    // 연기 속: 라이다 안전층 대신 속도 한도 (mdp/smoke.h — 실물 노드도 같은 규칙)
-    mdp::smoke::cap_command(e.smoke, &v, &vy, &w);
-    if (c.safety && mdp::smoke::lidar_safety(e.smoke) && v > 0.f && front_gap(b, e, env) < c.safety_dist) v = 0.f;
+    if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) v = 0.f;
     e.cmd_v = v;
     e.cmd_vy = vy;
     e.cmd_w = w;
@@ -506,7 +499,6 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   }
   // 섀시 구동: 명령 → 바퀴 → 몸통 (바닥 미끄러짐)
   const float v_prev = e.v, vy_prev = e.vy;
-  const float x_prev = e.x, y_prev = e.y, th_prev = e.th;   // 연기 속 추측 항법 오차 (이번 걸음 참 이동)
   e.vy = drive_lat(c.drive, e.drive, c.action_mode == kActVelocity ? e.cmd_vy : 0.f, c.dt, e.ground);
   drive_step(c.drive, e.drive, cmd_v, cmd_w, c.dt, e.ground, &e.v, &e.w);
   const float acc = (e.v - v_prev) / c.dt;   // 몸통 직진 가속 (IMU)
@@ -533,12 +525,6 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   // IMU 나머지: 몸통 v·ω·직진 가속 + 옆 이동(vy·옆 가속, 정상 메카넘 가정 — 배율은 앞뒤 값 그대로 잠정 📏, imu.h)
   imu_step(c.imu, e.imu, e.v, e.w, acc, e.rng, e.vy, acc_y);   // 부딪혀 멈춘 걸음은 v·ω 0 (충돌 충격은 모델에 없음)
   e.slip_acc = e.slip_acc + dm::absf(e.drive.ww - e.w) * c.dt;
-  if (e.smoke) {
-    // 연기 속 지도 자세 = 들어갈 때 지도 자세 ∘ 바퀴 + IMU 이동: 오차가 이동량만큼 쌓인다 (mdp/smoke.h drift_step, 잠정 계수)
-    const float g0 = gauss(e.rng), g1 = gauss(e.rng), g2 = gauss(e.rng), g3 = gauss(e.rng);
-    mdp::smoke::drift_step(&e.ex, &e.ey, &e.eth, e.x - x_prev, e.y - y_prev, wrapf(e.th - th_prev), e.err_scale, g0, g1, g2, g3);
-    return;
-  }
   // 지도 자세 오차: OU (평균 0, 표준편차 pe_*, 상관 시간 pe_tau)
   const float a = c.dt / c.pe_tau, q = sqrtf(2.f * a);
   const float sxy = c.pe_xy * e.err_scale, syaw = c.pe_yaw * e.err_scale;   // 단계 오차 배율 (curriculums.h)
@@ -780,8 +766,6 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
   float s0 = 0.f, c0 = 1.f;
   if (far_mask) dm::sincosf_d(e.th0, &s0, &c0);
   int n_wall = 0, n_floor = 0, d_known = 0, n_new = 0;
-  // 연기 속: 이번 장 표시(bit0~2)는 지우되 지도·덮음은 갱신하지 않는다 (mdp/smoke.h — 라이다를 안 씀, 연기 전 지도를 그대로 둠)
-  const bool upd = mdp::smoke::map_update(e.smoke);
   if (sh.bx1 >= 0) {
     const int n = c.size * c.size;
     int16_t* L = b.lmap + (size_t)env * n;
@@ -799,7 +783,7 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
         const uint32_t mk = (word >> (8 * q)) & 0xffu;
         if (!(mk & 7u)) continue;
         const int cx = wx * 4 + q, ci = cy * c.size + cx;
-        if (upd && (mk & 3u)) {
+        if (mk & 3u) {
           const int16_t obs = (mk & 2u) ? c.l_hit : c.l_miss;
           const int16_t old = L[ci];
           if (old == kUnknown) {
@@ -816,11 +800,11 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
             ch_hi = cx > ch_hi ? cx : ch_hi;
           }
         }
-        if (upd && (mk & 1u) && !(mk & 16u) && cx < m.gw && (m.grid[cy * m.gw + cx] & kCellFloor)) {
+        if ((mk & 1u) && !(mk & 16u) && cx < m.gw && (m.grid[cy * m.gw + cx] & kCellFloor)) {
           keep |= 16u << (8 * q);
           ++n_floor;
         }
-        if (upd && (mk & 4u) && !(mk & 8u)) {
+        if ((mk & 4u) && !(mk & 8u)) {
           keep |= 8u << (8 * q);
           ++n_wall;
         }
@@ -873,16 +857,14 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   in.slip = e.slip_acc;
   // 진행 없음 (curriculums.h kIdleTime): 새 벽 면 칸 없는 걸음 수 — 충돌·선언이 먼저.
   // 지도 새 칸(since_new)이 아니라 벽 덮음으로 셈: 제자리에서도 지도 새 칸은 가끔 생겨(reward_probe still 8 판 중 1~3 판이 1,200 s 까지 감) 버티기를 못 막음
-  // 연기 속에서는 벽을 볼 수 없어(라이다 안 씀) 세지 않고 멈춰 둔다 — 연기가 걷히면 그 자리부터 다시 셈
-  e.since_wall = new_wall > 0 ? 0 : (e.smoke ? e.since_wall : e.since_wall + 1);
-  in.idle = !e.smoke && !e.collided && !in.declared && (float)e.since_wall * dt_act >= mdp::cur::kIdleTime;
+  e.since_wall = new_wall > 0 ? 0 : e.since_wall + 1;
+  in.idle = !e.collided && !in.declared && (float)e.since_wall * dt_act >= mdp::cur::kIdleTime;
   float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
   e.reward = mdp::rew::terms(in, T);
   e.slip_acc = 0.f;
   e.coverage = cov;
   e.floor_cov = (float)e.seen_floor / (float)m.n_floor;
   e.step += 1;
-  if (e.smoke) e.smoke_steps += 1;
   if (e.t95_step < 0 && cov >= mdp::cur::kSuccessCov) e.t95_step = e.step;
   // 지도 진행
   e.known_free += d_known;

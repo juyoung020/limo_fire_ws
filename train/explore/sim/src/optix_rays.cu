@@ -70,11 +70,10 @@ extern "C" __global__ void __raygen__rays() {
 }
 
 // prog 1: 깊이 가운데 광선 — 픽셀마다 (env · DEPTH_SIZE + i) → dep_z·dep_tri (유효 영역 밖은 안 쏘고 −1). 구멍 판정·값은 CUDA 커널
-// (env_kernel.cu env_depth_pixel_kernel): raygen 안에서까지 하면 발사가 무거워져 조금 느렸다 (2.36 ms vs 1.78 + 0.49 ms). 연기 픽셀은 안 쏨
+// (env_kernel.cu env_depth_pixel_kernel): raygen 안에서까지 하면 발사가 무거워져 조금 느렸다 (2.36 ms vs 1.78 + 0.49 ms)
 __forceinline__ __device__ void depth_one(const sim::EnvBatch& b, int px) {
   const int env = px / mdp::obs::DEPTH_SIZE, i = px % mdp::obs::DEPTH_SIZE;
   const sim::EnvState& e = b.st[env];
-  if (e.smoke) return;   // 연기: 마무리 커널이 깊이를 가림 (광선을 안 씀)
   const sim::EnvCfg& c = b.cfg;
   float u, v;
   mdp::obsgen::depth_uv(c.depth, i, &u, &v);

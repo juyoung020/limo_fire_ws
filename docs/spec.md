@@ -117,7 +117,7 @@ LIMO 라이다는 바닥 위 0.111 m 를 수평으로만 보므로 **내려가�
 ## 연기 모드
 
 > **메모 (2026-11-04)**: 연기 모드는 **지도가 이미 있을 때**(평상시 탐사로 만든 지도 위) 움직이는 모드다. 기본은 아래 표대로 저장 지도 + BT·Nav2 다.
-> 연기 속 주행을 강화학습 정책이 직접 하는 안(`d686576`, [train/explore/mdp/README.md](../train/explore/mdp/README.md#연기-모드-2026-11-04-잠정) "연기 모드")은 **후행 연구이고 우선순위가 아니다.**
+> 연기 속 주행을 강화학습 정책이 직접 하는 안(`d686576`)은 **후행 연구이고 우선순위가 아니다.** 쓰이지 않아 그 코드는 2026-11-08 뺐다.
 > 그 커밋이 지운 Nav2 연기 모드(바퀴 오도메트리 + IMU 로 저장 지도 위 주행, `smoke_mode` 노드)는 2026-11-05 다시 넣었다 —
 > [limo_fire_navigation README](../src/limo_fire/limo_fire_navigation/README.md#연기-모드), 진행은 [smoke_mode_plan.md](smoke_mode_plan.md).
 

@@ -10,15 +10,6 @@ namespace sim {
 
 // ---------- 깊이 픽셀 (px = env · DEPTH_SIZE + i) ----------
 
-// 연기 모드면 깊이를 가리고(mdp/smoke.h) true — 광선도 옆 광선 일감도 안 만든다 (CPU obs_depth 와 같음)
-DEV bool depth_px_smoke(const EnvBatch& b, int px) {
-  const int env = px / mdp::obs::DEPTH_SIZE;
-  const EnvState& e = b.st[env];
-  if (!e.smoke) return false;
-  mdp::obsgen::depth_out(b, env)[px % mdp::obs::DEPTH_SIZE] = mdp::smoke::depth_px(e.smoke, 0);
-  return true;
-}
-
 // 픽셀의 가운데 광선 방향 (depth_dir). 카메라 자세는 마무리·리셋 커널이 환경마다 남긴 것 (Shared::cam = depth_camera)
 DEV V3 depth_px_dir(const EnvBatch& b, int px) {
   const int env = px / mdp::obs::DEPTH_SIZE, i = px % mdp::obs::DEPTH_SIZE;

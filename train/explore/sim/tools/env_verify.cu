@@ -5,8 +5,6 @@
 //   --declare p: 걸음마다 끝 선언을 p 확률로 (선언 성공·실패 끝도 비교에 들어가게)
 //   --negative: GPU 쪽 행동 하나를 바꿔 일부러 어긋나게 한다 (검사가 틀림을 잡는지)
 //   --people K: 환경마다 사람 상한 K (판마다 0~K 명, people.h). --negative-person: 가운데 걸음에 GPU 쪽 사람 하나를 1 cm 옮긴다
-//   --smoke: 짝수 환경에 1/3 걸음에서 연기를 켜고 2/3 걸음에서 끈다 (mdp/smoke.h). 비트 비교에 더해 연기 동안 라이다·세기·깊이 = 0,
-//            SMOKE 칸 = 1, 명령이 연기 속도 한도 안인지 본다
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -36,7 +34,6 @@ void range_1d(int i, float* lo, float* hi) {
   else if (k == HOME) { *lo = 0.f; *hi = 2.9f; }
   else if (k >= LAST_ACT && k < LAST_ACT + 16 && (k - LAST_ACT) % 4 == 3) { *lo = 0.f; *hi = 1.f; }
   else if (k >= ACCEL && k < IMU_TILT + 4) { *lo = -3.f; *hi = 3.f; }   // IMU (observations.h 정규화 — 대개 ±0.6, 잡음 꼬리 여유)
-  else if (k == SMOKE) { *lo = 0.f; *hi = 1.f; }                     // 연기 표시 0/1
   else if (k >= RESERVED || (k >= MAP_VEL && k < MAP_VEL + 3)) { *lo = 0.f; *hi = 0.f; }   // 📏·예약 = 0
 }
 }  // namespace
@@ -50,7 +47,6 @@ int main(int argc, char** argv) {
   bool negative = false;
   bool negative_person = false;
   int people = 0;
-  bool smoke = false;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--envs" && i + 1 < argc) n_env = std::stoi(argv[++i]);
@@ -59,7 +55,6 @@ int main(int argc, char** argv) {
     else if (a == "--negative") negative = true;
     else if (a == "--negative-person") negative = negative_person = true;
     else if (a == "--people" && i + 1 < argc) people = std::stoi(argv[++i]);
-    else if (a == "--smoke") smoke = true;
     else if (a == "--env" && i + 1 < argc) env_path = argv[++i];
     else if (a == "--model" && i + 1 < argc) model_path = argv[++i];
     else if (a == "--dump" && i + 1 < argc) dump = argv[++i];
@@ -120,7 +115,6 @@ int main(int argc, char** argv) {
   int first_bad = -1, ends[mdp::cur::kNumDone] = {}, first_range = -1;
   double reward_sum = 0, term_sum[K] = {};
   long people_sum = 0, hit_person = 0;
-  long smoke_steps = 0, bad_smoke = 0;   // 연기 걸음 수, 가림·표시·속도 한도를 어긴 칸·걸음 수
   std::vector<sim::EnvState> sg, sc;
   std::vector<float> rg, rc, tg, tc, og1, oc1, pg, pc;
   std::vector<int32_t> dg, dc;
@@ -130,12 +124,6 @@ int main(int argc, char** argv) {
     std::vector<float> act((size_t)A * n_env);
     for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)A * i], p_declare);
     std::vector<float> gact = act;
-    if (smoke && (t == n_steps / 3 || t == 2 * n_steps / 3)) {   // 짝수 환경: 켬 → 끔 (판이 끝나 리셋된 환경은 이미 0)
-      std::vector<int> on(n_env, 0);
-      for (int i = 0; i < n_env; i += 2) on[i] = t == n_steps / 3 ? 1 : 0;
-      gpu.set_smoke(on);
-      cpu.set_smoke(on);
-    }
     if (negative_person && t == n_steps / 2) {   // 사람이 있는 첫 환경의 사람 0 을 1 cm
       gpu.get_state(sg);
       for (int i = 0; i < n_env; ++i)
@@ -169,18 +157,6 @@ int main(int argc, char** argv) {
       // 안전층이 앞 명령을 0 으로 막은 걸음 (정규 v > 0 을 줬는데 명령 v == 0)
       if (hc.cfg.safety && act[(size_t)A * i] > 0.f && sc[i].cmd_v == 0.f && dc[i] == 0) ++safety_zero;
       people_sum += sc[i].people.n;
-      if (sc[i].smoke && dc[i] == 0) {
-        ++smoke_steps;
-        const float* o = &oc1[(size_t)mdp::obs::POLICY_1D * i];
-        for (int k = 0; k < mdp::obs::LIDAR + mdp::obs::INTENSITY; ++k) bad_smoke += o[k] != 0.f;
-        bad_smoke += o[mdp::obs::LIDAR + mdp::obs::INTENSITY + mdp::obs::SMOKE] != 1.f;
-        const uint8_t* d = &ic[(size_t)mdp::obs::IMG_SIZE * i + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE];
-        for (int k = 0; k < mdp::obs::DEPTH_SIZE; ++k) bad_smoke += d[k] != 0;
-        const float eps = 1e-6f;
-        if (hc.cfg.action_mode == sim::kActVelocity)
-          bad_smoke += sc[i].cmd_v > mdp::smoke::kVFwd + eps || sc[i].cmd_v < -mdp::smoke::kVBack - eps ||
-                     std::fabs(sc[i].cmd_vy) > mdp::smoke::kVy + eps || std::fabs(sc[i].cmd_w) > mdp::smoke::kW + eps;
-      }
       hit_person += sc[i].people.hit_person;
     }
     size_t bo = 0;
@@ -283,8 +259,5 @@ int main(int argc, char** argv) {
   const bool range_ok = n_nan == 0 && bad_range == 0;
   std::printf("%s\n", same ? "환경 V0 통과: GPU == CPU (비트 같음)" : "다름");
   std::printf("%s\n", range_ok ? "관측 범위 통과" : "관측 범위 실패");
-  // 연기: 켠 걸음이 있어야 하고(판이 다 끝나 리셋돼 0 이면 검사가 빈 것), 가림·표시·속도 한도를 어긴 것이 없어야 한다
-  const bool smoke_ok = !smoke || (smoke_steps > 0 && bad_smoke == 0);
-  if (smoke) std::printf("연기 %s: 연기 걸음 %ld, 가림·표시·속도 한도 어김 %ld\n", smoke_ok ? "통과" : "실패", smoke_steps, bad_smoke);
-  return negative ? (same ? 1 : 0) : (same && range_ok && smoke_ok ? 0 : 1);
+  return negative ? (same ? 1 : 0) : (same && range_ok ? 0 : 1);
 }

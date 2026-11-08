@@ -38,8 +38,7 @@ constexpr int KNOWN_AREA = 40;   // 1
 constexpr int FRONTIER = 41;     // 가장 가까운 프론티어 거리, sin, cos, 프론티어 칸 수 — 4
 constexpr int PROGRESS = 45;     // 최근 새로 안 칸 수, 마지막 새 칸 뒤 시간 — 2
 constexpr int HOME = 47;         // 시작점까지 거리, sin, cos — 3
-constexpr int SMOKE = 50;        // 연기 모드 1 / 평상시 0 (mdp/smoke.h) — 1
-constexpr int RESERVED = 51;     // 나중 값(레이더 사람 등)용 0 칸
+constexpr int RESERVED = 50;     // 나중 값(레이더 사람 등)용 0 칸
 constexpr int VEC = 64;
 constexpr int POLICY_1D = LIDAR + INTENSITY + VEC;   // 1304
 

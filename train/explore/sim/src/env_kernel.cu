@@ -445,7 +445,7 @@ __global__ void __launch_bounds__(kDepthThreads) env_beam_side_kernel(EnvBatch b
 template <int PER>
 __global__ void __launch_bounds__(kDepthThreads) env_depth_pixel_kernel(EnvBatch b) {
   const int px = blockIdx.x * kDepthThreads + threadIdx.x;
-  if (px >= b.n_env * mdp::obs::DEPTH_SIZE || depth_px_smoke(b, px)) return;
+  if (px >= b.n_env * mdp::obs::DEPTH_SIZE) return;
   const int tri = b.dep_tri[px];
   if (depth_px_center(b, px, b.dep_z[px], tri, tri == -1 ? V3{} : depth_px_dir(b, px))) return;
   const int q = atomicAdd(b.counters + kCntDepSide, PER);
