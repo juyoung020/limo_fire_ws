@@ -31,8 +31,31 @@ void reset_env(const EnvBatch& b, EnvState& e, int env) {
   reset_state(b, e);
 }
 
+// 도달 가능한 프론티어 요약 (mdp/frontier.h reach_summary = 기준선 frontier_search 그대로). GPU 는 env_kernel.cu reach_block — 같은 값
+void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh) {
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  mdp::reach_clear(&sh.reach);
+  if (e.kb_x1 < 0) return;   // 아는 칸 없음
+  const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
+  const mdp::MapView mv{L, c.size, m.gw, m.gh};
+  int n_tot = 0;   // 지도 전체 프론티어 칸 (모두 건드린 범위 안)
+  for (int y = e.kb_y0; y <= e.kb_y1; ++y)
+    for (int x = e.kb_x0; x <= e.kb_x1; ++x) n_tot += mdp::frontier_cell(mv, x, y) ? 1 : 0;
+  thread_local std::vector<uint8_t> flag;
+  thread_local std::vector<int32_t> qa, qb, dist;
+  thread_local std::vector<mdp::Frontier> out;
+  const size_t n = (size_t)m.gw * m.gh;
+  if (flag.size() < n) { flag.resize(n); qa.resize(n); qb.resize(n); dist.resize(n); }
+  if (out.size() < (size_t)mdp::kReachCap + 1) out.resize(mdp::kReachCap + 1);
+  int rx, ry;
+  cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
+  mdp::reach_summary(mv, rx, ry, mdp::obsgen::reach_robot(c), mdp::obsgen::reach_min_cells(c), mdp::SearchBuf{flag.data(), qa.data(), qb.data(), dist.data()},
+                     out.data(), (int)out.size(), n_tot, &sh.reach);
+}
+
 void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, const mdp::obsgen::FarDirty& fd) {
-  sh.fr_min = mdp::kNoFrontier;
+  reach_obs(b, e, env, sh);
   for (int tid = 0; tid < kThreads; ++tid) mdp::obsgen::obs_cells(b, e, env, sh, tid, fd);
   for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) mdp::obsgen::obs_depth(b, e, env, i);
   mdp::obsgen::obs_finish(b, e, env, sh);
@@ -51,7 +74,7 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
     EnvState e = b.st[env];
     e.collided = 0;
     apply_action(b, e, env, actions + mdp::act::DIM * env);
-    int new_wall = 0, new_floor = 0, d_known = 0, n_new = 0;
+    int new_wall = 0, new_floor = 0, d_known = 0, n_new = 0, n_occ = 0;
     sh.scanned = 0;
     const int tick0 = e.tick;
     for (int k = 0; k < c.substeps; ++k) {
@@ -60,20 +83,23 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
       if ((tick0 + k + 1) % c.lidar_every != 0) continue;
       scan_begin(b, e, sh);
       for (int j = 0; j < sh.n_beams; ++j) scan_beam(b, e, env, sh, j);
-      int s = 0, f = 0, kn = 0, nn = 0;
+      int s = 0, f = 0, kn = 0, nn = 0, no = 0;
       for (int tid = 0; tid < kThreads; ++tid) {
         const ApplyCount a = scan_apply(b, e, env, sh, tid, kThreads, g.far_mask);
         s += a.wall;
         f += a.floor;
         kn += a.known;
         nn += a.fresh;
+        no += a.occ;
       }
       new_wall += s;
       new_floor += f;
       d_known += kn;
       n_new += nn;
+      n_occ += no;
       known_box(b, e, sh);
     }
+    map_progress(e, n_occ);   // 진행 없음 시계 — finish_step 판 끝이 씀
     finish_step(b, e, env, new_wall, new_floor, d_known, n_new);
     mdp::obsgen::far_dirty_robot(b, e, g);
     b.reward[env] = e.reward;

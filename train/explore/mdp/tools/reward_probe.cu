@@ -1,10 +1,12 @@
 // 보상 해킹 시험 (mdp/README "보상 항", ROADMAP S4): 정해진 행동으로 판 하나씩 끝까지 돌려 판 합 보상·끝 코드·항마다 합을 잰다.
 //   still      : 제자리(행동 0) → 안전 시간 끊김까지. 기대: 판 합 < 0
 //   spin       : 제자리 돌기(ω = 0.5 정규 = 1.57 rad/s) → 끊김까지. 참고(해킹 아님 — 돌기도 탐사의 일부)
-//   declare0   : 첫 걸음에 선언. 기대: done 4(선언 실패)·판 합 < 0
+//   declare0   : 첫 걸음에 선언. 옛 규칙: done 4(선언 실패)·판 합 < 0. 닫힘 성공 규칙(기본): 선언은 무시 — done 4 가 없어야 함
 //   crash      : 안전층 끄고 앞으로 최고 속도 직진 → 벽에 박음. 기대: 판 합 < frontier 판 합(정상 선언)
 //   crash_safe : 안전층 켜고 같은 직진 → 안전층이 막아 박지 않는지(충돌 수)
 //   frontier   : 프론티어 기준선(baselines/frontier, --mode)이 모는 대로(물리 → 정규 단위), 기준선이 끝나면 그 걸음에 선언. 기대: 판 합 > 0
+// 닫힘 성공 규칙(sim EnvCfg::success_closed)에서는 덧붙여: 지도 닫힘으로 성공한 판의 정답 덮음(이 도구 안에서만 쓰는 확인값)이 0.8 아래인 판 = 0
+// (거짓 닫힘), 제자리·제자리 돌기의 덮음 항(로봇 지도 처음 막힘 칸 보상) < 기준선 따라가기의 1/4 (잡음·자세 흐름으로 칸을 키우지 못함)
 // reward_probe <장면.scene> [장면 …] [--envs 8] [--mode fast] [--only 이름,…]
 // 모두 GPU 환경(학습과 같은 커널). 커리큘럼 끔(맵 하나씩·오차 배율 1).
 #include <cmath>
@@ -156,8 +158,25 @@ int main(int argc, char** argv) {
     }
     if (has("declare0")) {
       bool ok = true;
-      for (int i = 0; i < n_env; ++i) ok = ok && res["declare0"].done[i] == mdp::cur::kDeclareShort && res["declare0"].ret[i] < 0;
-      check(ok, "0 걸음 선언 → 모든 판 done 4·판 합 < 0");
+      if (hc0.cfg.success_closed) {
+        for (int i = 0; i < n_env; ++i) ok = ok && res["declare0"].done[i] != mdp::cur::kDeclareShort;
+        check(ok, "닫힘 성공 규칙: 선언은 무시 → 선언 실패(done 4) 판 0");
+      } else {
+        for (int i = 0; i < n_env; ++i) ok = ok && res["declare0"].done[i] == mdp::cur::kDeclareShort && res["declare0"].ret[i] < 0;
+        check(ok, "0 걸음 선언 → 모든 판 done 4·판 합 < 0");
+      }
+    }
+    if (hc0.cfg.success_closed) {
+      int n_cl = 0, n_low = 0;
+      for (auto& kv : res)
+        for (int i = 0; i < n_env; ++i)
+          if (kv.second.done[i] == mdp::cur::kDeclareOk) { ++n_cl; n_low += kv.second.cov[i] < 0.8f; }
+      std::printf("  [참고] 지도 닫힘 성공 %d 판 (모든 시험 행동), 그중 정답 덮음 < 0.8 %d 판\n", n_cl, n_low);
+      check(n_low == 0, "거짓 닫힘 없음: 닫힘 성공 판의 정답 덮음 ≥ 0.8");
+      if (has("still") && has("spin") && has("frontier")) {
+        const double fc = res["frontier"].terms[0] / n_env, sc = res["still"].terms[0] / n_env, pc = res["spin"].terms[0] / n_env;
+        check(sc < 0.25 * fc && pc < 0.25 * fc, "덮음 항(로봇 지도 처음 막힘 칸): 제자리·제자리 돌기 < 기준선 따라가기의 1/4 (칸 키우기 없음)");
+      }
     }
     if (has("still") && has("crash") && has("frontier")) {
       // 진행 없음 끝 (D1): 버티다 끝나는 판이 박기보다 덜 나쁘고(박기로 도망 안 감), 기준선 따라 선언보다 나빠야 함

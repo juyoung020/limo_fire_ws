@@ -5,15 +5,20 @@
 // 정규화 상수 (관측 만들 때 곱함, 신경망은 그대로 받음)
 //   kRangeNorm 8 m   : 라이다 거리·없음 = 1. 지도와 같은 최대 거리(env.yaml map.max_range = Cartographer max_range 8 m) → [0, 1]
 //   kPosNorm 12.8 m  : 시작점 기준 위치·시작점 거리. 먼 지도 창(25.6 m)의 반 → 창 안이면 [−1, 1], 지도 한도(25.6 m) 안이면 |·| ≤ 2
-//   kFrontNorm 25.6 m: 가장 가까운 프론티어 거리. 지도 한 변 → 대각선이라도 ≤ 1.42
+//   kFrontNorm 25.6 m: 프론티어 덩어리까지 BFS 길 거리(설 수 있는 칸 4 이웃 걸음 × 5 cm). 지도 한 변 — 돌아가는 길이면 넘을 수 있어 자름 2
 //   kSpeedNorm 1 m/s : 바퀴·EKF·바퀴 4 개 속도. 데이터시트 최고 속도 1 m/s (실측 1.11 → 1.11)
 //   kRateNorm 3.14 rad/s: 자이로·EKF ω·헛돎. drive.max ω 실측 3.14 → [−1, 1] (헛돎은 순간 더 클 수 있음)
 //   지난 시간 / 안전 시간(1200 s) → [0, 1]. 안 넓이 / 655.36 m²(지도 25.6²) → [0, 1].
-//   프론티어 칸 수 / 4000 (자름 1) — 집 하나 프론티어는 수백~수천 칸(5 cm).
+//   프론티어 덩어리 크기: 칸 수 × 5 cm / kFrontSizeNorm 10 m (자름 1) — 문턱 0.75 m 면 0.075. 덩어리 수 / 10 (자름 1).
+//   번진 곳 안 프론티어 칸 수 / 4000 (자름 1) — 집 하나 프론티어는 수백~수천 칸(5 cm).
 //   새로 안 칸(최근 2 s) 넓이 / 20 m² (자름 2) — 1 m/s 로 8 m 시야가 새 곳을 쓸면 2 s 에 수십 m².
-//   마지막 새 칸 뒤 시간 / 60 s (자름 1).
+//   진행 없음 시계 / kIdleTime 60 s (자름 1) — 판 끝 진행 없음과 같은 시계 (env.h since_occ: 새 막힘 칸 ≥ kIdleOccMin 인 마지막 행동 뒤).
+//   새 막힘 칸(최근 2 s) 수 / kOccGainNorm (자름 2).
 //   가치 전용: 자세 오차 / (0.1 m, 0.1 m, 0.05 rad) — env.yaml pose_error σ(0.03 m, 0.017 rad)의 약 3 배 → 대개 [−1, 1].
 //              남은 벽 면 칸 / 5000 (작은 집 2594·서점 3206 칸).
+//              정답 벽 진척 시계 (마지막 새 벽 면 칸 뒤 시간 / kIdleTime, 자름 1) — 정답 벽이라 가치에만 (판 끝은 지도 시계).
+// 프론티어 덩어리 요약 = mdp/frontier.h reach_summary (기준선 frontier_search: 로봇 반경 kRobotRadius 로 막힘 팽창, 크기 문턱 kFrontMinSize).
+//   CPU 참조판은 env_ref.cpp 가 그대로 부르고, GPU 는 env_kernel.cu reach_block 이 같은 값을 블록 병렬로 — 둘 다 sh.reach 에 넣는다.
 //
 // 2D (uint8)
 //   가까운 지도 6 × 64 × 64, 칸 10 cm, 로봇(지도 자세) 중심·로봇 방향, 앞 = 위 행: 0 확률(0 모름, 1~255 로그 오즈 낮음→높음),
@@ -31,7 +36,12 @@
 namespace mdp::obsgen {
 
 constexpr float kRangeNorm = 8.f, kPosNorm = 12.8f, kFrontNorm = 25.6f, kSpeedNorm = 1.f, kRateNorm = 3.14f;
-constexpr float kAreaNorm = 655.36f, kFrontCountNorm = 4000.f, kProgAreaNorm = 20.f, kSinceNorm = 60.f;
+constexpr float kAreaNorm = 655.36f, kFrontCountNorm = 4000.f, kProgAreaNorm = 20.f;
+constexpr float kFrontSizeNorm = 10.f, kFrontNumNorm = 10.f, kOccGainNorm = 100.f;
+// 기준선과 같은 값 (baselines/frontier/config/frontier.yaml min_frontier_size, nav2_params.yaml robot_radius — frontier_check 가 같은지 본다)
+constexpr float kFrontMinSize = 0.75f, kRobotRadius = 0.2f;
+DEV mdp::Robot reach_robot(const sim::EnvCfg& c) { return mdp::robot_cells(kRobotRadius, c.res); }
+DEV int reach_min_cells(const sim::EnvCfg& c) { return (int)ceilf(kFrontMinSize / c.res - 1e-4f); }   // frontier_explorer.cpp make_plan 과 같은 식
 constexpr float kErrXyNorm = 0.1f, kErrThNorm = 0.05f, kRemainNorm = 5000.f;
 // IMU·세기 (S1 실측 맞춤, sensor_model.yaml imu·lidar.intensity)
 //   가속도 / 10 m/s²: 몸통 가속 ≲ 5 m/s²(구동 가속 한도) + 주행 진동 σ ≤ 1.3 m/s² → 대개 ±0.6. az 는 중력 9.81 을 빼고 (실측 g 10.03 이라 +0.02 치우침)
@@ -53,9 +63,15 @@ using sim::Shared;
 DEV uint8_t prob_u8(const sim::EnvCfg& c, int16_t l) {
   return l == sim::kUnknown ? (uint8_t)0 : (uint8_t)(1 + ((int)l - c.l_min) * 254 / (c.l_max - c.l_min));
 }
+// 프론티어 칸인가 (frontier.h frontier_cell 과 같은 값): GPU 는 지도 갱신 때 고쳐 둔 프론티어 비트 지도(EnvBatch::fmap, env_kernel.cu frontier_fix)를 읽고,
+// CPU 참조판(fmap 없음)은 칸과 4 이웃을 직접 본다 — env_verify 가 관측 GPU == CPU 로 같은 값임을 확인
+DEV bool frontier_at(const uint32_t* FM, int ws, const mdp::MapView& mv, int x, int y) {
+  if (FM) return (FM[y * ws + (x >> 5)] >> (x & 31)) & 1u;
+  return mdp::frontier_cell(mv, x, y);
+}
 DEV bool visited(const uint32_t* M, int ci) { return ((M[ci >> 2] >> (8 * (ci & 3))) & 32u) != 0u; }
 
-// 모든 스레드: 2D 관측·라이다 장 복사·프론티어 칸 (sh.part[tid] = 프론티어 칸 수, sh.fr_min = 가장 가까운 키 — 스레드 0 이 미리 kNoFrontier)
+// 모든 스레드: 2D 관측·라이다 장 복사 (프론티어 요약 sh.reach 는 부르는 쪽이 — 위 머리말)
 // 먼 지도 확률·지나간 곳 채널을 다시 그릴 곳: all 이면 전부, 아니면 칸 가운데가 세계 상자 [x0, x1] × [y0, y1] 안인 칸만
 // (나머지 칸은 지난 걸음 값 그대로 — 그 칸이 읽는 지도 칸이 안 바뀌었으므로 같은 값. GPU 가 쓴다, CPU 참조판은 늘 전부)
 struct FarDirty {
@@ -122,7 +138,7 @@ DEV bool far_cell_head(const EnvState& e, const FarDirty& fd, const FarFrame& f,
   const int row = i / FAR_W, col = i % FAR_W;
   F[2 * FAR_H * FAR_W + i] = (row == f.prow && col == f.pcol) ? (uint8_t)255 : (uint8_t)0;
   if (statics)
-    for (int ch = 3; ch < FAR_C; ++ch) F[ch * FAR_H * FAR_W + i] = 0;   // 물체 📏
+    for (int ch = 3; ch < FAR_FRONTIER_CH; ++ch) F[ch * FAR_H * FAR_W + i] = 0;   // 물체 📏 (마지막 칸은 프론티어 — far_cell_put)
   if (fd.all) return true;
   // 칸 가운데 (점 64 개는 가운데에서 앞·옆 0.35 m 안 → 반지름 0.5 m 안, fd 상자는 0.6 m 넓혀 둠)
   const float fwd_c = f.half - ((float)row + 0.5f) * kFarCell, left_c = f.half - ((float)col + 0.5f) * kFarCell;
@@ -132,8 +148,10 @@ DEV bool far_cell_head(const EnvState& e, const FarDirty& fd, const FarFrame& f,
 }
 // 칸 i 의 점 줄 kr (8 점): 아는 점의 로그 오즈 최댓값·지나간 곳을 lmax·vis 에 합침.
 // 확률 칸 값 = 아는 점의 prob_u8 최댓값. prob_u8 은 로그 오즈에 단조(모름 = kUnknown 이 가장 작음)라 로그 오즈 최댓값 하나만 바꾼다
-DEV void far_cell_row(const sim::EnvCfg& c, const sim::MapDev& m, const int16_t* L, const uint32_t* M, const EnvState& e, const FarFrame& f, int i,
-                      int kr, int* lmax, int* vis) {
+DEV void far_cell_row(const sim::EnvCfg& c, const sim::MapDev& m, const int16_t* L, const uint32_t* M, const uint32_t* FM, const EnvState& e,
+                      const FarFrame& f, int i, int kr, int* lmax, int* vis, int* fr) {
+  const mdp::MapView mv{L, c.size, m.gw, m.gh};
+  const int ws = sim::fmap_row(c);
   using namespace mdp::obs;
   const int row = i / FAR_W, col = i % FAR_W;
   const float fwd = f.half - ((float)row + ((float)kr + 0.5f) / (float)kFarSub) * kFarCell;
@@ -147,15 +165,17 @@ DEV void far_cell_row(const sim::EnvCfg& c, const sim::MapDev& m, const int16_t*
     const int l = L[ci];
     *lmax = l > *lmax ? l : *lmax;
     *vis |= visited(M, ci) ? 1 : 0;
+    *fr |= frontier_at(FM, ws, mv, cx, cy) ? 1 : 0;
   }
 }
-DEV void far_cell_put(const sim::EnvCfg& c, uint8_t* F, int i, int lmax, int vis) {
+DEV void far_cell_put(const sim::EnvCfg& c, uint8_t* F, int i, int lmax, int vis, int fr) {
   using namespace mdp::obs;
   F[i] = prob_u8(c, (int16_t)lmax);
   F[FAR_H * FAR_W + i] = vis ? (uint8_t)255 : (uint8_t)0;
+  F[FAR_FRONTIER_CH * FAR_H * FAR_W + i] = fr ? (uint8_t)255 : (uint8_t)0;
 }
 
-// whole = false: 먼 지도·프론티어 요약은 부르는 쪽이 (GPU env_kernel.cu obs_far_block·obs_front_block — 같은 값).
+// whole = false: 먼 지도는 부르는 쪽이 (GPU env_kernel.cu obs_far_block — 같은 값).
 // statics = false: 늘 0 인 물체 채널(📏)을 안 씀 — GPU 는 판이 시작할 때(리셋)만 쓰고 그 뒤 걸음은 그대로 둔다 (관측 버퍼는 이 함수만 씀, 같은 값)
 DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int tid, const FarDirty& fd, bool whole = true, bool statics = true) {
   using namespace mdp::obs;
@@ -177,7 +197,21 @@ DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
     I[i] = ci >= 0 ? prob_u8(c, L[ci]) : (uint8_t)0;
     I[NEAR_H * NEAR_W + i] = ci >= 0 && visited(M, ci) ? (uint8_t)255 : (uint8_t)0;
     if (statics)
-      for (int ch = 2; ch < NEAR_C; ++ch) I[ch * NEAR_H * NEAR_W + i] = 0;   // 물체 📏
+      for (int ch = 2; ch < NEAR_FRONTIER_CH; ++ch) I[ch * NEAR_H * NEAR_W + i] = 0;   // 물체 📏
+    // 프론티어 채널: 칸(10 cm) 안 2 × 2 점(지도 5 cm 칸 간격) 중 하나라도 프론티어 칸이면 255
+    {
+      const mdp::MapView mv{L, c.size, m.gw, m.gh};
+      const uint32_t* FM = b.fmap ? b.fmap + (size_t)env * c.size * sim::fmap_row(c) : nullptr;
+      const int ws = sim::fmap_row(c);
+      int fr = 0;
+      for (int q = 0; q < 4; ++q) {
+        const float f2 = fwd + ((q & 1) ? -0.25f : 0.25f) * kNearCell, l2 = left + ((q & 2) ? -0.25f : 0.25f) * kNearCell;
+        const float qx = (px + co * f2) - s * l2, qy = (py + s * f2) + co * l2;
+        int qx_c, qy_c;
+        if (sim::cell_of(c, m, qx, qy, &qx_c, &qy_c) >= 0) fr |= frontier_at(FM, ws, mv, qx_c, qy_c) ? 1 : 0;
+      }
+      I[NEAR_FRONTIER_CH * NEAR_H * NEAR_W + i] = fr ? (uint8_t)255 : (uint8_t)0;
+    }
   }
   // 먼 지도 (시작 자세 기준). GPU 는 다시 그릴 칸만 모아 칸마다 8 스레드(점 줄)가 나눠 한다 (env_kernel.cu obs_far_block — 같은 함수, 최댓값·OR 이라 순서 무관)
   if (whole) {
@@ -186,9 +220,10 @@ DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
     far_frame(e, px, py, &ff);
     for (int i = tid; i < FAR_H * FAR_W; i += sim::kThreads) {
       if (!far_cell_head(e, fd, ff, F, i)) continue;
-      int lmax = sim::kUnknown, vis = 0;
-      for (int kr = 0; kr < kFarSub; ++kr) far_cell_row(c, m, L, M, e, ff, i, kr, &lmax, &vis);
-      far_cell_put(c, F, i, lmax, vis);
+      int lmax = sim::kUnknown, vis = 0, fr = 0;
+      const uint32_t* FM = b.fmap ? b.fmap + (size_t)env * c.size * sim::fmap_row(c) : nullptr;
+      for (int kr = 0; kr < kFarSub; ++kr) far_cell_row(c, m, L, M, FM, e, ff, i, kr, &lmax, &vis, &fr);
+      far_cell_put(c, F, i, lmax, vis, fr);
     }
   }
   // 깊이는 픽셀마다 따로 (obs_depth — GPU 는 픽셀 하나 = 스레드 하나인 커널)
@@ -203,33 +238,6 @@ DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
       const int slot = ((e.lid_head - e.delay - f) % sim::kLidarRing + sim::kLidarRing) % sim::kLidarRing;
       O[i] = R[slot * LIDAR_BINS + k] / kRangeNorm;
     }
-  }
-  // 프론티어 칸 (지도에서 건드린 칸 범위 안)
-  if (whole) {
-    int n = 0;
-    if (e.kb_x1 >= 0) {
-      const mdp::MapView mv{L, c.size, m.gw, m.gh};
-      int rx, ry;
-      sim::cell_of(c, m, px, py, &rx, &ry);
-      const int x0 = e.kb_x0, y0 = e.kb_y0, w = e.kb_x1 - e.kb_x0 + 1, h = e.kb_y1 - e.kb_y0 + 1;
-      unsigned long long best = mdp::kNoFrontier;
-      for (int k = tid; k < w * h; k += sim::kThreads) {
-        const int x = x0 + k % w, y = y0 + k / w;
-        const unsigned long long key = mdp::summary_key(mv, x, y, rx, ry);
-        if (key != mdp::kNoFrontier) {
-          ++n;
-          best = key < best ? key : best;
-        }
-      }
-      if (best != mdp::kNoFrontier) {
-#ifdef __CUDA_ARCH__
-        atomicMin(&sh.fr_min, best);
-#else
-        if (best < sh.fr_min) sh.fr_min = best;
-#endif
-      }
-    }
-    sh.part[tid] = n;
   }
 }
 
@@ -270,13 +278,39 @@ DEV void obs_depth(const EnvBatch& b, const EnvState& e, int env, int i) {
   depth_out(b, env)[i] = depth_u8(c.depth, z);
 }
 
+// 프론티어 덩어리 칸 (mdp::ReachSummary → V): BFS 거리 짧은 순 3 개 — 거리, 그 칸(덩어리에서 BFS 거리 가장 짧은 칸) 방향 sin·cos, 크기. 없으면 0.
+// px, py, s, co = 지도 자세 위치·sin·cos. 이 칸들만 따로 쓰는 GPU 커널(env_kernel.cu env_reach_kernel)과 obs_finish 가 같이 부른다
+DEV bool reach_slot(int i) {
+  using namespace mdp::obs;
+  return (i >= FRONTIER && i < FRONTIER + 4) || (i >= FRONTIER2 && i < FRONTIER3 + 4) || i == FRONT_N || i == CLOSED || i == FRONT_CELLS;
+}
+DEV void reach_vec(const sim::EnvCfg& c, const sim::MapDev& m, float px, float py, float s, float co, const mdp::ReachSummary& R, float* V) {
+  using namespace mdp::obs;
+  const int slot[mdp::kReachTop] = {FRONTIER, FRONTIER2, FRONTIER3};
+  for (int k = 0; k < mdp::kReachTop; ++k) {
+    const mdp::ReachTop& t = R.top[k];
+    if (t.n <= 0) continue;
+    const float fx = m.ox + ((float)(t.cell % m.gw) + 0.5f) * c.res, fy = m.oy + ((float)(t.cell / m.gw) + 0.5f) * c.res;
+    const float ddx = fx - px, ddy = fy - py;
+    const float d = sqrtf(ddx * ddx + ddy * ddy);
+    V[slot[k] + 0] = dm::minf(2.f, (float)t.dist * c.res / kFrontNorm);
+    if (d > 1e-6f) {
+      V[slot[k] + 1] = dm::clampf((co * ddy - s * ddx) / d, -1.f, 1.f);   // 로봇 기준 sin
+      V[slot[k] + 2] = dm::clampf((co * ddx + s * ddy) / d, -1.f, 1.f);   // cos
+    }
+    V[slot[k] + 3] = dm::minf(1.f, (float)t.n * c.res / kFrontSizeNorm);
+  }
+  V[FRONT_N] = dm::minf(1.f, (float)R.n_found / kFrontNumNorm);
+  V[CLOSED] = R.closed ? 1.f : 0.f;
+  V[FRONT_CELLS] = dm::minf(1.f, (float)R.n_cells / kFrontCountNorm);
+}
+
 // 스레드 0: 숫자 관측(지연 반영)·가치 전용 참값
-DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh) {
+// with_reach = false: 프론티어 덩어리 칸(reach_slot)은 안 쓴다 — GPU 는 env_reach_kernel 이 obs_reach 로 따로 (같은 값·같은 지연 규칙)
+DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh, bool with_reach = true) {
   using namespace mdp::obs;
   const sim::EnvCfg& c = b.cfg;
   const sim::MapDev& m = b.maps[e.map];
-  int n_front = 0;
-  for (int i = 0; i < sim::kThreads; ++i) n_front += sh.part[i];
   float* V = sh.vec;
   for (int i = 0; i < VEC; ++i) V[i] = 0.f;
   const float px = e.x + e.ex, py = e.y + e.ey, pth = e.th + e.eth;
@@ -315,20 +349,10 @@ DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh) {
   }
   const float dt_act = (float)c.substeps * c.dt;
   V[KNOWN_AREA] = (float)e.known_free * (c.res * c.res) / kAreaNorm;
-  if (n_front > 0 && sh.fr_min != mdp::kNoFrontier) {
-    const int k = (int)(sh.fr_min & 0xffffffffull);
-    const float fx = m.ox + ((float)(k % m.gw) + 0.5f) * c.res, fy = m.oy + ((float)(k / m.gw) + 0.5f) * c.res;
-    const float ddx = fx - px, ddy = fy - py;
-    const float d = sqrtf(ddx * ddx + ddy * ddy);
-    V[FRONTIER + 0] = d / kFrontNorm;
-    if (d > 1e-6f) {
-      V[FRONTIER + 1] = dm::clampf((co * ddy - s * ddx) / d, -1.f, 1.f);   // 로봇 기준 sin
-      V[FRONTIER + 2] = dm::clampf((co * ddx + s * ddy) / d, -1.f, 1.f);   // cos
-    }
-    V[FRONTIER + 3] = dm::minf(1.f, (float)n_front / kFrontCountNorm);
-  }
+  if (with_reach) reach_vec(c, m, px, py, s, co, sh.reach, V);
   V[PROGRESS + 0] = dm::minf(2.f, (float)e.prog_sum * (c.res * c.res) / kProgAreaNorm);
-  V[PROGRESS + 1] = dm::minf(1.f, (float)e.since_new * dt_act / kSinceNorm);
+  V[PROGRESS + 1] = dm::minf(1.f, (float)e.since_occ * dt_act / mdp::cur::kIdleTime);   // 진행 없음 시계 = 판 끝 시계 (env.h map_progress)
+  V[OCC_GAIN] = dm::minf(2.f, (float)e.occ_sum / kOccGainNorm);
   {
     const float hx = e.x0 - px, hy = e.y0 - py;
     const float d = sqrtf(hx * hx + hy * hy);
@@ -343,6 +367,7 @@ DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh) {
   float* P = b.vec_prev + (size_t)env * VEC;
   const bool late = e.delay > 0 && e.step > 0;
   for (int i = 0; i < VEC; ++i) {
+    if (!with_reach && reach_slot(i)) continue;
     const float now = V[i];
     O[i] = late ? P[i] : now;
     P[i] = now;
@@ -367,6 +392,27 @@ DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh) {
     Q[PRIV_REMAIN] = (float)(m.n_wall - e.seen_wall) / kRemainNorm;
     // PRIV_RESERVED: 몸통~가장 가까운 사람 간격 / 5 m (자름 1, 사람 없으면 1, 겹치면 음수 그대로) — people.h near_d
     Q[PRIV_RESERVED] = dm::minf(1.f, e.people.near_d / 5.f);
+    Q[PRIV_IDLE] = dm::minf(1.f, (float)e.since_wall * dt_act / mdp::cur::kIdleTime);   // 정답 벽 진척 시계 (가치에만, 판 끝엔 안 씀)
+  }
+}
+
+// 프론티어 덩어리 칸만 (GPU env_reach_kernel): obs_finish(with_reach = false) 뒤 같은 상태로 — 지연 규칙도 obs_finish 와 같다
+DEV void obs_reach(const EnvBatch& b, const EnvState& e, int env, const mdp::ReachSummary& R) {
+  using namespace mdp::obs;
+  const sim::MapDev& m = b.maps[e.map];
+  float V[VEC];
+  for (int i = 0; i < VEC; ++i) V[i] = 0.f;
+  float s, co;
+  dm::sincosf_d(e.th + e.eth, &s, &co);
+  reach_vec(b.cfg, m, e.x + e.ex, e.y + e.ey, s, co, R, V);
+  float* O = b.obs_1d + (size_t)env * POLICY_1D + LIDAR + INTENSITY;
+  float* P = b.vec_prev + (size_t)env * VEC;
+  const bool late = e.delay > 0 && e.step > 0;
+  for (int i = 0; i < VEC; ++i) {
+    if (!reach_slot(i)) continue;
+    const float now = V[i];
+    O[i] = late ? P[i] : now;
+    P[i] = now;
   }
 }
 

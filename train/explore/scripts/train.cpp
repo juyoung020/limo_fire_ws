@@ -1,6 +1,6 @@
 // train — 탐사 RL 학습 러너 (S6). 시뮬(sim/include/env_api.h) × 신경망·PPO(network/·ppo/) → 학습 뷰어 실행 폴더(viewer/include/runfolder.h).
 //
-//   train [--envs 2048] [--iters 0] [--minutes 0] [--name explore] [--seed 1] [--lr-max 1e-3] [--mlp 2] [--chunk N] [--eval-every 50] [--ckpt-every 50]
+//   train [--envs 2048] [--iters 0] [--minutes 0] [--name explore] [--seed 1] [--lr-max 1e-3] [--std-max 1] [--mlp 2] [--chunk N] [--eval-every 50] [--ckpt-every 50]
 //         [--replay-every 25] [--eval-episodes 32] [--resume] [--root train/explore/runs] [--list train/explore/scenes/train/list.tsv]
 //         [--test a.scene,b.scene] [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml]
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
@@ -9,6 +9,7 @@
 // 실행 폴더 <root>/<name>/: run.json(kind explore_ppo), progress.jsonl(반복마다), episodes.jsonl(표본 환경의 판), evals/test_it<반복>.json,
 //   replays/*.xrp(환경 0·1 의 판을 --replay-every 반복마다 한 판씩), ckpt/model_<반복>.bin·model_latest.bin.
 // 평가: --eval-every 반복마다 시험 맵마다 별도 Env(환경 --eval-episodes 개, 커리큘럼 끔)로 결정적 정책(act_inference), 환경마다 첫 판.
+//   같은 판을 정책 분포 샘플로 한 번 더(evals/test_sample_it*.json, progress eval_sample/*) — 학습 성공과 평가 성공의 차이 보기.
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -49,8 +50,13 @@ struct Args {
   double minutes = 0;
   uint64_t seed = 1;
   float lr_max = 1e-3f;
+  float bound_coef = -1;  // < 0 = PPOConfig 기본. 평균 행동 경계 손실 계수 (0 = 끔, explore_v7 과 같음)
+  float entropy = -1, desired_kl = -1, std_min = -1;   // < 0 = PPOConfig 기본 (엔트로피 계수 · KL 적응 목표 · σ 하한)
+  float std_max = 0;  // 0 = PPOConfig 기본(1). 정책 σ 상한 — 크게(예 1e6) 주면 사실상 상한 없음, 하한 std_min 은 그대로
   int mlp = 2, chunk = 0;  // chunk 0 = PPOConfig 기본 (미니배치 하나)
   bool resume = false;
+  std::string eval_ckpt;
+  std::string convert_in, convert_out;   // --convert-shared 입력 출력: 형식 2(공유 인코더) → 형식 3(인코더 나눔) 체크포인트로 바꿔 쓰고 끝  // 비어 있지 않으면 이 체크포인트를 불러 평가만 하고 끝 (학습 안 함)
   std::string name = "explore", root = "train/explore/runs", list = "train/explore/scenes/train/list.tsv";
   std::vector<std::string> test = {"train/explore/scenes/test/bookstore.scene", "train/explore/scenes/test/small-house.scene"};
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml";
@@ -82,6 +88,20 @@ __global__ void k_map_done(const int32_t* d, int n, int* out) {
 
 // 평가 장부 (장치): 환경마다 첫 판만 — 아직 안 끝났으면 보상을 더하고(double, 걸음 순서대로), 끝나면 판 정보를 적는다.
 // 호스트가 걸음마다 동기화하던 것을 GPU 에서 해 걸음 사이 동기화를 없앤다 (결과는 같다).
+// 결정적 평가 행동(= 정책 평균 μ, 자르기 전) 통계: 아직 첫 판 중인 환경만. s[0] 걸음 수, s[1..3] μ 합(v, vy, ω),
+// s[4..6] |μ| > 1 걸음 수(잘리는 영역), s[7] μ_v > 1.5 걸음 수
+__global__ void k_mu_stats(const float* act, const int* first, int n, double* s) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n || first[i]) return;
+  const float* m = act + (size_t)i * mdp::act::DIM;
+  atomicAdd(s + 0, 1.0);
+  for (int j = 0; j < 3; ++j) {
+    atomicAdd(s + 1 + j, (double)m[j]);
+    if (fabsf(m[j]) > 1.f) atomicAdd(s + 4 + j, 1.0);
+  }
+  if (m[0] > 1.5f) atomicAdd(s + 7, 1.0);
+}
+
 __global__ void k_eval_book(const int32_t* done, const float* rew, const sim::EpInfo* ep, int n, int* first,
                             sim::EpInfo* fe, double* er) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -179,6 +199,11 @@ int main(int argc, char** argv) {
       else if (k == "--name") a.name = nx();
       else if (k == "--seed") a.seed = std::stoull(nx());
       else if (k == "--lr-max") a.lr_max = std::stof(nx());
+      else if (k == "--std-max") a.std_max = std::stof(nx());
+      else if (k == "--entropy") a.entropy = std::stof(nx());
+      else if (k == "--desired-kl") a.desired_kl = std::stof(nx());
+      else if (k == "--std-min") a.std_min = std::stof(nx());
+      else if (k == "--bound-coef") a.bound_coef = std::stof(nx());
       else if (k == "--mlp") a.mlp = std::stoi(nx());
       else if (k == "--chunk") a.chunk = std::stoi(nx());
       else if (k == "--eval-every") a.eval_every = std::stoi(nx());
@@ -186,6 +211,8 @@ int main(int argc, char** argv) {
       else if (k == "--replay-every") a.replay_every = std::stoi(nx());
       else if (k == "--eval-episodes") a.eval_eps = std::stoi(nx());
       else if (k == "--resume") a.resume = true;
+      else if (k == "--eval-ckpt") a.eval_ckpt = nx();
+      else if (k == "--convert-shared") { a.convert_in = nx(); a.convert_out = nx(); }
       else if (k == "--root") a.root = nx();
       else if (k == "--list") a.list = nx();
       else if (k == "--test") a.test = split(nx(), ',');
@@ -227,8 +254,20 @@ int main(int argc, char** argv) {
     pc.num_envs = N;
     pc.lr_max = a.lr_max;
     pc.mlp = a.mlp;
+    if (a.std_max > 0) pc.std_max = a.std_max;
+    if (a.entropy >= 0) pc.entropy_coef = a.entropy;
+    if (a.desired_kl >= 0) pc.desired_kl = a.desired_kl;
+    if (a.std_min > 0) pc.std_min = a.std_min;
+    if (a.bound_coef >= 0) pc.bound_coef = a.bound_coef;
     if (a.chunk > 0) pc.chunk = a.chunk;
     xppo::PPO ppo(pc, xnet::explore_spec(), a.seed);
+    if (!a.convert_in.empty()) {
+      ppo.load_convert_shared(a.convert_in);
+      ppo.save(a.convert_out);
+      std::fprintf(stderr, "변환: %s (형식 2, 공유 인코더) → %s (형식 3, 인코더 나눔·프론티어 채널 첫 층 가중치 0), 반복 %d\n", a.convert_in.c_str(),
+                   a.convert_out.c_str(), ppo.iteration());
+      return 0;
+    }
     const std::string dir = a.root + "/" + a.name;
     const std::string ckdir = dir + "/ckpt";
     if (a.resume) {
@@ -236,6 +275,69 @@ int main(int argc, char** argv) {
       if (!file_exists(p)) throw std::runtime_error("--resume: 체크포인트 없음 " + p);
       ppo.load(p);
       std::fprintf(stderr, "이어 학습: %s 반복 %d, 학습률 %.2e\n", p.c_str(), ppo.iteration(), ppo.learning_rate());
+      // 커리큘럼 단계 되살리기: 단계는 환경 상태라 체크포인트에 없다 — 그냥 이으면 모든 환경이 단계 0 에서 다시 오른다
+      // (explore_v7 반복 2608·8850 재개 때 단계 평균 2.9 → 0 → ~1500 반복 동안 다시 오름, value 손실 튐).
+      // ckpt/stages_latest.bin(환경마다 int32, 저장 때 같이 씀)이 있으면 그대로, 없으면 episodes.jsonl 끝 2000 판의 단계 분포를
+      // 환경 번호 순서로 나눠 준다(옛 실행 폴더용 근사). 최근 판 덮음 기록(창)은 비운다.
+      if (hc.cfg.curriculum) {
+        std::vector<int32_t> stg;
+        {
+          std::ifstream f(ckdir + "/stages_latest.bin", std::ios::binary);
+          if (f) {
+            stg.resize(N);
+            f.read(reinterpret_cast<char*>(stg.data()), sizeof(int32_t) * N);
+            if (f.gcount() != (std::streamsize)(sizeof(int32_t) * N)) stg.clear();
+          }
+        }
+        const char* how = "stages_latest.bin";
+        if (stg.empty()) {
+          std::ifstream f(dir + "/episodes.jsonl");
+          std::vector<int> last;
+          std::string line;
+          const std::regex re("\"stage\":(-?\\d+)");
+          while (std::getline(f, line)) {
+            std::smatch m;
+            if (std::regex_search(line, m, re)) last.push_back(std::stoi(m[1].str()));
+          }
+          if (!last.empty()) {
+            const size_t k0 = last.size() > 2000 ? last.size() - 2000 : 0;
+            std::vector<int> h(mdp::cur::kNumStages, 0);
+            for (size_t k = k0; k < last.size(); ++k) h[std::max(0, std::min(mdp::cur::kNumStages - 1, last[k]))]++;
+            const int tot = (int)(last.size() - k0);
+            stg.resize(N);
+            for (int i = 0; i < N; ++i) {   // 환경 i → 누적 분포에서 (i + 0.5)/N 자리의 단계
+              const double q = (i + 0.5) / N * tot;
+              int s = 0, acc = h[0];
+              while (s + 1 < mdp::cur::kNumStages && acc <= q) acc += h[++s];
+              stg[i] = s;
+            }
+            how = "episodes.jsonl 끝 판 분포";
+          }
+        }
+        if (!stg.empty()) {
+          std::vector<sim::EnvState> es;
+          env.get_state(es);
+          double mean = 0;
+          for (int i = 0; i < N; ++i) {
+            es[i].stage = stg[i];
+            es[i].cur_hist = 0u;
+            es[i].cur_n = 0;
+            env.set_state(i, es[i]);
+            mean += stg[i];
+          }
+          env.reset();
+          env.sync();
+          std::fprintf(stderr, "커리큘럼 단계 되살림 (%s): 평균 %.2f\n", how, mean / N);
+        }
+      }
+    }
+
+    if (!a.eval_ckpt.empty()) {
+      ppo.load(a.eval_ckpt);
+      std::vector<float> ls(mdp::act::CONT);
+      cudaMemcpy(ls.data(), ppo.ac().log_std(), sizeof(float) * ls.size(), cudaMemcpyDeviceToHost);
+      std::fprintf(stderr, "평가만: %s 반복 %d, σ (v, vy, ω) = %.3f %.3f %.3f\n", a.eval_ckpt.c_str(), ppo.iteration(), std::exp(ls[0]),
+                   std::exp(ls[1]), std::exp(ls[2]));
     }
 
     // ---- 실행 폴더
@@ -269,12 +371,13 @@ int main(int argc, char** argv) {
     meta.set("kind", "explore_ppo").set("group", a.name).set("seed", (unsigned long long)a.seed).set("n_envs", N)
         .set("ctrl_hz", 1.0 / dt_act).set("success_coverage", mdp::cur::kSuccessCov).set("action_limits", limits)
         .set("reward_terms", terms).set("n_train_maps", (unsigned long long)worlds.size()).set("test_maps", tests_meta)
-        .set("scene_list", a.list).set("steps_per_env", pc.steps_per_env).set("lr_max", a.lr_max)
+        .set("sweep_guard", c.sweep_guard).set("cur_top_random", c.cur_top_random).set("success_closed", c.success_closed).set("reward_occ", c.reward_occ).set("scene_list", a.list).set("steps_per_env", pc.steps_per_env).set("lr_max", a.lr_max)
         .set("n_params", (long long)ppo.ac().n_params)
         .set("ppo", rf::Json::object().set("epochs", pc.epochs).set("minibatches", pc.minibatches).set("clip", pc.clip)
                         .set("gamma", pc.gamma).set("lam", pc.lam).set("entropy_coef", pc.entropy_coef).set("lr", pc.lr)
                         .set("desired_kl", pc.desired_kl).set("max_grad_norm", pc.max_grad_norm)
-                        .set("std_min", pc.std_min).set("std_max", pc.std_max));
+                        .set("std_min", pc.std_min).set("std_max", pc.std_max)
+                        .set("bound_coef", pc.bound_coef).set("bound_soft", pc.bound_soft));
     rf::RunFolder::Options opt;
     opt.every_s = 0;
     if (a.resume) {
@@ -381,7 +484,8 @@ int main(int argc, char** argv) {
     };
 
     // ---- 평가
-    auto evaluate = [&](int it) {
+    // sample = true: 같은 시험 판(같은 씨앗)을 정책 분포 샘플로 — 학습 롤아웃과 같은 행동 방식(evals/test_sample_it*.json)
+    auto evaluate = [&](int it, bool sample) {
       auto t0 = std::chrono::steady_clock::now();
       const int E = std::min(a.eval_eps, N);
       rf::Json rows = rf::Json::array();
@@ -406,6 +510,10 @@ int main(int argc, char** argv) {
       cudaMalloc(&d_fe, sizeof(sim::EpInfo) * E * NT);
       cudaMalloc(&d_er, sizeof(double) * E * NT);
       cudaMalloc(&d_eact, sizeof(float) * mdp::act::DIM * E * NT);
+      double* d_mus;
+      constexpr int kMu = 8;
+      cudaMalloc(&d_mus, sizeof(double) * kMu * NT);
+      cudaMemset(d_mus, 0, sizeof(double) * kMu * NT);
       cudaMemset(d_first, 0, sizeof(int) * E * NT);
       cudaMemset(d_fe, 0, sizeof(sim::EpInfo) * E * NT);
       cudaMemset(d_er, 0, sizeof(double) * E * NT);
@@ -428,7 +536,16 @@ int main(int argc, char** argv) {
           float* act = d_eact + (size_t)mdp::act::DIM * E * ti;
           const sim::StepOut o = evs[ti]->outputs();
           cudaStreamWaitEvent(pst, ev_obs[ti], 0);   // 이 맵의 지난 걸음 관측이 다 나온 뒤
-          ppo.act_inference(o.obs_img, o.obs_1d, act, E);
+          ppo.act_inference(o.obs_img, o.obs_1d, act, E, sample ? (int64_t)step * (int64_t)NT + (int64_t)ti : -1);
+          if (!sample) k_mu_stats<<<(E + 127) / 128, 128, 0, pst>>>(act, d_first + (size_t)E * ti, E, d_mus + (size_t)kMu * ti);
+          if (!sample && std::getenv("EVAL_ACT_DUMP") && step < 300) {   // 변환 확인용: 결정적 평가 행동(평균) 걸음마다
+            static FILE* fa = std::fopen(std::getenv("EVAL_ACT_DUMP"), "w");
+            std::vector<float> ha((size_t)mdp::act::DIM * E);
+            cudaStreamSynchronize(pst);
+            cudaMemcpy(ha.data(), act, sizeof(float) * ha.size(), cudaMemcpyDeviceToHost);
+            for (int i = 0; i < E; ++i) std::fprintf(fa, "%zu %d %d %a %a %a %a\n", ti, step, i, ha[4 * i], ha[4 * i + 1], ha[4 * i + 2], ha[4 * i + 3]);
+            std::fflush(fa);
+          }
           cudaEventRecord(ev_act[ti], pst);
           cudaStreamWaitEvent(mst[ti], ev_act[ti], 0);
           evs[ti]->step(act, mst[ti]);
@@ -463,16 +580,29 @@ int main(int argc, char** argv) {
       cudaFree(d_fe);
       cudaFree(d_er);
       cudaFree(d_eact);
+      std::vector<double> hmu((size_t)kMu * NT);
+      cudaMemcpy(hmu.data(), d_mus, sizeof(double) * kMu * NT, cudaMemcpyDeviceToHost);
+      cudaFree(d_mus);
+      if (!sample)
+        for (size_t ti = 0; ti < NT; ++ti) {
+          const double* q = hmu.data() + (size_t)kMu * ti;
+          const double nn = q[0] > 0 ? q[0] : 1;
+          std::fprintf(stderr, "  평가 μ %s: 걸음 %.0f, 평균 μ (v, vy, ω) %.3f %.3f %.3f, |μ| > 1 비율 %.3f %.3f %.3f, μ_v > 1.5 비율 %.3f\n",
+                       tests[ti].name.c_str(), q[0], q[1] / nn, q[2] / nn, q[3] / nn, q[4] / nn, q[5] / nn, q[6] / nn, q[7] / nn);
+        }
       evs.clear();
       for (size_t ti = 0; ti < NT; ++ti) {
         const int* first = hfirst.data() + (size_t)E * ti;
         const sim::EpInfo* fe = hfe.data() + (size_t)E * ti;
         const double* er = her.data() + (size_t)E * ti;
         double n = E, succ = 0, coll = 0, trunc = 0, shrt = 0, cov = 0, t95 = 0, t95n = 0, len = 0, cad = 0, decl = 0, rws = 0;
+        double idle = 0, tcl = 0;   // 진행 없음 끝 · 성공(닫힘)까지 시간 합
         for (int i = 0; i < E; ++i) {
           const auto& f = fe[i];
           if (!first[i]) { trunc += 1; continue; }
           succ += f.done == mdp::cur::kDeclareOk;
+          idle += f.done == mdp::cur::kNoProgress;
+          if (f.done == mdp::cur::kDeclareOk) tcl += f.t;
           coll += f.done == mdp::cur::kCollision || f.done == mdp::cur::kCollisionPerson;
           trunc += f.done == mdp::cur::kTruncated;
           shrt += f.done == mdp::cur::kDeclareShort;
@@ -483,20 +613,35 @@ int main(int argc, char** argv) {
           if (f.t95 >= 0) { t95 += f.t95; t95n += 1; }
         }
         rf::Json row = rf::Json::object();
-        row.set("eval", tests[ti].name).set("split", "test").set("n", n).set("success", succ / n).set("collision", coll / n)
-            .set("truncation", trunc / n).set("declare_short", shrt / n).set("coverage", cov / n).set("t95_reached", t95n / n)
-            .set("pass", coll == 0 && succ == n);
-        if (t95n > 0) row.set("t95", t95 / t95n);
+        row.set("eval", tests[ti].name).set("split", sample ? "test_sample" : "test").set("n", n).set("success", succ / n).set("collision", coll / n)
+            .set("truncation", trunc / n).set("no_progress", idle / n).set("pass", coll == 0 && succ == n);
+        if (succ > 0) row.set("t_success", tcl / succ);   // 닫힘(성공)까지 시간 (s)
+        if (!hc_eval.cfg.success_closed) {   // 정답 덮음 지표는 옛 규칙(SIM_SUCCESS_CLOSED=0)에서만 — 보관 (mdp/README "판 끝")
+          row.set("declare_short", shrt / n).set("coverage", cov / n).set("t95_reached", t95n / n);
+          if (t95n > 0) row.set("t95", t95 / t95n);
+        }
         rows.push(row);
         s_n += n; s_succ += succ; s_coll += coll; s_trunc += trunc; s_short += shrt; s_cov += cov; s_t95 += t95; s_t95n += t95n;
         s_len += len; s_cad += cad; s_decl += decl; s_rew += rws;
-        std::fprintf(stderr, "  평가 %s: 성공 %.0f/%d 충돌 %.0f 끊김 %.0f 선언 미달 %.0f 끝 덮음 %.3f t95 %s\n", tests[ti].name.c_str(), succ, E, coll,
-                     trunc, shrt, cov / n, t95n > 0 ? std::to_string(t95 / t95n).c_str() : "—");
+        if (hc_eval.cfg.success_closed)
+          std::fprintf(stderr, "  평가%s %s: 성공(닫힘) %.0f/%d 충돌 %.0f 진행 없음 %.0f 끊김 %.0f 닫힘까지 %.1f s\n", sample ? "(샘플)" : "", tests[ti].name.c_str(), succ, E,
+                       coll, idle, trunc, succ > 0 ? tcl / succ : 0.0);
+        else
+          std::fprintf(stderr, "  평가%s %s: 성공 %.0f/%d 충돌 %.0f 끊김 %.0f 선언 미달 %.0f 끝 덮음 %.3f t95 %s\n", sample ? "(샘플)" : "", tests[ti].name.c_str(), succ, E, coll,
+                       trunc, shrt, cov / n, t95n > 0 ? std::to_string(t95 / t95n).c_str() : "—");
       }
       rf::Json evj = rf::Json::object();
       evj.set("iter", it).set("ckpt", "model_" + std::to_string(it)).set("rows", rows);
-      run.eval("test_it" + std::to_string(it), evj);
+      run.eval((sample ? "test_sample_it" : "test_it") + std::to_string(it), evj);
       auto& r = run.row();
+      if (sample) {
+        r.last("eval_sample/success_rate", s_succ / s_n);
+        r.last("eval_sample/coverage_mean", s_cov / s_n);
+        r.last("eval_sample/collision_rate", s_coll / s_n);
+        r.last("eval_sample/declare_short_rate", s_short / s_n);
+        std::fprintf(stderr, "  평가(샘플) %.1f s\n", ms_since(t0) / 1000);
+        return;
+      }
       r.last(rf::key::EVAL_N, s_n);
       r.last(rf::key::EVAL_SUCCESS, s_succ / s_n);
       r.last(rf::key::EVAL_COLLISION, s_coll / s_n);
@@ -515,7 +660,26 @@ int main(int argc, char** argv) {
     auto save = [&](bool numbered) {
       ppo.save(ckdir + "/model_latest.bin");
       if (numbered) ppo.save(ckdir + "/model_" + std::to_string(ppo.iteration()) + ".bin");
+      if (hc.cfg.curriculum) {   // 커리큘럼 단계 (이어 학습 때 되살림 — 위 "커리큘럼 단계 되살리기")
+        std::vector<sim::EnvState> es;
+        env.get_state(es);
+        std::vector<int32_t> stg(N);
+        for (int i = 0; i < N; ++i) stg[i] = es[i].stage;
+        const std::string p = ckdir + "/stages_latest.bin";
+        std::ofstream f(p + ".tmp", std::ios::binary);
+        f.write(reinterpret_cast<const char*>(stg.data()), sizeof(int32_t) * N);
+        f.close();
+        std::rename((p + ".tmp").c_str(), p.c_str());
+      }
     };
+
+    if (!a.eval_ckpt.empty()) {
+      evaluate(ppo.iteration(), false);
+      evaluate(ppo.iteration(), true);
+      cudaFree(d_act);
+      cudaFree(d_done);
+      return 0;
+    }
 
     // ---- 학습
     const auto t_start = std::chrono::steady_clock::now();
@@ -532,6 +696,7 @@ int main(int argc, char** argv) {
       // 반복 통계
       double n_ep = 0, n_succ = 0, n_coll = 0, n_pcoll = 0, n_trunc = 0, n_short = 0, n_idle = 0, cov = 0, cad = 0, n_decl = 0, t95 = 0, t95n = 0, stage = 0,
              len = 0, rew_ep = 0, step_rew = 0;
+      double t_succ_sum = 0;   // 성공(닫힘) 판의 시간 합
       std::vector<double> term_sum(mdp::rew::kTerms, 0.0);
       for (int t = 0; t < pc.steps_per_env; ++t) {
         auto t0 = std::chrono::steady_clock::now();
@@ -578,6 +743,7 @@ int main(int argc, char** argv) {
           const sim::EpInfo& f = h_ep[i];
           n_ep += 1;
           n_succ += d == mdp::cur::kDeclareOk;
+          if (d == mdp::cur::kDeclareOk) t_succ_sum += f.t;
           n_coll += d == mdp::cur::kCollision || d == mdp::cur::kCollisionPerson;
           n_pcoll += d == mdp::cur::kCollisionPerson;
           n_trunc += d == mdp::cur::kTruncated;
@@ -664,6 +830,7 @@ int main(int argc, char** argv) {
         r.mean_w(rf::key::EP_REW_MEAN, rew_ep / n_ep, n_ep);
         r.mean_w(rf::key::EP_LEN_MEAN, len / n_ep, n_ep);
         r.mean_w(rf::key::SUCCESS_RATE, n_succ / n_ep, n_ep);
+        if (n_succ > 0) r.mean_w("rollout/t_success_mean", t_succ_sum / n_succ, n_succ);
         r.mean_w(rf::key::COLLISION_RATE, n_coll / n_ep, n_ep);
         r.mean_w(rf::key::PERSON_COLLISION_RATE, n_pcoll / n_ep, n_ep);
         r.mean_w(rf::key::TRUNCATION_RATE, n_trunc / n_ep, n_ep);
@@ -695,7 +862,7 @@ int main(int argc, char** argv) {
                    n_ep ? stage / n_ep : 0, step_rew / ((double)pc.steps_per_env * N), us.value, us.kl, us.lr, std::exp(ls[0]), t_act,
                    t_sim, t_host, t_upd, pc.steps_per_env * N / (t_iter / 1000));
       ++it_done;
-      if (a.eval_every > 0 && it_now % a.eval_every == 0) evaluate(it_now);
+      if (a.eval_every > 0 && it_now % a.eval_every == 0) { evaluate(it_now, false); evaluate(it_now, true); }
       run.end_update();
       if (a.ckpt_every > 0 && it_now % a.ckpt_every == 0) save(true);
       else if (it_now % 10 == 0) save(false);

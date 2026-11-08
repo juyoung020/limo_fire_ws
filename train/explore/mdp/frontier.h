@@ -10,8 +10,8 @@
 //
 // 쓰는 곳
 //   - 프론티어 탐사 기준선(baselines/frontier): frontier_search — 찾기·끝(닫힘) 조건
-//   - RL 관측 "프론티어 요약"(mdp/README: 가장 가까운 프론티어 거리·방향, 프론티어 칸 수): frontier_cell + summary_key — 칸마다 따로라
-//     GPU 에서 칸 하나 = 스레드 하나로 돌리고 atomicAdd·atomicMin 으로 합친다
+//   - RL 관측 "도달 가능한 프론티어 요약"(mdp/README "관측"): reach_summary = frontier_search(+ BFS 거리) 결과에서 덩어리 고르기.
+//     GPU 는 같은 값을 블록 병렬로(sim/src/env_kernel.cu reach_block), 프론티어 칸 비트 지도(fmap)는 frontier_cell 로 고친다
 //
 // 지도: 시뮬 지도(sim/include/env.h EnvBatch::lmap) 그대로 — 로그 오즈 × 1000(int16), 아직 모름 = −32768(sim::kUnknown).
 //
@@ -84,8 +84,8 @@ DEV bool frontier_cell(const MapView& m, int x, int y) {
 struct Robot {
   int32_t r, r2;
 };
-// res(m) 칸 지도에서 반경 radius(m) → Robot (호스트에서 한 번)
-inline Robot robot_cells(float radius, float res) {
+// res(m) 칸 지도에서 반경 radius(m) → Robot (호스트·장치 같은 float 셈)
+DEV Robot robot_cells(float radius, float res) {
   const float q = radius / res;
   Robot o;
   o.r2 = (int32_t)(q * q);
@@ -107,22 +107,6 @@ DEV bool standable(const MapView& m, int x, int y, Robot rb) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// RL 관측 프론티어 요약: 프론티어 칸 수 + 기준 칸(로봇)에서 가장 가까운 프론티어 칸.
-// 칸마다 summary_key 를 만들어 가장 작은 것을 고르면(atomicMin) 거리² 가 작고, 같으면 칸 번호가 작은 칸 — 순서와 무관해 결정적.
-// 이 요약은 도달 가능 여부를 안 본다(지도 전체 프론티어 칸). 닫힘·기준선은 frontier_search(설 수 있는 칸으로 이어진 것만).
-constexpr uint64_t kNoFrontier = ~0ull;
-DEV uint64_t summary_key(const MapView& m, int x, int y, int rx, int ry) {
-  if (!frontier_cell(m, x, y)) return kNoFrontier;
-  const int dx = x - rx, dy = y - ry;
-  const uint32_t d2 = (uint32_t)(dx * dx + dy * dy);
-  return ((uint64_t)d2 << 32) | (uint32_t)(y * m.w + x);
-}
-struct FrontierSummary {
-  int32_t n_cells;      // 프론티어 칸 수
-  uint64_t nearest;     // summary_key 최솟값 (kNoFrontier = 없음). 칸 = (nearest & 0xffffffff) → (% w, / w), 거리² = nearest >> 32 (칸²)
-};
-
-// ---------------------------------------------------------------------------------------------------------------
 // 닫힘 + 프론티어 덩어리: 로봇 칸 (rx, ry) 에서 설 수 있는 칸으로 이어진 프론티어 덩어리들.
 // 덩어리 하나 — 모든 값이 칸 단위 정수(결정적). 세계 좌표는 쓰는 쪽에서: 중심 = 원점 + (sx / n + ½) · res
 struct Frontier {
@@ -131,6 +115,8 @@ struct Frontier {
   int32_t min_d2;       // 로봇 칸에서 가장 가까운 칸까지 거리² (칸²)
   int32_t middle;       // 그 칸 번호 (y · w + x)
   int32_t initial;      // 처음 찾은 칸 번호
+  int32_t near_dist;    // SearchBuf::dist 가 있을 때: 덩어리 칸 중 시작 칸에서 설 수 있는 칸 4 이웃 BFS 거리(칸)가 가장 짧은 값 (없으면 −1)
+  int32_t near_cell;    //   그 칸 번호 (같은 거리면 번호가 작은 칸 — 순서와 무관)
 };
 
 // 버퍼(쓰는 쪽이 w·h 칸씩): flag(u8), qa·qb(int32). 장치에서는 환경마다 따로.
@@ -138,6 +124,7 @@ struct SearchBuf {
   uint8_t* flag;        // bit0 번진 칸(설 수 있음), bit1 덩어리로 묶임, bit2 nearestCell 지나감
   int32_t* qa;          // nearestCell·번지기 큐
   int32_t* qb;          // 덩어리 BFS 큐
+  int32_t* dist = nullptr;   // 있으면 번진 칸마다 시작 칸에서 4 이웃 BFS 거리(칸)를 적고 덩어리 near_dist·near_cell 을 셈 (번지기는 FIFO 라 거리 = 부모 + 1)
 };
 
 struct SearchResult {
@@ -152,11 +139,21 @@ struct SearchResult {
 // 닫힘: 설 수 있는 칸에서 번졌고 프론티어 칸에 하나도 안 닿음
 DEV bool closed(const SearchResult& r) { return r.start_free != 0 && r.n_cells == 0; }
 
+// ---------------------------------------------------------------------------------------------------------------
+// 굵은 격자 닫힘 (판 끝 성공 판정, 2026-11-08 — mdp/README "판 끝"): 지도를 f×f 칸으로 줄여(막힘 하나라도 있으면 막힘, 모두 모름이면 모름,
+// 그 밖은 갈 수 있음) 그 격자에서 로봇 반경 radius 로 엄격 닫힘(closed). 버퍼는 쓰는 쪽이 굵은 칸 수만큼(L int16, flag u8, qa·qb int32).
+struct CoarseBuf {
+  int16_t* L;
+  uint8_t* flag;
+  int32_t* qa;
+  int32_t* qb;
+};
+DEV int coarse_dim(int n, int f) { return (n + f - 1) / f; }
 namespace detail {
 // buildNewFrontier (원본 97-170): 8 이웃으로, 번진 칸 안의 프론티어 칸을 묶음. 첫 칸도 합·거리에 넣는다(위 "원본과 다른 점")
 DEV Frontier build(const MapView& m, int init, int rx, int ry, SearchBuf b) {
   Frontier f;
-  f.n = 0; f.sx = 0; f.sy = 0; f.min_d2 = 0x7fffffff; f.middle = init; f.initial = init;
+  f.n = 0; f.sx = 0; f.sy = 0; f.min_d2 = 0x7fffffff; f.middle = init; f.initial = init; f.near_dist = -1; f.near_cell = -1;
   int head = 0, tail = 0;
   b.qb[tail++] = init;
   while (head < tail) {
@@ -165,6 +162,10 @@ DEV Frontier build(const MapView& m, int init, int rx, int ry, SearchBuf b) {
     f.n += 1; f.sx += x; f.sy += y;
     const int dx0 = x - rx, dy0 = y - ry, d2 = dx0 * dx0 + dy0 * dy0;
     if (d2 < f.min_d2) { f.min_d2 = d2; f.middle = idx; }
+    if (b.dist) {
+      const int bd = b.dist[idx];
+      if (f.near_dist < 0 || bd < f.near_dist || (bd == f.near_dist && idx < f.near_cell)) { f.near_dist = bd; f.near_cell = idx; }
+    }
     for (int k = 0; k < 8; ++k) {
       int dx, dy;
       nb8(k, &dx, &dy);
@@ -215,6 +216,7 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
   int head = 0, tail = 0;
   b.qa[tail++] = r.start;
   b.flag[r.start] |= 1;
+  if (b.dist) b.dist[r.start] = 0;
   while (head < tail) {
     const int idx = b.qa[head++];
     const int x = idx % m.w, y = idx / m.w;
@@ -226,6 +228,7 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
       const int j = v * m.w + u;
       if ((b.flag[j] & 1) || !standable(m, u, v, rb)) continue;
       b.flag[j] |= 1;
+      if (b.dist) b.dist[j] = b.dist[idx] + 1;
       b.qa[tail++] = j;
     }
   }
@@ -247,6 +250,85 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
     }
   }
   return r;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// RL 관측 "도달 가능한 프론티어 요약" (mdp/README "관측", obs_layout.h FRONTIER·FRONTIER2·FRONTIER3·FRONT_N·CLOSED·FRONT_CELLS).
+// 기준선(baselines/frontier)과 같은 frontier_search 결과(설 수 있는 칸으로 번진 곳 안 프론티어 덩어리, 크기 문턱, 닫힘)에서
+// 문턱을 넘는 덩어리를 시작 칸에서의 BFS 거리(설 수 있는 칸 4 이웃, 칸) 짧은 순으로 kReachTop 개 고른다.
+// 순서 열쇠 = (near_dist << 32) | near_cell — 덩어리마다 다르고(칸은 한 덩어리에만) 순서와 무관해 GPU 병렬판과 같다.
+// GPU 는 같은 값을 블록 병렬(비트 BFS + 합집합 찾기)로 낸다 — sim/src/env_kernel.cu reach_block, 비트 비교는 sim/tools/env_verify.
+constexpr int kReachTop = 3;
+constexpr int kReachCap = 8192;   // GPU 덩어리 묶기 목록 칸 수 (지도 전체 프론티어 칸). 넘으면 덩어리 요약을 비움(overflow = 1) — CPU 도 같은 규칙
+struct ReachTop {
+  int32_t n;      // 덩어리 칸 수 (0 = 없음)
+  int32_t dist;   // 시작 칸 → 덩어리 가장 가까운 칸 BFS 거리 (칸)
+  int32_t cell;   // 그 칸 번호 (y · w + x)
+};
+struct ReachSummary {
+  int32_t start_free;   // frontier_search 와 같음
+  int32_t closed;       // closed(r)
+  int32_t n_found;      // 문턱 넘는 덩어리 수 (overflow 면 0)
+  int32_t n_cells;      // 번진 곳 안 프론티어 칸 수
+  int32_t overflow;     // 지도 전체 프론티어 칸 > kReachCap
+  ReachTop top[kReachTop];
+};
+DEV void reach_clear(ReachSummary* s) {
+  s->start_free = s->closed = s->n_found = s->n_cells = s->overflow = 0;
+  for (int k = 0; k < kReachTop; ++k) { s->top[k].n = 0; s->top[k].dist = -1; s->top[k].cell = -1; }
+}
+// 위 열쇠로 kReachTop 개 (오름차순) 를 고름. n_tot = 지도 전체 프론티어 칸 수 (overflow 판정)
+DEV void reach_pick(const SearchResult& r, const Frontier* out, int n_out, int min_cells, int n_tot, ReachSummary* s) {
+  reach_clear(s);
+  s->start_free = r.start_free;
+  s->closed = closed(r) ? 1 : 0;
+  s->n_cells = r.n_cells;
+  if (n_tot > kReachCap) { s->overflow = 1; return; }
+  uint64_t last = 0;
+  bool have_last = false;
+  for (int k = 0; k < kReachTop; ++k) {
+    uint64_t best = ~0ull;
+    int bi = -1;
+    for (int i = 0; i < n_out; ++i) {
+      if (out[i].n < min_cells) continue;
+      const uint64_t key = ((uint64_t)(uint32_t)out[i].near_dist << 32) | (uint32_t)out[i].near_cell;
+      if (have_last && key <= last) continue;
+      if (key < best) { best = key; bi = i; }
+    }
+    if (bi < 0) break;
+    s->top[k].n = out[bi].n;
+    s->top[k].dist = out[bi].near_dist;
+    s->top[k].cell = out[bi].near_cell;
+    last = best;
+    have_last = true;
+  }
+  for (int i = 0; i < n_out; ++i) s->n_found += out[i].n >= min_cells ? 1 : 0;
+}
+// CPU 참조: frontier_search(dist 켬) 그대로 → reach_pick. b.dist 필요, out 은 max_out ≥ 덩어리 수 (w·h / 1 이면 늘 충분)
+inline void reach_summary(const MapView& m, int rx, int ry, Robot rb, int min_cells, SearchBuf b, Frontier* out, int max_out, int n_tot,
+                          ReachSummary* s) {
+  const SearchResult r = frontier_search(m, rx, ry, rb, 1, b, out, max_out);   // 문턱 1: 모든 덩어리를 out 에 (문턱은 reach_pick 에서)
+  reach_pick(r, out, r.n_found < max_out ? r.n_found : max_out, min_cells, n_tot, s);
+}
+
+
+DEV bool coarse_closed(const MapView& m, int rx, int ry, float res, int f, float radius, CoarseBuf cb) {
+  const int cw = coarse_dim(m.w, f), ch = coarse_dim(m.h, f);
+  for (int cy = 0; cy < ch; ++cy)
+    for (int cx = 0; cx < cw; ++cx) {
+      bool occ = false, unk = true;
+      for (int yy = cy * f; yy < cy * f + f && yy < m.h; ++yy)
+        for (int xx = cx * f; xx < cx * f + f && xx < m.w; ++xx) {
+          const uint8_t k = cls_at(m, xx, yy);
+          occ = occ || k == kOcc;
+          unk = unk && k == kUnk;
+        }
+      cb.L[cy * cw + cx] = occ ? (int16_t)1000 : (unk ? kUnknownL : (int16_t)-1000);
+    }
+  const MapView cv{cb.L, cw, cw, ch};
+  const SearchResult r = frontier_search(cv, rx < 0 ? -1 : rx / f, ry < 0 ? -1 : ry / f, robot_cells(radius, res * (float)f), 1 << 30,
+                                         SearchBuf{cb.flag, cb.qa, cb.qb}, nullptr, 0);
+  return closed(r);
 }
 
 }  // namespace mdp

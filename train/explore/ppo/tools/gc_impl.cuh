@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <random>
 #include <vector>
@@ -45,6 +46,8 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   cfg.tf32 = false;  // fp32 정확 모드로 검사
   cfg.cnn_bf16 = false;
   cfg.mlp = mlp;
+  // 평균 행동 경계 손실 검사: GC_BOUND_SOFT 로 경계를 좁히면(예 0.02) 작은 무작위 μ 도 경계 밖이라 그 항의 기울기가 차분과 비교된다
+  if (const char* e = std::getenv("GC_BOUND_SOFT")) cfg.bound_soft = (float)std::atof(e);
   PPO ppo(cfg, spec, 1234);
   auto& ac = ppo.ac();
   int N = cfg.num_envs, IMG = spec.enc.img_stride, P1 = spec.actor.in1d, PR = spec.norm_dim - P1, A = spec.n_cont + 1;

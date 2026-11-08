@@ -162,6 +162,9 @@ struct ACSpec {
   real init_log_std = 0.f;  // log σ 초기값 (σ = 1, rsl_rl init_noise_std=1.0)
   real declare_bias = -7.f; // 선언 로짓 편향 초기값 (mdp/README "행동")
   int norm_dim = 0;          // 정규화 대상 1D 수 (critic 1D 전체; actor 는 앞 in1d 개를 같은 통계로)
+  // 인코더 나누기 (2026-11-08, rsl_rl·legged_gym·Jonnarth 2024·Cao 2024 처럼): true 면 actor 인코더 enc 와 critic 인코더 enc_c 가 같은 구조·따로 가중치,
+  // 각 인코더 기울기는 자기 손실에서만. false = 공유 인코더(구조 버전 2, 체크포인트 형식 2)
+  bool split_enc = false;
 };
 
 // obs_layout.h 크기로 만든 탐사 RL 기본 구조
@@ -183,7 +186,9 @@ class ActorCritic {
   real* log_std_grad() { return d_grads + logstd_off; }
 
   ACSpec spec;
-  Net enc, actor, critic;  // enc = 공유 인코더 (특징 enc.x0() [n][nf]), actor·critic = MLP (입력 [F | 1D])
+  Net enc, actor, critic;  // enc = 공유 인코더 (split 이면 actor 인코더) (특징 enc.x0() [n][nf]), actor·critic = MLP (입력 [F | 1D])
+  Net enc_c;               // split 일 때만: critic 인코더 (같은 구조, 따로 가중치)
+  bool split = false;
   int nf = 0;              // 인코더 특징 수
   Normalizer norm;
   std::vector<ParamBlock> blocks;

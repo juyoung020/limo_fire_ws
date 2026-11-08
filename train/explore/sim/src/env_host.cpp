@@ -185,6 +185,33 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     h.brake_dist = d;
     c.safety = mdp::act::SAFETY ? 1 : 0;
     c.safety_dist = d + mdp::act::V_FWD * (0.1f + (float)c.substeps * c.dt);
+    // 몸통 쓸림 안전층 (실험, env.h sweep_scale) — 기본 끔. SIM_SWEEP_GUARD=1 로 켬(학습·평가·env_verify 모두 같은 규칙).
+    // 내다보는 시간 0.2 s = 행동 2 걸음(이번 걸음 + 다음 판단 전), 여유 0.02 m (지도 칸 5 cm 의 반 아래): 잠정
+    {
+      const char* g = std::getenv("SIM_SWEEP_GUARD");
+      c.sweep_guard = (g && g[0] == '1') ? 1 : 0;
+      c.sweep_h = 0.2f;
+      c.sweep_margin = 0.02f;
+    }
+    {
+      // 판 끝·성공 (2026-11-08, mdp/README "판 끝"): 성공 = 굵은 격자 지도 닫힘 + 지도 진행 없음 시계 ≥ 10 s. SIM_SUCCESS_CLOSED=0 이면 옛 규칙
+      // (선언 + 정답 덮음 ≥ 0.95, 보관). 굵은 칸 4 × 5 cm = 20 cm, 로봇 반경 0.2 m (frontier 기준선과 같은 팽창), 1 s(10 걸음)마다 판정 —
+      // 근거는 explore_v9 정책 64 판씩 측정(엄격 닫힘 1~2/64, 로봇 폭 규칙 1~3/64, 굵은 격자만은 bookstore 닫힘의 33 % 가 정답 덮음 < 0.8 로 이름,
+      // 시계 10 s 를 더하면 정답 덮음 < 0.9 인 닫힘 0 %)
+      const char* g = std::getenv("SIM_SUCCESS_CLOSED");
+      c.success_closed = (g && g[0] == '0') ? 0 : 1;
+      c.close_f = 4;
+      c.close_every = 10;
+      c.close_radius = 0.2f;
+      c.close_idle_s = 10.f;
+      // 덮음 보상: 로봇 지도 처음 막힘 칸 (rewards.h kOccCell) — 기본. SIM_REWARD_GT=1 이면 옛 정답 벽 덮음 보상 (보관)
+      const char* r = std::getenv("SIM_REWARD_GT");
+      c.reward_occ = (r && r[0] == '1') ? 0 : 1;
+    }
+    {
+      const char* g = std::getenv("SIM_CUR_TOPRAND");   // 커리큘럼 맨 위 단계 무작위 (curriculums.h on_episode_end) — 기본 켬, SIM_CUR_TOPRAND=0 으로 끔
+      c.cur_top_random = (g && g[0] == '0') ? 0 : 1;      // explore_v8_cur A/B: 맨 위 단계에 고여 중간 크기 맵을 잊던 것
+    }
   }
   c.people = load_people_cfg(path);
   return h;
@@ -461,6 +488,18 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   b_.done = alloc<int32_t>(n_env);
   b_.ep = alloc<EpInfo>(n_env);
   b_.scratch = alloc<Shared>(n_env);
+  {   // 굵은 격자 닫힘 버퍼 (env.h finish_step, mdp::coarse_closed): 환경마다 (size/f)² 칸
+    const int cd = mdp::coarse_dim(hc.cfg.size, std::max(1, hc.cfg.close_f));
+    b_.coarse_cells = cd * cd;
+    const size_t nc = (size_t)b_.coarse_cells;
+    int16_t* cl = alloc<int16_t>(nc * n_env);
+    uint8_t* cf = alloc<uint8_t>(nc * n_env);
+    int32_t* ca = alloc<int32_t>(nc * n_env);
+    int32_t* cb = alloc<int32_t>(nc * n_env);
+    std::vector<mdp::CoarseBuf> bufs(n_env);
+    for (int i = 0; i < n_env; ++i) bufs[i] = mdp::CoarseBuf{cl + nc * i, cf + nc * i, ca + nc * i, cb + nc * i};
+    b_.coarse = upload(bufs);
+  }
   if (gpu) {
     const size_t px = (size_t)mdp::obs::DEPTH_SIZE * n_env;
     b_.dep_z = alloc<float>(px);
@@ -470,6 +509,13 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     b_.counters = alloc<int32_t>(16);
     b_.fmap = alloc<uint32_t>((size_t)n_env * hc.cfg.size * ((hc.cfg.size + 31) / 32));
     b_.fchg = alloc<int32_t>((size_t)n_env * kClassLog);
+    {   // 도달 가능한 프론티어 요약 (env_kernel.cu reach_block)
+      const size_t nf = (size_t)hc.cfg.size * ((hc.cfg.size + 31) / 32);
+      b_.rbits = alloc<uint32_t>((size_t)n_env * kReachBits * nf);
+      b_.rpre = alloc<int32_t>((size_t)n_env * nf);
+      b_.rlist = alloc<int32_t>((size_t)n_env * mdp::kReachCap * kReachLists);
+      b_.rkey = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
+    }
     const size_t nb = (size_t)kMaxBeams * n_env;
     b_.beam_t = alloc<float>(nb);
     b_.beam_tri = alloc<int32_t>(nb);

@@ -143,7 +143,8 @@ Ckpt read_ckpt(const std::string& path) {
   };
   uint32_t hdr[3];
   r(hdr, 12);
-  if (hdr[0] != 0x4F505058 || hdr[1] != 2 || hdr[2] != 4) throw std::runtime_error("체크포인트 형식 2(fp32)가 아님");
+  // 형식 2 = 공유 인코더, 3 = actor·critic 인코더 나눔(2026-11-08) — 3 은 actor 인코더(enc.*)·actor MLP 만 내보낸다(배포에 critic 불필요)
+  if (hdr[0] != 0x4F505058 || (hdr[1] != 2 && hdr[1] != 3) || hdr[2] != 4) throw std::runtime_error("체크포인트 형식 2·3(fp32)가 아님");
   int32_t nb;
   r(&nb, 4);
   std::vector<std::pair<std::string, int64_t>> names;
@@ -307,7 +308,8 @@ int main(int argc, char** argv) {
       }
     };
     mlp("actor", sp.actor, "policy_1d_n", "actor_out");
-    mlp("critic", sp.critic, "obs_1d_n", "value");
+    const bool split = ck.blk.count("enc_c.cnn0.conv0.w") > 0;   // 형식 3: critic 은 따로 인코더라 이 그래프(actor 특징)로는 못 냄 — 안 내보냄
+    if (!split) mlp("critic", sp.critic, "obs_1d_n", "value");
     // log σ: 상태 무관 변수 — 출력으로 그대로
     {
       const auto* L = data("log_std", sp.n_cont);
@@ -322,7 +324,7 @@ int main(int argc, char** argv) {
     }
     G.output("actor_out", {-1, sp.actor.out}, "v·vy·ω 평균 (가우시안, 정규 단위) + 끝 선언 로짓 (베르누이)");
     G.output("log_std_out", {sp.n_cont}, "log σ (v, vy, ω)");
-    G.output("value", {-1, sp.critic.out}, "가치 V(s)");
+    if (!split) G.output("value", {-1, sp.critic.out}, "가치 V(s)");
     G.g.bytes(F::Graph_name, "explore_net_v2");
     G.g.bytes(F::Graph_doc, "탐사 RL 정책·가치 신경망 구조 버전 2 — 공유 합성곱 인코더 + actor·critic MLP (train/explore/network/README.md)");
     Pb opset;

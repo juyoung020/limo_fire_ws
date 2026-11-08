@@ -745,6 +745,7 @@ ACSpec explore_spec() {
   s.critic = c;
   s.n_cont = mdp::act::CONT;
   s.norm_dim = o::CRITIC_1D;
+  s.split_enc = true;   // 2026-11-08: actor·critic 인코더 따로 (체크포인트 형식 3)
   return s;
 }
 
@@ -757,6 +758,8 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   long cur = 0;
   enc.build(sp.enc, blocks, cur, "enc");
   nf = (int)enc.feat_img();
+  split = sp.split_enc;
+  if (split) enc_c.build(sp.enc, blocks, cur, "enc_c");
   NetSpec as = sp.actor, cs = sp.critic;  // 입력 = [F | 1D], 앞 nf 열 기울기를 인코더로
   as.in1d += nf;
   cs.in1d += nf;
@@ -780,11 +783,13 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   CK(cudaEventCreateWithFlags(&ev_join_, cudaEventDisableTiming));
   CKB(cublasSetMathMode(cublas, CUBLAS_DEFAULT_MATH));  // fp32 그대로 (TF32 안 씀)
   enc.bind(d_params, d_grads, mc);
+  if (split) enc_c.bind(d_params, d_grads, mc);
   actor.bind(d_params, d_grads, mc);
   critic.bind(d_params, d_grads, mc);
   std::vector<real> host(n_params);
   std::mt19937_64 rng(seed);
   enc.init(rng, host);
+  if (split) enc_c.init(rng, host);
   actor.init(rng, host);
   critic.init(rng, host);
   for (int j = 0; j < sp.n_cont; ++j) host[logstd_off + j] = sp.init_log_std;
@@ -807,6 +812,7 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
 
 ActorCritic::~ActorCritic() {
   enc.free_ws();
+  if (split) enc_c.free_ws();
   actor.free_ws();
   critic.free_ws();
   norm.release();

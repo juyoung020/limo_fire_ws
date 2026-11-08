@@ -1,5 +1,7 @@
 // 탐사 RL PPO — 롤아웃 버퍼·GAE·손실·Adam·KL 적응 학습률·체크포인트. rsl_rl 2.3.1 algorithms/ppo.py·storage/rollout_storage.py 꼴.
 #include <cuda_bf16.h>
+
+#include "../mdp/obs_layout.h"
 #include <curand_kernel.h>
 
 #include <algorithm>
@@ -55,6 +57,19 @@ __global__ void k_sample(const real* aout, const real* log_std, int n, int nc, u
   s_act[i * A + nc] = d;
   s_logit[i] = l;
   s_logp[i] = lp + dist::bern_logp(d, l);
+}
+
+// 평가용 샘플 행동 (학습 롤아웃 칸·난수 계수를 안 건드림): 연속 = μ + σ·N(0,1), 선언 = Bernoulli(sigmoid(로짓)).
+// 난수는 학습(k_sample: seed, 부분열 env, 오프셋 call·8)과 겹치지 않게 seed 를 바꾼 계열.
+__global__ void k_sample_act(const real* aout, const real* log_std, int n, int nc, uint64_t seed, uint64_t call, int env0,
+                             real* act) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  curandStatePhilox4_32_10_t rs;
+  curand_init(seed, (uint64_t)(env0 + i), call * 8ull, &rs);
+  int A = nc + 1;
+  for (int j = 0; j < nc; ++j) act[i * A + j] = aout[i * A + j] + exp(log_std[j]) * curand_normal(&rs);
+  act[i * A + nc] = curand_uniform(&rs) < dist::sigmoid(aout[i * A + nc]) ? 1.f : 0.f;
 }
 
 __global__ void k_mean_act(const real* aout, int n, int nc, real* act) {
@@ -142,6 +157,7 @@ struct LossArgs {
   int n, nc;
   real clip, value_coef, scale;
   bool clipped_value;
+  real bound_coef, bound_soft;  // 평균 행동 경계 손실 (PPOConfig::bound_coef) — 0 이면 안 씀
   real *da, *dv, *dls, *stat;
 };
 __global__ void k_loss(LossArgs p) {
@@ -164,6 +180,14 @@ __global__ void k_loss(LossArgs p) {
   real rc = fmin(fmax(r, 1.f - p.clip), 1.f + p.clip);
   real s1 = -Ad * r, s2 = -Ad * rc;
   real surr = fmax(s1, s2);
+  // 평균 행동 경계 손실 (rl_games a2c_continuous.py bound_loss): c·Σ_j [max(μ_j − b, 0)² + min(μ_j + b, 0)²].
+  // 손실 값은 surrogate 통계에 더한다(기울기 검사가 손실·기울기를 같이 보게).
+  real bl = (real)0;
+  if (p.bound_coef > (real)0)
+    for (int j = 0; j < nc; ++j) {
+      const real hi = fmax(mu[j] - p.bound_soft, (real)0), lo = fmin(mu[j] + p.bound_soft, (real)0);
+      bl += p.bound_coef * (hi * hi + lo * lo);
+    }
   bool inside = r > 1.f - p.clip && r < 1.f + p.clip;
   real g = (inside || s1 > s2) ? -Ad * r : 0.f;  // d surr / d logπ
   g *= p.scale;
@@ -171,6 +195,10 @@ __global__ void k_loss(LossArgs p) {
     real sd = exp(ls[j]);
     real z = (p.act[i * A + j] - mu[j]) / sd;
     p.da[i * A + j] = g * z / sd;
+    if (p.bound_coef > (real)0) {
+      const real hi = fmax(mu[j] - p.bound_soft, (real)0), lo = fmin(mu[j] + p.bound_soft, (real)0);
+      p.da[i * A + j] += p.scale * (real)2 * p.bound_coef * (hi + lo);
+    }
     p.dls[i * nc + j] = g * (z * z - 1.f);
   }
   p.da[i * A + nc] = g * (d - dist::sigmoid(l));
@@ -189,7 +217,7 @@ __global__ void k_loss(LossArgs p) {
     dv = 2.f * (v - R);
   }
   p.dv[i] = dv * p.value_coef * p.scale;
-  p.stat[i * 4 + 0] = surr;
+  p.stat[i * 4 + 0] = surr + bl;
   p.stat[i * 4 + 1] = vl;
   p.stat[i * 4 + 2] = kl;
   p.stat[i * 4 + 3] = r;
@@ -249,6 +277,7 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   bool bf = cfg.cnn_bf16;
   if (const char* e = std::getenv("XNET_CNN_BF16")) bf = std::atoi(e) != 0;  // TODO(제거): 정밀도 A/B 실측용
   ac_->enc.cnn_bf16 = bf;
+  ac_->enc_c.cnn_bf16 = bf;
   CKB(cublasSetMathMode(ac_->cublas2, cfg.tf32 ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH));
   ac_->set_mlp_mode(sizeof(real) == 4 ? cfg.mlp : 0);
   if (!(cfg.std_min > 0.f && cfg.std_min <= cfg.std_max)) throw std::runtime_error("PPOConfig: 0 < std_min ≤ std_max 이어야 함");
@@ -298,6 +327,11 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   // bf16 MLP(mlp 2)는 첫 층이 cuBLAS bf16 이라 입력 bf16 사본 c_xh_ 를 둔다 (1D 열은 사본에만, F 열은 둘 다 — fp32 는 넷째 층 ELU' 용)
   if (sizeof(real) == 4 && cfg_.mlp == 2) c_xh_ = dmalloc<uint16_t>((long)C * (NF_ + D_), b);
   ac_->enc.set_x0(c_x_, NF_ + D_, c_xh_);  // 인코더가 특징을 MLP 입력 [F | 1D] 의 앞 열에 바로 쓴다 (모으는 복사 없음)
+  if (ac_->split) {   // critic 인코더는 자기 입력 버퍼 [F_c | 1D] 에
+    c_xc_ = dmalloc<real>((long)C * (NF_ + D_), b);
+    if (c_xh_) c_xch_ = dmalloc<uint16_t>((long)C * (NF_ + D_), b);
+    ac_->enc_c.set_x0(c_xc_, NF_ + D_, c_xch_);
+  }
   c_gat_ = dmalloc<real>((long)C * (A_ + 5 + 2 * NC_), b);
   d_perm_ = dmalloc<int>(S_, b);
 }
@@ -305,7 +339,7 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
 PPO::~PPO() {
   for (void* p : std::initializer_list<void*>{m_, v_, s_img_, s_obs_, s_act_, s_logp_, s_val_, s_mu_, s_logit_, s_sd_,
                                               s_rew_, s_done_, s_ret_, s_adv_, raw_, last_obs_, last_val_, c_img_,
-                                              c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_})
+                                              c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_})
     cudaFree(p);
   delete ac_;
 }
@@ -317,6 +351,13 @@ void PPO::encode(int n, const uint8_t* img, const int* idx, const real* x1d) {
   ac_->enc.forward(ac_->cublas, st, n, img, nullptr, 0, nullptr, idx);
   if (x1d)
     k_put_1d<<<nblk((long)n * D_), 256, 0, st>>>(x1d, D_, D_, n, c_x_ + NF_, c_xh_ ? (__nv_bfloat16*)c_xh_ + NF_ : nullptr, NF_ + D_);
+}
+
+void PPO::encode_c(int n, const uint8_t* img, const int* idx, const real* x1d) {
+  auto st = ac_->stream2;
+  ac_->enc_c.forward(ac_->cublas2, st, n, img, nullptr, 0, nullptr, idx);
+  if (x1d)
+    k_put_1d<<<nblk((long)n * D_), 256, 0, st>>>(x1d, D_, D_, n, c_xc_ + NF_, c_xch_ ? (__nv_bfloat16*)c_xch_ + NF_ : nullptr, NF_ + D_);
 }
 
 void PPO::concat_norm(const real* obs1d, const real* priv, int n, bool upd, real* out) {
@@ -338,9 +379,11 @@ void PPO::act(const uint8_t* img, const real* obs1d, const real* priv, real* act
     int n = std::min(cfg_.chunk, N_ - c0);
     const uint8_t* im = s_img_ + (k0 + c0) * IMG_;
     const real* ob = obs + (long)c0 * D_;
+    ac_->fork();   // 나눔: critic 인코더·MLP 는 stream2 에서 actor 쪽과 겹쳐 돈다 (버퍼·기울기 칸이 안 겹침)
+    if (ac_->split) encode_c(n, im, nullptr, ob);
     encode(n, im, nullptr, ob);
-    ac_->fork();
-    ac_->critic.forward(ac_->cublas2, ac_->stream2, n, nullptr, c_x_, NF_ + D_, s_val_ + k0 + c0, nullptr, c_xh_);
+    if (!ac_->split) ac_->fork();
+    ac_->critic.forward(ac_->cublas2, ac_->stream2, n, nullptr, cx(), NF_ + D_, s_val_ + k0 + c0, nullptr, cxh());
     ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     ac_->join();
     long k = k0 + c0;
@@ -366,7 +409,7 @@ void PPO::store(const real* reward, const int* done) {
   ++step_;
 }
 
-void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, int n_all) {
+void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, int n_all, int64_t sample_call) {
   if (n_all < 0) n_all = N_;
   if (n_all > N_) throw std::runtime_error("act_inference: n > num_envs");
   auto st = ac_->stream;
@@ -377,7 +420,11 @@ void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, in
     int n = std::min(cfg_.chunk, n_all - c0);
     encode(n, img + (long)c0 * IMG_, nullptr, raw_ + (long)c0 * D_);
     ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
-    k_mean_act<<<nblk(n, 128), 128, 0, st>>>(c_aout_, n, NC_, actions + (long)c0 * A_);
+    if (sample_call >= 0)
+      k_sample_act<<<nblk(n, 128), 128, 0, st>>>(c_aout_, ac_->log_std(), n, NC_, seed_ ^ 0x9E3779B97F4A7C15ull,
+                                                  (uint64_t)sample_call, c0, actions + (long)c0 * A_);
+    else
+      k_mean_act<<<nblk(n, 128), 128, 0, st>>>(c_aout_, n, NC_, actions + (long)c0 * A_);
   }
 }
 
@@ -387,8 +434,15 @@ void PPO::compute_returns(const uint8_t* img, const real* obs1d, const real* pri
   concat_norm(obs1d, priv, N_, false, last_obs_);
   for (int c0 = 0; c0 < N_; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, N_ - c0);
-    encode(n, img + (long)c0 * IMG_, nullptr, last_obs_ + (long)c0 * D_);
-    ac_->critic.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, last_val_ + c0, nullptr, c_xh_);
+    if (ac_->split) {   // critic 인코더만 (stream2 → stream 에 합침)
+      ac_->fork();
+      encode_c(n, img + (long)c0 * IMG_, nullptr, last_obs_ + (long)c0 * D_);
+      ac_->critic.forward(ac_->cublas2, ac_->stream2, n, nullptr, c_xc_, NF_ + D_, last_val_ + c0, nullptr, c_xch_);
+      ac_->join();
+    } else {
+      encode(n, img + (long)c0 * IMG_, nullptr, last_obs_ + (long)c0 * D_);
+      ac_->critic.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, last_val_ + c0, nullptr, c_xh_);
+    }
   }
   k_gae<<<nblk(N_, 128), 128, 0, st>>>(s_rew_, s_done_, s_val_, last_val_, T_, N_, cfg_.gamma, cfg_.lam, s_ret_,
                                        s_adv_);
@@ -427,22 +481,31 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
     }
     k_gather_mb<<<nblk((long)n * (D_ + gs.W)), 256, 0, st>>>(s_obs_, D_, ix, n, c_x_ + NF_, NF_ + D_,
                                                                    c_xh_ ? (__nv_bfloat16*)c_xh_ + NF_ : nullptr, gs);
-    encode(n, im, imx, nullptr);
+    if (ac.split) {   // critic 입력 버퍼에도 같은 1D 열 (모을 롤아웃 값은 없이)
+      GatherSet g0{{}, {}, {}, 0};
+      k_gather_mb<<<nblk((long)n * D_), 256, 0, st>>>(s_obs_, D_, ix, n, c_xc_ + NF_, NF_ + D_, c_xch_ ? (__nv_bfloat16*)c_xch_ + NF_ : nullptr, g0);
+    }
     ac.fork();
-    ac.critic.forward(ac.cublas2, ac.stream2, n, nullptr, c_x_, NF_ + D_, c_v_, nullptr, c_xh_);
+    if (ac.split) encode_c(n, im, imx, nullptr);
+    encode(n, im, imx, nullptr);
+    if (!ac.split) ac.fork();
+    ac.critic.forward(ac.cublas2, ac.stream2, n, nullptr, cx(), NF_ + D_, c_v_, nullptr, cxh());
     ac.actor.forward(ac.cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     ac.join();
     LossArgs p{c_aout_, c_v_, ac.log_std(), off[0], off[1], off[2], off[3], off[4], off[5], off[6], off[7], n, NC_,
-               cfg_.clip, cfg_.value_coef, 1.f / mb, cfg_.clipped_value, c_da_, c_dv_, c_dls_, c_stat_};
+               cfg_.clip, cfg_.value_coef, 1.f / mb, cfg_.clipped_value, cfg_.bound_coef, cfg_.bound_soft,
+               c_da_, c_dv_, c_dls_, c_stat_};
     k_loss<<<nblk(n, 128), 128, 0, st>>>(p);
     if (backward) {
       ac.fork();
       ac.critic.backward(ac.cublas2, ac.stream2, n, nullptr, c_dv_);
+      if (ac.split) ac.enc_c.backward_feat(ac.cublas2, ac.stream2, n, im, imx, ac.critic.dx0(), ac.critic.feat(), nullptr, 0);   // critic 손실만
       ac.actor.backward(ac.cublas, st, n, nullptr, c_da_);
+      if (ac.split) ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), nullptr, 0);   // actor 손실만
       ac.join();
       // 공유 인코더: 두 MLP 의 특징 기울기(actor + critic, 고정 순서)를 합성곱 역방향으로 (rsl_rl·공유 인코더 PPO 와 같은 합 손실).
       // 더하기는 넷째 층 역방향이 읽으면서 한다 (모으는 버퍼 없음)
-      ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), ac.critic.dx0(), ac.critic.feat());
+      if (!ac.split) ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), ac.critic.dx0(), ac.critic.feat());
       col_sum(c_dls_, n, NC_, NC_, ac.log_std_grad(), true, st);
     }
     col_sum(c_stat_, n, 4, 4, c_red_, false, st);
@@ -530,7 +593,8 @@ UpdateStats PPO::update(const uint8_t* img, const real* obs1d, const real* priv)
 // ---------------- 체크포인트 ----------------
 namespace {
 constexpr uint32_t kMagic = 0x4F505058;  // "XPPO"
-constexpr uint32_t kVersion = 2;  // 2: 공유 인코더·4 층 합성곱 (1 = 망마다 3 층 합성곱 — 불러오기 거부)
+constexpr uint32_t kVersion = 3;  // 3: actor·critic 인코더 나눔(+ 프론티어 채널, 2026-11-08). 2 = 공유 인코더 (load_convert_shared 로만), 1 = 거부
+constexpr uint32_t kVersionShared = 2;
 }  // namespace
 
 void PPO::save(const std::string& path) const {
@@ -599,6 +663,7 @@ void PPO::load(const std::string& path) {
   };
   uint32_t hdr[3];
   r(hdr, 12);
+  if (hdr[0] == kMagic && hdr[1] == kVersionShared) throw std::runtime_error("형식 2(공유 인코더) 체크포인트 — load_convert_shared 로 바꿔 불러야 함: " + path);
   if (hdr[0] != kMagic || hdr[1] != kVersion || hdr[2] != sizeof(real)) throw std::runtime_error("체크포인트 형식이 다름");
   int32_t nb;
   r(&nb, 4);
@@ -643,6 +708,99 @@ void PPO::load(const std::string& path) {
   CK(cudaMemcpy(ac_->norm.d_var, nv.data(), D * sizeof(real), cudaMemcpyHostToDevice));
   ac_->norm.count = cnt;
   clamp_std();  // 옛 체크포인트(σ 상한 전, explore_v3 σ 99.6)도 범위 안으로
+  ac_->params_changed();
+  adam_t_ = at;
+  iter_ = it;
+  lr_ = lr;
+  act_calls_ = acn;
+  seed_ = sd;
+  step_ = 0;
+}
+
+void PPO::load_convert_shared(const std::string& path) {
+  if (!ac_->split) throw std::runtime_error("load_convert_shared: 인코더 나눔 구조에서만");
+  std::ifstream f(path, std::ios::binary);
+  if (!f) throw std::runtime_error("체크포인트 없음: " + path);
+  auto r = [&](void* d, size_t n) {
+    f.read((char*)d, n);
+    if (!f) throw std::runtime_error("체크포인트가 잘림: " + path);
+  };
+  uint32_t hdr[3];
+  r(hdr, 12);
+  if (hdr[0] != kMagic || hdr[1] != kVersionShared || hdr[2] != sizeof(real)) throw std::runtime_error("변환: 형식 2(공유 인코더) 체크포인트가 아님");
+  int32_t nb;
+  r(&nb, 4);
+  struct Old { std::string name; long off, n; };
+  std::vector<Old> old;
+  long off = 0;
+  for (int i = 0; i < nb; ++i) {
+    int32_t ln;
+    r(&ln, 4);
+    std::string nm(ln, '\0');
+    r(nm.data(), ln);
+    int64_t n;
+    r(&n, 8);
+    old.push_back({nm, off, (long)n});
+    off += (long)n;
+  }
+  int64_t P0;
+  r(&P0, 8);
+  if (P0 != off) throw std::runtime_error("변환: 변수 수가 층 합과 다름");
+  std::vector<real> p0(P0), m0(P0), v0(P0);
+  r(p0.data(), P0 * sizeof(real));
+  r(m0.data(), P0 * sizeof(real));
+  r(v0.data(), P0 * sizeof(real));
+  const long P = ac_->n_params;
+  std::vector<real> p(P, 0), m(P, 0), v(P, 0);
+  for (auto& b : ac_->blocks) {
+    const std::string src = b.name.rfind("enc_c.", 0) == 0 ? "enc." + b.name.substr(6) : b.name;
+    const Old* o = nullptr;
+    for (auto& q : old) if (q.name == src) { o = &q; break; }
+    if (!o || o->n != b.n) throw std::runtime_error("변환: 옛 체크포인트에 없는 층 " + src);
+    std::copy(p0.begin() + o->off, p0.begin() + o->off + b.n, p.begin() + b.off);
+    std::copy(m0.begin() + o->off, m0.begin() + o->off + b.n, m.begin() + b.off);
+    std::copy(v0.begin() + o->off, v0.begin() + o->off + b.n, v.begin() + b.off);
+  }
+  // 프론티어 채널 첫 층 가중치 0 (두 인코더, 가까운 지도 cnn0·먼 지도 cnn1). W [cout][자식 4][cin]
+  const int chs[2] = {mdp::obs::NEAR_FRONTIER_CH, mdp::obs::FAR_FRONTIER_CH};
+  for (const char* pre : {"enc.", "enc_c."})
+    for (int br = 0; br < 2; ++br) {
+      const std::string nm = std::string(pre) + "cnn" + std::to_string(br) + ".conv0.w";
+      const int cin = ac_->spec.enc.imgs[br].c;
+      for (auto& b : ac_->blocks)
+        if (b.name == nm) {
+          const long cout = b.n / (4L * cin);
+          for (long co = 0; co < cout; ++co)
+            for (int ch4 = 0; ch4 < 4; ++ch4) {
+              const long k = b.off + co * 4 * cin + ch4 * cin + chs[br];
+              p[k] = m[k] = v[k] = 0;
+            }
+        }
+    }
+  int64_t at;
+  r(&at, 8);
+  int32_t D;
+  r(&D, 4);
+  if (D != ac_->norm.dim) throw std::runtime_error("정규화 차원 다름");
+  std::vector<real> nm(D), nv(D);
+  r(nm.data(), D * sizeof(real));
+  r(nv.data(), D * sizeof(real));
+  double cnt;
+  r(&cnt, 8);
+  int32_t it;
+  r(&it, 4);
+  real lr;
+  r(&lr, 4);
+  uint64_t acn, sd;
+  r(&acn, 8);
+  r(&sd, 8);
+  CK(cudaMemcpy(ac_->d_params, p.data(), P * sizeof(real), cudaMemcpyHostToDevice));
+  CK(cudaMemcpy(m_, m.data(), P * sizeof(real), cudaMemcpyHostToDevice));
+  CK(cudaMemcpy(v_, v.data(), P * sizeof(real), cudaMemcpyHostToDevice));
+  CK(cudaMemcpy(ac_->norm.d_mean, nm.data(), D * sizeof(real), cudaMemcpyHostToDevice));
+  CK(cudaMemcpy(ac_->norm.d_var, nv.data(), D * sizeof(real), cudaMemcpyHostToDevice));
+  ac_->norm.count = cnt;
+  clamp_std();
   ac_->params_changed();
   adam_t_ = at;
   iter_ = it;

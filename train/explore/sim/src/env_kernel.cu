@@ -49,54 +49,534 @@ __device__ void obs_far_block(const EnvBatch& b, const EnvState& e, int env, int
   const int n = n_list, kr = tid % kRowThreads;
   for (int base = 0; base < n; base += kPerRound) {   // 모든 스레드가 같은 횟수 (셔플이 워프 전체)
     const int t = base + tid / kRowThreads;
-    int lmax = kUnknown, vis = 0;
-    if (t < n) mdp::obsgen::far_cell_row(c, m, L, M, e, ff, list[t], kr, &lmax, &vis);
+    int lmax = kUnknown, vis = 0, fr = 0;
+    if (t < n) mdp::obsgen::far_cell_row(c, m, L, M, b.fmap + (size_t)env * c.size * fmap_row(c), e, ff, list[t], kr, &lmax, &vis, &fr);
     for (int o = 1; o < kRowThreads; o <<= 1) {
       const int l2 = __shfl_xor_sync(0xffffffffu, lmax, o);
       lmax = l2 > lmax ? l2 : lmax;
       vis |= __shfl_xor_sync(0xffffffffu, vis, o);
+      fr |= __shfl_xor_sync(0xffffffffu, fr, o);
     }
-    if (t < n && kr == 0) mdp::obsgen::far_cell_put(c, F, list[t], lmax, vis);
+    if (t < n && kr == 0) mdp::obsgen::far_cell_put(c, F, list[t], lmax, vis, fr);
   }
 }
 
-// 프론티어 요약 (observations.h obs_cells 의 프론티어 칸과 같은 값): 칸마다 frontier_cell 을 다시 보는 대신 프론티어 칸 지도(fmap)의 켜진 비트만 —
-// 프론티어 칸은 아는 칸이라 모두 건드린 범위(kb) 안이고, 비트는 지도 갱신 때 고쳐 둠 (frontier_fix). sh.part[tid] = 칸 수, sh.fr_min = 가장 가까운 키
-__device__ void obs_front_block(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int tid) {
-  int n = 0;
-  if (e.kb_x1 >= 0) {
-    const EnvCfg& c = b.cfg;
-    const MapDev& m = b.maps[e.map];
-    int rx, ry;
-    cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
-    const int ws = fmap_row(c), w0 = e.kb_x0 >> 5, nw = (e.kb_x1 >> 5) - w0 + 1, rows = e.kb_y1 - e.kb_y0 + 1;
-    const uint32_t* F = b.fmap + (size_t)env * c.size * ws;
-    unsigned long long best = mdp::kNoFrontier;
-    for (int k = tid; k < nw * rows; k += kThreads) {
-      const int y = e.kb_y0 + k / nw, wx = w0 + k % nw;
-      uint32_t bits = F[y * ws + wx];
-      n += __popc(bits);
-      for (; bits; bits &= bits - 1) {
-        const int x = wx * 32 + __ffs(bits) - 1;
-        const int dx = x - rx, dy = y - ry;
-        const unsigned long long key = ((unsigned long long)(uint32_t)(dx * dx + dy * dy) << 32) | (uint32_t)(y * m.gw + x);   // mdp::summary_key
-        best = key < best ? key : best;
+// ---------- 도달 가능한 프론티어 요약 (mdp/frontier.h reach_summary 와 같은 값, 블록 병렬 — 아래 reach_block·reach_fix) ----------
+constexpr int kRT = kThreads;     // env_reach_kernel 블록 스레드 (환경 하나)
+constexpr int kAccShared = 1792; // 번진 곳·설 수 있는 칸·BFS 후보 비트를 공유 메모리에 둘 범위 낱말 수 상한 (7 KB 씩 둘)
+__device__ int uf_find(int* par, int v) {   // par[x] ≤ x 가 늘 성립 (작은 쪽으로만 잇는다) — 중간 칸을 할아버지로 당김
+  volatile int* P = par;
+  int cur = P[v];
+  if (cur != v) {
+    int prev = v, next;
+    while (cur > (next = P[cur])) {
+      P[prev] = next;
+      prev = cur;
+      cur = next;
+    }
+  }
+  return cur;
+}
+__device__ void uf_union(int* par, int a, int b) {
+  while (true) {
+    a = uf_find(par, a);
+    b = uf_find(par, b);
+    if (a == b) return;
+    if (a > b) { const int t = a; a = b; b = t; }
+    if (atomicCAS(&par[b], b, a) == b) return;
+  }
+}
+
+// 설 수 있는 칸 낱말 (y, wx): 앎 & ~막힘 & ~(막힘을 로봇 반경 원판으로 팽창) — 줄 dy 마다 막힘 낱말을 ±hw(dy) 칸 밀어 OR (mdp::standable 과 같은 원판)
+__device__ uint32_t stand_word(const uint32_t* OCC, const uint32_t* KN, int ws, int gh, int y, int wx, mdp::Robot rb) {
+  uint32_t dil = 0u;
+  for (int dy = -rb.r; dy <= rb.r; ++dy) {
+    const int yy = y + dy;
+    if (yy < 0 || yy >= gh || dy * dy > rb.r2) continue;
+    int hw = 0;
+    while ((hw + 1) * (hw + 1) + dy * dy <= rb.r2) ++hw;
+    const uint32_t* row = OCC + yy * ws;
+    const uint32_t a = row[wx], l = wx > 0 ? row[wx - 1] : 0u, r = wx + 1 < ws ? row[wx + 1] : 0u;
+    uint32_t d = a;
+    for (int h = 1; h <= hw; ++h) d |= (a << h) | (l >> (32 - h)) | (a >> h) | (r << (32 - h));
+    dil |= d;
+  }
+  const int wi = y * ws + wx;
+  return KN[wi] & ~OCC[wi] & ~dil;
+}
+
+// 지도 갱신 뒤 (모든 스레드): 칸 종류가 바뀐 칸(fchg 낱말 4 칸, 넘치면 장 범위 전체)의 막힘·앎 비트를 고치고,
+// 그 칸에서 로봇 반경 안 칸의 설 수 있음 비트를 다시 — 다른 칸은 막힘·앎이 반경 안에서 그대로라 같은 값 (리셋이 0 으로 비움 = 모두 모름)
+__device__ void reach_fix(const EnvBatch& b, const EnvState& e, int env, const Shared& sh, int tid, int n_chg) {
+  __shared__ int s_nd;
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
+  const int ws = fmap_row(c), nf = c.size * ws;
+  uint32_t* RB = b.rbits + (size_t)env * kReachBits * nf;
+  uint32_t* OCC = RB + kRbOcc * nf;
+  uint32_t* KN = RB + kRbKnown * nf;
+  uint32_t* QF = RB + kRbQueued * nf;   // 다시 셀 낱말 표시 (reach_block BFS 와 같은 칸 — 둘 다 쓰고 0 으로 되돌림)
+  uint32_t* ST = RB + kRbStand * nf;
+  int32_t* QC = b.rlist + (size_t)env * mdp::kReachCap * kReachLists + 6 * mdp::kReachCap;
+  const mdp::Robot rb = mdp::obsgen::reach_robot(c);
+  const auto fix = [&](int x, int y) {
+    if (x < 0 || y < 0 || x >= m.gw || y >= m.gh) return;
+    const uint8_t k = mdp::cell_class(L[y * c.size + x]);
+    const uint32_t bit = 1u << (x & 31);
+    uint32_t* o = OCC + y * ws + (x >> 5);
+    uint32_t* n = KN + y * ws + (x >> 5);
+    if (k == mdp::kOcc) { if (!(*o & bit)) atomicOr(o, bit); } else if (*o & bit) atomicAnd(o, ~bit);
+    if (k != mdp::kUnk) { if (!(*n & bit)) atomicOr(n, bit); } else if (*n & bit) atomicAnd(n, ~bit);
+  };
+  const bool listed = n_chg <= kClassLog;
+  const int32_t* list = b.fchg + (size_t)env * kClassLog;
+  if (listed) {
+    for (int k = tid; k < 4 * n_chg; k += kThreads) {
+      const int ci = list[k / 4];
+      fix(ci % c.size + (k & 3), ci / c.size);
+    }
+  } else if (sh.bx1 >= 0) {
+    const int w = sh.bx1 - sh.bx0 + 1, h = sh.by1 - sh.by0 + 1;
+    for (int k = tid; k < w * h; k += kThreads) fix(sh.bx0 + k % w, sh.by0 + k / w);
+  }
+  if (tid == 0) s_nd = 0;
+  __syncthreads();   // 막힘·앎 다 고침
+  if (listed) {
+    // 바뀐 낱말(4 칸 x0..x0+3, 줄 y)에서 반경 r 안: 줄 y−r..y+r, 낱말 (x0−r)/32..(x0+3+r)/32 — 표시해 한 번씩만
+    const int span = 2 * rb.r + 1;
+    for (int k = tid; k < n_chg * span * 2; k += kThreads) {
+      const int ci = list[k / (span * 2)], q = k % (span * 2);
+      const int x0 = ci % c.size, y = ci / c.size + q / 2 - rb.r;
+      const int xa = max(0, x0 - rb.r), xb = min(m.gw - 1, x0 + 3 + rb.r);
+      const int wx = (q & 1) ? (xb >> 5) : (xa >> 5);
+      if (y < 0 || y >= m.gh || ((q & 1) && (xb >> 5) == (xa >> 5))) continue;
+      const int wi = y * ws + wx;
+      if (QF[wi] == 0u && atomicExch(&QF[wi], 1u) == 0u) QC[atomicAdd(&s_nd, 1)] = wi;
+    }
+    __syncthreads();
+    const int nd = s_nd;
+    for (int i = tid; i < nd; i += kThreads) {
+      const int wi = QC[i];
+      ST[wi] = stand_word(OCC, KN, ws, m.gh, wi / ws, wi % ws, rb);
+      QF[wi] = 0u;
+    }
+  } else if (sh.bx1 >= 0) {   // 넘침: 장 범위 ± r 전체
+    const int y0 = max(0, sh.by0 - rb.r), y1 = min(m.gh - 1, sh.by1 + rb.r);
+    const int w0 = max(0, sh.bx0 - rb.r) >> 5, w1 = min(m.gw - 1, sh.bx1 + rb.r) >> 5, nw = w1 - w0 + 1;
+    for (int k = tid; k < nw * (y1 - y0 + 1); k += kThreads) {
+      const int y = y0 + k / nw, wx = w0 + k % nw;
+      ST[y * ws + wx] = stand_word(OCC, KN, ws, m.gh, y, wx, rb);
+    }
+  }
+}
+
+// 한 줄 낱말 안 이어 채우기: 씨앗 t(⊆ m)가 든 m 의 1 줄기를 위쪽 비트(칸 x 큰 쪽)로 끝까지 — 덧셈 자리올림이 1 줄기를 타고 오른다
+__device__ __forceinline__ uint32_t run_fill_up(uint32_t t, uint32_t m) {
+  return (((uint32_t)((unsigned long long)m + t) ^ m) | t) & m;
+}
+
+// env_reach_kernel (모든 스레드, 판이 끝났으면 리셋 뒤 지도): RS 를 채운다 — 끝에 __syncthreads.
+// 값은 mdp::reach_summary(기준선 frontier_search)와 같고, 순서와 무관한 정수 연산으로만 낸다:
+//   1. 프론티어 칸 목록 번호 = 건드린 범위 낱말을 줄 차례로 훑은 차례(낱말마다 앞합). 설 수 있는 칸 비트는 지도 갱신 때 reach_fix 가 고쳐 둠
+//   2. 시작 칸 = frontier_search nearestCell (FIFO 차례 그대로, 스레드 0)
+//   3. 번진 곳 R = 시작 칸의 4 이웃 연결 성분: 줄마다 낱말 덧셈 자리올림으로 가로 1 줄기를 한 번에, 낱말 열마다 세로로 위→아래·아래→위 쓸기를
+//      바뀜이 없을 때까지 번갈아 (고정점 = 연결 성분, 걸음 차례와 무관). 층 BFS 와 달리 반복 수 = 길의 꺾임 수
+//   4. 덩어리 = R 안 프론티어 칸의 8 이웃 연결 성분 (합집합 찾기 — 늘 작은 번호 쪽으로 atomicCAS, 뿌리 = 가장 작은 목록 번호, ECL-CC 꼴),
+//      뿌리마다 칸 수, 문턱 넘는 덩어리 수
+//   5. 거리 = 층 BFS(4 이웃, 설 수 있는 칸): 물결 낱말 목록만 돌고(넓이가 아니라 물결 길이에 비례), 문턱 넘는 덩어리를 min(3, 덩어리 수) 개
+//      처음 맞힌 층을 마치면 멈춤 — 덩어리 열쇠 (거리 << 32 | 칸) 최솟값은 처음 맞힌 층에서 정해지고 안 맞힌 덩어리는 거리가 더 멀다
+__device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::ReachSummary& RS, int tid) {
+  constexpr int kHitCap = 64;
+  __shared__ int s_tot, s_any, s_start, s_cells, s_found, s_hits, s_nhit, s_cntA[2], s_cntC[2];
+  __shared__ uint32_t s_a[kAccShared];   // 범위가 작으면: 채우기 동안 설 수 있는 칸, BFS 동안 후보 비트
+  __shared__ uint32_t s_r[kAccShared];   // 범위가 작으면: 번진 곳 (RE 대신)
+  __shared__ int s_scan[kRT];
+  __shared__ int s_hit[kHitCap];
+  __shared__ unsigned long long s_best;
+  __shared__ int s_best_n;
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  if (tid == 0) mdp::reach_clear(&RS);
+  if (e.kb_x1 < 0) { __syncthreads(); return; }   // 아는 칸 없음 (블록 전체 같은 값)
+  const int ws = fmap_row(c), nf = c.size * ws;
+  uint32_t* RB = b.rbits + (size_t)env * kReachBits * nf;
+  const uint32_t* ST = RB + kRbStand * nf;
+  uint32_t* RE = RB + kRbReach * nf;
+  uint32_t* ACC = RB + kRbAcc * nf;     // BFS 다음 층 후보 비트 — 쓰고 나면 0 으로 되돌려 늘 0 (리셋이 비움)
+  const uint32_t* F = b.fmap + (size_t)env * nf;
+  int32_t* PRE = b.rpre + (size_t)env * nf;
+  int32_t* LST = b.rlist + (size_t)env * mdp::kReachCap * kReachLists;
+  int32_t* PAR = LST;                                   // 합집합 찾기 부모 (목록 번호)
+  int32_t* CNT = LST + mdp::kReachCap;                  // 뿌리마다 덩어리 칸 수
+  int32_t* QA = LST + 2 * mdp::kReachCap;               // BFS 물결 낱말 (번호, 비트) 두 벌 + 후보 낱말 — 각 kReachCap(≥ 범위 낱말 수)
+  int32_t* QB = LST + 4 * mdp::kReachCap;
+  int32_t* QC = LST + 6 * mdp::kReachCap;
+  unsigned long long* KEY = b.rkey + (size_t)env * mdp::kReachCap;
+  const int by0 = e.kb_y0, by1 = e.kb_y1, bw0 = e.kb_x0 >> 5, bw1 = e.kb_x1 >> 5, nbw = bw1 - bw0 + 1, nbox = nbw * (by1 - by0 + 1);
+  const int min_cells = mdp::obsgen::reach_min_cells(c);
+  // 범위 낱말이 kAccShared 이하면 번진 곳·설 수 있는 칸·BFS 후보 비트를 공유 메모리에 (범위 안 번호 = (y − by0) · nbw + (wx − bw0)) — 같은 값
+  const bool small = nbox <= kAccShared;
+  const auto bidx = [&](int wi) { return (wi / ws - by0) * nbw + (wi % ws - bw0); };
+  const auto REp = [&](int wi) -> uint32_t* { return small ? &s_r[bidx(wi)] : &RE[wi]; };
+  const auto STv = [&](int wi) -> uint32_t { return small ? s_a[bidx(wi)] : ST[wi]; };
+  // 1. 번진 곳 비우기 (설 수 있는 칸 비트는 지도 갱신 때 reach_fix 가 바뀐 곳만 고쳐 둠)
+  int any = 0;
+  for (int k = tid; k < nbox; k += kRT) {
+    const int wi = (by0 + k / nbw) * ws + bw0 + k % nbw;
+    const uint32_t st = ST[wi];
+    if (small) { s_r[k] = 0u; s_a[k] = st; } else RE[wi] = 0u;
+    any |= st != 0u;
+  }
+  // 프론티어 칸 앞합 (스레드마다 이어진 낱말 덩이)
+  const int chunk = (nbox + kRT - 1) / kRT, k0 = tid * chunk, k1 = min(nbox, k0 + chunk);
+  int part = 0;
+  for (int k = k0; k < k1; ++k) part += __popc(F[(by0 + k / nbw) * ws + bw0 + k % nbw]);
+  s_scan[tid] = part;
+  any = __syncthreads_or(any);
+  if (tid == 0) {
+    int acc = 0;
+    for (int i = 0; i < kRT; ++i) { const int v = s_scan[i]; s_scan[i] = acc; acc += v; }
+    s_tot = acc;
+    s_any = any;
+    s_start = -1;
+  }
+  __syncthreads();
+  {
+    int acc = s_scan[tid];
+    for (int k = k0; k < k1; ++k) {
+      PRE[k] = acc;
+      acc += __popc(F[(by0 + k / nbw) * ws + bw0 + k % nbw]);
+    }
+  }
+  const int n_tot = s_tot;
+  const bool over = n_tot > mdp::kReachCap;
+  int rx, ry;
+  cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
+  const bool in_map = rx >= 0 && ry >= 0 && rx < m.gw && ry < m.gh;
+  const auto st_bit = [&](int x, int y) -> bool {   // 범위 밖 낱말 = 설 수 없음 (설 수 있으면 아는 칸 = 범위 안)
+    const int wx = x >> 5;
+    if (y < by0 || y > by1 || wx < bw0 || wx > bw1) return false;
+    return (ST[y * ws + wx] >> (x & 31)) & 1u;
+  };
+  const auto list_pos = [&](int x, int y) -> int {
+    const int wx = x >> 5, bit = x & 31;
+    return PRE[(y - by0) * nbw + (wx - bw0)] + __popc(F[y * ws + wx] & ((1u << bit) - 1u));
+  };
+  // 2. 시작 칸 (스레드 0, 물결 목록 QA·QB 를 두 층 버퍼로)
+  __syncthreads();
+  if (tid == 0 && in_map && s_any) {
+    if (st_bit(rx, ry)) s_start = ry * m.gw + rx;
+    else {
+      // 층 d 차례 cur → 층 d+1 차례 nxt: 칸마다 nb4 차례로 이웃 중 맨해튼 d+1 이고 아직 nxt 에 없는 칸을 붙인다 (FIFO 와 같은 차례)
+      int* cur = QA;
+      int* nxt = QB;
+      int nc = 1, d = 0;
+      cur[0] = ry * m.gw + rx;
+      while (nc > 0 && s_start < 0) {
+        for (int i = 0; i < nc; ++i) {
+          const int x = cur[i] % m.gw, y = cur[i] / m.gw;
+          if (st_bit(x, y)) { s_start = cur[i]; break; }
+        }
+        if (s_start >= 0) break;
+        int nn = 0;
+        for (int i = 0; i < nc; ++i) {
+          const int x = cur[i] % m.gw, y = cur[i] / m.gw;
+          for (int k = 0; k < 4; ++k) {
+            int dx, dy;
+            mdp::nb4(k, &dx, &dy);
+            const int u = x + dx, v = y + dy;
+            if (u < 0 || v < 0 || u >= m.gw || v >= m.gh) continue;
+            if (abs(u - rx) + abs(v - ry) != d + 1) continue;
+            const int j = v * m.gw + u;
+            bool seen = false;
+            for (int q = nn - 1; q >= 0 && !seen; --q) seen = nxt[q] == j;
+            if (!seen) nxt[nn++] = j;
+          }
+        }
+        int* t = cur; cur = nxt; nxt = t;
+        nc = nn;
+        ++d;
       }
     }
-    if (best != mdp::kNoFrontier) atomicMin(&sh.fr_min, best);
   }
-  sh.part[tid] = n;
+  for (int i = tid; i < (over ? 0 : n_tot); i += kRT) { PAR[i] = i; CNT[i] = 0; KEY[i] = ~0ull; }
+  __syncthreads();
+  const int start = s_start;
+  const int sx = start % m.gw, sy = start / m.gw;
+  if (tid == 0) {
+    s_cells = 0;
+    s_found = 0;
+    s_hits = 0;
+    s_nhit = 0;
+    if (start >= 0) *REp(sy * ws + (sx >> 5)) = 1u << (sx & 31);
+  }
+  __syncthreads();
+  // 3. 번진 곳 = 시작 칸의 4 이웃 연결 성분 (가로 줄 채우기 ↔ 세로 쓸기, 바뀜이 없을 때까지)
+  if (start >= 0) {
+    for (;;) {
+      int chg = 0;   // 세로 쓸기가 바꾼 칸이 있나
+      for (int y = by0 + tid; y <= by1; y += kRT) {   // 줄마다: 오른쪽으로 자리올림을 넘기며, 다음 왼쪽으로 (비트 뒤집어 같은 셈)
+        uint32_t carry = 0u;
+        for (int wx = bw0; wx <= bw1; ++wx) {
+          uint32_t* rp = REp(y * ws + wx);
+          const uint32_t mk = STv(y * ws + wx), old = *rp, t = (old | carry) & mk;
+          const uint32_t f = t ? run_fill_up(t, mk) : 0u;
+          carry = f >> 31;
+          if (f != old) *rp = f;
+        }
+        carry = 0u;
+        for (int wx = bw1; wx >= bw0; --wx) {
+          uint32_t* rp = REp(y * ws + wx);
+          const uint32_t mk = STv(y * ws + wx), old = *rp, t = (old | (carry << 31)) & mk;
+          const uint32_t f = t ? __brev(run_fill_up(__brev(t), __brev(mk))) : 0u;
+          carry = f & 1u;
+          if (f != old) *rp = f;
+        }
+      }
+      __syncthreads();
+      {   // 낱말 열마다 (워프 하나가 한 열, 레인 = 32 줄 묶음): 세로 x_y = R_y | (S_y & x_{y−1}) 를 (g, p) 결합 워프 앞합으로 — 위→아래, 아래→위
+        const int lane = tid & 31;
+        for (int wx = bw0 + (tid >> 5); wx <= bw1; wx += kRT / 32) {
+          for (int dir = 0; dir < 2; ++dir) {
+            uint32_t carry = 0u;
+            for (int base = 0; base <= by1 - by0; base += 32) {
+              const int yo = base + lane, y = dir == 0 ? by0 + yo : by1 - yo;
+              const bool ok = yo <= by1 - by0;
+              const int wi = y * ws + wx;
+              const uint32_t old = ok ? *REp(wi) : 0u, p0 = ok ? STv(wi) : 0u;
+              // 묶음(32 줄 × 낱말) 안에서 세로(레인 차례 앞합 ↑·↓)와 가로(낱말 안 채우기)를 안 바뀔 때까지 — 묶음 안 꺾임을 이번에 다 풀어
+              // 바깥 반복 수를 줄임. 들어오는 칸은 위 묶음에서 넘어온 carry 뿐이고, 더하는 칸은 모두 설 수 있는 칸으로 이어진 칸이라 고정점은 같다
+              uint32_t g = lane == 0 ? (old | (carry & p0)) : old;
+              for (;;) {
+                uint32_t gu = g, pu = p0;
+                for (int o = 1; o < 32; o <<= 1) {   // 레인 오름 차례
+                  const uint32_t gp = __shfl_up_sync(0xffffffffu, gu, o), pp = __shfl_up_sync(0xffffffffu, pu, o);
+                  if (lane >= o) { gu |= pu & gp; pu &= pp; }
+                }
+                uint32_t gd = gu, pd = p0;
+                for (int o = 1; o < 32; o <<= 1) {   // 레인 내림 차례
+                  const uint32_t gp = __shfl_down_sync(0xffffffffu, gd, o), pp = __shfl_down_sync(0xffffffffu, pd, o);
+                  if (lane + o < 32) { gd |= pd & gp; pd &= pp; }
+                }
+                const uint32_t h = gd ? (run_fill_up(gd, p0) | __brev(run_fill_up(__brev(gd), __brev(p0)))) : 0u;
+                const bool same = __all_sync(0xffffffffu, h == g);
+                g = h;
+                if (same) break;
+              }
+              if (ok && g != old) { *REp(wi) = g; chg = 1; }
+              carry = __shfl_sync(0xffffffffu, g, 31);
+            }
+          }
+        }
+      }
+      if (!__syncthreads_or(chg)) break;   // 세로가 안 바꿨으면 끝: 가로 채우기 뒤라 줄마다 가로로 닫혀 있고 세로도 닫힘 = 고정점
+    }
+  }
+  // 4. 덩어리 = 번진 프론티어 칸(F & RE)의 8 이웃 연결 성분. 칸마다가 아니라 낱말 안 가로 줄기(이어진 1 비트)마다:
+  //    (가) 줄기 칸의 부모 = 줄기 첫 칸 (목록 번호가 이어짐 — 작은 번호 쪽, par[x] ≤ x 그대로)
+  //    (나) 줄기 끝이 낱말 끝(비트 31)이고 다음 낱말 비트 0 도 번진 프론티어면 잇기, 아래 줄 [첫 칸 − 1, 끝 칸 + 1] 안 줄기마다 첫 칸과 잇기
+  //         (위 줄과의 연결은 위 줄 줄기가 맡음 — 8 이웃을 한 번씩)
+  //    (다) 뿌리마다 칸 수 += 줄기 길이 — 칸 수가 문턱을 막 넘은 줄기에서 덩어리 수 하나
+  //    칸 하나씩 잇던 것과 같은 성분·같은 뿌리(성분의 가장 작은 목록 번호)·같은 칸 수
+  const auto for_runs = [&](uint32_t fr, auto&& f) {   // 낱말 안 줄기 (첫 비트, 길이)
+    while (fr) {
+      const int lo = __ffs(fr) - 1;
+      const uint32_t t = fr >> lo;
+      const int len = ~t ? __ffs(~t) - 1 : 32 - lo;
+      f(lo, len);
+      fr &= len == 32 ? 0u : ~(((1u << len) - 1u) << lo);
+    }
+  };
+  int cells = 0;
+  for (int k = tid; k < nbox; k += kRT) {
+    const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
+    const uint32_t fr = F[wi] & *REp(wi);
+    cells += __popc(fr);
+    if (over || !fr) continue;
+    for_runs(fr, [&](int lo, int len) {
+      const int rep = list_pos(wx * 32 + lo, y);
+      for (int q = 1; q < len; ++q) PAR[rep + q] = rep;
+    });
+  }
+  atomicAdd(&s_cells, cells);
+  __syncthreads();
+  if (!over)
+    for (int k = tid; k < nbox; k += kRT) {
+      const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
+      const uint32_t fr = F[wi] & *REp(wi);
+      if (!fr) continue;
+      for_runs(fr, [&](int lo, int len) {
+        const int a = wx * 32 + lo, bx = a + len - 1, rep = list_pos(a, y);
+        if (lo + len == 32 && wx < bw1 && ((F[wi + 1] & *REp(wi + 1)) & 1u)) uf_union(PAR, rep, list_pos(bx + 1, y));
+        if (y + 1 > by1) return;
+        const int xl = max(a - 1, 0), xh = min(bx + 1, m.gw - 1);
+        uint32_t carry = 0u;
+        for (int ww = max(xl >> 5, bw0); ww <= min(xh >> 5, bw1); ++ww) {
+          const int b0 = max(xl - ww * 32, 0), b1 = min(xh - ww * 32, 31);
+          const uint32_t rng = (b1 == 31 ? ~0u : ((1u << (b1 + 1)) - 1u)) & ~((1u << b0) - 1u);
+          const int wj = (y + 1) * ws + ww;
+          const uint32_t mm = F[wj] & *REp(wj) & rng;
+          for (uint32_t st = mm & ~((mm << 1) | carry); st; st &= st - 1u) uf_union(PAR, rep, list_pos(ww * 32 + __ffs(st) - 1, y + 1));
+          carry = mm >> 31;
+        }
+      });
+    }
+  __syncthreads();
+  // 뿌리마다 칸 수 (줄기 길이씩), 문턱을 막 넘은 순간 덩어리 수 하나
+  int found = 0;
+  if (!over)
+    for (int k = tid; k < nbox; k += kRT) {
+      const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
+      const uint32_t fr = F[wi] & *REp(wi);
+      if (!fr) continue;
+      for_runs(fr, [&](int lo, int len) {
+        const int r = uf_find(PAR, list_pos(wx * 32 + lo, y));
+        const int old = atomicAdd(&CNT[r], len);
+        found += (old < min_cells && old + len >= min_cells) ? 1 : 0;
+      });
+    }
+  atomicAdd(&s_found, found);
+  __syncthreads();
+  const int need = over ? 0 : min(mdp::kReachTop, s_found);
+  // 맞힌 칸 (거리 dd): 문턱 넘는 덩어리면 열쇠를 줄이고, 처음 맞힌 덩어리면 셈
+  const auto hit = [&](int x, int y, int dd) {
+    const int r = uf_find(PAR, list_pos(x, y));
+    if (CNT[r] < min_cells) return;
+    const unsigned long long key = ((unsigned long long)(uint32_t)dd << 32) | (uint32_t)(y * m.gw + x);
+    if (atomicMin(&KEY[r], key) == ~0ull) {
+      atomicAdd(&s_hits, 1);
+      const int q = atomicAdd(&s_nhit, 1);
+      if (q < kHitCap) s_hit[q] = r;
+    }
+  };
+  // 5. 거리: 물결 낱말 목록 층 BFS (같은 층 안 차례는 결과에 안 남음 — 집합·최솟값만). 아직 안 간 칸 = RE 에 남은 칸
+  //    (BFS 가 닿는 곳 = 번진 곳이라 RE 에서 지워 가며 씀 — RE 는 위에서 다 썼고 다음 관측이 다시 셈).
+  //    후보 비트는 범위 낱말이 kAccShared 이하면 공유 메모리(범위 안 번호), 넘으면 장치 메모리 ACC — 같은 값. 층마다 __syncthreads 둘
+  //    (셈 칸을 층 홀짝으로 두 벌 — 다음 층 칸은 지난 층이 다 읽은 뒤 스레드 0 이 비움)
+  if (need > 0) {
+    const auto acc_ref = [&](int wi) -> uint32_t* { return small ? &s_a[bidx(wi)] : &ACC[wi]; };
+    if (small) {   // 채우기에 쓴 설 수 있는 칸 사본을 비워 후보 비트로
+      for (int k = tid; k < nbox; k += kRT) s_a[k] = 0u;
+      __syncthreads();
+    }
+    if (tid == 0) {
+      const int wi = sy * ws + (sx >> 5);
+      const uint32_t bit = 1u << (sx & 31);
+      *REp(wi) &= ~bit;
+      QA[0] = wi;
+      QA[mdp::kReachCap] = (int32_t)bit;
+      s_cntA[0] = 1;
+      s_cntC[0] = 0;
+      if (F[wi] & bit) hit(sx, sy, 0);
+    }
+    __syncthreads();
+    int32_t* cur = QA;
+    int32_t* nxt = QB;
+    for (int d = 0;; ++d) {
+      const int na = s_cntA[d & 1];
+      if (na == 0 || s_hits >= need) break;   // 블록 전체 같은 값 (지난 층 끝 __syncthreads 뒤)
+      if (tid == 0) { s_cntA[(d + 1) & 1] = 0; s_cntC[(d + 1) & 1] = 0; }
+      // 밀기: 물결 낱말의 4 이웃 넓힘을 후보 비트에 OR — 이번 층에 처음 비트를 받은 낱말(전 값 0)만 후보 목록에
+      int* nc_ = &s_cntC[d & 1];
+      const auto push = [&](int wi, uint32_t g) {
+        if (g && atomicOr(acc_ref(wi), g) == 0u) QC[atomicAdd(nc_, 1)] = wi;
+      };
+      for (int i = tid; i < na; i += kRT) {
+        const int wi = cur[i], y = wi / ws, wx = wi % ws;
+        const uint32_t a = (uint32_t)cur[mdp::kReachCap + i];
+        push(wi, (a << 1) | (a >> 1));
+        if (wx > bw0) push(wi - 1, a << 31);
+        if (wx < bw1) push(wi + 1, a >> 31);
+        if (y > by0) push(wi - ws, a);
+        if (y < by1) push(wi + ws, a);
+      }
+      __syncthreads();
+      const int nc = *nc_;
+      for (int i = tid; i < nc; i += kRT) {
+        const int wi = QC[i];
+        uint32_t* ap = acc_ref(wi);
+        uint32_t* rp = REp(wi);
+        const uint32_t n = *ap & *rp;
+        *ap = 0u;
+        if (!n) continue;
+        *rp &= ~n;
+        const int q = atomicAdd(&s_cntA[(d + 1) & 1], 1);
+        nxt[q] = wi;
+        nxt[mdp::kReachCap + q] = (int32_t)n;
+        const int y = wi / ws, wx = wi % ws;
+        for (uint32_t f = n & F[wi]; f; f &= f - 1u) hit(wx * 32 + __ffs(f) - 1, y, d + 1);
+      }
+      int32_t* t = cur; cur = nxt; nxt = t;
+      __syncthreads();
+    }
+  }
+  if (tid == 0) {
+    mdp::ReachSummary& R = RS;
+    R.start_free = start >= 0 ? 1 : 0;
+    R.n_cells = s_cells;
+    R.closed = (start >= 0 && s_cells == 0) ? 1 : 0;
+    R.overflow = over ? 1 : 0;
+    R.n_found = over ? 0 : s_found;
+    if (s_nhit <= kHitCap) {   // 맞힌 덩어리 목록에서 열쇠 작은 kReachTop 개 (안 맞힌 덩어리는 거리가 더 멂)
+      unsigned long long last = 0ull;
+      for (int t = 0; t < mdp::kReachTop; ++t) {
+        unsigned long long best = ~0ull;
+        int br = -1;
+        for (int q = 0; q < s_nhit; ++q) {
+          const unsigned long long k = KEY[s_hit[q]];
+          if ((t == 0 || k > last) && k < best) { best = k; br = s_hit[q]; }
+        }
+        if (br < 0) break;
+        R.top[t].n = CNT[br];
+        R.top[t].dist = (int32_t)(best >> 32);
+        R.top[t].cell = (int32_t)(best & 0xffffffffull);
+        last = best;
+      }
+    }
+  }
+  if (s_nhit > kHitCap) {   // 드묾: 목록이 넘쳤으면 뿌리 전체를 세 번 훑음 (맞힌 뿌리만 열쇠가 ~0 아님)
+    unsigned long long last = 0ull;
+    for (int t = 0; t < mdp::kReachTop; ++t) {
+      if (tid == 0) { s_best = ~0ull; s_best_n = 0; }
+      __syncthreads();
+      unsigned long long mine = ~0ull;
+      for (int i = tid; i < n_tot; i += kRT)
+        if (KEY[i] != ~0ull && (t == 0 || KEY[i] > last) && KEY[i] < mine) mine = KEY[i];
+      if (mine != ~0ull) atomicMin(&s_best, mine);
+      __syncthreads();
+      const unsigned long long best = s_best;
+      if (best == ~0ull) break;   // 블록 전체 같은 값
+      for (int i = tid; i < n_tot; i += kRT)
+        if (KEY[i] == best) s_best_n = CNT[i];
+      __syncthreads();
+      if (tid == 0) {
+        RS.top[t].n = s_best_n;
+        RS.top[t].dist = (int32_t)(best >> 32);
+        RS.top[t].cell = (int32_t)(best & 0xffffffffull);
+      }
+      last = best;
+    }
+  }
+  __syncthreads();
+}
+
+// 관측 마무리 뒤 (env_finish_kernel·env_reset_kernel 다음): 환경마다 블록 하나가 요약을 내고 그 칸만 관측에 (observations.h obs_reach).
+// 관측 커널과 따로 둔 까닭: 이 단계의 레지스터·공유 메모리가 관측 커널에 붙으면 그 커널 전체의 동시 블록 수가 줄어서
+__global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b) {
+  __shared__ mdp::ReachSummary rs;
+  const int env = blockIdx.x, tid = threadIdx.x;
+  const EnvState& e = b.st[env];
+  reach_block(b, e, env, rs, tid);
+  if (tid == 0) mdp::obsgen::obs_reach(b, e, env, rs);
 }
 
 // 관측: 칸마다(모든 스레드) → 합치기·숫자(스레드 0). statics: 늘 0 인 물체 채널(📏)도 씀 — 판이 시작할 때만 (observations.h obs_cells)
 __device__ void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, int tid, const mdp::obsgen::FarDirty& fd, bool statics) {
-  if (tid == 0) sh.fr_min = mdp::kNoFrontier;
-  __syncthreads();
   mdp::obsgen::obs_cells(b, e, env, sh, tid, fd, false, statics);
   obs_far_block(b, e, env, tid, fd, statics);
-  obs_front_block(b, e, env, sh, tid);
   __syncthreads();
-  if (tid == 0) mdp::obsgen::obs_finish(b, e, env, sh);
+  if (tid == 0) mdp::obsgen::obs_finish(b, e, env, sh, false);   // 프론티어 덩어리 칸은 env_reach_kernel
   __syncthreads();
 }
 
@@ -127,7 +607,7 @@ __global__ void __launch_bounds__(kPhysThreads) env_phys_kernel(EnvBatch b, cons
   if (first) {
     e.collided = 0;
     apply_action(b, e, env, actions + mdp::act::DIM * env);
-    sh.new_wall = sh.new_floor = sh.d_known = sh.n_new = 0;
+    sh.new_wall = sh.new_floor = sh.d_known = sh.n_new = sh.n_occ = 0;
     mdp::obsgen::far_dirty_clear(sh);
     sh.scanned = 0;
     sh.k_next = 0;
@@ -136,16 +616,17 @@ __global__ void __launch_bounds__(kPhysThreads) env_phys_kernel(EnvBatch b, cons
   physics_until_scan(b, e, sh);
 }
 
-__device__ void block_sum4(int v[4], int tid) {
-  __shared__ int acc[4];
-  if (tid < 4) acc[tid] = 0;
+constexpr int kSums = 5;
+__device__ void block_sum(int v[kSums], int tid) {
+  __shared__ int acc[kSums];
+  if (tid < kSums) acc[tid] = 0;
   __syncthreads();
-  for (int q = 0; q < 4; ++q) {
+  for (int q = 0; q < kSums; ++q) {
     const int s = __reduce_add_sync(0xffffffffu, v[q]);
     if ((tid & 31) == 0) atomicAdd(&acc[q], s);
   }
   __syncthreads();
-  for (int q = 0; q < 4; ++q) v[q] = acc[q];
+  for (int q = 0; q < kSums; ++q) v[q] = acc[q];
 }
 
 // 프론티어 칸 지도 고치기 (지도 갱신 뒤): 칸 종류가 바뀐 칸이 있는 낱말(4 칸)과 그 4 이웃(위·아래 줄 4 칸, 왼·오른 끝 칸)의 비트를 frontier_cell 로 다시 —
@@ -180,7 +661,7 @@ __device__ void frontier_fix(const EnvBatch& b, const EnvState& e, int env, cons
   }
 }
 
-__global__ void __launch_bounds__(kThreads) env_apply_kernel(EnvBatch b) {
+__global__ void __launch_bounds__(kThreads, 6) env_apply_kernel(EnvBatch b) {   // 6 블록: reach_fix 가 레지스터를 늘려 동시 블록이 줄지 않게
   const int env = blockIdx.x, tid = threadIdx.x;
   Shared& sh = b.scratch[env];
   if (!sh.pending) return;   // 블록 전체가 같은 값
@@ -190,14 +671,16 @@ __global__ void __launch_bounds__(kThreads) env_apply_kernel(EnvBatch b) {
   __syncthreads();
   const ClassLog log{b.fchg + (size_t)env * kClassLog, &n_chg};
   const ApplyCount n = scan_apply(b, e, env, sh, tid, kThreads, b.scratch[env].far_mask, &log);   // 로그 오즈가 바뀐 칸 → 먼 지도 칸 표시
-  int v[4] = {n.wall, n.floor, n.known, n.fresh};
-  block_sum4(v, tid);   // 끝에 __syncthreads — 지도 갱신이 다 보임
+  int v[kSums] = {n.wall, n.floor, n.known, n.fresh, n.occ};
+  block_sum(v, tid);   // 끝에 __syncthreads — 지도 갱신이 다 보임
   frontier_fix(b, e, env, sh, tid, n_chg);
+  reach_fix(b, e, env, sh, tid, n_chg);
   if (tid == 0) {
     sh.new_wall += v[0];
     sh.new_floor += v[1];
     sh.d_known += v[2];
     sh.n_new += v[3];
+    sh.n_occ += v[4];
     known_box(b, e, sh);
     sh.pending = 0;
   }
@@ -225,6 +708,7 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b) {
       e.tick += 1;
       g.k_next += 1;
     }
+    map_progress(e, g.n_occ);   // 진행 없음 시계 — finish_step 판 끝이 씀
     finish_step(b, e, env, g.new_wall, g.new_floor, g.d_known, g.n_new);
     mdp::obsgen::far_dirty_robot(b, e, g);   // 지나간 곳 표시도 먼 지도 다시 그릴 곳에
     b.reward[env] = e.reward;
@@ -521,6 +1005,33 @@ void depth_gpu(const EnvBatch& b, cudaStream_t st) {
 
 }  // namespace
 
+// 요약 커널을 깊이 커널과 겹쳐 돌림: 둘은 서로 다른 메모리만 쓴다(요약 = obs_1d 의 덩어리 칸·vec_prev 그 칸, 깊이 = obs_img 깊이 칸).
+// 옆 스트림에서 돌리고 st 가 끝을 기다린다 — 걸음 결과·차례는 그대로
+namespace {
+struct ReachStream {
+  cudaStream_t s = nullptr;
+  cudaEvent_t go = nullptr, done = nullptr;
+};
+ReachStream& reach_stream() {
+  static ReachStream r;
+  if (!r.s) {
+    cudaStreamCreateWithFlags(&r.s, cudaStreamNonBlocking);
+    cudaEventCreateWithFlags(&r.go, cudaEventDisableTiming);
+    cudaEventCreateWithFlags(&r.done, cudaEventDisableTiming);
+  }
+  return r;
+}
+void reach_and_depth(const EnvBatch& b, cudaStream_t st) {
+  ReachStream& r = reach_stream();
+  cudaEventRecord(r.go, st);
+  cudaStreamWaitEvent(r.s, r.go, 0);
+  env_reach_kernel<<<b.n_env, kRT, 0, r.s>>>(b);
+  cudaEventRecord(r.done, r.s);
+  depth_gpu(b, st);
+  cudaStreamWaitEvent(st, r.done, 0);
+}
+}  // namespace
+
 void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
   const EnvCfg& c = b.cfg;
   // 한 행동의 라이다 장 수 ≤ ⌈substeps / lidar_every⌉ — 장마다 물리·빔·지도 갱신 한 바퀴
@@ -532,12 +1043,12 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
     env_apply_kernel<<<b.n_env, kThreads, 0, st>>>(b);
   }
   env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b);
-  depth_gpu(b, st);
+  reach_and_depth(b, st);
 }
 
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st) {
   env_reset_kernel<<<b.n_env, kThreads, 0, st>>>(b);
-  depth_gpu(b, st);
+  reach_and_depth(b, st);
 }
 
 }  // namespace sim

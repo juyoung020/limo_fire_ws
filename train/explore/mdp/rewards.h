@@ -16,15 +16,21 @@ namespace mdp::rew {
 // 1. 보상 값 (점수) — 잠정, 학습 곡선을 보고 바꾸면 맨 아래 근거에 적는다
 // ============================================================================================================
 //                                          항 이름(로그)        언제·무엇에 곱하나
-constexpr float kCov = 10.f;              // coverage          벽 덮음 비율 1.0 당 (이번 걸음에 새로 본 벽 몫)
-constexpr float kTime = 0.5f;             // time              기준선 속도로 다 덮을 시간(T_ref) 동안 합 (초당 −kTime/T_ref)
-constexpr float kCollWall = -10.f;        // collision_wall    벽·물체에 부딪혀 판 끝
-constexpr float kCollPerson = -15.f;      // collision_person  사람과 부딪혀 판 끝 (벽보다 크게)
+constexpr float kCov = 20.f;              // coverage          벽 덮음 비율 1.0 당 (이번 걸음에 새로 본 벽 몫) — 10 → 20 (2026-11-05, 아래 근거)
+constexpr float kOccCell = 20.f / 1600.f;   // coverage (로봇 지도, 2026-11-08) 판 처음 막힘이 된 지도 칸 하나에 — 한 행동에 kIdleOccMin(10) 개 이상 생긴
+                                            // 걸음의 칸만 셈(진행 없음 시계와 같은 셈, env.h finish_step — 멈춰 있어도 잡음으로 드문드문 생기는 칸은 0).
+                                            // 1600 = 시험 맵 크기(145~150 m²)를 끝까지 탐사했을 때 그렇게 센 칸 수 중앙(explore_v9 정책 64 판씩: bookstore 1507,
+                                            // small-house 1712) → 그런 맵 다 훑으면 ≈ +20 (옛 정답 덮음 보상과 같은 크기). 정답 없이 셀 수 있게 맵마다 나누지 않고
+                                            // 칸마다 고정 — 큰 맵일수록 합이 큼 (학습 맵 24 개 중앙: 단계 0 0.2~0.6 k, 1 0.5~1.4 k, 2 1.0~2.3 k, 3 1.5~4.2 k)
+constexpr float kTime = 0.2f;             // time              기준선 속도로 다 덮을 시간(T_ref) 동안 합 (초당 −kTime/T_ref)
+constexpr float kCollWall = -6.f;         // collision_wall    벽·물체에 부딪혀 판 끝
+constexpr float kCollPerson = -9.f;       // collision_person  사람과 부딪혀 판 끝 (벽보다 크게)
 constexpr float kPersonNear = -0.5f;      // person_near       사람 근처(kNearDist 안)에서 움직인 거리 m 당
-constexpr float kDeclareSuccess = 5.f;    // declare           끝 선언 때 덮음 ≥ 성공 기준(curriculums.h kSuccessCov)
+constexpr float kDeclareSuccess = 10.f;   // declare           끝 선언 때 덮음 ≥ 성공 기준(curriculums.h kSuccessCov)
 constexpr float kDeclareFail = -3.f;      // declare           끝 선언 때 덮음이 0 에 가까울 때 (기준 근처로 갈수록 kDeclareNear 로)
 constexpr float kSlip = -0.05f;           // slip              바퀴가 몸통보다 더 돈 각도 rad 당
-constexpr float kIdlePenalty = -3.f;      // no_progress       새 벽을 kIdleTime 동안 못 봐 판 끝
+constexpr float kTurn = -0.001f;          // turn              몸통이 돈 각도 rad 당 (|ω|·걸음 길이) — 작게: 사각(라이다 220°)을 메우는 회전은 남기고 늘 최대로 도는 것만 줄이게
+constexpr float kIdlePenalty = -4.f;      // no_progress       지도 진척(새 막힘 칸 ≥ kIdleOccMin / 행동)이 kIdleTime 동안 없어 판 끝
 
 // ============================================================================================================
 // 2. 항 모양 (점수 아님)
@@ -33,16 +39,16 @@ constexpr float kRefCellsPerSec = 10.f;   // time: 기준선이 벽 칸을 덮�
 constexpr float kTRefMin = cur::kSafeTime / 10.f;   // time: T_ref 하한 (s) — 작은 맵에서 시간 감점이 너무 세지 않게
 constexpr float kNearDist = 0.5f;         // person_near: 몸통~사람 간격 이 안이면 감점 (m)
 constexpr float kDeclareNear = 0.f;       // declare: 덮음이 성공 기준 바로 아래일 때 다가가는 값
-constexpr float kDeclareWidth = 0.02f;    // declare: 성공 기준 아래로 이 폭(덮음 비율) 안에서 가파르게 kDeclareNear 로 오름
+constexpr float kDeclareRampFrom = 0.5f;  // declare: 덮음 이것부터 성공 기준까지 kDeclareFail → kDeclareNear 로 곧게 오름 (11-05, 전엔 기준 아래 0.02 폭 지수)
 
 // ============================================================================================================
 // 아래는 식 — 값을 바꿀 때는 건드릴 필요 없음
 // ============================================================================================================
 
 // ---- 항 번호 (reward_terms [N][kTerms]) ----
-enum Term : int { kTermCov = 0, kTermTime, kTermCollWall, kTermCollPerson, kTermPersonNear, kTermDeclare, kTermSlip, kTermIdle, kTerms };
+enum Term : int { kTermCov = 0, kTermTime, kTermCollWall, kTermCollPerson, kTermPersonNear, kTermDeclare, kTermSlip, kTermIdle, kTermTurn, kTerms };
 inline const char* term_name(int k) {
-  static const char* n[kTerms] = {"coverage", "time", "collision_wall", "collision_person", "person_near", "declare", "slip", "no_progress"};
+  static const char* n[kTerms] = {"coverage", "time", "collision_wall", "collision_person", "person_near", "declare", "slip", "no_progress", "turn"};
   return n[k];
 }
 
@@ -55,18 +61,9 @@ inline float t_ref(int n_wall) {
 // 선언 보상 (덮음 c)
 DEV float declare_reward(float c) {
   if (c >= cur::kSuccessCov) return kDeclareSuccess;
-  const float x = (c - cur::kSuccessCov) / kDeclareWidth;   // ≤ 0
-  // exp(x) = 2^(x·log2 e): detmath 에 exp 가 없어 정수 거듭제곱 + 다항식 없이 반복 제곱으로 (결정적, x ≥ −50 만 의미)
-  float e;
-  if (x < -40.f) e = 0.f;
-  else {
-    // exp(x) = (1 + x/1024)^1024 (상대 오차 < 0.5 % — 모양만 쓰는 값)
-    float b = 1.f + x / 1024.f;
-    if (b < 0.f) b = 0.f;
-    for (int i = 0; i < 10; ++i) b = b * b;
-    e = b;
-  }
-  return kDeclareFail + (kDeclareNear - kDeclareFail) * e;
+  if (c <= kDeclareRampFrom) return kDeclareFail;
+  // kDeclareRampFrom → 성공 기준 사이 곧은 오름: 더 덮고 선언할수록 덜 나쁘게
+  return kDeclareFail + (kDeclareNear - kDeclareFail) * (c - kDeclareRampFrom) / (cur::kSuccessCov - kDeclareRampFrom);
 }
 
 // 한 걸음 항 입력
@@ -80,18 +77,23 @@ struct StepIn {
   float cov;            // 선언 때 덮음
   float slip;           // 헛돈 각도 합 (rad)
   int idle;             // 이번 걸음 진행 없음으로 끝 (충돌·선언이 아닐 때만)
+  int closed;           // 이번 걸음 지도 닫힘으로 성공 → 성공 보너스 kDeclareSuccess (declare 항 자리)
+  int new_occ;          // 이번 걸음 로봇 지도에서 판 처음 막힘이 된 칸 수 (첫 걸음 0)
+  int reward_occ;       // 1: 덮음 항 = kOccCell × new_occ (로봇 지도), 0: kCov × cov_gain (정답 벽 — 보관)
+  float turn;           // 이번 걸음 몸통이 돈 각도 (rad, ≥ 0)
 };
 
 // 항마다 값 → out[kTerms], 합을 돌려줌 (더하는 순서 고정 — 결정적)
 DEV float terms(const StepIn& in, float* out) {
-  out[kTermCov] = kCov * in.cov_gain;
+  out[kTermCov] = in.reward_occ ? kOccCell * (float)in.new_occ : kCov * in.cov_gain;
   out[kTermTime] = -kTime * in.dt / in.t_ref;
   out[kTermCollWall] = in.collided_wall ? kCollWall : 0.f;
   out[kTermCollPerson] = in.collided_person ? kCollPerson : 0.f;
   out[kTermPersonNear] = kPersonNear * in.near_person;
-  out[kTermDeclare] = in.declared ? declare_reward(in.cov) : 0.f;
+  out[kTermDeclare] = in.closed ? kDeclareSuccess : (in.declared ? declare_reward(in.cov) : 0.f);
   out[kTermSlip] = kSlip * in.slip;
   out[kTermIdle] = in.idle ? kIdlePenalty : 0.f;
+  out[kTermTurn] = kTurn * in.turn;
   float r = 0.f;
   for (int k = 0; k < kTerms; ++k) r += out[k];
   return r;
@@ -102,7 +104,12 @@ DEV float terms(const StepIn& in, float* out) {
 // ============================================================================================================
 // 근거 (2026-11-04, 잠정 — 학습 곡선을 보고 바꾸면 여기 적는다)
 // ============================================================================================================
-//   크기 틀: 기준선 속도로 다 덮고 선언하면 판 합 ≈ +10(덮음) + 5(성공) − 0.5(시간) ≈ +14.5.
+//   크기 틀: 기준선 속도로 다 덮고 선언하면 판 합 ≈ +20(덮음) + 10(성공) − 0.2(시간) ≈ +29.8.
+//   kCov 10 → 20 (2026-11-05, 잠정): explore_v4(kCov 10) 3000 반복 뒤 판의 34 % 가 진행 없음 끝(평균 510 s, 덮음 0.53, 판 합 −1.2) —
+//     새 벽 몫이 작아 헤매도 손해가 거의 없었다. 그래서 같은 날 함께: 덮음 ×2(10 → 20), 성공 ×2(5 → 10, 덮음과 비율 유지),
+//     방침(사용자): 먼저 벽을 빨리 훑는 법을 배우게 감점은 작게 — 덮음·성공이 보상 대부분, 감점은 최고 보상을 노리며 나중에 피하게.
+//     충돌 감점이 크면 조심만 배우고 탐사를 못 배운다(사용자 경험). 그래서 충돌 −10 → −6, 사람 −15 → −9, 시간 0.5 → 0.2,
+//     진행 없음 −3 → −4(기준 미달 선언 −3 보다는 나쁘게: 헤매느니 선언). 선언 실패 −3 은 그대로.
 //   기준선 덮는 속도 kRefCellsPerSec = 10 칸/s:
 //     runs/frontier_fast·frontier_nav2 의 episodes.jsonl(2026-11-04, 장면 small-house·bookstore 각 8 판)에서 판마다
 //     n_wall × coverage / t 를 잼. 성공 판만: frontier_fast 13.7·11.4(small-house), 18.3·17.2·14.0·13.7·12.2·10.2(bookstore) → 중앙 13.7,
@@ -111,15 +118,21 @@ DEV float terms(const StepIn& in, float* out) {
 //   T_ref = n_wall / kRefCellsPerSec (small-house 259 s, bookstore 321 s). 초당 감점 = kTime / T_ref → 기준선 속도면 시간 합 −kTime.
 //   T_ref 는 kTRefMin = 안전 시간 / 10 아래로 안 내림 — 안전 시간까지 버틴 시간 감점이 kTime × 10 = 5 를 넘지 않게(아래 부등식).
 //   보상 해킹 막기 (mdp/README): 충돌 < 가장 나쁜 선언 − 안전 시간 × 초당 감점
-//     = kDeclareFail − kTime · kSafeTime / kTRefMin = −3 − 0.5 · 10 = −8  →  kCollWall = −10 (여유 2).
+//     = kDeclareFail − kTime · kSafeTime / kTRefMin = −3 − 0.2 · 10 = −5  →  kCollWall = −6 (여유 1). (11-04: −3 − 0.5·10 = −8 → −10)
 //     일부러 일찍 박아 시간 감점을 아끼는 것 < 끝까지 버티다 기준 미달로 선언하는 것.
 //   0 걸음 선언: kDeclareFail ≈ −3 (덮음 0 에서) → 음수. 일찍 선언 = 남은 덮음 보상을 버림.
 //   제자리: 출발 자리 첫 장(첫 행동)의 덮음은 보상하지 않는다(env.h finish_step: 첫 걸음 덮음 증가 0) — 안 움직여도 받는 몫이라
-//     서 있기만 하면 시간 감점만 쌓이다가 진행 없음(curriculums.h kIdleTime)으로 끝나 kIdlePenalty.
-//   선언 보상: 덮음 c ≥ kSuccessCov → +kDeclareSuccess. 아래면 kDeclareFail + (kDeclareNear − kDeclareFail)·exp((c − 0.95)/kDeclareWidth)
-//     → c = 0.94 에서 −1.8, 0.90 에서 −2.75, 0 에서 −3. 95 % 근처에서 가파르게 오르고 문턱에서 +5 로 뛴다.
+//     서 있기만 하면 시간 감점만 쌓이다가 진행 없음(curriculums.h kIdleTime — 지도에서 새 막힘 칸이 한 행동에 kIdleOccMin 개 이상 생긴
+//     마지막 걸음 뒤 60 s. 멈춰 있으면 자세 오차·빔 잡음으로 생기는 막힘 칸은 드문드문이라 이 문턱을 못 넘음)으로 끝나 kIdlePenalty.
+//   선언 보상: 덮음 c ≥ kSuccessCov → +kDeclareSuccess. 아래면 c ≤ 0.5 에서 kDeclareFail, 0.5 ~ 0.95 사이 곧게 kDeclareNear(0) 로.
+//     2026-11-05: 전엔 kDeclareFail + (kDeclareNear − kDeclareFail)·exp((c − 0.95)/0.02) 였다 — 0.5 에서 선언하나 0.93 에서 하나 −3 근처로 같아
+//     explore_v4 는 덮음 0.77 에서 선언(판의 20 %)하고 더 채울 까닭을 못 배웠다.
+//     → 지금 c = 0.94 에서 −0.07, 0.77 에서 −1.2, 0.5 아래 −3, 문턱에서 +10 으로 뛴다.
 //   헛돎 −0.05 / rad: 구동 실측에 맞춘 보조 항(env.yaml 에 있던 값 그대로 옮김).
-//   사람 충돌 −15(> 벽 −10 — 같은 부등식 −8 도 만족), 사람 근접: 몸통~사람 간격 0.5 m 안에서 움직인 거리 m 당 −0.5 (1 m/s 로 1 s 지나면 −0.5).
+//   사람 충돌 −9(> 벽 −6 — 같은 부등식 −5 도 만족), 사람 근접: 몸통~사람 간격 0.5 m 안에서 움직인 거리 m 당 −0.5 (1 m/s 로 1 s 지나면 −0.5).
 //     잠정 — 학습에서 사람을 너무 피해 탐사가 느려지면 줄인다.
-//   진행 없음 감점 kIdlePenalty −3: 버티다 끝(−3) > 박기(−10), 버티다 끝 < 기준선 따라 선언 — reward_probe 가 검사.
+//   회전 감점 kTurn −0.001 / rad (2026-11-05, 잠정): explore_v4 정책은 늘 한쪽으로 거의 최대 회전(직전 ω 정규 평균 +0.74, 1 m 당 2.7 rad).
+//     v4 성공 판(68 s, |ω| 2.8)이면 −0.19, 헤맨 판(510 s)이면 −1.4 — 덮음(20)에 비해 작게. 부등식에 안 넣는다: 제자리 회전은
+//     한 바퀴 뒤엔 새 막힘 칸이 문턱(kIdleOccMin)을 못 넘어 진행 없음(60 s)으로 끝나므로 최대 3.14 · 60 · 0.001 ≈ −0.19 (첫 바퀴 몫 조금 더).
+//   진행 없음 감점 kIdlePenalty −4: 버티다 끝(−4) > 박기(−6), 버티다 끝 < 기준선 따라 선언 — reward_probe 가 검사.
 //     (진행 없음 끝을 둔 까닭과 kIdleTime 근거는 curriculums.h "판 끝 조건".)

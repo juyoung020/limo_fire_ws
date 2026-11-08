@@ -28,9 +28,10 @@ void range_1d(int i, float* lo, float* hi) {
   else if (k == SLIP || k == GYRO_Z || k == EKF + 1) { *lo = -2.f; *hi = 2.f; }   // 헛돎은 순간 3.14 넘을 수 있음
   else if (k >= WHEELS4 && k < WHEELS4 + 4) { *lo = -1.5f; *hi = 1.5f; }          // 바퀴 한도 1.11 m/s — v·vy·ω 가 따로 응답해 바뀌는 중엔 합이 잠깐 넘음
   else if (k == WHEEL_V || k == EKF) { *lo = -1.2f; *hi = 1.2f; }
-  else if (k == ELAPSED || k == KNOWN_AREA || k == FRONTIER + 3 || k == PROGRESS + 1) { *lo = 0.f; *hi = 1.f; }
-  else if (k == FRONTIER) { *lo = 0.f; *hi = 1.5f; }
-  else if (k == PROGRESS) { *lo = 0.f; *hi = 2.f; }
+  else if (k == ELAPSED || k == KNOWN_AREA || k == PROGRESS + 1 || k == FRONT_N || k == CLOSED || k == FRONT_CELLS) { *lo = 0.f; *hi = 1.f; }
+  else if (k == FRONTIER + 3 || k == FRONTIER2 + 3 || k == FRONTIER3 + 3) { *lo = 0.f; *hi = 1.f; }   // 덩어리 크기
+  else if (k == FRONTIER || k == FRONTIER2 || k == FRONTIER3) { *lo = 0.f; *hi = 2.f; }               // BFS 길 거리 (자름 2)
+  else if (k == PROGRESS || k == OCC_GAIN) { *lo = 0.f; *hi = 2.f; }
   else if (k == HOME) { *lo = 0.f; *hi = 2.9f; }
   else if (k >= LAST_ACT && k < LAST_ACT + 16 && (k - LAST_ACT) % 4 == 3) { *lo = 0.f; *hi = 1.f; }
   else if (k >= ACCEL && k < IMU_TILT + 4) { *lo = -3.f; *hi = 3.f; }   // IMU (observations.h 정규화 — 대개 ±0.6, 잡음 꼬리 여유)
@@ -47,6 +48,7 @@ int main(int argc, char** argv) {
   bool negative = false;
   bool negative_person = false;
   int people = 0;
+  bool spin = false;   // --spin: 행동을 제자리 돌기(ω 0.5 정규)로 — 작은 방에서 지도 닫힘 성공(판 끝 1) 길을 GPU == CPU 로 지나가게
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--envs" && i + 1 < argc) n_env = std::stoi(argv[++i]);
@@ -55,6 +57,7 @@ int main(int argc, char** argv) {
     else if (a == "--negative") negative = true;
     else if (a == "--negative-person") negative = negative_person = true;
     else if (a == "--people" && i + 1 < argc) people = std::stoi(argv[++i]);
+    else if (a == "--spin") spin = true;
     else if (a == "--env" && i + 1 < argc) env_path = argv[++i];
     else if (a == "--model" && i + 1 < argc) model_path = argv[++i];
     else if (a == "--dump" && i + 1 < argc) dump = argv[++i];
@@ -78,6 +81,17 @@ int main(int argc, char** argv) {
                     run(1, seven, 3) == 1 && run(3, hi, 3) == 3 && run(0, lo, 3) == 0;
     std::printf("커리큘럼 규칙 %s (8 판 덮음 평균 ≥ 0.8 → 올림, < 0.4 → 내림, 그 사이·7 판까지 → 그대로, 끝 단계에서 멈춤)\n", ok ? "통과" : "실패");
     if (!ok) return 1;
+    // 맨 위 단계 무작위 (실험 top_random): 맨 위에서 올림 조건 → rnd % (max + 1), 끄면 그대로, 맨 위 아니면 보통 올림, 내림은 그대로
+    auto run_r = [](int stage, std::vector<float> covs, int max_stage, bool tr, uint32_t rnd) {
+      int32_t s = stage, n = 0;
+      uint32_t h = 0;
+      for (float c : covs) mdp::cur::on_episode_end(&s, &h, &n, c, max_stage, tr, rnd);
+      return s;
+    };
+    const bool ok2 = run_r(3, hi, 3, true, 5u) == 1 && run_r(3, hi, 3, true, 7u) == 3 && run_r(3, hi, 3, false, 5u) == 3 &&
+                     run_r(1, hi, 3, true, 5u) == 2 && run_r(3, lo, 3, true, 5u) == 2 && run_r(3, mid, 3, true, 5u) == 3;
+    std::printf("커리큘럼 맨 위 무작위 규칙 %s\n", ok2 ? "통과" : "실패");
+    if (!ok2) return 1;
   }
   sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
   if (people > 0) hc.cfg.curriculum = 0;   // 커리큘럼이 켜져 있으면 단계가 사람 수를 정함 — --people 로 정한 수를 쓰려고 끔
@@ -123,6 +137,8 @@ int main(int argc, char** argv) {
   for (int t = 0; t < n_steps; ++t) {
     std::vector<float> act((size_t)A * n_env);
     for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)A * i], p_declare);
+    if (spin)
+      for (int i = 0; i < n_env; ++i) { float* q = &act[(size_t)A * i]; q[0] = 0.f; q[1] = 0.f; q[2] = 0.5f; }
     std::vector<float> gact = act;
     if (negative_person && t == n_steps / 2) {   // 사람이 있는 첫 환경의 사람 0 을 1 cm
       gpu.get_state(sg);

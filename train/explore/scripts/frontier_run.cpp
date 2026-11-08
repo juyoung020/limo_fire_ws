@@ -54,7 +54,7 @@ std::string stem(const std::string& p) {
 // 판 하나 기록
 struct Episode {
   int env = 0;
-  bool active = true, declared = false, collided = false, truncated = false;
+  bool active = true, declared = false, collided = false, truncated = false, success = false;   // success: 닫힘 성공 규칙이면 시뮬이 지도 닫힘으로 끝낸 판
   std::string reason;
   float t = 0, coverage = 0, floor_cov = 0, t95 = -1, path = 0, known_m2 = 0, cov_at_declare = -1;
   int steps = 0;
@@ -262,7 +262,16 @@ int run_mode(const Args& a, const std::string& mode) {
           }
           e.rw->scan(ranges.data());
         }
-        if (end) finish(e, e.declared ? (s.coverage >= kSuccessCov ? rf::outcome::SUCCESS : rf::outcome::DECLARED_SHORT) : rf::outcome::TRUNCATED);
+        if (end) {
+          if (c.success_closed) {
+            // 닫힘 성공 규칙: 성공은 시뮬이 지도 닫힘으로 판을 끝낼 때만. 기준선이 스스로 끝냄(남은 덩어리 모두 포기 등) = 실패("포기", 진행 없음으로 셈)
+            e.declared = false;
+            finish(e, rf::outcome::NO_PROGRESS);
+          } else {
+            e.success = e.declared && s.coverage >= kSuccessCov;
+            finish(e, e.declared ? (s.coverage >= kSuccessCov ? rf::outcome::SUCCESS : rf::outcome::DECLARED_SHORT) : rf::outcome::TRUNCATED);
+          }
+        }
       }
       if (n_active == 0) break;
       if (a.cpu) env.step(act.data());
@@ -287,6 +296,12 @@ int run_mode(const Args& a, const std::string& mode) {
                        act[mdp::act::DIM * i], act[mdp::act::DIM * i + 2], s.drive.wv, s.drive.ww, ex[i].goal_x(), ex[i].goal_y(), bd, (int)Li[(size_t)(bk / W.gw) * S + bk % W.gw]);
         }
         if (done[i] == 2) { e.collided = true; e.reason = "collision"; finish(e, rf::outcome::COLLISION); }
+        else if (done[i] == mdp::cur::kDeclareOk && c.success_closed) {   // 지도 닫힘 = 성공 (직전 걸음 덮음)
+          e.success = true;
+          e.reason = "map_closed";
+          finish(e, rf::outcome::SUCCESS);
+        }
+        else if (done[i] == mdp::cur::kNoProgress) { e.reason = "no_progress"; finish(e, rf::outcome::NO_PROGRESS); }
         else { e.truncated = true; e.reason = "sim_done_" + std::to_string(done[i]); finish(e, rf::outcome::TRUNCATED); }
       }
       if (step % 600 == 0) {
@@ -299,8 +314,11 @@ int run_mode(const Args& a, const std::string& mode) {
     if (d_act) cudaFree(d_act);
     // 이 장면 집계 → progress 한 줄 + 평가 표 한 줄
     double n = N, succ = 0, coll = 0, trunc = 0, decl = 0, ds = 0, cv = 0, cad = 0, t95s = 0, t95n = 0, tails = 0, fcv = 0, pl = 0, km = 0, len = 0;
+    double s_cov = 0, s_t = 0, s_low = 0, s_low8 = 0, gaveup = 0;   // 성공 판의 덮음·시간, 성공인데 덮음 < 0.95·< 0.8, 기준선 포기
     for (auto& e : eps) {
-      succ += e.declared && e.coverage >= kSuccessCov;
+      if (e.success) { s_cov += e.coverage; s_t += e.t; s_low += e.coverage < kSuccessCov; s_low8 += e.coverage < 0.8f; }
+      gaveup += !e.success && !e.collided && e.reason != "no_progress" && e.reason.rfind("sim_done", 0) != 0 && !e.truncated && e.reason != "map_closed";
+      succ += e.success;
       ds += e.declared && e.coverage < kSuccessCov;
       coll += e.collided;
       trunc += e.truncated;
@@ -333,7 +351,7 @@ int run_mode(const Args& a, const std::string& mode) {
     run.end_update();
     rf::Json row = rf::Json::object();
     row.set("eval", W.name).set("split", mode).set("n", n).set("success", succ / n).set("collision", coll / n).set("truncation", trunc / n)
-        .set("declare_short", ds / n).set("coverage", cv / n).set("t95_reached", t95n / n).set("path_len", pl / n)
+        .set("cov_at_success", succ > 0 ? s_cov / succ : 0.0).set("t_success", succ > 0 ? s_t / succ : 0.0).set("closed_low_gt", s_low / n).set("closed_lt80", s_low8 / n).set("gave_up", gaveup / n).set("declare_short", ds / n).set("coverage", cv / n).set("t95_reached", t95n / n).set("path_len", pl / n)
         .set("pass", coll == 0 && t95n == n);
     row.set("floor_coverage", fcv / n);
     if (t95n > 0) row.set("t95", t95s / t95n).set("ref_t95", t95s / t95n).set("tail_s", tails / t95n);

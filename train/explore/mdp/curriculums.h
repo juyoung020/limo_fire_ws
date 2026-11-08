@@ -2,7 +2,7 @@
 //
 // 판 끝 (done 코드, 러너는 terminal() 로 "종료(뒤 가치 0)" 와 "끊김(가치로 메움)" 을 가른다)
 //   0 진행 · 1 선언 성공(선언 때 벽 덮음 ≥ 95 %) · 2 벽 충돌 · 3 끊김(안전 시간) · 4 선언 실패(기준 미달) · 5 사람 충돌
-//   · 6 진행 없음(지도에서 새 칸을 mdp::cur::kIdleTime 동안 못 봄 — 종료, rewards.h '진행 없음')
+//   · 6 진행 없음(지도에서 판 처음 막힘이 된 칸이 한 행동에 kIdleOccMin 개 이상인 걸음이 kIdleTime 동안 없음 — 종료, rewards.h '진행 없음')
 //   1·2·4·5·6 = 종료, 3 = 끊김 (rsl_rl time_outs, IsaacLab is_finite_horizon=False 와 같은 쓰임).
 //   한 걸음에 충돌과 선언이 같이 오면 충돌.
 //
@@ -33,14 +33,23 @@ DEV bool terminal(int32_t d) { return d != kRunning && d != kTruncated; }   // �
 // 판 끝 조건 (사람이 바꾸는 값 — 보상 점수는 rewards.h)
 // ============================================================================================================
 constexpr float kSafeTime = 1200.f;   // 안전 시간 (s): 이만큼 지나면 끊김(3, 가치로 메움). 맵과 무관. frontier_nav2 가장 긴 판 1040 s 보다 넉넉히
-constexpr float kIdleTime = 60.f;     // 진행 없음 (s): 새 벽 면 칸을 이만큼 못 보면 종료(6) + rewards.h kIdlePenalty
+constexpr float kIdleTime = 60.f;     // 진행 없음 (s): 지도 진척(아래 kIdleOccMin)이 이만큼 없으면 종료(6) + rewards.h kIdlePenalty
+constexpr int kIdleOccMin = 10;       // 진척 = 한 행동(0.1 s) 동안 판 처음 막힘(p > 0.65, frontier.h kOccL)이 된 지도 칸 ≥ 이것 (env.h map_progress)
 constexpr float kSuccessCov = 0.95f;  // 성공 기준: 끝 선언 때 벽 덮음 ≥ 이것이면 선언 성공(1), 아래면 선언 실패(4) (mdp/README)
 //   진행 없음 끝을 둔 까닭: 끊김(안전 시간)은 time-out 이라 V 로 메워, 버티는 판의 값은 걸음당 시간 감점 할인 합
 //   (작은 맵 ≈ 0.0004/(1−γ) ≈ 0.14)뿐 — 충돌(−10)·미달 선언(−3)보다 훨씬 싸서 '판을 안 끝내는' 붕괴가 남(cur-fix (ii) 씨앗 2, B·C 실험 씨앗 1 모두).
 //   출처: Go-Explore (Ecoffet et al., Nature 2021, arXiv 2004.12919 Methods) "we terminate the episode early … if no new cells are
 //   discovered for 1,000 steps (while exploring)".
 //   kIdleTime 근거: (ii-a) 씨앗 3 반복 300 체크포인트, 학습 맵 15,318 판(학습식 표집)에서 판 최대 '새 벽 없는 간격' ≥ 60 s 는
-//   성공 0.4 %·미달 선언 0.5 %·충돌 0.3 %, 시험 맵에서 1,200 s 끊긴 판은 28/28 이 걸림 (diag 측정).
+//   성공 0.4 %·미달 선언 0.5 %·충돌 0.3 %, 시험 맵에서 1,200 s 끊긴 판은 28/28 이 걸림 (diag 측정 — 그때 시계는 정답 벽 면 기준).
+//   진척 시계를 정답 벽 면(since_wall)에서 지도(since_occ)로 바꾼 까닭 (2026-11-05): 정답 벽은 실물에 없어 정책이 볼 수 없었고(관측 시계는
+//   지도 새 칸 기준이라 거의 늘 0 — 판 끝이 예고 없이 옴), 이제 판 끝 시계 == 관측 PROGRESS+1 시계라 실물에서도 같은 값을 센다.
+//   since_wall 은 가치 전용 참값(obs_layout.h PRIV_IDLE)으로만 남긴다.
+//   kIdleOccMin 근거 (idle_agree 일회성 측정: 학습 맵 목록, 256 환경 × 6000 걸음, 덩어리 따라가기 ½·무작위 ¼·거의 제자리 ¼, 정답 벽 시계로
+//   진행 없음 끝난 604 판 · 다른 끝 6,310 판): 문턱 K 에서 지도 시계도 60 s 넘은 비율 / 다른 끝 판에서 넘은 판 —
+//   K=1 1.3 % / 0 (멈춰도 지도 자세 오차 흐름·빔 잡음으로 막힘 칸이 드문드문 계속 생겨 시계가 안 감), K=5 77.8 % / 2, K=10 94.7 % / 8,
+//   K=20 99.0 % / 16. 10 = 제자리를 거의 다 잡으면서 오발동이 적은 쪽. 지도 시계는 벽 시계보다 중앙 67 s 먼저 넘는다(벽 시계는 벽 칸 1 개에도
+//   되돌아감) — 즉 같은 행동에서 판이 더 일찍 끝난다.
 
 struct Stage {
   float max_area;    // 이 단계 맵의 갈 수 있는 바닥 넓이 상한 (m²)
@@ -72,12 +81,18 @@ inline int stage_of_area(float area_m2) {
 }
 
 // 판 끝: 끝 덮음 cov 를 기록에 더하고(hist = 덮음×1000 합, n = 기록 수) kWindow 판이 차면 단계를 고침. max_stage = 맵이 있는 가장 높은 단계
-DEV void on_episode_end(int32_t* stage, uint32_t* hist, int32_t* n, float cov, int max_stage) {
+// top_random (기본 켬 — EnvCfg::cur_top_random, SIM_CUR_TOPRAND=0 이면 끔): 맨 위 단계에서 또 올림 조건을 넘으면 단계를 rnd % (max_stage + 1) 로 —
+//   legged_gym/envs/base/legged_robot.py _update_terrain_curriculum "Robots that solve the last level are sent to a random one"
+//   (torch.where(levels >= max_level, randint_like(levels, max_level), clip(levels, 0))). 근거: explore_v7 은 반복 ~5000 부터 단계 평균 2.9+ 로
+//   거의 큰 맵(단계 3, 92 개)만 보고, 결정적 평가에서 단계 3 학습 맵 성공은 0.50 → 0.54 → 0.56(반복 3900 → 7000 → 14000)로 오르는데
+//   시험 맵과 같은 크기의 단계 2 학습 맵은 0.37 → 0.37 → 0.34, 충돌 0.34 → 0.41 → 0.52 로 나빠졌다(맵 8 개 × 32 판, ppo/README "explore_v8 A/B").
+DEV void on_episode_end(int32_t* stage, uint32_t* hist, int32_t* n, float cov, int max_stage, bool top_random = false, uint32_t rnd = 0u) {
   *hist += (uint32_t)(cov * 1000.f + 0.5f);
   *n += 1;
   if (*n < kWindow) return;
   const float avg = (float)*hist / (1000.f * (float)kWindow);
   if (avg >= kProgUp && *stage < max_stage) *stage += 1;
+  else if (avg >= kProgUp && top_random) *stage = (int32_t)(rnd % (uint32_t)(max_stage + 1));
   else if (avg < kProgDown && *stage > 0) *stage -= 1;
   *hist = 0u;
   *n = 0;
