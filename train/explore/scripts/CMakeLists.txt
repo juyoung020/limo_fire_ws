@@ -23,3 +23,14 @@ target_include_directories(train PRIVATE ${EXPLORE}/viewer/include)
 target_link_libraries(train limo_sim explore_ppo)
 # 재생 화면의 로봇 모양: 러너가 시작할 때 URDF(xacro) 치수를 읽어 run.json robot 에 적는다
 target_compile_definitions(train PRIVATE LIMO_URDF_DIR="${EXPLORE}/../../src/limo_fire/limo_fire_description/urdf")
+
+# 감시자 하이브리드 평가(hybrid_eval): RL 정책 + 프론티어 기준선(baselines/frontier Explorer) — 평가 전용, train 은 그대로
+set(FRONTIER_DIR ${EXPLORE}/baselines/frontier)
+add_library(frontier_explorer_h STATIC ${FRONTIER_DIR}/src/frontier_explorer.cpp)
+target_include_directories(frontier_explorer_h PUBLIC ${FRONTIER_DIR}/include ${EXPLORE}/mdp)
+target_link_libraries(frontier_explorer_h PUBLIC limo_sim)
+target_compile_definitions(frontier_explorer_h PUBLIC FRONTIER_CONFIG="${FRONTIER_DIR}/config/frontier.yaml")
+add_executable(hybrid_eval hybrid_eval.cpp)
+set_source_files_properties(hybrid_eval.cpp PROPERTIES LANGUAGE CUDA)   # observations.h·ppo.h 머리글
+target_link_libraries(hybrid_eval frontier_explorer_h explore_ppo)
+target_compile_options(hybrid_eval PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra>)

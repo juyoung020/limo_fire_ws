@@ -3,9 +3,11 @@
 //
 //   frontier_run --scenes a.scene [b.scene …] [--modes nav2,fast] [--episodes 4] [--root train/explore/runs] [--name frontier]
 //                [--seed 1] [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml] [--frontier baselines/frontier/config/frontier.yaml]
-//                [--obs-every 5] [--cpu]
+//                [--obs-every 5] [--cpu] [--eval-seed]
 //   --modes 에 slot0 · slot0_nosafe 를 넣으면 계층형 규칙 정책(늘 0 번 후보, 아래 run_hier)을 같은 판으로
 //   --people K: 계층형 판마다 사람 0 ~ K 명 (시험 맵 넓이 = 커리큘럼 단계 2 → 2). 끝 지표는 벽 충돌·사람 충돌을 나누고 충돌 때 명령(앞·제자리 회전·뒤·멈춤)도 셈
+//   --eval-seed: 장면 i 의 시뮬 씨앗을 학습 러너 평가와 같은 규칙(train.cpp evaluate: seed · 7919 + 17 + i)으로 — --scenes 를 train --test 와
+//                같은 차례로 주면 RL 평가·scripts/hybrid_eval 과 같은 시작점(환경 번호 같으면 같은 시작 칸·방향·바닥). 기본은 옛 규칙(seed · 1000003 + i · 7919)
 //   → <root>/<name>_<판>/ (run.json kind "baseline", progress.jsonl, episodes.jsonl, evals/frontier.json, replays/*.xrp)
 //
 // 판 지표(episodes.jsonl): coverage(끝 덮은 비율), t95(95 % 도달 시각), tail_s(95 % 도달 → 판 끝), floor_coverage, path_len(참 자세 이동 거리),
@@ -38,7 +40,7 @@ struct Args {
   uint64_t seed = 1;
   std::string root = "train/explore/runs", name = "frontier";
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
-  bool cpu = false;
+  bool cpu = false, eval_seed = false;
 };
 
 std::vector<std::string> split(const std::string& s, char c) {
@@ -138,7 +140,7 @@ int run_mode(const Args& a, const std::string& mode) {
   for (size_t wi = 0; wi < worlds.size(); ++wi) {
     const sim::World& W = worlds[wi];
     std::vector<sim::World> one{W};
-    sim::Env env(hc, one, lidar, N, a.seed * 1000003ull + wi * 7919ull, !a.cpu);
+    sim::Env env(hc, one, lidar, N, a.eval_seed ? a.seed * 7919ull + 17 + wi : a.seed * 1000003ull + wi * 7919ull, !a.cpu);
     env.reset();
     env.sync();
     // 재생용 정답 맵·광선
@@ -525,10 +527,11 @@ int main(int argc, char** argv) {
     else if (k == "--obs-every") a.obs_every = std::max(1, std::stoi(nx()));
     else if (k == "--people") a.people = std::stoi(nx());
     else if (k == "--cpu") a.cpu = true;
+    else if (k == "--eval-seed") a.eval_seed = true;
     else { std::fprintf(stderr, "모르는 인자 %s\n", k.c_str()); return 2; }
   }
   if (a.scenes.empty()) {
-    std::fprintf(stderr, "frontier_run --scenes a.scene [b.scene …] [--modes nav2,fast] [--episodes 4] [--root runs] [--name frontier] [--seed 1] [--obs-every 5] [--cpu]\n");
+    std::fprintf(stderr, "frontier_run --scenes a.scene [b.scene …] [--modes nav2,fast] [--episodes 4] [--root runs] [--name frontier] [--seed 1] [--obs-every 5] [--cpu] [--eval-seed]\n");
     return 2;
   }
   try {
