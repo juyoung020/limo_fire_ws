@@ -67,6 +67,31 @@ constexpr int CRITIC_1D = POLICY_1D + PRIV;
 
 }  // namespace mdp::obs
 
+// ---- 계층형 행동 모드 (2026-11-08, mdp/README "계층형"): 정책이 1 s 마다 프론티어 후보 K 개 중 하나를 고르고, 경로 계획 + 추종기가 몬다.
+// 이 모드에서만 1D 관측 뒤에 후보 칸 CAND_1D 를 붙인다(정책 1D = hier::POLICY_1D). 기본(속도 행동) 모드의 배치·크기는 그대로.
+namespace mdp::hier {
+constexpr int K = 8;                 // 후보 수 (ARiADNE 류의 이웃 후보 k — 잠정)
+constexpr int FEAT = 7;              // 후보마다 칸 수
+enum : int {
+  F_DIST = 0,   // 로봇 칸 → 덩어리 가장 가까운 칸 BFS 길 거리(설 수 있는 칸 4 이웃) × 5 cm / kFrontNorm 25.6 m (자름 2)
+  F_SIN = 1,    // 그 칸 방향 (로봇 기준 sin, cos)
+  F_COS = 2,
+  F_SIZE = 3,   // 덩어리 크기 칸 수 × 5 cm / 10 m (자름 1)
+  F_UTIL = 4,   // 주변 프론티어 칸 수: 그 칸 둘레 ±kUtilRadius 네모 안 프론티어 칸(지도 전체, 시선 검사 없음) / kUtilNorm (자름 1)
+  F_CUR = 5,    // 지금 목표(직전 결정에서 고른 칸)가 이 덩어리 안이면 1
+  F_VALID = 6,  // 후보 있음 1 / 빈 칸 0 (= 행동 가림 — 빈 칸은 확률 0)
+};
+constexpr int CAND_1D = K * FEAT;                         // 56
+constexpr int POLICY_1D = mdp::obs::POLICY_1D + CAND_1D;  // 1360 (앞 1304 칸은 기본 모드와 같은 배치)
+constexpr int CRITIC_1D = POLICY_1D + mdp::obs::PRIV;
+constexpr int kCandMinCells = 1;     // 후보 덩어리 크기 문턱 (칸) — 0.75 m 미만 조각도 후보 (정체 판의 36 % 가 그런 조각만 남아 실패, 2026-11-08 조사)
+constexpr int kCandMinDist = 6;      // 후보 칸은 로봇 칸에서 BFS 6 칸(0.3 m) 이상 — 그 안은 라이다가 못 보는 뒤·발밑(fov 220°)이라 가도 안 풀림. 잠정
+                                     // (2026-11-08 규칙 정책: 이 문턱 없이 늘 0 번을 고르면 거리 0 덩어리에 "도착"해 128 판 모두 정체)
+constexpr float kUtilRadius = 2.0f;  // m — 잠정 (시선 검사 없는 근사)
+constexpr float kUtilNorm = 160.f;   // 칸 — 잠정 (±2 m 창 한 변 80 칸 × 2 줄)
+constexpr int kPathMax = 64;         // 웨이포인트 상한 (EnvState)
+}  // namespace mdp::hier
+
 namespace mdp::act {
 constexpr int CONT = 3;    // v, vy, ω — [−1, 1] 정규 단위, 환경이 한도를 곱하고 자름
 constexpr int DECLARE = 1; // 끝 선언 (베르누이 로짓)
@@ -77,4 +102,5 @@ constexpr float V_BACK = 0.3f;   // m/s, 라이다가 뒤 140° 를 못 봐서 �
 constexpr float VY_MAX = 1.0f;   // m/s, 잠정 📏 (데이터시트에 옆 속도 없음)
 constexpr float W_MAX = 3.14f;   // rad/s, 실측 (env.yaml drive.max)
 constexpr bool SAFETY = true;    // 안전층 기본 켬 (시뮬·실물 같은 규칙)
+// 계층형 모드의 행동: 환경마다 같은 DIM 칸, a[0] = 고른 후보 번호 0 … hier::K − 1 (정수 값), 나머지 0
 }  // namespace mdp::act

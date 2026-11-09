@@ -4,7 +4,7 @@
 |---|---|
 | `train.cpp` | 학습 러너: 장면 목록으로 환경 N 개 → 24 걸음 롤아웃 → PPO update 반복, 뷰어 실행 폴더(`run.json kind: explore_ppo`)·체크포인트·시험 맵 평가. 빌드·옵션은 아래 |
 | `play.cpp` | 학습한 정책 돌려 보기 |
-| `frontier_run.cpp` | 프론티어 탐사 기준선을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) |
+| `frontier_run.cpp` | 프론티어 탐사 기준선을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) · `--modes slot0`(·`slot0_nosafe`) 는 계층형 규칙 정책(늘 0 번 후보)을 같은 판으로 |
 
 ## train (`train.cpp`, 빌드 `CMakeLists.txt`)
 
@@ -27,6 +27,7 @@ cmake --build <빌드> -j8 --target train
 | `--ckpt-every` | 50 | `ckpt/model_<반복>.bin`, 그리고 10 반복마다 `ckpt/model_latest.bin` |
 | `--replay-every` | 25 | 이 반복마다 표본 환경(0~63)에서 새로 시작하는 판 2 개를 재생 파일로 (동시 녹화 최대 8 판 — 끊김 판(12 000 걸음)이 녹화 칸을 오래 잡아도 새 녹화가 계속 붙음) |
 | `--list` · `--env` · `--model` | scenes/train/list.tsv · sim/config/env.yaml · sensor_model.yaml | 학습 맵 목록·시뮬 설정 |
+| `--hier` | 끔 | 계층형(mdp/README "계층형"): 1 s 마다 프론티어 후보 8 개 중 하나(가린 범주 분포, `xnet::explore_spec_hier`) → 시뮬이 경로 계획·추종. 반복 = 결정 24 개(= 시뮬 240 걸음), γ = 0.999¹⁰, 걸음/s 는 시뮬 걸음 단위. 재생 녹화는 아직 없음(`--replay-every` 무시) · 체크포인트는 기본 구조와 안 섞임(층 이름이 다름) |
 
 - done 매핑: `mdp::cur::terminal` (1 선언 성공·2 벽 충돌·4 선언 실패·5 사람 충돌) → PPO 1 종료, 3 → 끊김(가치로 메움).
 - progress.jsonl (반복마다): `reward/<항>`(끝난 판의 항별 합 평균), `rollout/success_rate`·`collision_rate`(벽+사람)·`person_collision_rate`·`declare_short_rate`(선언 실패)·`truncation_rate`·`coverage_mean`·`coverage_at_declare_mean`·`t95_mean`·`t95_reached_rate`·`ep_len_mean`(걸음)·`ep_rew_mean`, `curriculum/stage`(끝난 판 단계 평균), `train/*`(learning_rate·approx_kl·value_loss·policy_gradient_loss·entropy_loss·grad_norm·std), `time/*`(fps·iter_ms·rollout_ms·update_ms + sim_ms·act_ms·host_ms), `gpu/mem_used_mb`, 평가 반복에는 `eval/*`(success_rate·collision_rate·t95_mean·coverage_mean … — frontier 실행의 `eval/frontier_t95_mean` 과 나란히).

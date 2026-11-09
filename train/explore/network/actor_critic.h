@@ -15,6 +15,7 @@
 
 #include "cnn_fused.cuh"
 #include "common.cuh"
+#include "slot_head.cuh"
 
 namespace XNET_NS {
 
@@ -165,10 +166,15 @@ struct ACSpec {
   // 인코더 나누기 (2026-11-08, rsl_rl·legged_gym·Jonnarth 2024·Cao 2024 처럼): true 면 actor 인코더 enc 와 critic 인코더 enc_c 가 같은 구조·따로 가중치,
   // 각 인코더 기울기는 자기 손실에서만. false = 공유 인코더(구조 버전 2, 체크포인트 형식 2)
   bool split_enc = false;
+  // 계층형 (mdp/README "계층형", slot_head.cuh): n_slots > 0 이면 행동 = 후보 슬롯 하나 (가린 범주 분포). actor 출력은 상태 임베딩(actor.out 칸),
+  // 머리가 슬롯마다 [임베딩 ; 정규화 1D 의 slot_off + k·slot_feat 칸] → 로짓. 이때 n_cont = 0 (σ 없음), 선언 로짓 없음
+  int n_slots = 0, slot_feat = 0, slot_off = 0, slot_hidden = 64;
 };
 
 // obs_layout.h 크기로 만든 탐사 RL 기본 구조
 ACSpec explore_spec();
+// 계층형 구조 (obs_layout.h mdp::hier): 같은 인코더·MLP, actor 출력 = 임베딩 64, 슬롯 머리 (은닉 64)
+ACSpec explore_spec_hier();
 
 class ActorCritic {
  public:
@@ -188,6 +194,7 @@ class ActorCritic {
   ACSpec spec;
   Net enc, actor, critic;  // enc = 공유 인코더 (split 이면 actor 인코더) (특징 enc.x0() [n][nf]), actor·critic = MLP (입력 [F | 1D])
   Net enc_c;               // split 일 때만: critic 인코더 (같은 구조, 따로 가중치)
+  SlotHead head;            // spec.n_slots > 0 일 때만: 슬롯 점수 머리
   bool split = false;
   int nf = 0;              // 인코더 특징 수
   Normalizer norm;

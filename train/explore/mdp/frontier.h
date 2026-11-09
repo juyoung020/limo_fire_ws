@@ -29,6 +29,7 @@
 #include <cstdint>
 
 #include "detmath.h"
+#include "obs_layout.h"
 
 namespace mdp {
 
@@ -125,6 +126,7 @@ struct SearchBuf {
   int32_t* qa;          // nearestCell·번지기 큐
   int32_t* qb;          // 덩어리 BFS 큐
   int32_t* dist = nullptr;   // 있으면 번진 칸마다 시작 칸에서 4 이웃 BFS 거리(칸)를 적고 덩어리 near_dist·near_cell 을 셈 (번지기는 FIFO 라 거리 = 부모 + 1)
+  int32_t* label = nullptr;  // 있으면 덩어리로 묶인 칸(flag bit1)마다 그 덩어리 번호(찾은 차례, 문턱과 무관 — 계층형 후보의 "지금 목표" 판정)
 };
 
 struct SearchResult {
@@ -151,7 +153,7 @@ struct CoarseBuf {
 DEV int coarse_dim(int n, int f) { return (n + f - 1) / f; }
 namespace detail {
 // buildNewFrontier (원본 97-170): 8 이웃으로, 번진 칸 안의 프론티어 칸을 묶음. 첫 칸도 합·거리에 넣는다(위 "원본과 다른 점")
-DEV Frontier build(const MapView& m, int init, int rx, int ry, SearchBuf b) {
+DEV Frontier build(const MapView& m, int init, int rx, int ry, SearchBuf b, int lab) {
   Frontier f;
   f.n = 0; f.sx = 0; f.sy = 0; f.min_d2 = 0x7fffffff; f.middle = init; f.initial = init; f.near_dist = -1; f.near_cell = -1;
   int head = 0, tail = 0;
@@ -160,6 +162,7 @@ DEV Frontier build(const MapView& m, int init, int rx, int ry, SearchBuf b) {
     const int idx = b.qb[head++];
     const int x = idx % m.w, y = idx / m.w;
     f.n += 1; f.sx += x; f.sy += y;
+    if (b.label) b.label[idx] = lab;
     const int dx0 = x - rx, dy0 = y - ry, d2 = dx0 * dx0 + dy0 * dy0;
     if (d2 < f.min_d2) { f.min_d2 = d2; f.middle = idx; }
     if (b.dist) {
@@ -241,7 +244,7 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
     r.n_cells += 1;
     if (b.flag[idx] & 2) continue;
     b.flag[idx] |= 2;
-    const Frontier f = detail::build(m, idx, rx, ry, b);
+    const Frontier f = detail::build(m, idx, rx, ry, b, r.n_found + r.n_small);
     if (f.n >= min_cells) {
       if (r.n_found < max_out) out[r.n_found] = f;
       r.n_found += 1;
@@ -309,6 +312,74 @@ inline void reach_summary(const MapView& m, int rx, int ry, Robot rb, int min_ce
                           ReachSummary* s) {
   const SearchResult r = frontier_search(m, rx, ry, rb, 1, b, out, max_out);   // 문턱 1: 모든 덩어리를 out 에 (문턱은 reach_pick 에서)
   reach_pick(r, out, r.n_found < max_out ? r.n_found : max_out, min_cells, n_tot, s);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 계층형 후보 (mdp/README "계층형", obs_layout.h mdp::hier): 번진 곳 안 덩어리를 크기와 무관하게(hier::kCandMinCells) 위 reach_pick 과 같은
+// 열쇠 (BFS 거리 << 32 | 칸) 짧은 순으로 hier::K 개. 넘침 규칙: K 개보다 많으면 가까운 K 개만(먼 덩어리는 로봇이 다가가면 들어옴),
+// 지도 전체 프론티어 칸 > kReachCap 이면 비움(reach_pick 과 같은 규칙). GPU 는 reach_block 이 같은 값을 블록 병렬로 (env_verify 가 비트 비교).
+struct CandTop {
+  int32_t n;      // 덩어리 칸 수 (0 = 빈 칸)
+  int32_t dist;   // BFS 거리 (칸)
+  int32_t cell;   // 덩어리에서 BFS 거리가 가장 짧은 칸 (y · w + x) = 경로 목표
+  int32_t cur;    // 1: 지금 목표 칸(goal)이 이 덩어리 안
+  int32_t util;   // 주변 프론티어 칸 수 (cand_util)
+};
+struct CandSummary {
+  int32_t n;      // 채운 후보 수
+  CandTop c[hier::K];
+};
+DEV void cand_clear(CandSummary* s) {
+  s->n = 0;
+  for (int k = 0; k < hier::K; ++k) { s->c[k].n = 0; s->c[k].dist = -1; s->c[k].cell = -1; s->c[k].cur = 0; s->c[k].util = 0; }
+}
+// CPU 참조: frontier_search(문턱 1, dist·label 켬) 결과에서. key2[i] = 덩어리 i 의 칸 중 BFS 거리 ≥ hier::kCandMinDist 인 칸의 (거리 << 32 | 칸) 최솟값
+// (cand_keys, 없으면 ~0 — 후보 아님). goal = 지금 목표 칸 (없으면 −1), flag·label = 그 찾기의 버퍼
+DEV void cand_pick(const Frontier* out, const uint64_t* key2, int n_out, int n_tot, int goal, const uint8_t* flag, const int32_t* label, CandSummary* s) {
+  cand_clear(s);
+  if (n_tot > kReachCap) return;
+  const int glab = (goal >= 0 && (flag[goal] & 2)) ? label[goal] : -1;
+  uint64_t last = 0;
+  for (int k = 0; k < hier::K; ++k) {
+    uint64_t best = ~0ull;
+    int bi = -1;
+    for (int i = 0; i < n_out; ++i) {
+      if (out[i].n < hier::kCandMinCells || key2[i] == ~0ull) continue;
+      const uint64_t key = key2[i];
+      if (k > 0 && key <= last) continue;
+      if (key < best) { best = key; bi = i; }
+    }
+    if (bi < 0) break;
+    s->c[k].n = out[bi].n;
+    s->c[k].dist = (int32_t)(best >> 32);
+    s->c[k].cell = (int32_t)(best & 0xffffffffull);
+    s->c[k].cur = bi == glab ? 1 : 0;
+    s->n = k + 1;
+    last = best;
+  }
+}
+// 덩어리마다 후보 열쇠 (위 cand_pick 의 key2): 번진 칸(qa[0 … r.n_reach)) 중 덩어리로 묶인 프론티어 칸이고 거리 ≥ kCandMinDist 인 칸
+DEV void cand_keys(const SearchResult& r, const SearchBuf& b, int n_out, uint64_t* key2) {
+  for (int i = 0; i < n_out; ++i) key2[i] = ~0ull;
+  for (int q = 0; q < r.n_reach; ++q) {
+    const int idx = b.qa[q];
+    if (!(b.flag[idx] & 2) || b.dist[idx] < hier::kCandMinDist) continue;
+    const int l = b.label[idx];
+    if (l < 0 || l >= n_out) continue;
+    const uint64_t key = ((uint64_t)(uint32_t)b.dist[idx] << 32) | (uint32_t)idx;
+    if (key < key2[l]) key2[l] = key;
+  }
+}
+// 주변 프론티어 칸 수: 칸 (cx, cy) 둘레 ±R 칸 네모(맵 안) 안의 frontier_cell 수. GPU 는 프론티어 칸 비트 지도(fmap)를 세어 같은 값
+DEV int cand_util_radius(float res) { return (int)(hier::kUtilRadius / res + 0.5f); }
+DEV int cand_util(const MapView& m, int cx, int cy, int R) {
+  int n = 0;
+  for (int y = cy - R; y <= cy + R; ++y) {
+    if (y < 0 || y >= m.h) continue;
+    for (int x = cx - R; x <= cx + R; ++x)
+      if (x >= 0 && x < m.w && frontier_cell(m, x, y)) ++n;
+  }
+  return n;
 }
 
 

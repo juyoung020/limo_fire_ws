@@ -171,6 +171,49 @@ __device__ void reach_fix(const EnvBatch& b, const EnvState& e, int env, const S
   }
 }
 
+// 시작 칸 (스레드 하나) = frontier_search nearestCell 과 같은 칸: 로봇 칸 (rx, ry) 이 설 수 있으면 그 칸, 아니면 FIFO 차례 4 이웃 BFS 로
+// 처음 만나는 설 수 있는 칸. 층 d 차례 cur → 층 d+1 차례 nxt: 칸마다 nb4 차례로 이웃 중 맨해튼 d+1 이고 아직 nxt 에 없는 칸을 붙인다
+// (FIFO 와 같은 차례). 물결 목록 QA·QB 를 두 층 버퍼로. 범위(건드린 칸 범위 낱말) 밖은 설 수 없음. 설 수 있는 칸이 하나는 있어야 부른다
+// (없으면 맵 전체를 돈다 — 부르는 쪽이 확인). reach_block 과 계층형 계획(env_plan_kernel)이 같이 쓴다
+__device__ int stand_start(const MapDev& m, int rx, int ry, const uint32_t* ST, int ws, int by0, int by1, int bw0, int bw1, int32_t* QA,
+                           int32_t* QB) {
+  const auto st_bit = [&](int x, int y) -> bool {
+    const int wx = x >> 5;
+    if (y < by0 || y > by1 || wx < bw0 || wx > bw1) return false;
+    return (ST[y * ws + wx] >> (x & 31)) & 1u;
+  };
+  if (st_bit(rx, ry)) return ry * m.gw + rx;
+  int* cur = QA;
+  int* nxt = QB;
+  int nc = 1, d = 0;
+  cur[0] = ry * m.gw + rx;
+  while (nc > 0) {
+    for (int i = 0; i < nc; ++i) {
+      const int x = cur[i] % m.gw, y = cur[i] / m.gw;
+      if (st_bit(x, y)) return cur[i];
+    }
+    int nn = 0;
+    for (int i = 0; i < nc; ++i) {
+      const int x = cur[i] % m.gw, y = cur[i] / m.gw;
+      for (int k = 0; k < 4; ++k) {
+        int dx, dy;
+        mdp::nb4(k, &dx, &dy);
+        const int u = x + dx, v = y + dy;
+        if (u < 0 || v < 0 || u >= m.gw || v >= m.gh) continue;
+        if (abs(u - rx) + abs(v - ry) != d + 1) continue;
+        const int j = v * m.gw + u;
+        bool seen = false;
+        for (int q = nn - 1; q >= 0 && !seen; --q) seen = nxt[q] == j;
+        if (!seen) nxt[nn++] = j;
+      }
+    }
+    int* t = cur; cur = nxt; nxt = t;
+    nc = nn;
+    ++d;
+  }
+  return -1;
+}
+
 // 한 줄 낱말 안 이어 채우기: 씨앗 t(⊆ m)가 든 m 의 1 줄기를 위쪽 비트(칸 x 큰 쪽)로 끝까지 — 덧셈 자리올림이 1 줄기를 타고 오른다
 __device__ __forceinline__ uint32_t run_fill_up(uint32_t t, uint32_t m) {
   return (((uint32_t)((unsigned long long)m + t) ^ m) | t) & m;
@@ -186,18 +229,25 @@ __device__ __forceinline__ uint32_t run_fill_up(uint32_t t, uint32_t m) {
 //      뿌리마다 칸 수, 문턱 넘는 덩어리 수
 //   5. 거리 = 층 BFS(4 이웃, 설 수 있는 칸): 물결 낱말 목록만 돌고(넓이가 아니라 물결 길이에 비례), 문턱 넘는 덩어리를 min(3, 덩어리 수) 개
 //      처음 맞힌 층을 마치면 멈춤 — 덩어리 열쇠 (거리 << 32 | 칸) 최솟값은 처음 맞힌 층에서 정해지고 안 맞힌 덩어리는 거리가 더 멀다
-__device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::ReachSummary& RS, int tid) {
+// 계층형(b.cand ≠ nullptr)이면 같은 BFS 에서 후보(mdp::cand_pick 과 같은 값 — 크기 문턱 hier::kCandMinCells, 열쇠 짧은 순 hier::K 개)와
+// 지금 목표 칸(e.goal_cell)을 품은 덩어리를 CS 에 더 낸다. BFS 는 두 목록이 다 찰 때까지 — 기본 요약(가까운 3 개)은 그대로 (더 먼 층을 더 돌 뿐)
+__device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::ReachSummary& RS, mdp::CandSummary& CS, int tid) {
   constexpr int kHitCap = 64;
   __shared__ int s_tot, s_any, s_start, s_cells, s_found, s_hits, s_nhit, s_cntA[2], s_cntC[2];
+  __shared__ int s_found_all, s_hits_all, s_groot, s_best_r;   // 계층형 후보: 문턱 kCandMinCells 덩어리 수·맞힌 수, 지금 목표 덩어리 뿌리
   __shared__ uint32_t s_a[kAccShared];   // 범위가 작으면: 채우기 동안 설 수 있는 칸, BFS 동안 후보 비트
   __shared__ uint32_t s_r[kAccShared];   // 범위가 작으면: 번진 곳 (RE 대신)
   __shared__ int s_scan[kRT];
-  __shared__ int s_hit[kHitCap];
+  __shared__ int s_hit[kHitCap], s_hit2[kHitCap], s_nhit2;
   __shared__ unsigned long long s_best;
   __shared__ int s_best_n;
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
-  if (tid == 0) mdp::reach_clear(&RS);
+  const bool hier = b.cand != nullptr;
+  if (tid == 0) {
+    mdp::reach_clear(&RS);
+    if (hier) mdp::cand_clear(&CS);
+  }
   if (e.kb_x1 < 0) { __syncthreads(); return; }   // 아는 칸 없음 (블록 전체 같은 값)
   const int ws = fmap_row(c), nf = c.size * ws;
   uint32_t* RB = b.rbits + (size_t)env * kReachBits * nf;
@@ -213,6 +263,7 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   int32_t* QB = LST + 4 * mdp::kReachCap;
   int32_t* QC = LST + 6 * mdp::kReachCap;
   unsigned long long* KEY = b.rkey + (size_t)env * mdp::kReachCap;
+  unsigned long long* KEY2 = b.rkey2 ? b.rkey2 + (size_t)env * mdp::kReachCap : nullptr;   // 계층형 후보 열쇠
   const int by0 = e.kb_y0, by1 = e.kb_y1, bw0 = e.kb_x0 >> 5, bw1 = e.kb_x1 >> 5, nbw = bw1 - bw0 + 1, nbox = nbw * (by1 - by0 + 1);
   const int min_cells = mdp::obsgen::reach_min_cells(c);
   // 범위 낱말이 kAccShared 이하면 번진 곳·설 수 있는 칸·BFS 후보 비트를 공유 메모리에 (범위 안 번호 = (y − by0) · nbw + (wx − bw0)) — 같은 값
@@ -254,53 +305,19 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   int rx, ry;
   cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
   const bool in_map = rx >= 0 && ry >= 0 && rx < m.gw && ry < m.gh;
-  const auto st_bit = [&](int x, int y) -> bool {   // 범위 밖 낱말 = 설 수 없음 (설 수 있으면 아는 칸 = 범위 안)
-    const int wx = x >> 5;
-    if (y < by0 || y > by1 || wx < bw0 || wx > bw1) return false;
-    return (ST[y * ws + wx] >> (x & 31)) & 1u;
-  };
   const auto list_pos = [&](int x, int y) -> int {
     const int wx = x >> 5, bit = x & 31;
     return PRE[(y - by0) * nbw + (wx - bw0)] + __popc(F[y * ws + wx] & ((1u << bit) - 1u));
   };
   // 2. 시작 칸 (스레드 0, 물결 목록 QA·QB 를 두 층 버퍼로)
   __syncthreads();
-  if (tid == 0 && in_map && s_any) {
-    if (st_bit(rx, ry)) s_start = ry * m.gw + rx;
-    else {
-      // 층 d 차례 cur → 층 d+1 차례 nxt: 칸마다 nb4 차례로 이웃 중 맨해튼 d+1 이고 아직 nxt 에 없는 칸을 붙인다 (FIFO 와 같은 차례)
-      int* cur = QA;
-      int* nxt = QB;
-      int nc = 1, d = 0;
-      cur[0] = ry * m.gw + rx;
-      while (nc > 0 && s_start < 0) {
-        for (int i = 0; i < nc; ++i) {
-          const int x = cur[i] % m.gw, y = cur[i] / m.gw;
-          if (st_bit(x, y)) { s_start = cur[i]; break; }
-        }
-        if (s_start >= 0) break;
-        int nn = 0;
-        for (int i = 0; i < nc; ++i) {
-          const int x = cur[i] % m.gw, y = cur[i] / m.gw;
-          for (int k = 0; k < 4; ++k) {
-            int dx, dy;
-            mdp::nb4(k, &dx, &dy);
-            const int u = x + dx, v = y + dy;
-            if (u < 0 || v < 0 || u >= m.gw || v >= m.gh) continue;
-            if (abs(u - rx) + abs(v - ry) != d + 1) continue;
-            const int j = v * m.gw + u;
-            bool seen = false;
-            for (int q = nn - 1; q >= 0 && !seen; --q) seen = nxt[q] == j;
-            if (!seen) nxt[nn++] = j;
-          }
-        }
-        int* t = cur; cur = nxt; nxt = t;
-        nc = nn;
-        ++d;
-      }
-    }
+  if (tid == 0 && in_map && s_any) s_start = stand_start(m, rx, ry, ST, ws, by0, by1, bw0, bw1, QA, QB);
+  for (int i = tid; i < (over ? 0 : n_tot); i += kRT) {
+    PAR[i] = i;
+    CNT[i] = 0;
+    KEY[i] = ~0ull;
+    if (KEY2) KEY2[i] = ~0ull;
   }
-  for (int i = tid; i < (over ? 0 : n_tot); i += kRT) { PAR[i] = i; CNT[i] = 0; KEY[i] = ~0ull; }
   __syncthreads();
   const int start = s_start;
   const int sx = start % m.gw, sy = start / m.gw;
@@ -309,6 +326,10 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
     s_found = 0;
     s_hits = 0;
     s_nhit = 0;
+    s_found_all = 0;
+    s_nhit2 = 0;
+    s_hits_all = 0;
+    s_groot = -1;
     if (start >= 0) *REp(sy * ws + (sx >> 5)) = 1u << (sx & 31);
   }
   __syncthreads();
@@ -424,7 +445,8 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
     }
   __syncthreads();
   // 뿌리마다 칸 수 (줄기 길이씩), 문턱을 막 넘은 순간 덩어리 수 하나
-  int found = 0;
+  int found = 0, found_all = 0;
+  constexpr int kc = mdp::hier::kCandMinCells;
   if (!over)
     for (int k = tid; k < nbox; k += kRT) {
       const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
@@ -434,27 +456,45 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
         const int r = uf_find(PAR, list_pos(wx * 32 + lo, y));
         const int old = atomicAdd(&CNT[r], len);
         found += (old < min_cells && old + len >= min_cells) ? 1 : 0;
+        found_all += (old < kc && old + len >= kc) ? 1 : 0;
       });
     }
   atomicAdd(&s_found, found);
+  if (hier) atomicAdd(&s_found_all, found_all);
   __syncthreads();
   const int need = over ? 0 : min(mdp::kReachTop, s_found);
+  const int need_all = (over || !hier) ? 0 : min(mdp::hier::K, s_found_all);
+  // 계층형: 지금 목표 칸이 번진 프론티어 칸이면 그 덩어리 뿌리 (CPU 참조: frontier_search 의 flag bit1 · label)
+  if (hier && tid == 0 && !over && e.goal_cell >= 0) {
+    const int gx = e.goal_cell % m.gw, gy = e.goal_cell / m.gw, gwx = gx >> 5;
+    if (gy >= by0 && gy <= by1 && gwx >= bw0 && gwx <= bw1) {
+      const int wi = gy * ws + gwx;
+      if (((F[wi] & *REp(wi)) >> (gx & 31)) & 1u) s_groot = uf_find(PAR, list_pos(gx, gy));
+    }
+  }
   // 맞힌 칸 (거리 dd): 문턱 넘는 덩어리면 열쇠를 줄이고, 처음 맞힌 덩어리면 셈
+  // 계층형 후보는 따로 열쇠(KEY2)·목록: 크기 문턱 kc, 거리 hier::kCandMinDist 칸 이상인 칸만 (mdp::cand_pick 과 같은 규칙)
   const auto hit = [&](int x, int y, int dd) {
     const int r = uf_find(PAR, list_pos(x, y));
-    if (CNT[r] < min_cells) return;
+    const bool big = CNT[r] >= min_cells, cand = hier && CNT[r] >= kc && dd >= mdp::hier::kCandMinDist;
+    if (!big && !cand) return;
     const unsigned long long key = ((unsigned long long)(uint32_t)dd << 32) | (uint32_t)(y * m.gw + x);
-    if (atomicMin(&KEY[r], key) == ~0ull) {
+    if (big && atomicMin(&KEY[r], key) == ~0ull) {
       atomicAdd(&s_hits, 1);
       const int q = atomicAdd(&s_nhit, 1);
       if (q < kHitCap) s_hit[q] = r;
+    }
+    if (cand && atomicMin(&KEY2[r], key) == ~0ull) {
+      atomicAdd(&s_hits_all, 1);
+      const int q = atomicAdd(&s_nhit2, 1);
+      if (q < kHitCap) s_hit2[q] = r;
     }
   };
   // 5. 거리: 물결 낱말 목록 층 BFS (같은 층 안 차례는 결과에 안 남음 — 집합·최솟값만). 아직 안 간 칸 = RE 에 남은 칸
   //    (BFS 가 닿는 곳 = 번진 곳이라 RE 에서 지워 가며 씀 — RE 는 위에서 다 썼고 다음 관측이 다시 셈).
   //    후보 비트는 범위 낱말이 kAccShared 이하면 공유 메모리(범위 안 번호), 넘으면 장치 메모리 ACC — 같은 값. 층마다 __syncthreads 둘
   //    (셈 칸을 층 홀짝으로 두 벌 — 다음 층 칸은 지난 층이 다 읽은 뒤 스레드 0 이 비움)
-  if (need > 0) {
+  if (need > 0 || need_all > 0) {
     const auto acc_ref = [&](int wi) -> uint32_t* { return small ? &s_a[bidx(wi)] : &ACC[wi]; };
     if (small) {   // 채우기에 쓴 설 수 있는 칸 사본을 비워 후보 비트로
       for (int k = tid; k < nbox; k += kRT) s_a[k] = 0u;
@@ -475,7 +515,7 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
     int32_t* nxt = QB;
     for (int d = 0;; ++d) {
       const int na = s_cntA[d & 1];
-      if (na == 0 || s_hits >= need) break;   // 블록 전체 같은 값 (지난 층 끝 __syncthreads 뒤)
+      if (na == 0 || (s_hits >= need && s_hits_all >= need_all)) break;   // 블록 전체 같은 값 (지난 층 끝 __syncthreads 뒤)
       if (tid == 0) { s_cntA[(d + 1) & 1] = 0; s_cntC[(d + 1) & 1] = 0; }
       // 밀기: 물결 낱말의 4 이웃 넓힘을 후보 비트에 OR — 이번 층에 처음 비트를 받은 낱말(전 값 0)만 후보 목록에
       int* nc_ = &s_cntC[d & 1];
@@ -518,57 +558,106 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
     R.closed = (start >= 0 && s_cells == 0) ? 1 : 0;
     R.overflow = over ? 1 : 0;
     R.n_found = over ? 0 : s_found;
-    if (s_nhit <= kHitCap) {   // 맞힌 덩어리 목록에서 열쇠 작은 kReachTop 개 (안 맞힌 덩어리는 거리가 더 멂)
-      unsigned long long last = 0ull;
-      for (int t = 0; t < mdp::kReachTop; ++t) {
-        unsigned long long best = ~0ull;
-        int br = -1;
-        for (int q = 0; q < s_nhit; ++q) {
-          const unsigned long long k = KEY[s_hit[q]];
-          if ((t == 0 || k > last) && k < best) { best = k; br = s_hit[q]; }
-        }
-        if (br < 0) break;
-        R.top[t].n = CNT[br];
-        R.top[t].dist = (int32_t)(best >> 32);
-        R.top[t].cell = (int32_t)(best & 0xffffffffull);
-        last = best;
-      }
-    }
+    if (hier) CS.n = 0;
   }
-  if (s_nhit > kHitCap) {   // 드묾: 목록이 넘쳤으면 뿌리 전체를 세 번 훑음 (맞힌 뿌리만 열쇠가 ~0 아님)
+  // 맞힌 덩어리에서 열쇠 작은 kcount 개 (칸 수 ≥ minc) → put(차례, 뿌리, 열쇠, 칸 수). 맞힌 목록이 넘쳤으면(드묾) 뿌리 전체를 kcount 번 훑음
+  // (맞힌 뿌리만 열쇠가 ~0 아님). 안 맞힌 덩어리는 거리가 더 멂. put 은 스레드 0 만 부른다
+  const auto pick = [&](const unsigned long long* KEY, const int* s_hit, int s_nhit, int kcount, int minc, auto&& put) {
+    if (s_nhit <= kHitCap) {
+      if (tid == 0) {
+        unsigned long long last = 0ull;
+        for (int t = 0; t < kcount; ++t) {
+          unsigned long long best = ~0ull;
+          int br = -1;
+          for (int q = 0; q < s_nhit; ++q) {
+            if (CNT[s_hit[q]] < minc) continue;
+            const unsigned long long k = KEY[s_hit[q]];
+            if ((t == 0 || k > last) && k < best) { best = k; br = s_hit[q]; }
+          }
+          if (br < 0) break;
+          put(t, br, best, CNT[br]);
+          last = best;
+        }
+      }
+      return;
+    }
     unsigned long long last = 0ull;
-    for (int t = 0; t < mdp::kReachTop; ++t) {
-      if (tid == 0) { s_best = ~0ull; s_best_n = 0; }
+    for (int t = 0; t < kcount; ++t) {
+      if (tid == 0) { s_best = ~0ull; s_best_n = 0; s_best_r = -1; }
       __syncthreads();
       unsigned long long mine = ~0ull;
       for (int i = tid; i < n_tot; i += kRT)
-        if (KEY[i] != ~0ull && (t == 0 || KEY[i] > last) && KEY[i] < mine) mine = KEY[i];
+        if (KEY[i] != ~0ull && CNT[i] >= minc && (t == 0 || KEY[i] > last) && KEY[i] < mine) mine = KEY[i];
       if (mine != ~0ull) atomicMin(&s_best, mine);
       __syncthreads();
       const unsigned long long best = s_best;
       if (best == ~0ull) break;   // 블록 전체 같은 값
       for (int i = tid; i < n_tot; i += kRT)
-        if (KEY[i] == best) s_best_n = CNT[i];
+        if (KEY[i] == best) { s_best_n = CNT[i]; s_best_r = i; }
       __syncthreads();
-      if (tid == 0) {
-        RS.top[t].n = s_best_n;
-        RS.top[t].dist = (int32_t)(best >> 32);
-        RS.top[t].cell = (int32_t)(best & 0xffffffffull);
-      }
+      if (tid == 0) put(t, s_best_r, best, s_best_n);
       last = best;
     }
+  };
+  pick(KEY, s_hit, s_nhit, mdp::kReachTop, min_cells, [&](int t, int, unsigned long long key, int n) {
+    RS.top[t].n = n;
+    RS.top[t].dist = (int32_t)(key >> 32);
+    RS.top[t].cell = (int32_t)(key & 0xffffffffull);
+  });
+  if (hier) {
+    __syncthreads();   // 위 훑기의 공유 칸(s_best …)을 다시 쓰기 전
+    pick(KEY2, s_hit2, s_nhit2, mdp::hier::K, kc, [&](int t, int r, unsigned long long key, int n) {
+      CS.c[t].n = n;
+      CS.c[t].dist = (int32_t)(key >> 32);
+      CS.c[t].cell = (int32_t)(key & 0xffffffffull);
+      CS.c[t].cur = r == s_groot ? 1 : 0;
+      CS.c[t].util = 0;
+      CS.n = t + 1;
+    });
   }
   __syncthreads();
 }
 
 // 관측 마무리 뒤 (env_finish_kernel·env_reset_kernel 다음): 환경마다 블록 하나가 요약을 내고 그 칸만 관측에 (observations.h obs_reach).
 // 관측 커널과 따로 둔 까닭: 이 단계의 레지스터·공유 메모리가 관측 커널에 붙으면 그 커널 전체의 동시 블록 수가 줄어서
-__global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b) {
+// gate (계층형 묶음): 0 모든 환경 · 1 판이 끝난(쉬는) 환경은 건너뜀 (묶음 가운데 걸음) · 2 끝난 환경만 (묶음 끝 리셋 뒤)
+__global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate) {
   __shared__ mdp::ReachSummary rs;
+  __shared__ mdp::CandSummary cs;
+  __shared__ int s_util[mdp::hier::K];
   const int env = blockIdx.x, tid = threadIdx.x;
+  if (gate == 1 && b.done[env] != 0) return;   // 블록 전체 같은 값
+  if (gate == 2 && b.done[env] == 0) return;
   const EnvState& e = b.st[env];
-  reach_block(b, e, env, rs, tid);
+  reach_block(b, e, env, rs, cs, tid);
   if (tid == 0) mdp::obsgen::obs_reach(b, e, env, rs);
+  if (!b.cand) return;
+  // 계층형 후보: 주변 프론티어 칸 수 = 프론티어 칸 비트 지도(fmap)의 ±R 네모 안 비트 수 (mdp::cand_util 과 같은 값) — (후보, 줄)마다 스레드
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int ws = fmap_row(c), R = mdp::cand_util_radius(c.res), rows = 2 * R + 1;
+  const uint32_t* FM = b.fmap + (size_t)env * c.size * ws;
+  if (tid < mdp::hier::K) s_util[tid] = 0;
+  __syncthreads();
+  for (int it = tid; it < mdp::hier::K * rows; it += kRT) {
+    const int k = it / rows;
+    if (cs.c[k].n <= 0) continue;
+    const int cx = cs.c[k].cell % m.gw, y = cs.c[k].cell / m.gw + it % rows - R;
+    if (y < 0 || y >= m.gh) continue;
+    const int x0 = max(0, cx - R), x1 = min(m.gw - 1, cx + R);
+    int n = 0;
+    for (int w = x0 >> 5; w <= (x1 >> 5); ++w) {
+      const int b0 = max(x0 - w * 32, 0), b1 = min(x1 - w * 32, 31);
+      const uint32_t mk = (b1 == 31 ? ~0u : ((1u << (b1 + 1)) - 1u)) & ~((1u << b0) - 1u);
+      n += __popc(FM[y * ws + w] & mk);
+    }
+    atomicAdd(&s_util[k], n);
+  }
+  __syncthreads();
+  if (tid == 0) {
+    for (int k = 0; k < mdp::hier::K; ++k) cs.c[k].util = s_util[k];
+    mdp::obsgen::obs_cand(b, e, env, cs);
+  }
 }
 
 // 관측: 칸마다(모든 스레드) → 합치기·숫자(스레드 0). statics: 늘 0 인 물체 채널(📏)도 씀 — 판이 시작할 때만 (observations.h obs_cells)
@@ -599,9 +688,10 @@ __device__ void physics_until_scan(const EnvBatch& b, EnvState& e, Shared& sh) {
   sh.k_next = k;
 }
 
-__global__ void __launch_bounds__(kPhysThreads) env_phys_kernel(EnvBatch b, const float* actions, int first) {
+__global__ void __launch_bounds__(kPhysThreads) env_phys_kernel(EnvBatch b, const float* actions, int first, int sub) {
   const int env = blockIdx.x * kPhysThreads + threadIdx.x;
   if (env >= b.n_env) return;
+  if (sub > 0 && b.done[env] != 0) return;   // 계층형 묶음: 판이 이 묶음 앞 걸음에서 끝남 — 묶음 끝까지 쉼
   EnvState& e = b.st[env];
   Shared& sh = b.scratch[env];
   if (first) {
@@ -694,8 +784,11 @@ __device__ void copy_state(EnvState& dst, const EnvState& src, int tid) {
   for (int i = tid; i < (int)(sizeof(EnvState) / 4); i += kThreads) d[i] = s[i];
 }
 
-__global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b) {
+// sub < 0: 기본 (행동 하나 = 걸음 하나). sub ≥ 0: 계층형 묶음의 sub 번째 걸음 — 보상·항을 묶음 합에 더하고, 판이 끝나면 리셋·관측을 묶음 끝
+// (env_bundle_end_kernel)으로 미룬다. 앞 걸음에서 끝난 환경은 쉼
+__global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int sub) {
   const int env = blockIdx.x, tid = threadIdx.x;
+  if (sub > 0 && b.done[env] != 0) return;   // 블록 전체 같은 값 (b.done 은 아래 첫 __syncthreads 뒤에만 씀)
   __shared__ EnvState e;
   __shared__ Shared sh;   // 관측용 (프론티어 합)
   Shared& g = b.scratch[env];
@@ -714,12 +807,28 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b) {
     b.reward[env] = e.reward;
     b.done[env] = e.done;
     if (g.scanned) e.lid_head = (e.lid_head + 1) % kLidarRing;
+    if (sub >= 0) {   // 계층형: 결정 동안 합 (걸음 차례대로 더함 — CPU 참조판과 같은 차례)
+      const float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
+      float* A = b.tacc + (size_t)env * mdp::rew::kTerms;
+      if (sub == 0) {
+        b.racc[env] = e.reward;
+        for (int k = 0; k < mdp::rew::kTerms; ++k) A[k] = T[k];
+      } else {
+        b.racc[env] += e.reward;
+        for (int k = 0; k < mdp::rew::kTerms; ++k) A[k] += T[k];
+      }
+    }
   }
   __syncthreads();
   if (g.scanned) push_bins(b, e, env, g, tid);
   __syncthreads();
   const bool was_done = e.done != 0;
   __syncthreads();
+  if (was_done && sub >= 0) {   // 계층형: 리셋·관측은 묶음 끝에
+    copy_state(b.st[env], e, tid);
+    if (tid == 0) g.cam = mdp::obsgen::depth_camera(b.cfg, e);
+    return;
+  }
   if (was_done) reset_env(b, e, env, tid);
   __shared__ mdp::obsgen::FarDirty fd;
   if (tid == 0) {
@@ -749,6 +858,217 @@ __global__ void env_reset_kernel(EnvBatch b) {
     b.done[env] = 0;
     for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = 0.f;
   }
+}
+
+// ---------- 계층형 (kActPath, include/hier_path.h): 결정 때 경로 계획 · 묶음 끝 ----------
+// 고른 후보 번호 (행동 a[0], 정수 값). 범위 밖·NaN 은 −1 (빈 칸과 같음 — 제자리 회전)
+__device__ __host__ inline int slot_of(float a) { return (a >= 0.f && a < (float)mdp::hier::K) ? (int)a : -1; }
+// 환경 하나 = 블록 하나, 묶음 첫 걸음 앞. 후보 칸(관측 때 b.cand) → 목표. 같은 후보(그 덩어리가 지금 목표 칸을 품음)이고 남은 경로가 아직
+// 지난번 계획과 같은 칸 기준(엄격·느슨)으로 설 수 있는 칸 위면 그대로, 아니면 무게 있는 최단 경로(hier_path.h 머리말 "약한 막힘"):
+// 먼저 엄격(막힘 = 지도 막힘 ∪ 장애물 층 약한 막힘)으로, 못 닿으면 느슨(지도 막힘만)으로. 비트 판 층 BFS(Dial, 버킷 4 개) → 거리 mod 7 로 뒤로 짚기 → 웨이포인트.
+// CPU 참조판 env_ref.cpp plan_cpu 와 같은 경로 (env_verify --hier)
+__global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* actions) {
+  const int env = blockIdx.x, tid = threadIdx.x;
+  EnvState& e = b.st[env];
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int ws = fmap_row(c), nf = c.size * ws;
+  const uint32_t* RB = b.rbits + (size_t)env * kReachBits * nf;
+  const uint32_t* OCC = RB + kRbOcc * nf;
+  const uint32_t* KN = RB + kRbKnown * nf;
+  const uint32_t* ST = RB + kRbStand * nf;
+  const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
+  __shared__ int s_plan, s_target, s_start, s_tgt_ok;
+  const int by0 = e.kb_y0, by1 = e.kb_y1, bw0 = e.kb_x0 >> 5, bw1 = e.kb_x1 >> 5;
+  const auto in_box = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh && y >= by0 && y <= by1 && (x >> 5) >= bw0 && (x >> 5) <= bw1; };
+  const auto bit_of = [&](const uint32_t* P, int x, int y) -> uint32_t { return in_box(x, y) ? (P[y * ws + (x >> 5)] >> (x & 31)) & 1u : 0u; };
+  uint32_t* P = b.pplanes + (size_t)env * kPathPlanes * nf;
+  uint32_t* C3 = P + kPpC3 * nf;
+  uint32_t* C45 = P + kPpC45 * nf;
+  uint32_t* D0 = P + kPpD * nf;
+  uint32_t* D1 = D0 + nf;
+  uint32_t* D2 = D1 + nf;
+  uint32_t* LT = P + kPpLT * nf;
+  uint32_t* SST = P + kPpSST * nf;
+  const auto Bp = [&](int t) { return P + (size_t)(kPpB + (t & 3)) * nf; };
+  if (tid == 0) {
+    const int k = slot_of(actions[(size_t)mdp::act::DIM * env]);
+    e.p_slot = k;
+    const int tgt = k >= 0 ? b.cand[(size_t)env * mdp::hier::K + k] : -1;
+    s_target = tgt;
+    if (tgt < 0) {
+      e.goal_cell = -1;
+      path_set_none(e);
+    }
+    s_plan = tgt >= 0 && e.kb_x1 >= 0 ? 1 : 0;
+    s_start = -1;
+  }
+  __syncthreads();
+  if (!s_plan) {   // 빈 후보: 목표 없음. 아는 칸이 없으면 목표만 (경로 없이 섬)
+    if (tid == 0 && s_target >= 0) {
+      e.goal_cell = s_target;
+      path_set_none(e);
+    }
+    return;   // 블록 전체 같은 값
+  }
+  const int nbw = bw1 - bw0 + 1, nbox = nbw * (by1 - by0 + 1);
+  int rcx, rcy;
+  cell_of(c, m, e.x + e.ex, e.y + e.ey, &rcx, &rcy);
+  const mdp::Robot rb = mdp::obsgen::reach_robot(c), rm = path_rb_mid(c), ro = path_rb_out(c);
+  // 엄격 막힘 판 LT = 지도 막힘 ∪ 약한 막힘(로그 오즈 > 0, 로봇 칸에서 obstacle_max_range 안 — path_lethal 과 같은 규칙), 엄격 설 수 있음 SST
+  // LT 는 범위 둘레(줄 ± 팽창 반경, 낱말 ± 1)까지 — stand_word 가 거기를 읽는다 (범위 밖은 모름이라 지도 막힘과 같지만 판에는 옛 값이 남아 있음)
+  const float rr = c.path_obs_range * c.path_obs_range;
+  const int ly0 = max(0, by0 - ro.r), ly1 = min(m.gh - 1, by1 + ro.r), lw0 = max(0, bw0 - 1), lw1 = min(ws - 1, bw1 + 1), lnw = lw1 - lw0 + 1;
+  for (int k = tid; k < lnw * (ly1 - ly0 + 1); k += kRT) {
+    const int y = ly0 + k / lnw, wx = lw0 + k % lnw, wi = y * ws + wx;
+    uint32_t w = OCC[wi];
+    for (int q = 0; q < 32; ++q) {
+      const int x = wx * 32 + q;
+      if (x >= m.gw) break;
+      const int16_t l = L[y * c.size + x];
+      if (l == mdp::kUnknownL || l <= 0) continue;
+      const float dx = (float)(x - rcx) * c.res, dy = (float)(y - rcy) * c.res;
+      if (dx * dx + dy * dy <= rr) w |= 1u << q;
+    }
+    LT[wi] = w;
+  }
+  __syncthreads();
+  for (int k = tid; k < nbox; k += kRT) {
+    const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
+    SST[wi] = stand_word(LT, KN, ws, m.gh, y, wx, rb);
+  }
+  __syncthreads();
+  // 같은 후보 · 경로 그대로? (지난 계획이 엄격이면 엄격 칸, 느슨이면 느슨 칸으로 남은 경로 확인)
+  if (tid == 0) {
+    const int k = e.p_slot;
+    const bool same = ((b.cand_cur[env] >> k) & 1) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc &&
+                      path_clear(e, [&](int x, int y) { return bit_of(e.p_mode == 1 ? SST : ST, x, y) != 0u; });
+    if (same) s_plan = 0;
+    else {
+      e.goal_cell = s_target;
+      path_set_none(e);
+      e.p_plans += 1;
+    }
+    s_tgt_ok = bit_of(SST, s_target % m.gw, s_target / m.gw) != 0u ? 1 : 0;
+  }
+  __syncthreads();
+  if (!s_plan) return;
+  const int target = s_target, tx = target % m.gw, ty = target / m.gw, twi = ty * ws + (tx >> 5);
+  const uint32_t tbit = 1u << (tx & 31);
+  int32_t* LST = b.rlist + (size_t)env * mdp::kReachCap * kReachLists;
+  // 한 번 계획: PASS = 설 수 있는 칸, OBS = 무게 경계를 셀 막힘 판. 닿으면 true (D0..D2 에 거리 mod 7, C3·C45 에 무게 경계)
+  const auto run = [&](const uint32_t* PASS, const uint32_t* OBS) -> bool {
+    int any = 0;
+    for (int k = tid; k < nbox; k += kRT) {
+      const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
+      C3[wi] = stand_word(OBS, KN, ws, m.gh, y, wx, rm);
+      C45[wi] = stand_word(OBS, KN, ws, m.gh, y, wx, ro);
+      for (int q = 0; q < 4; ++q) Bp(q)[wi] = 0u;
+      D0[wi] = D1[wi] = D2[wi] = 0u;
+      any |= PASS[wi] != 0u;
+    }
+    any = __syncthreads_or(any);
+    if (tid == 0) {
+      s_start = -1;
+      if (any && rcx >= 0 && rcy >= 0 && rcx < m.gw && rcy < m.gh)
+        s_start = stand_start(m, rcx, rcy, PASS, ws, by0, by1, bw0, bw1, LST + 2 * mdp::kReachCap, LST + 4 * mdp::kReachCap);
+      if (s_start >= 0) Bp(0)[(s_start / m.gw) * ws + ((s_start % m.gw) >> 5)] |= 1u << ((s_start % m.gw) & 31);
+    }
+    __syncthreads();
+    if (s_start < 0) return false;
+    // 층 t: 거리 t 로 정해지는 칸 F = 버킷[t] & ~정해진 칸 → 거리 mod 7 + 1 을 3 비트 판에, 이웃(설 수 있고 안 정해진 칸)을 무게만큼 뒤 버킷에
+    const int t_max = 3 * nbox * 32 + 8;   // 못 닿을 때의 안전 상한
+    for (int t = 0; t < t_max; ++t) {
+      uint32_t* Bt = Bp(t);
+      uint32_t* Bold = Bp(t + 3);   // = 지난 층 F (버킷 t − 1) — 이제 비움 (이번 층 밀기가 무게 3 칸을 여기 쓴다)
+      const int code = t % 7 + 1;
+      int a = 0, pend = 0, h = 0;
+      for (int k = tid; k < nbox; k += kRT) {
+        const int wi = (by0 + k / nbw) * ws + bw0 + k % nbw;
+        Bold[wi] = 0u;
+        const uint32_t f = Bt[wi] & ~(D0[wi] | D1[wi] | D2[wi]);
+        Bt[wi] = f;
+        if (f) {
+          if (code & 1) D0[wi] |= f;
+          if (code & 2) D1[wi] |= f;
+          if (code & 4) D2[wi] |= f;
+          a = 1;
+          if (wi == twi && (f & tbit)) h = 1;
+        }
+        pend |= (Bp(t + 1)[wi] | Bp(t + 2)[wi]) != 0u;
+      }
+      a = __syncthreads_or(a);
+      pend = __syncthreads_or(pend);
+      h = __syncthreads_or(h);
+      if (h) return true;
+      if (!a && !pend) return false;
+      if (!a) continue;
+      for (int k = tid; k < nbox; k += kRT) {
+        const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
+        const uint32_t f = Bt[wi], fl = wx > bw0 ? Bt[wi - 1] : 0u, fr = wx < bw1 ? Bt[wi + 1] : 0u;
+        const uint32_t fu = y > by0 ? Bt[wi - ws] : 0u, fd = y < by1 ? Bt[wi + ws] : 0u;
+        const uint32_t n = ((f << 1) | (f >> 1) | (fl >> 31) | (fr << 31) | fu | fd) & PASS[wi] & ~(D0[wi] | D1[wi] | D2[wi]);
+        if (!n) continue;
+        const uint32_t c45 = C45[wi], c3 = C3[wi];
+        Bp(t + 1)[wi] |= n & c45;
+        Bp(t + 2)[wi] |= n & c3 & ~c45;
+        Bp(t + 3)[wi] |= n & ~c3;
+      }
+      __syncthreads();
+    }
+    return false;
+  };
+  int mode = 0;
+  if (s_tgt_ok && run(SST, LT)) mode = 1;           // 엄격 (블록 전체 같은 값)
+  else if (run(ST, OCC)) mode = 2;                  // 느슨: 목표가 약한 막힘 둘레 안이거나 엄격으로 못 닿음
+  if (tid != 0 || !mode) return;
+  const uint32_t* PASS = mode == 1 ? SST : ST;
+  // 뒤로 짚기 (스레드 0): 이웃 차례 nb4 에서 처음으로 거리 ≡ 내 거리 − 내 무게 (mod 7) 인 칸
+  const int start = s_start;
+  const auto dcode = [&](int x, int y) { return (int)(bit_of(D0, x, y) | (bit_of(D1, x, y) << 1) | (bit_of(D2, x, y) << 2)); };
+  const auto wfn = [&](int x, int y) { return path_weight(bit_of(PASS, x, y) != 0u, bit_of(C3, x, y) != 0u, bit_of(C45, x, y) != 0u); };
+  int32_t* list = LST + 6 * mdp::kReachCap;
+  int n = 0, v = target;
+  list[n++] = v;
+  while (v != start) {
+    const int x = v % m.gw, y = v / m.gw;
+    const int pc = ((dcode(x, y) - 1 - wfn(x, y)) % 7 + 7) % 7 + 1;
+    int u = -1;
+    for (int k = 0; k < 4 && u < 0; ++k) {
+      int dx, dy;
+      mdp::nb4(k, &dx, &dy);
+      if (dcode(x + dx, y + dy) == pc) u = (y + dy) * m.gw + x + dx;
+    }
+    if (u < 0 || n >= mdp::kReachCap) return;   // 오지 않음 (거리 장이 맞으면 앞 칸이 늘 있음) — 경로 없이 섬
+    v = u;
+    list[n++] = v;
+  }
+  for (int i = 0; i < n / 2; ++i) { const int t = list[i]; list[i] = list[n - 1 - i]; list[n - 1 - i] = t; }
+  int trunc = 0;
+  e.p_n = path_simplify(list, n, m.gw, wfn, e.wp, mdp::hier::kPathMax, &trunc);
+  e.p_i = 0;
+  e.p_trunc = trunc;
+  e.p_mode = mode;
+  if (mode == 2) e.p_fb += 1;
+}
+
+// 묶음 끝 (환경 하나 = 블록 하나): 보상·항 = 묶음 합, 판이 끝난 환경은 리셋 + 새 판 관측 (끝난 걸음 env_finish_kernel 이 미룬 것 — 그 커널의 was_done 길과 같은 차례)
+__global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
+  const int env = blockIdx.x, tid = threadIdx.x;
+  if (tid == 0) b.reward[env] = b.racc[env];
+  if (tid < mdp::rew::kTerms) b.reward_terms[(size_t)env * mdp::rew::kTerms + tid] = b.tacc[(size_t)env * mdp::rew::kTerms + tid];
+  if (b.done[env] == 0) return;   // 블록 전체 같은 값
+  __shared__ EnvState e;
+  __shared__ Shared sh;
+  Shared& g = b.scratch[env];
+  copy_state(e, b.st[env], tid);
+  __syncthreads();
+  reset_env(b, e, env, tid);
+  __shared__ mdp::obsgen::FarDirty fd;
+  if (tid == 0) fd = mdp::obsgen::far_dirty_take(b, e, g, true);
+  write_obs(b, e, env, sh, tid, fd, true);
+  copy_state(b.st[env], e, tid);
+  if (tid == 0) g.cam = mdp::obsgen::depth_camera(b.cfg, e);
 }
 
 // ---------- 소프트웨어 광선 묶음: 스레드마다 광선 하나씩 순회(trav_step)하고, 끝난 스레드는 워프 단위로 다음 광선을 받는다 ----------
@@ -1021,29 +1341,45 @@ ReachStream& reach_stream() {
   }
   return r;
 }
-void reach_and_depth(const EnvBatch& b, cudaStream_t st) {
+void reach_and_depth(const EnvBatch& b, cudaStream_t st, int gate = 0) {
   ReachStream& r = reach_stream();
   cudaEventRecord(r.go, st);
   cudaStreamWaitEvent(r.s, r.go, 0);
-  env_reach_kernel<<<b.n_env, kRT, 0, r.s>>>(b);
+  env_reach_kernel<<<b.n_env, kRT, 0, r.s>>>(b, gate);
   cudaEventRecord(r.done, r.s);
   depth_gpu(b, st);
   cudaStreamWaitEvent(st, r.done, 0);
 }
 }  // namespace
 
-void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
+namespace {
+// 행동 하나 (속도 행동 주기). sub < 0: 기본 · sub ≥ 0: 계층형 묶음의 sub 번째 걸음 (깊이는 묶음 끝에만 — 정책이 묶음 끝 관측만 보고 깊이는 상태만의 함수)
+void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub) {
   const EnvCfg& c = b.cfg;
   // 한 행동의 라이다 장 수 ≤ ⌈substeps / lidar_every⌉ — 장마다 물리·빔·지도 갱신 한 바퀴
   const int n_scan = (c.substeps + c.lidar_every - 1) / c.lidar_every;
   const int phys_blocks = (b.n_env + kPhysThreads - 1) / kPhysThreads;
   for (int s = 0; s < n_scan; ++s) {
-    env_phys_kernel<<<phys_blocks, kPhysThreads, 0, st>>>(b, actions, s == 0);
+    env_phys_kernel<<<phys_blocks, kPhysThreads, 0, st>>>(b, actions, s == 0, sub);
     beams_gpu(b, st);
     env_apply_kernel<<<b.n_env, kThreads, 0, st>>>(b);
   }
-  env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b);
-  reach_and_depth(b, st);
+  env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b, sub);
+  if (sub < 0) reach_and_depth(b, st);
+  else env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1);   // 덩어리 칸 관측의 지연 차례(vec_prev)를 걸음마다 맞춤 — 끝난 환경은 묶음 끝에
+}
+}  // namespace
+
+void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
+  if (b.cfg.action_mode != kActPath) {
+    step_once(b, actions, st, -1);
+    return;
+  }
+  // 계층형: 결정 하나 = 경로 계획 → 속도 행동 decide_steps 걸음 → 묶음 끝 (보상 합·끝난 판 리셋·관측)
+  env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions);
+  for (int s = 0; s < b.cfg.decide_steps; ++s) step_once(b, actions, st, s);
+  env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
+  reach_and_depth(b, st, 2);
 }
 
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st) {

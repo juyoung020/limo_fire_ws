@@ -46,12 +46,13 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
 // 러너가 읽는 출력 — 모두 GPU 장치 포인터 (CPU 판이면 호스트), step 이 끝나면(스트림 순서) 유효. 호스트 왕복 없음
 struct StepOut {
   const uint8_t* obs_img;       // [N][mdp::obs::IMG_SIZE]
-  const float* obs_1d;          // [N][mdp::obs::POLICY_1D]
+  const float* obs_1d;          // [N][o1d] — o1d = mdp::obs::POLICY_1D (기본), mdp::hier::POLICY_1D (계층형: 뒤에 후보 칸)
   const float* priv;            // [N][mdp::obs::PRIV]
   const float* reward;          // [N]
   const float* reward_terms;    // [N][mdp::rew::kTerms]
   const int32_t* done;          // [N] mdp::cur::Done — 종료 여부는 mdp::cur::terminal(done), 끊김 = 3
   const EpInfo* ep;             // [N] done ≠ 0 인 환경의 끝난 판 정보 (덮음·t95·길이·충돌·단계·맵)
+  int o1d;                      // 관측 1D 한 환경 칸 수
 };
 
 class Env {
@@ -64,7 +65,9 @@ class Env {
 
   void reset();                         // 모든 환경 새 판 + 관측
   // 환경마다 float mdp::act::DIM 개 (v, vy, ω, 끝 선언) — 정규 단위 [−1, 1], 선언은 0/1 (> 0.5 이면 선언).
-  // cfg.act_raw 면 물리 단위. 목표점 행동이면 [번호, 0, 0, 선언]. GPU 면 장치 포인터, CPU 면 호스트 포인터
+  // cfg.act_raw 면 물리 단위. 목표점 행동이면 [번호, 0, 0, 선언]. 계층형(kActPath)이면 [후보 번호, 0, 0, 0] — 한 번 부르면 결정 하나
+  // (속도 행동 decide_steps 걸음 묶음: 보상·항은 묶음 합, done 은 끝난 걸음의 코드 — 판이 묶음 가운데서 끝나면 그 환경은 남은 걸음을 쉬고 묶음 끝에 리셋).
+  // 계층형 후보 칸은 관측 1D 뒤 mdp::hier::CAND_1D 칸. GPU 면 장치 포인터, CPU 면 호스트 포인터
   void step(const float* actions, cudaStream_t st = 0);
   StepOut outputs() const;
   void sync() const;
@@ -111,6 +114,9 @@ inline void random_action(const EnvCfg& c, uint64_t& rng, float* out, float p_de
       out[1] = dm::rand_range(rng, -1.2f, 1.2f);
       out[2] = dm::rand_range(rng, -1.2f, 1.2f);
     }
+  } else if (c.action_mode == kActPath) {   // 후보 번호 (빈 칸이면 환경이 제자리 회전)
+    out[0] = (float)(dm::splitmix64(rng) % (uint64_t)mdp::hier::K);
+    out[1] = out[2] = 0.f;
   } else {
     out[0] = (float)(dm::splitmix64(rng) % (uint64_t)(c.n_dir * c.n_dist));
     out[1] = out[2] = 0.f;
@@ -131,6 +137,8 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);
 void env_step_cpu(const EnvBatch& b, const float* actions);
 // CPU 참조판 스레드 수 (기본 1). 환경을 스레드에 나눠 돌린다 — 결과는 스레드 수와 무관하게 같다
 void set_cpu_threads(int n);
+// 시험용 (env_verify --hier): 계층형 결정 하나의 경로 계획을 CPU 참조판 그대로 (상태 e 의 경로 칸만 바꿈). b 는 CPU 묶음
+void hier_plan_cpu(const EnvBatch& b, EnvState& e, int env, int slot);
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st = 0);
 void env_reset_cpu(const EnvBatch& b);
 

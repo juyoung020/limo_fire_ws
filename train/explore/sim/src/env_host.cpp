@@ -50,6 +50,16 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   c.approach_dist = rpp["approach_velocity_scaling_dist"].as<float>();
   c.approach_min_v = rpp["min_approach_linear_velocity"].as<float>();
   c.goal_tol = need(ctl, "general_goal_checker", nav_path)["xy_goal_tolerance"].as<float>();
+  c.reg_min_radius = rpp["regulated_linear_scaling_min_radius"].as<float>();   // 계층형 추종기 곡률 감속 (hier_path.h)
+  c.reg_min_speed = rpp["regulated_linear_scaling_min_speed"].as<float>();
+  c.path_r_out = need(need(nav["global_costmap"]["global_costmap"]["ros__parameters"], "inflation_layer", nav_path), "inflation_radius", nav_path).as<float>();
+  {   // 계층형 추종기 RPP 충돌 검사 (hier_path.h path_imminent) — 기준선 frontier_explorer.cpp load_params 와 같은 칸에서
+    const YAML::Node gcm = nav["global_costmap"]["global_costmap"]["ros__parameters"];
+    c.path_obs_range = need(need(gcm, "obstacle_layer", nav_path), "scan", nav_path)["obstacle_max_range"].as<float>();
+    const YAML::Node lcm = nav["local_costmap"]["local_costmap"]["ros__parameters"];
+    c.path_fp_pad = lcm["footprint_padding"] ? lcm["footprint_padding"].as<float>() : 0.f;
+    c.path_coll_time = need(rpp, "max_allowed_time_to_collision_up_to_carrot", nav_path).as<float>();
+  }
   const YAML::Node vs = nav["velocity_smoother"]["ros__parameters"];
   c.v_max = vs["max_velocity"][0].as<float>();
   c.w_max = vs["max_velocity"][2].as<float>();
@@ -85,18 +95,33 @@ EnvHostCfg load_env_cfg(const std::string& path) {
 
   const YAML::Node a = need(y, "action", path);
   const std::string mode = need(a, "mode", path).as<std::string>();
-  if (mode != "velocity" && mode != "goal") throw std::runtime_error(path + ": action.mode 는 velocity 또는 goal");
-  c.action_mode = mode == "velocity" ? kActVelocity : kActGoal;
+  if (mode != "velocity" && mode != "goal" && mode != "path") throw std::runtime_error(path + ": action.mode 는 velocity · goal · path");
+  c.action_mode = mode == "velocity" ? kActVelocity : (mode == "path" ? kActPath : kActGoal);
   const YAML::Node av = need(a, "velocity", path), ag = need(a, "goal", path);
   c.n_dir = ag["n_dir"].as<int>();
   c.n_dist = (int)ag["dist"].size();
   if (c.n_dist < 1 || c.n_dist > 4) throw std::runtime_error(path + ": action.goal.dist 는 1~4 개");
   for (int i = 0; i < c.n_dist; ++i) c.dist[i] = ag["dist"][i].as<float>();
   c.goal_margin = ag["goal_margin"].as<float>();
-  const float period = (c.action_mode == kActVelocity ? av : ag)["period"].as<float>();
+  const float period = (c.action_mode != kActGoal ? av : ag)["period"].as<float>();   // 계층형도 0.1 s 속도 행동 주기로 시뮬 걸음 (결정은 그 묶음)
   c.substeps = (int)std::lround(period / c.dt);
   if (c.substeps < 1 || std::fabs(c.substeps * c.dt - period) > 1e-4f)
     throw std::runtime_error(path + ": action period 는 time.dt 의 배수");
+  // 계층형 (include/hier_path.h): 결정 주기 = 속도 행동 주기의 정수 배, 추종기 직진 속도·장애물 근접 감속 (기준선 fast 판과 같은 값), 경로 무게 경계.
+  // 학습기·도구는 --hier 로 action_mode 를 kActPath 로 바꾼다 (이 파일의 기본 mode 는 velocity 그대로 — 기준선이 velocity 를 요구)
+  {
+    const YAML::Node ap = need(a, "path", path);
+    const float dp = ap["period"].as<float>(), pv = av["period"].as<float>();
+    c.decide_steps = (int)std::lround(dp / pv);
+    if (c.decide_steps < 1 || std::fabs(c.decide_steps * pv - dp) > 1e-4f) throw std::runtime_error(path + ": action.path.period 는 velocity.period 의 배수");
+    c.path_v = ap["v"].as<float>();
+    c.path_cost_reg = ap["use_cost_regulated_linear_velocity_scaling"].as<bool>() ? 1 : 0;
+    c.path_cs_dist = ap["cost_scaling_dist"].as<float>();
+    c.path_cs_gain = ap["cost_scaling_gain"].as<float>();
+    c.path_r_mid = ap["weight_mid_dist"].as<float>();
+    c.path_backup_v = ap["backup_speed"].as<float>();
+    c.path_fp_pad += ap["extra_padding"].as<float>();   // nav2 footprint_padding 위에 더 (잠정)
+  }
 
   // 섀시 구동 (drive.h) · 바닥 재질
   const YAML::Node dr = need(y, "drive", path);
@@ -478,7 +503,16 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   b_.lmap = alloc<int16_t>(cells * n_env);
   b_.marks = alloc<uint32_t>(cells / 4 * n_env);
   b_.obs_img = alloc<uint8_t>((size_t)mdp::obs::IMG_SIZE * n_env);
-  b_.obs_1d = alloc<float>((size_t)mdp::obs::POLICY_1D * n_env);
+  const bool hier = hc.cfg.action_mode == kActPath;
+  b_.o1d = hier ? mdp::hier::POLICY_1D : mdp::obs::POLICY_1D;
+  b_.obs_1d = alloc<float>((size_t)b_.o1d * n_env);
+  if (hier) {   // 계층형 (env.h EnvBatch 아래 칸, include/hier_path.h)
+    b_.cand = alloc<int32_t>((size_t)mdp::hier::K * n_env);
+    b_.cand_cur = alloc<int32_t>(n_env);
+    b_.racc = alloc<float>(n_env);
+    b_.tacc = alloc<float>((size_t)mdp::rew::kTerms * n_env);
+    if (gpu) b_.pplanes = alloc<uint32_t>((size_t)n_env * kPathPlanes * hc.cfg.size * ((hc.cfg.size + 31) / 32));
+  }
   b_.priv = alloc<float>((size_t)mdp::obs::PRIV * n_env);
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
   b_.vec_prev = alloc<float>((size_t)mdp::obs::VEC * n_env);
@@ -515,6 +549,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.rpre = alloc<int32_t>((size_t)n_env * nf);
       b_.rlist = alloc<int32_t>((size_t)n_env * mdp::kReachCap * kReachLists);
       b_.rkey = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
+      if (hier) b_.rkey2 = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
     }
     const size_t nb = (size_t)kMaxBeams * n_env;
     b_.beam_t = alloc<float>(nb);
@@ -561,7 +596,7 @@ void Env::step(const float* actions, cudaStream_t st) {
 }
 
 StepOut Env::outputs() const {
-  return StepOut{b_.obs_img, b_.obs_1d, b_.priv, b_.reward, b_.reward_terms, b_.done, b_.ep};
+  return StepOut{b_.obs_img, b_.obs_1d, b_.priv, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d};
 }
 
 void Env::sync() const {
@@ -594,7 +629,7 @@ void Env::get_seen(std::vector<uint8_t>& out) const {
 }
 void Env::get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d, std::vector<float>& priv) const {
   fetch(gpu_, b_.obs_img, (size_t)mdp::obs::IMG_SIZE * b_.n_env, img);
-  fetch(gpu_, b_.obs_1d, (size_t)mdp::obs::POLICY_1D * b_.n_env, o1d);
+  fetch(gpu_, b_.obs_1d, (size_t)b_.o1d * b_.n_env, o1d);
   fetch(gpu_, b_.priv, (size_t)mdp::obs::PRIV * b_.n_env, priv);
 }
 void Env::get_terms(std::vector<float>& terms) const { fetch(gpu_, b_.reward_terms, (size_t)mdp::rew::kTerms * b_.n_env, terms); }

@@ -5,6 +5,9 @@
 //   --declare p: 걸음마다 끝 선언을 p 확률로 (선언 성공·실패 끝도 비교에 들어가게)
 //   --negative: GPU 쪽 행동 하나를 바꿔 일부러 어긋나게 한다 (검사가 틀림을 잡는지)
 //   --people K: 환경마다 사람 상한 K (판마다 0~K 명, people.h). --negative-person: 가운데 걸음에 GPU 쪽 사람 하나를 1 cm 옮긴다
+//   --hier: 계층형 행동 모드(kActPath — 결정 하나 = 속도 행동 10 걸음 묶음, 후보 번호 무작위). 덧붙여 정답 격자를 쓰지 않는지:
+//           CPU 묶음의 정답 격자(MapDev::grid)를 모두 막힘·모두 빈 칸으로 바꾼 사본에서 경로 계획·추종기 명령이 같은지 (--negative 는 후보 번호 하나를 바꿈)
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +23,12 @@ void range_1d(int i, float* lo, float* hi) {
   using namespace mdp::obs;
   *lo = -1.f;
   *hi = 1.f;
+  if (i >= POLICY_1D) {   // 계층형 후보 칸 (mdp::hier)
+    const int f = (i - POLICY_1D) % mdp::hier::FEAT;
+    if (f == mdp::hier::F_DIST) { *lo = 0.f; *hi = 2.f; }
+    else if (f != mdp::hier::F_SIN && f != mdp::hier::F_COS) { *lo = 0.f; *hi = 1.f; }
+    return;
+  }
   if (i < LIDAR) { *lo = 0.f; return; }
   if (i < LIDAR + INTENSITY) { *lo = 0.f; *hi = 1.5f; return; }   // 세기 / 100
 
@@ -48,7 +57,8 @@ int main(int argc, char** argv) {
   bool negative = false;
   bool negative_person = false;
   int people = 0;
-  bool spin = false;   // --spin: 행동을 제자리 돌기(ω 0.5 정규)로 — 작은 방에서 지도 닫힘 성공(판 끝 1) 길을 GPU == CPU 로 지나가게
+  bool spin = false;
+  bool hier = false;   // --spin: 행동을 제자리 돌기(ω 0.5 정규)로 — 작은 방에서 지도 닫힘 성공(판 끝 1) 길을 GPU == CPU 로 지나가게
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--envs" && i + 1 < argc) n_env = std::stoi(argv[++i]);
@@ -58,6 +68,7 @@ int main(int argc, char** argv) {
     else if (a == "--negative-person") negative = negative_person = true;
     else if (a == "--people" && i + 1 < argc) people = std::stoi(argv[++i]);
     else if (a == "--spin") spin = true;
+    else if (a == "--hier") hier = true;
     else if (a == "--env" && i + 1 < argc) env_path = argv[++i];
     else if (a == "--model" && i + 1 < argc) model_path = argv[++i];
     else if (a == "--dump" && i + 1 < argc) dump = argv[++i];
@@ -94,6 +105,7 @@ int main(int argc, char** argv) {
     if (!ok2) return 1;
   }
   sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
+  if (hier) hc.cfg.action_mode = sim::kActPath;
   if (people > 0) hc.cfg.curriculum = 0;   // 커리큘럼이 켜져 있으면 단계가 사람 수를 정함 — --people 로 정한 수를 쓰려고 끔
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   std::vector<sim::World> worlds;
@@ -145,7 +157,7 @@ int main(int argc, char** argv) {
       for (int i = 0; i < n_env; ++i)
         if (sg[i].people.n > 0) { sg[i].people.cyl[0].x += 0.01f; gpu.set_state(i, sg[i]); break; }
     }
-    if (negative && !negative_person && t == n_steps / 2) gact[0] = hc.cfg.action_mode == sim::kActVelocity ? (gact[0] > 0.f ? -gact[0] : 0.5f) : (float)(((int)gact[0] + 1) % (hc.cfg.n_dir * hc.cfg.n_dist));
+    if (negative && !negative_person && t == n_steps / 2) gact[0] = hc.cfg.action_mode == sim::kActPath ? (float)(((int)gact[0] + 1) % mdp::hier::K) : hc.cfg.action_mode == sim::kActVelocity ? (gact[0] > 0.f ? -gact[0] : 0.5f) : (float)(((int)gact[0] + 1) % (hc.cfg.n_dir * hc.cfg.n_dist));
     cudaMemcpy(d_act, gact.data(), sizeof(float) * A * n_env, cudaMemcpyHostToDevice);
     gpu.step(d_act);
     cpu.step(act.data());
@@ -185,12 +197,12 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < oc1.size(); ++i) {
       const float v = oc1[i];
       float lo, hi;
-      range_1d((int)(i % mdp::obs::POLICY_1D), &lo, &hi);
+      range_1d((int)(i % gpu.batch().o1d), &lo, &hi);
       if (!std::isfinite(v)) ++n_nan;
       else if (v < lo || v > hi) {
         if (first_range < 0) {
           first_range = t;
-          std::printf("범위 밖: 걸음 %d 환경 %zu 칸 %zu 값 %g (허용 %g~%g)\n", t, i / mdp::obs::POLICY_1D, i % mdp::obs::POLICY_1D, v, lo, hi);
+          std::printf("범위 밖: 걸음 %d 환경 %zu 칸 %zu 값 %g (허용 %g~%g)\n", t, i / gpu.batch().o1d, i % gpu.batch().o1d, v, lo, hi);
         }
         ++bad_range;
       }
@@ -247,7 +259,7 @@ int main(int argc, char** argv) {
     size_t nz = 0;
     double isum = 0, imu[7] = {};
     for (int i = 0; i < n_env; ++i) {
-      const float* O = oc1.data() + (size_t)i * POLICY_1D;
+      const float* O = oc1.data() + (size_t)i * gpu.batch().o1d;
       for (int k = 0; k < INTENSITY; ++k) { nz += O[LIDAR + k] != 0.f; isum += O[LIDAR + k]; }
       for (int k = 0; k < 7; ++k) imu[k] += std::fabs(O[LIDAR + INTENSITY + ACCEL + k]);
     }
@@ -271,9 +283,52 @@ int main(int argc, char** argv) {
       }
     std::fclose(f);
   }
+  bool gt_ok = true;
+  if (hier) {
+    // 계층형 마지막 관측: 후보 수·지금 목표 표시, 경로 있는 환경 수
+    using mdp::hier::FEAT; using mdp::hier::F_VALID; using mdp::hier::F_CUR;
+    int nc = 0, ncur = 0, npath = 0, ngoal = 0;
+    for (int i = 0; i < n_env; ++i) {
+      const float* O = oc1.data() + (size_t)i * gpu.batch().o1d + mdp::obs::POLICY_1D;
+      for (int k = 0; k < mdp::hier::K; ++k) { nc += O[k * FEAT + F_VALID] > 0.5f; ncur += O[k * FEAT + F_CUR] > 0.5f; }
+      npath += sc[i].p_n > 0;
+      ngoal += sc[i].goal_cell >= 0;
+    }
+    std::printf("계층형: 환경당 후보 %.2f 개, 지금 목표 표시 %d, 목표 있음 %d · 경로 있음 %d (환경 %d)\n", (double)nc / n_env, ncur, ngoal, npath, n_env);
+    // 정답 격자를 안 쓰나: CPU 묶음 사본의 맵 격자를 모두 막힘(0xff)·모두 0 으로 바꿔 경로 계획·추종기 명령을 다시 — 같아야 함
+    const sim::EnvBatch& B = cpu.batch();
+    std::vector<sim::MapDev> m_blk(B.maps, B.maps + B.n_maps), m_free(B.maps, B.maps + B.n_maps);
+    size_t gmax = 0;
+    for (int k = 0; k < B.n_maps; ++k) gmax = std::max(gmax, (size_t)B.maps[k].gw * B.maps[k].gh);
+    std::vector<uint8_t> g_blk(gmax, 0xff), g_free(gmax, 0);
+    for (int k = 0; k < B.n_maps; ++k) { m_blk[k].grid = g_blk.data(); m_free[k].grid = g_free.data(); }
+    sim::EnvBatch Bb = B, Bf = B;
+    Bb.maps = m_blk.data();
+    Bf.maps = m_free.data();
+    int n_cmp = 0, n_diff = 0, n_planned = 0;
+    for (int i = 0; i < n_env; ++i)
+      for (int k = 0; k < mdp::hier::K; ++k) {
+        sim::EnvState e0 = sc[i], e1 = sc[i], e2 = sc[i];
+        e0.p_n = e1.p_n = e2.p_n = 0;   // 늘 새로 짜게
+        sim::hier_plan_cpu(B, e0, i, k);
+        sim::hier_plan_cpu(Bb, e1, i, k);
+        sim::hier_plan_cpu(Bf, e2, i, k);
+        float v0, w0, v1, w1, v2, w2;
+        sim::path_follow(B, e0, i, &v0, &w0);
+        sim::path_follow(Bb, e1, i, &v1, &w1);
+        sim::path_follow(Bf, e2, i, &v2, &w2);
+        ++n_cmp;
+        n_planned += e0.p_n > 0;
+        const bool same_p = std::memcmp(&e0, &e1, sizeof(e0)) == 0 && std::memcmp(&e0, &e2, sizeof(e0)) == 0;
+        if (!same_p || v0 != v1 || v0 != v2 || w0 != w1 || w0 != w2) ++n_diff;
+      }
+    gt_ok = n_diff == 0 && n_planned > 0;
+    std::printf("정답 격자 안 씀: 환경 × 후보 %d 개 중 경로 짠 것 %d, 정답 격자를 모두 막힘·모두 빈 칸으로 바꿔 경로·명령이 달라진 것 %d — %s\n", n_cmp, n_planned, n_diff,
+                gt_ok ? "통과" : "실패");
+  }
   const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_obs == 0;
   const bool range_ok = n_nan == 0 && bad_range == 0;
   std::printf("%s\n", same ? "환경 V0 통과: GPU == CPU (비트 같음)" : "다름");
   std::printf("%s\n", range_ok ? "관측 범위 통과" : "관측 범위 실패");
-  return negative ? (same ? 1 : 0) : (same && range_ok ? 0 : 1);
+  return negative ? (same ? 1 : 0) : (same && range_ok && gt_ok ? 0 : 1);
 }

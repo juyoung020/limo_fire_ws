@@ -74,7 +74,7 @@ class PPO {
   PPO& operator=(const PPO&) = delete;
 
   // 학습 행동. img u8 [N][img_stride], obs1d float [N][actor.in1d], priv float [N][norm_dim − actor.in1d] (nullptr = 0),
-  // actions float [N][n_cont+1] (연속 = 샘플 원값, 선언 = 0/1). 롤아웃 칸이 가득 차 있으면 예외.
+  // actions float [N][n_cont+1] (연속 = 샘플 원값, 선언 = 0/1). 계층형(n_slots > 0)이면 actions [N][mdp::act::DIM], a[0] = 고른 슬롯 (가린 범주 분포). 롤아웃 칸이 가득 차 있으면 예외.
   void act(const uint8_t* img, const real* obs1d, const real* priv, real* actions);
   // reward float [N], done int [N]. 끊김(3)이면 rsl_rl 처럼 r += γ·V(s_t).
   void store(const real* reward, const int* done);
@@ -122,6 +122,10 @@ class PPO {
   XNET_NS::ActorCritic* ac_;
   uint64_t seed_;
   int N_, T_, S_, D_, IMG_, A_, NC_, NF_ = 0;
+  // 계층형 (spec.n_slots > 0): 범주 행동 — 슬롯 K_, actor 출력(임베딩) AO_, 환경 행동 칸 ADIM_ (mdp::act::DIM), 후보 특징 자리 SOFF_·칸 SF_
+  bool disc_ = false;
+  int K_ = 0, AO_ = 0, ADIM_ = 0, SOFF_ = 0, SF_ = 0;
+  real *s_mask_ = nullptr, *c_logits_ = nullptr, *c_G_ = nullptr, *c_feat_ = nullptr, *c_maskt_ = nullptr;
   int step_ = 0, iter_ = 0;
   uint64_t act_calls_ = 0;
   float lr_;

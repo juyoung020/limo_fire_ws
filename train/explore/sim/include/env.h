@@ -38,7 +38,7 @@ namespace sim {
 constexpr int kThreads = 256;
 constexpr int16_t kUnknown = -32768;   // 지도 칸 아직 모름
 constexpr int kMaxFloors = 8;
-enum ActionMode : int32_t { kActGoal = 0, kActVelocity = 1 };
+enum ActionMode : int32_t { kActGoal = 0, kActVelocity = 1, kActPath = 2 };   // kActPath: 계층형 (include/hier_path.h)
 
 struct EnvCfg {
   float dt;
@@ -93,6 +93,15 @@ struct EnvCfg {
   float cam_cp, cam_sp;     // 카메라를 아래로 숙인 각의 cos·sin (env.yaml body.camera_pitch, 실측 바닥 면 — 호스트가 계산)
   int depth_w, depth_h;     // 관측 영상 크기 — 원본 칸을 고르게 건너뛴 가운데 광선
   PeopleCfg people;         // 움직이는 사람 (people.h)
+  // 계층형 행동 (kActPath, include/hier_path.h · env.yaml action.path). 결정 하나 = 속도 행동 주기(substeps · dt) × decide_steps
+  int decide_steps;
+  float path_v;             // RPP desired_linear_vel·velocity_smoother 최고 속도 (기준선 fast 판과 같은 1 m/s)
+  int path_cost_reg;        // RPP 장애물 근접 감속 켬
+  float path_cs_dist, path_cs_gain;   // cost_scaling_dist · cost_scaling_gain (Nav2 기본 0.6 · 1.0)
+  float path_r_mid, path_r_out;       // 경로 무게 경계: 막힘까지 0.3 m (잠정) · 팽창 반경 (nav2 inflation_radius 0.45)
+  float reg_min_radius, reg_min_speed;   // RPP 곡률 감속 (nav2_params regulated_linear_scaling_*)
+  float path_obs_range, path_fp_pad, path_coll_time;   // RPP 충돌 검사: 장애물 층 obstacle_max_range · footprint_padding · max_allowed_time_to_collision_up_to_carrot
+  float path_backup_v;      // 충돌 검사에 걸리면 물러나는 속도 (Nav2 BT BackUp backup_speed)
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -158,6 +167,10 @@ struct EnvState {
   LidarNoise noise;            // 이 판 라이다 오차 (무작위화)
   float depth_floor;           // 이 판 깊이 바닥 구멍 표 위치 [0, 1] (sensor_model.h DepthModel floor_hole ~ floor_hole_hi)
   People people;              // 이 판 움직이는 사람 (people.h)
+  // 계층형 행동 (kActPath, include/hier_path.h): 지금 목표 칸 (y · gw + x, −1 없음), 웨이포인트 수·지금 구간·고른 후보 번호·앞 부분만 담았나, 웨이포인트 칸 (x, y)
+  int32_t goal_cell, p_n, p_i, p_slot, p_trunc, p_stops;   // p_stops: 판 동안 충돌 검사로 멈추거나 물러난 걸음 수 (기록)
+  int32_t p_mode, p_fb, p_plans, p_pad;   // 지난 계획 칸 기준 (1 엄격: 약한 막힘도 피함 · 2 느슨: 지도 막힘만 — hier_path.h), 판 동안 느슨으로 짠 수·계획 수 (기록)
+  int16_t wp[2 * mdp::hier::kPathMax];
 };
 
 // 블록 안 공유 (GPU __shared__, CPU 는 지역 변수)
@@ -244,10 +257,20 @@ struct EnvBatch {
   int32_t* rpre;               // [env · size · fmap_row]  건드린 범위 낱말마다 앞 프론티어 칸 수 (목록 번호)
   int32_t* rlist;              // [env · kReachCap · kReachLists]  부모(합집합 찾기)·덩어리 칸 수 (프론티어 칸 목록 번호마다), BFS 물결·후보 낱말
   unsigned long long* rkey;    // [env · kReachCap]  덩어리 뿌리마다 (거리 << 32 | 칸) 최솟값
+  unsigned long long* rkey2;   // 계층형만 [env · kReachCap]: 후보 열쇠 (거리 ≥ hier::kCandMinDist 인 칸의 최솟값)
   // RT 코어 (OptiX, 선택): 있으면 깊이·라이다 광선을 하드웨어로 (include/optix_rt.h — raygen 이 이 묶음의 장치 사본 dev_self 를 읽음)
   void* rt;                    // OptixRt* (호스트 객체, 없으면 nullptr)
   int rt_fast;                 // 1: 빠른 길(하드웨어 삼각형, 학습 기본) · 0: 정확한 길(SIM_EXACT=1 — GPU == CPU 비트 같음). include/optix_rt.h
   const EnvBatch* dev_self;    // 이 묶음의 장치 사본 (GPU 판, 생성 끝에 올림 — 그 뒤 묶음은 안 바뀜)
+  // 관측 1D 한 환경 칸 수: mdp::obs::POLICY_1D (기본) · mdp::hier::POLICY_1D (계층형 — 뒤에 후보 칸)
+  int o1d;
+  // 계층형 (kActPath 일 때만, 아니면 nullptr): 관측 때 고른 후보 칸 [env · hier::K] (−1 빈 칸)·지금 목표를 품은 후보 비트 [env],
+  // 결정 동안 보상·항 합 [env]·[env · kTerms], GPU 계획 비트 판 [env · kPathPlanes · size · fmap_row]
+  int32_t* cand;
+  int32_t* cand_cur;
+  float* racc;
+  float* tacc;
+  uint32_t* pplanes;
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)
@@ -368,6 +391,10 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.delay = (int)(dm::rand01(e.rng) * 150.f) / 100;
   if (e.delay > c.max_delay) e.delay = c.max_delay;
   e.t95_step = -1;
+  e.goal_cell = -1;   // 계층형 경로 없음 (다른 모드에선 안 씀)
+  e.p_slot = -1;
+  e.p_n = e.p_i = e.p_trunc = e.p_stops = 0;
+  e.p_mode = e.p_fb = e.p_plans = e.p_pad = 0;
   if (c.curriculum) e.people.k_max = mdp::cur::people_of(e.stage);   // 단계별 사람 수 (curriculums.h)
   people_reset(b, e);   // 사람 놓기 (로봇 자세·world_seed 뒤)
 }
@@ -466,6 +493,8 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
   return 0.f;
 }
 
+#include "hier_path.h"   // 계층형 경로 추종 (apply_action 이 부름)
+
 // a: 환경마다 float mdp::act::DIM 개. 속도 행동이면 (v, vy, ω, 선언) — 정규 단위 [−1, 1] (act_raw 면 물리 단위),
 // 목표점 행동이면 a[0] = 행동 번호 (a[3] 선언은 같음)
 DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
@@ -514,6 +543,37 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
     e.last_act[1] = dm::clampf(n1, -1.f, 1.f);
     e.last_act[2] = dm::clampf(n2, -1.f, 1.f);
     e.last_act[3] = (float)e.declared;
+  } else if (c.action_mode == kActPath) {
+    // 계층형: 경로(결정 때 plan 단계가 짬)를 추종기가 따라감 → velocity_smoother(행동 주기) → 안전층. 고른 후보 번호는 결정 때 p_slot 에
+    float vc, wc, cd;
+    path_follow(b, e, env, &vc, &wc, &cd);
+    // RPP 충돌 검사 (hier_path.h path_imminent): 걸리면 Nav2 BT 복구의 BackUp 처럼 물러남 (뒤도 막히면 섬)
+    if ((vc != 0.f || wc != 0.f) && path_imminent(b, e, env, vc, wc, cd)) {
+      vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;   // 0.1 m = 결정 둘(2 s) 동안 물러나는 거리
+      wc = 0.f;
+      e.p_stops += 1;
+    }
+    const float dt_act = (float)c.substeps * c.dt;
+    const float vt = dm::maxf(-c.path_v, dm::minf(c.path_v, vc));
+    const float dv = vt - e.vs, dw = wc - e.ws, sv = c.a_max * dt_act, sw = c.alpha_max * dt_act;
+    e.vs = e.vs + (dv > sv ? sv : (dv < -sv ? -sv : dv));
+    e.ws = e.ws + (dw > sw ? sw : (dw < -sw ? -sw : dw));
+    float v = e.vs, w = e.ws;
+    if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) v = 0.f;
+    if (c.sweep_guard) {
+      const float k = sweep_scale(b, e, env, v, 0.f, w);
+      v *= k;
+      w *= k;
+    }
+    e.cmd_v = v;
+    e.cmd_vy = 0.f;
+    e.cmd_w = w;
+    e.last_action = e.p_slot;
+    for (int i = mdp::act::DIM * 4 - 1; i >= mdp::act::DIM; --i) e.last_act[i] = e.last_act[i - mdp::act::DIM];
+    e.last_act[0] = dm::clampf(v >= 0.f ? v / c.act_v_fwd : v / c.act_v_back, -1.f, 1.f);
+    e.last_act[1] = 0.f;
+    e.last_act[2] = dm::clampf(w / c.act_w_max, -1.f, 1.f);
+    e.last_act[3] = 0.f;
   } else {
     set_goal(b, e, (int)a[0]);
   }
@@ -553,7 +613,7 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   const MapDev& m = b.maps[e.map];
   people_step(b, e);   // 사람 먼저 움직임
   float cmd_v, cmd_w;
-  if (c.action_mode == kActVelocity) {
+  if (c.action_mode != kActGoal) {   // 속도 행동·계층형 (계층형은 apply_action 이 낸 명령)
     cmd_v = e.cmd_v;
     cmd_w = e.cmd_w;
   } else {
@@ -584,7 +644,7 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   }
   // 섀시 구동: 명령 → 바퀴 → 몸통 (바닥 미끄러짐)
   const float v_prev = e.v, vy_prev = e.vy;
-  e.vy = drive_lat(c.drive, e.drive, c.action_mode == kActVelocity ? e.cmd_vy : 0.f, c.dt, e.ground);
+  e.vy = drive_lat(c.drive, e.drive, c.action_mode != kActGoal ? e.cmd_vy : 0.f, c.dt, e.ground);
   drive_step(c.drive, e.drive, cmd_v, cmd_w, c.dt, e.ground, &e.v, &e.w);
   const float acc = (e.v - v_prev) / c.dt;   // 몸통 직진 가속 (IMU)
   const float acc_y = (e.vy - vy_prev) / c.dt;   // 몸통 옆 가속 (메카넘, IMU)

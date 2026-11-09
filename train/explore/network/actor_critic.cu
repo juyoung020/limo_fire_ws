@@ -749,9 +749,27 @@ ACSpec explore_spec() {
   return s;
 }
 
+ACSpec explore_spec_hier() {
+  namespace h = mdp::hier;
+  ACSpec s = explore_spec();
+  s.actor.in1d = h::POLICY_1D;
+  s.actor.out = 64;   // 상태 임베딩 (잠정 — 마지막 은닉 128 의 반)
+  s.critic.in1d = h::CRITIC_1D;
+  s.norm_dim = h::CRITIC_1D;
+  s.n_cont = 0;
+  s.n_slots = h::K;
+  s.slot_feat = h::FEAT;
+  s.slot_off = mdp::obs::POLICY_1D;
+  s.slot_hidden = 64;   // 잠정
+  return s;
+}
+
 // ---------------- ActorCritic ----------------
 ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), max_chunk(mc) {
-  if (sp.actor.out != sp.n_cont + 1 || sp.critic.out != 1) throw std::runtime_error("ACSpec 출력 크기");
+  if (sp.n_slots > 0 ? (sp.n_cont != 0 || sp.actor.out < 1 || sp.slot_feat < 1 || sp.slot_off + sp.n_slots * sp.slot_feat > sp.actor.in1d)
+                     : sp.actor.out != sp.n_cont + 1)
+    throw std::runtime_error("ACSpec 출력 크기");
+  if (sp.critic.out != 1) throw std::runtime_error("ACSpec 출력 크기");
   if (sp.actor.in1d > sp.norm_dim || sp.critic.in1d != sp.norm_dim) throw std::runtime_error("ACSpec 1D 크기");
   if (!sp.actor.imgs.empty() || !sp.critic.imgs.empty() || sp.enc.in1d != 0 || sp.enc.out != 0 || !sp.enc.hidden.empty())
     throw std::runtime_error("ACSpec: 합성곱은 enc 에만, actor·critic 은 MLP 만");
@@ -766,8 +784,18 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   as.grad_cols = cs.grad_cols = nf;
   actor.build(as, blocks, cur, "actor");
   critic.build(cs, blocks, cur, "critic");
+  if (sp.n_slots > 0) {   // 슬롯 머리 (slot_head.cuh): W1 [H][E + C], b1 [H], w2 [H]
+    head.E = sp.actor.out;
+    head.C = sp.slot_feat;
+    head.K = sp.n_slots;
+    head.H = sp.slot_hidden;
+    const long nw1 = (long)head.H * (head.E + head.C);
+    head.w1_off = cur; blocks.push_back({cur, nw1, PKind::LinW, "head.w1"}); cur += nw1;
+    head.b1_off = cur; blocks.push_back({cur, head.H, PKind::LinB, "head.b1"}); cur += head.H;
+    head.w2_off = cur; blocks.push_back({cur, head.H, PKind::LinW, "head.w2"}); cur += head.H;
+  }
   logstd_off = cur;
-  blocks.push_back({cur, sp.n_cont, PKind::LogStd, "log_std"});
+  if (sp.n_cont > 0) blocks.push_back({cur, sp.n_cont, PKind::LogStd, "log_std"});
   cur += sp.n_cont;
   n_params = cur;
   CK(cudaMalloc(&d_params, n_params * sizeof(real)));
@@ -793,13 +821,24 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   actor.init(rng, host);
   critic.init(rng, host);
   for (int j = 0; j < sp.n_cont; ++j) host[logstd_off + j] = sp.init_log_std;
+  if (sp.n_slots > 0) {   // torch nn.Linear 기본 초기화와 같은 꼴 U(±1/√fan_in), float 로 뽑음 (fp64 빌드도 같은 값)
+    auto uni = [&](long off, long n, float bound) {
+      std::uniform_real_distribution<float> U(-bound, bound);
+      for (long i = 0; i < n; ++i) host[off + i] = U(rng);
+    };
+    const float b1 = 1.f / std::sqrt((float)(head.E + head.C)), b2 = 1.f / std::sqrt((float)head.H);
+    uni(head.w1_off, (long)head.H * (head.E + head.C), b1);
+    uni(head.b1_off, head.H, b1);
+    uni(head.w2_off, head.H, b2);
+  }
   // 선언 로짓 = actor 마지막 층 편향의 마지막 원소
   const ParamBlock* last_b = nullptr;
   for (auto& b : blocks)
     if (b.name.rfind("actor.mlp", 0) == 0 && b.kind == PKind::LinB) last_b = &b;  // actor 의 마지막 선형 층 편향
-  host[last_b->off + last_b->n - 1] = sp.declare_bias;
+  if (sp.n_slots == 0) host[last_b->off + last_b->n - 1] = sp.declare_bias;
   CK(cudaMemcpy(d_params, host.data(), n_params * sizeof(real), cudaMemcpyHostToDevice));
   zero_grad();
+  if (sp.n_slots > 0) head.alloc(mc);
   norm.init(sp.norm_dim);
 #ifndef XNET_FP64
   for (Net* m : {&actor, &critic}) {  // bf16 사본은 망마다 따로 (첫 층 W 가 cudaMalloc 정렬 = 16 B 정렬)
@@ -811,6 +850,7 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
 }
 
 ActorCritic::~ActorCritic() {
+  if (spec.n_slots > 0) head.release();
   enc.free_ws();
   if (split) enc_c.free_ws();
   actor.free_ws();

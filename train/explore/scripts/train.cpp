@@ -3,6 +3,7 @@
 //   train [--envs 2048] [--iters 0] [--minutes 0] [--name explore] [--seed 1] [--lr-max 1e-3] [--std-max 1] [--mlp 2] [--chunk N] [--eval-every 50] [--ckpt-every 50]
 //         [--replay-every 25] [--eval-episodes 32] [--resume] [--root train/explore/runs] [--list train/explore/scenes/train/list.tsv]
 //         [--test a.scene,b.scene] [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml]
+//         [--hier]  계층형: 1 s 마다 프론티어 후보 K 개 중 하나(가린 범주 분포) → 시뮬 경로 계획·추종 (mdp/README "계층형"). 반복 = 결정 24 개
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
 //
 // 반복 하나 = 24 걸음 롤아웃(act → env.step → store) → update. done 매핑: mdp::cur::terminal(1·2·4·5) → 1 종료, 3 → 3 끊김.
@@ -55,6 +56,7 @@ struct Args {
   float std_max = 0;  // 0 = PPOConfig 기본(1). 정책 σ 상한 — 크게(예 1e6) 주면 사실상 상한 없음, 하한 std_min 은 그대로
   int mlp = 2, chunk = 0;  // chunk 0 = PPOConfig 기본 (미니배치 하나)
   bool resume = false;
+  bool hier = false;   // --hier: 계층형 행동 (1 s 마다 프론티어 후보 하나 — sim kActPath, PPO 가린 범주 분포)
   std::string eval_ckpt;
   std::string convert_in, convert_out;   // --convert-shared 입력 출력: 형식 2(공유 인코더) → 형식 3(인코더 나눔) 체크포인트로 바꿔 쓰고 끝  // 비어 있지 않으면 이 체크포인트를 불러 평가만 하고 끝 (학습 안 함)
   std::string name = "explore", root = "train/explore/runs", list = "train/explore/scenes/train/list.tsv";
@@ -211,6 +213,7 @@ int main(int argc, char** argv) {
       else if (k == "--replay-every") a.replay_every = std::stoi(nx());
       else if (k == "--eval-episodes") a.eval_eps = std::stoi(nx());
       else if (k == "--resume") a.resume = true;
+      else if (k == "--hier") a.hier = true;
       else if (k == "--eval-ckpt") a.eval_ckpt = nx();
       else if (k == "--convert-shared") { a.convert_in = nx(); a.convert_out = nx(); }
       else if (k == "--root") a.root = nx();
@@ -230,10 +233,16 @@ int main(int argc, char** argv) {
   try {
     // ---- 시뮬
     sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
+    if (a.hier) {   // 계층형: 결정 하나 = 속도 행동 decide_steps 걸음 (env.step 한 번). 재생 녹화는 아직 속도 행동 열만 있어 끔
+      hc.cfg.action_mode = sim::kActPath;
+      if (a.replay_every > 0) std::fprintf(stderr, "--hier: 재생 녹화는 아직 없음 — --replay-every 무시\n");
+      a.replay_every = 0;
+    }
     const sim::LidarModel lidar = sim::load_lidar_model(a.model);
     const sim::EnvCfg& c = hc.cfg;
-    if (c.action_mode != sim::kActVelocity || c.act_raw) throw std::runtime_error("env.yaml: 속도 행동·정규 단위여야 함");
-    const float dt_act = c.substeps * c.dt;
+    if ((c.action_mode != sim::kActVelocity && c.action_mode != sim::kActPath) || c.act_raw) throw std::runtime_error("env.yaml: 속도 행동·정규 단위여야 함");
+    const float dt_act = c.substeps * c.dt;   // 시뮬 걸음 (상태 step 단위)
+    const int dec = a.hier ? c.decide_steps : 1;   // 정책 걸음 하나 = 시뮬 걸음 dec 개
     std::vector<std::string> skipped;
     std::vector<sim::World> worlds = sim::load_scene_list(a.list, hc, &skipped);
     if (worlds.empty()) throw std::runtime_error("학습 맵이 없음: " + a.list);
@@ -260,7 +269,8 @@ int main(int argc, char** argv) {
     if (a.std_min > 0) pc.std_min = a.std_min;
     if (a.bound_coef >= 0) pc.bound_coef = a.bound_coef;
     if (a.chunk > 0) pc.chunk = a.chunk;
-    xppo::PPO ppo(pc, xnet::explore_spec(), a.seed);
+    if (a.hier) pc.gamma = (float)std::pow((double)pc.gamma, (double)dec);   // γ_결정 = 0.999^10 (같은 100 s 지평)
+    xppo::PPO ppo(pc, a.hier ? xnet::explore_spec_hier() : xnet::explore_spec(), a.seed);
     if (!a.convert_in.empty()) {
       ppo.load_convert_shared(a.convert_in);
       ppo.save(a.convert_out);
@@ -334,8 +344,8 @@ int main(int argc, char** argv) {
 
     if (!a.eval_ckpt.empty()) {
       ppo.load(a.eval_ckpt);
-      std::vector<float> ls(mdp::act::CONT);
-      cudaMemcpy(ls.data(), ppo.ac().log_std(), sizeof(float) * ls.size(), cudaMemcpyDeviceToHost);
+      std::vector<float> ls(mdp::act::CONT, 0.f);
+      if (!a.hier) cudaMemcpy(ls.data(), ppo.ac().log_std(), sizeof(float) * ls.size(), cudaMemcpyDeviceToHost);
       std::fprintf(stderr, "평가만: %s 반복 %d, σ (v, vy, ω) = %.3f %.3f %.3f\n", a.eval_ckpt.c_str(), ppo.iteration(), std::exp(ls[0]),
                    std::exp(ls[1]), std::exp(ls[2]));
     }
@@ -369,7 +379,7 @@ int main(int argc, char** argv) {
     rf::Json meta = rf::Json::object();
     meta.set("robot", robot);
     meta.set("kind", "explore_ppo").set("group", a.name).set("seed", (unsigned long long)a.seed).set("n_envs", N)
-        .set("ctrl_hz", 1.0 / dt_act).set("success_coverage", mdp::cur::kSuccessCov).set("action_limits", limits)
+        .set("ctrl_hz", 1.0 / (dt_act * dec)).set("hier", a.hier).set("decide_steps", dec).set("success_coverage", mdp::cur::kSuccessCov).set("action_limits", limits)
         .set("reward_terms", terms).set("n_train_maps", (unsigned long long)worlds.size()).set("test_maps", tests_meta)
         .set("sweep_guard", c.sweep_guard).set("cur_top_random", c.cur_top_random).set("success_closed", c.success_closed).set("reward_occ", c.reward_occ).set("scene_list", a.list).set("steps_per_env", pc.steps_per_env).set("lr_max", a.lr_max)
         .set("n_params", (long long)ppo.ac().n_params)
@@ -398,7 +408,7 @@ int main(int argc, char** argv) {
     std::vector<sim::EpInfo> h_ep(N);
     std::vector<double> ep_terms((size_t)N * mdp::rew::kTerms, 0.0), ep_rew(N, 0.0);
     std::vector<int> ep_steps(N, 0);
-    double total_steps = (double)ppo.iteration() * pc.steps_per_env * N;
+    double total_steps = (double)ppo.iteration() * pc.steps_per_env * N * dec;   // 시뮬 걸음 (0.1 s) 단위
 
     // 재생
     std::vector<Rec> rec;   // 녹화 중인 판들
@@ -528,7 +538,8 @@ int main(int argc, char** argv) {
         cudaEventCreateWithFlags(&ev_obs[ti], cudaEventDisableTiming);
         cudaEventRecord(ev_obs[ti], mst[ti]);
       }
-      for (int step = 0; step < c.max_steps + 10; ++step) {
+      const int eval_steps = c.max_steps / dec + 10;
+      for (int step = 0; step < eval_steps; ++step) {
         bool any_live = false;
         for (size_t ti = 0; ti < NT; ++ti) {
           if (!live[ti]) continue;
@@ -537,7 +548,7 @@ int main(int argc, char** argv) {
           const sim::StepOut o = evs[ti]->outputs();
           cudaStreamWaitEvent(pst, ev_obs[ti], 0);   // 이 맵의 지난 걸음 관측이 다 나온 뒤
           ppo.act_inference(o.obs_img, o.obs_1d, act, E, sample ? (int64_t)step * (int64_t)NT + (int64_t)ti : -1);
-          if (!sample) k_mu_stats<<<(E + 127) / 128, 128, 0, pst>>>(act, d_first + (size_t)E * ti, E, d_mus + (size_t)kMu * ti);
+          if (!sample && !a.hier) k_mu_stats<<<(E + 127) / 128, 128, 0, pst>>>(act, d_first + (size_t)E * ti, E, d_mus + (size_t)kMu * ti);
           if (!sample && std::getenv("EVAL_ACT_DUMP") && step < 300) {   // 변환 확인용: 결정적 평가 행동(평균) 걸음마다
             static FILE* fa = std::fopen(std::getenv("EVAL_ACT_DUMP"), "w");
             std::vector<float> ha((size_t)mdp::act::DIM * E);
@@ -555,7 +566,7 @@ int main(int argc, char** argv) {
           cudaEventRecord(ev_obs[ti], mst[ti]);
         }
         if (!any_live) break;
-        if ((step + 1) % kCheck == 0 || step + 1 == c.max_steps + 10) {
+        if ((step + 1) % kCheck == 0 || step + 1 == eval_steps) {
           cudaDeviceSynchronize();  // 맵 스트림(비차단)까지
           cudaMemcpy(hfirst.data(), d_first, sizeof(int) * E * NT, cudaMemcpyDeviceToHost);
           for (size_t ti = 0; ti < NT; ++ti) {
@@ -583,7 +594,7 @@ int main(int argc, char** argv) {
       std::vector<double> hmu((size_t)kMu * NT);
       cudaMemcpy(hmu.data(), d_mus, sizeof(double) * kMu * NT, cudaMemcpyDeviceToHost);
       cudaFree(d_mus);
-      if (!sample)
+      if (!sample && !a.hier)
         for (size_t ti = 0; ti < NT; ++ti) {
           const double* q = hmu.data() + (size_t)kMu * ti;
           const double nn = q[0] > 0 ? q[0] : 1;
@@ -761,7 +772,7 @@ int main(int argc, char** argv) {
             const long long id = run.new_episode_id();
             const std::string oc = outcome_of(d);
             const int mi = (f.map >= 0 && f.map < (int)worlds.size()) ? f.map : 0;
-            line.set("iter", it).set("env_steps", total_steps + (double)(t + 1) * N).set("env", i).set("ep", id).set("map", stem(worlds[mi].name))
+            line.set("iter", it).set("env_steps", total_steps + (double)(t + 1) * N * dec).set("env", i).set("ep", id).set("map", stem(worlds[mi].name))
                 .set("stage", f.stage).set("area_m2", worlds[mi].n_floor * c.res * c.res).set("outcome", oc)
                 .set("success", d == mdp::cur::kDeclareOk).set("declared", d == mdp::cur::kDeclareOk || d == mdp::cur::kDeclareShort)
                 .set("collided", d == mdp::cur::kCollision || d == mdp::cur::kCollisionPerson).set("person_collision", d == mdp::cur::kCollisionPerson)
@@ -798,7 +809,7 @@ int main(int argc, char** argv) {
         }
         t_host += ms_since(t0);
       }
-      total_steps += (double)pc.steps_per_env * N;
+      total_steps += (double)pc.steps_per_env * N * dec;
       auto tu = std::chrono::steady_clock::now();
       const sim::StepOut o = env.outputs();
       const xppo::UpdateStats us = ppo.update(o.obs_img, o.obs_1d, o.priv);
@@ -810,14 +821,14 @@ int main(int argc, char** argv) {
         run.finish();
         return 3;
       }
-      float ls[3];
-      cudaMemcpy(ls, ppo.ac().log_std(), sizeof(ls), cudaMemcpyDeviceToHost);
+      float ls[3] = {0.f, 0.f, 0.f};   // 계층형은 σ 없음
+      if (!a.hier) cudaMemcpy(ls, ppo.ac().log_std(), sizeof(ls), cudaMemcpyDeviceToHost);
       size_t fr, tot;
       cudaMemGetInfo(&fr, &tot);
       auto& r = run.row();
       r.last(rf::key::ITER, it);
       r.last(rf::key::STEPS, total_steps);
-      r.last(rf::key::FPS, pc.steps_per_env * N / (t_iter / 1000));
+      r.last(rf::key::FPS, pc.steps_per_env * N * dec / (t_iter / 1000));   // 시뮬 걸음/s (계층형은 결정/s × dec)
       r.last(rf::key::ITER_MS, t_iter);
       r.last(rf::key::ROLLOUT_MS, t_act + t_sim + t_host);
       r.last(rf::key::UPDATE_MS, t_upd);
@@ -860,7 +871,7 @@ int main(int argc, char** argv) {
                    "act %.0f sim %.0f host %.0f update %.0f ms (%.0f 걸음/s)\n",
                    it, n_ep, n_ep ? n_succ / n_ep : 0, n_ep ? n_coll / n_ep : 0, n_ep ? n_trunc / n_ep : 0, n_ep ? cov / n_ep : 0,
                    n_ep ? stage / n_ep : 0, step_rew / ((double)pc.steps_per_env * N), us.value, us.kl, us.lr, std::exp(ls[0]), t_act,
-                   t_sim, t_host, t_upd, pc.steps_per_env * N / (t_iter / 1000));
+                   t_sim, t_host, t_upd, pc.steps_per_env * N * dec / (t_iter / 1000));
       ++it_done;
       if (a.eval_every > 0 && it_now % a.eval_every == 0) { evaluate(it_now, false); evaluate(it_now, true); }
       run.end_update();

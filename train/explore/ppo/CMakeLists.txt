@@ -16,7 +16,7 @@ find_package(CUDAToolkit REQUIRED)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 
 set(NET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../network)
-add_library(explore_net STATIC ${NET_DIR}/common.cu ${NET_DIR}/actor_critic.cu ${NET_DIR}/cnn_fused.cu ${NET_DIR}/cnn_tail.cu
+add_library(explore_net STATIC ${NET_DIR}/common.cu ${NET_DIR}/actor_critic.cu ${NET_DIR}/slot_head.cu ${NET_DIR}/cnn_fused.cu ${NET_DIR}/cnn_tail.cu
             ${NET_DIR}/gemm_fused.cu)
 target_include_directories(explore_net PUBLIC ${NET_DIR})
 target_link_libraries(explore_net PUBLIC CUDA::cudart CUDA::cublas)
@@ -26,7 +26,7 @@ target_include_directories(explore_ppo PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(explore_ppo PUBLIC explore_net CUDA::curand)
 
 # fp64 한 벌: 기울기 검사의 기준 (이름공간 xnet64·xppo64)
-add_library(explore_net64 STATIC ${NET_DIR}/common.cu ${NET_DIR}/actor_critic.cu)
+add_library(explore_net64 STATIC ${NET_DIR}/common.cu ${NET_DIR}/actor_critic.cu ${NET_DIR}/slot_head.cu)
 target_include_directories(explore_net64 PUBLIC ${NET_DIR})
 target_compile_definitions(explore_net64 PUBLIC XNET_FP64)
 target_link_libraries(explore_net64 PUBLIC CUDA::cudart CUDA::cublas)
@@ -40,7 +40,7 @@ target_link_libraries(gc32 PUBLIC explore_ppo)
 add_executable(gradcheck tools/gradcheck.cu)
 target_link_libraries(gradcheck gc32 explore_ppo64)
 
-foreach(t toy_train bench gemm_bench)
+foreach(t toy_train toy_slot bench gemm_bench)
   add_executable(${t} tools/${t}.cu)
   target_link_libraries(${t} explore_ppo)
 endforeach()

@@ -229,7 +229,7 @@ DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
   // 깊이는 픽셀마다 따로 (obs_depth — GPU 는 픽셀 하나 = 스레드 하나인 커널)
   // 라이다 4 장 (지연 반영) + 세기
   {
-    float* O = b.obs_1d + (size_t)env * POLICY_1D;
+    float* O = b.obs_1d + (size_t)env * b.o1d;   // 한 환경 칸 수 o1d (계층형이면 뒤에 후보 칸)
     const float* R = b.lidar_ring + (size_t)env * sim::kLidarRing * LIDAR_BINS;
     const float* IT = b.lidar_int + (size_t)env * LIDAR_BINS;
     for (int i = tid; i < LIDAR + INTENSITY; i += sim::kThreads) {
@@ -363,7 +363,7 @@ DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh, bool wi
     }
   }
   // 지연: 직전 걸음 숫자 (판 첫 걸음은 지금 것). 직전 행동·지난 시간은 정책·시계가 아는 값이라 지연 안 함
-  float* O = b.obs_1d + (size_t)env * POLICY_1D + LIDAR + INTENSITY;
+  float* O = b.obs_1d + (size_t)env * b.o1d + LIDAR + INTENSITY;
   float* P = b.vec_prev + (size_t)env * VEC;
   const bool late = e.delay > 0 && e.step > 0;
   for (int i = 0; i < VEC; ++i) {
@@ -405,7 +405,7 @@ DEV void obs_reach(const EnvBatch& b, const EnvState& e, int env, const mdp::Rea
   float s, co;
   dm::sincosf_d(e.th + e.eth, &s, &co);
   reach_vec(b.cfg, m, e.x + e.ex, e.y + e.ey, s, co, R, V);
-  float* O = b.obs_1d + (size_t)env * POLICY_1D + LIDAR + INTENSITY;
+  float* O = b.obs_1d + (size_t)env * b.o1d + LIDAR + INTENSITY;
   float* P = b.vec_prev + (size_t)env * VEC;
   const bool late = e.delay > 0 && e.step > 0;
   for (int i = 0; i < VEC; ++i) {
@@ -414,6 +414,42 @@ DEV void obs_reach(const EnvBatch& b, const EnvState& e, int env, const mdp::Rea
     O[i] = late ? P[i] : now;
     P[i] = now;
   }
+}
+
+// 계층형 후보 칸 (mdp::hier, 스레드 하나): 후보 요약 → 1D 뒤 CAND_1D 칸 + 환경이 결정 때 읽는 후보 칸(b.cand)·지금 목표 비트(b.cand_cur).
+// 지연 없음 — 지도에서 나온 값이고(지도·깊이처럼), 정책이 본 후보와 환경이 결정 때 쓰는 후보 칸이 같아야 해서. 빈 칸은 7 칸 모두 0.
+// CPU 참조판(env_ref.cpp)과 GPU env_reach_kernel 이 같은 요약(mdp::cand_pick == reach_block)으로 부른다
+DEV void obs_cand(const EnvBatch& b, const EnvState& e, int env, const mdp::CandSummary& cs) {
+  using namespace mdp::hier;
+  const sim::EnvCfg& c = b.cfg;
+  const sim::MapDev& m = b.maps[e.map];
+  float* O = b.obs_1d + (size_t)env * b.o1d + mdp::obs::POLICY_1D;
+  int32_t* C = b.cand + (size_t)env * K;
+  const float px = e.x + e.ex, py = e.y + e.ey;
+  float s, co;
+  dm::sincosf_d(e.th + e.eth, &s, &co);
+  int cur = 0;
+  for (int k = 0; k < K; ++k) {
+    float* F = O + k * FEAT;
+    for (int q = 0; q < FEAT; ++q) F[q] = 0.f;
+    const mdp::CandTop& t = cs.c[k];
+    C[k] = t.n > 0 ? t.cell : -1;
+    if (t.n <= 0) continue;
+    const float fx = m.ox + ((float)(t.cell % m.gw) + 0.5f) * c.res, fy = m.oy + ((float)(t.cell / m.gw) + 0.5f) * c.res;
+    const float ddx = fx - px, ddy = fy - py;
+    const float d = sqrtf(ddx * ddx + ddy * ddy);
+    F[F_DIST] = dm::minf(2.f, (float)t.dist * c.res / kFrontNorm);
+    if (d > 1e-6f) {
+      F[F_SIN] = dm::clampf((co * ddy - s * ddx) / d, -1.f, 1.f);
+      F[F_COS] = dm::clampf((co * ddx + s * ddy) / d, -1.f, 1.f);
+    }
+    F[F_SIZE] = dm::minf(1.f, (float)t.n * c.res / kFrontSizeNorm);
+    F[F_UTIL] = dm::minf(1.f, (float)t.util / kUtilNorm);
+    F[F_CUR] = t.cur ? 1.f : 0.f;
+    F[F_VALID] = 1.f;
+    cur |= t.cur ? (1 << k) : 0;
+  }
+  b.cand_cur[env] = cur;
 }
 
 }  // namespace mdp::obsgen

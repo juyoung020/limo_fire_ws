@@ -14,6 +14,7 @@
 //   gradcheck            작은 구조(같은 코드 길, 작은 크기)
 //   gradcheck --full     obs_layout.h 실제 크기 구조
 //   gradcheck --negative ELU 역방향을 일부러 틀리게 → 검사가 잡아야(실패를 찾아야) 종료 0
+//   gradcheck --hier     계층형 구조(슬롯 머리 + 가린 범주 분포 — log π·엔트로피·KL, 빈 칸·고를 것 없는 샘플 섞음)
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -34,6 +35,7 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--full")) full = true;
     if (!std::strcmp(argv[i], "--negative")) negative = true;
+    if (!std::strcmp(argv[i], "--hier")) setenv("GC_HIER", "1", 1);   // 계층형: 슬롯 머리 + 가린 범주 분포 (gc_impl.cuh)
     if (!std::strcmp(argv[i], "--mlp") && i + 1 < argc) mlp = std::atoi(argv[++i]);
   }
   const int K = full ? 8 : 16;

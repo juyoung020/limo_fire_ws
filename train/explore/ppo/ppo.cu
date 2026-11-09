@@ -223,6 +223,170 @@ __global__ void k_loss(LossArgs p) {
   p.stat[i * 4 + 3] = r;
 }
 
+
+// ---------------- 계층형: 가린 범주 분포 (ACSpec::n_slots > 0, 슬롯 머리 slot_head.cuh) ----------------
+constexpr int MAXK = 16;   // 슬롯 최대 수 (커널 안 고정 배열)
+// 로짓 l[K]·가림 m[K](1 = 있음) → 있는 칸의 log 확률 lp[K] (가린 칸 확률 0 — lp 는 0 으로 두고 쓰지 않음), 반환 = 있는 칸 수.
+// log-sum-exp 는 있는 칸 최댓값을 빼서
+__device__ int cat_logp(const real* l, const real* m, int K, real* lp) {
+  real mx = -1e30f;
+  int V = 0;
+  for (int k = 0; k < K; ++k)
+    if (m[k] > 0.5f) { mx = fmax(mx, l[k]); ++V; }
+  if (V == 0) {
+    for (int k = 0; k < K; ++k) lp[k] = 0;
+    return 0;
+  }
+  real s = 0;
+  for (int k = 0; k < K; ++k)
+    if (m[k] > 0.5f) s += exp(l[k] - mx);
+  const real lz = mx + log(s);
+  for (int k = 0; k < K; ++k) lp[k] = m[k] > 0.5f ? l[k] - lz : (real)0;
+  return V;
+}
+// 가림 = 날 1D 관측(정규화 전)의 후보 칸 마지막(있음 0/1) 값: mask[i·K + k] = raw[i·ld + off + k·F + F − 1] > 0.5
+__global__ void k_cat_mask(const real* raw, int ld, int off, int F, int n, int K, real* mask) {
+  int t = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t >= n * K) return;
+  const int i = t / K, k = t % K;
+  mask[t] = raw[(long)i * ld + off + k * F + F - 1] > 0.5f ? (real)1 : (real)0;
+}
+// 학습 샘플: u ~ U(0,1] (Philox — 연속 판 k_sample 과 같은 씨앗·부분열 규칙), 있는 칸 차례 누적 확률이 u 이상인 첫 칸. 있는 칸이 없으면 0 번·log π 0
+__global__ void k_sample_cat(const real* logits, const real* mask, int n, int K, uint64_t seed, uint64_t call, int env0, int adim,
+                             real* act_out, real* s_act, real* s_logp, real* s_logit, real* s_mask) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  curandStatePhilox4_32_10_t rs;
+  curand_init(seed, (uint64_t)(env0 + i), call * 8ull, &rs);
+  const real* l = logits + (long)i * K;
+  const real* m = mask + (long)i * K;
+  real lp[MAXK];
+  const int V = cat_logp(l, m, K, lp);
+  const real u = curand_uniform(&rs);
+  int a = 0;
+  real lpa = 0;
+  if (V > 0) {
+    real cum = 0;
+    int last = -1;
+    a = -1;
+    for (int k = 0; k < K; ++k) {
+      if (m[k] <= 0.5f) continue;
+      last = k;
+      cum += exp(lp[k]);
+      if (a < 0 && cum >= u) a = k;
+    }
+    if (a < 0) a = last;   // 반올림으로 누적이 1 아래면 마지막 있는 칸
+    lpa = lp[a];
+  }
+  for (int j = 0; j < adim; ++j) act_out[(long)i * adim + j] = j == 0 ? (real)a : (real)0;
+  s_act[i] = (real)a;
+  s_logp[i] = lpa;
+  for (int k = 0; k < K; ++k) { s_logit[(long)i * K + k] = l[k]; s_mask[(long)i * K + k] = m[k]; }
+}
+// 평가: sample_call < 0 이면 있는 칸 중 로짓 최대(같으면 작은 번호), 아니면 학습과 다른 씨앗 계열로 샘플
+__global__ void k_cat_act(const real* logits, const real* mask, int n, int K, uint64_t seed, int64_t call, int env0, int adim, real* act) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  const real* l = logits + (long)i * K;
+  const real* m = mask + (long)i * K;
+  int a = 0;
+  if (call < 0) {
+    real best = -1e30f;
+    a = -1;
+    for (int k = 0; k < K; ++k)
+      if (m[k] > 0.5f && (a < 0 || l[k] > best)) { best = l[k]; a = k; }
+    if (a < 0) a = 0;
+  } else {
+    curandStatePhilox4_32_10_t rs;
+    curand_init(seed, (uint64_t)(env0 + i), (uint64_t)call * 8ull, &rs);
+    real lp[MAXK];
+    const int V = cat_logp(l, m, K, lp);
+    const real u = curand_uniform(&rs);
+    if (V > 0) {
+      real cum = 0;
+      int last = -1;
+      a = -1;
+      for (int k = 0; k < K; ++k) {
+        if (m[k] <= 0.5f) continue;
+        last = k;
+        cum += exp(lp[k]);
+        if (a < 0 && cum >= u) a = k;
+      }
+      if (a < 0) a = last;
+    }
+  }
+  for (int j = 0; j < adim; ++j) act[(long)i * adim + j] = j == 0 ? (real)a : (real)0;
+}
+// 미니배치 특징 모으기: dst [n][w] = obs [idx[i]][off … off + w)
+__global__ void k_gather_cols(const real* obs, int D, int off, int w, const int* idx, int n, real* dst) {
+  long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (t >= (long)n * w) return;
+  const int i = (int)(t / w), j = (int)(t % w);
+  dst[t] = obs[(long)idx[i] * D + off + j];
+}
+// 범주 PPO 손실: 대리(자른 비) + 엔트로피 보너스(샘플마다 H, 계수 ent·scale) → 로짓 기울기 G[i·K + k], KL(옛 ‖ 새) = Σ p_옛 (log p_옛 − log p_새).
+// 있는 칸이 없는 샘플(고를 것이 없음)은 log π = 0 · 비 1 · 기울기 0. 가치 손실은 k_loss 와 같은 식
+struct CatLossArgs {
+  const real *logits, *mask, *old_logits, *act, *old_logp, *adv, *ret, *old_v, *v;
+  int n, K;
+  real clip, value_coef, scale, ent;
+  bool clipped_value;
+  real *G, *dv, *stat;
+};
+__global__ void k_loss_cat(CatLossArgs p) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= p.n) return;
+  const int K = p.K;
+  const real* l = p.logits + (long)i * K;
+  const real* m = p.mask + (long)i * K;
+  real lp[MAXK], lo[MAXK];
+  const int V = cat_logp(l, m, K, lp);
+  cat_logp(p.old_logits + (long)i * K, m, K, lo);
+  real surr = 0, kl = 0, H = 0, r = 1;
+  real* G = p.G + (long)i * K;
+  for (int k = 0; k < K; ++k) G[k] = 0;
+  if (V > 0) {
+    const int a = (int)p.act[i];
+    r = exp(lp[a] - p.old_logp[i]);
+    const real Ad = p.adv[i];
+    const real rc = fmin(fmax(r, 1.f - p.clip), 1.f + p.clip);
+    const real s1 = -Ad * r, s2 = -Ad * rc;
+    surr = fmax(s1, s2);
+    const bool inside = r > 1.f - p.clip && r < 1.f + p.clip;
+    const real g = ((inside || s1 > s2) ? -Ad * r : (real)0) * p.scale;   // d surr / d log π_a
+    for (int k = 0; k < K; ++k)
+      if (m[k] > 0.5f) {
+        const real pk = exp(lp[k]);
+        H -= pk * lp[k];
+        kl += exp(lo[k]) * (lo[k] - lp[k]);
+      }
+    for (int k = 0; k < K; ++k) {
+      if (m[k] <= 0.5f) continue;
+      const real pk = exp(lp[k]);
+      // d(−ent·H)/dl_k = ent · p_k (log p_k + H)
+      G[k] = g * ((k == a ? (real)1 : (real)0) - pk) + p.ent * p.scale * pk * (lp[k] + H);
+    }
+  }
+  real v = p.v[i], R = p.ret[i], vo = p.old_v[i];
+  real vl, dv;
+  if (p.clipped_value) {
+    real dvc = fmin(fmax(v - vo, -p.clip), p.clip);
+    real vc = vo + dvc;
+    real l1 = (v - R) * (v - R), l2 = (vc - R) * (vc - R);
+    vl = fmax(l1, l2);
+    bool in = fabs(v - vo) < p.clip;
+    dv = l1 >= l2 ? 2.f * (v - R) : (in ? 2.f * (vc - R) : 0.f);
+  } else {
+    vl = (v - R) * (v - R);
+    dv = 2.f * (v - R);
+  }
+  p.dv[i] = dv * p.value_coef * p.scale;
+  p.stat[i * 4 + 0] = surr;
+  p.stat[i * 4 + 1] = vl;
+  p.stat[i * 4 + 2] = kl;
+  p.stat[i * 4 + 3] = H;   // 범주 판: 넷째 칸 = 샘플 엔트로피 (연속 판은 비 — 안 씀)
+}
+
 // MLP 입력 [F | 1D] 의 1D 열: dst[i·ldd + j] = x[i·ldx + j] (j < d), dst_h 면 bf16 만. F 열은 인코더가 바로 쓴다
 __global__ void k_put_1d(const real* __restrict__ x, int ldx, int d, int n, real* dst, __nv_bfloat16* dst_h, long ldd) {
   long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
@@ -291,6 +455,16 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   NF_ = ac_->nf;
   NC_ = spec.n_cont;
   A_ = NC_ + 1;
+  disc_ = spec.n_slots > 0;
+  AO_ = spec.actor.out;
+  ADIM_ = mdp::act::DIM;
+  if (disc_) {
+    K_ = spec.n_slots;
+    SOFF_ = spec.slot_off;
+    SF_ = spec.slot_feat;
+    A_ = 1;   // 저장하는 행동 = 슬롯 번호 하나
+    if (K_ > MAXK) throw std::runtime_error("n_slots > MAXK");
+  }
   if (IMG_ % 4) throw std::runtime_error("img_stride 는 4 의 배수여야 함");
   if (S_ % cfg.minibatches) throw std::runtime_error("N·T 가 minibatches 로 안 나뉨");
   size_t& b = storage_bytes_;
@@ -305,7 +479,8 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   s_logp_ = dmalloc<real>(S_, b);
   s_val_ = dmalloc<real>(S_, b);
   s_mu_ = dmalloc<real>((long)S_ * NC_, b);
-  s_logit_ = dmalloc<real>(S_, b);
+  s_logit_ = dmalloc<real>((long)S_ * (disc_ ? K_ : 1), b);
+  if (disc_) s_mask_ = dmalloc<real>((long)S_ * K_, b);
   s_sd_ = dmalloc<real>((long)S_ * NC_, b);
   s_rew_ = dmalloc<real>(S_, b);
   s_done_ = dmalloc<real>(S_, b);
@@ -316,9 +491,15 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   last_obs_ = dmalloc<real>((long)N_ * D_, b);
   last_val_ = dmalloc<real>(N_, b);
   c_img_ = dmalloc<uint8_t>((long)C * IMG_, b);
-  c_aout_ = dmalloc<real>((long)C * A_, b);
+  c_aout_ = dmalloc<real>((long)C * AO_, b);
   c_v_ = dmalloc<real>(C, b);
-  c_da_ = dmalloc<real>((long)C * A_, b);
+  c_da_ = dmalloc<real>((long)C * AO_, b);
+  if (disc_) {
+    c_logits_ = dmalloc<real>((long)C * K_, b);
+    c_G_ = dmalloc<real>((long)C * K_, b);
+    c_feat_ = dmalloc<real>((long)C * K_ * SF_, b);
+    c_maskt_ = dmalloc<real>((long)C * K_, b);
+  }
   c_dv_ = dmalloc<real>(C, b);
   c_dls_ = dmalloc<real>((long)C * NC_, b);
   c_stat_ = dmalloc<real>((long)C * 4, b);
@@ -332,14 +513,15 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
     if (c_xh_) c_xch_ = dmalloc<uint16_t>((long)C * (NF_ + D_), b);
     ac_->enc_c.set_x0(c_xc_, NF_ + D_, c_xch_);
   }
-  c_gat_ = dmalloc<real>((long)C * (A_ + 5 + 2 * NC_), b);
+  c_gat_ = dmalloc<real>((long)C * (A_ + 5 + 2 * std::max(NC_, K_)), b);
   d_perm_ = dmalloc<int>(S_, b);
 }
 
 PPO::~PPO() {
   for (void* p : std::initializer_list<void*>{m_, v_, s_img_, s_obs_, s_act_, s_logp_, s_val_, s_mu_, s_logit_, s_sd_,
                                               s_rew_, s_done_, s_ret_, s_adv_, raw_, last_obs_, last_val_, c_img_,
-                                              c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_})
+                                              c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_,
+                                              s_mask_, c_logits_, c_G_, c_feat_, c_maskt_})
     cudaFree(p);
   delete ac_;
 }
@@ -387,6 +569,13 @@ void PPO::act(const uint8_t* img, const real* obs1d, const real* priv, real* act
     ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     ac_->join();
     long k = k0 + c0;
+    if (disc_) {   // 슬롯 머리 → 가림(날 1D 관측의 후보 있음 칸) → 범주 샘플
+      ac_->head.forward(st, n, c_aout_, AO_, ob, D_, SOFF_, ac_->d_params, c_logits_);
+      k_cat_mask<<<nblk((long)n * K_), 256, 0, st>>>(obs1d + (long)c0 * ac_->spec.actor.in1d, ac_->spec.actor.in1d, SOFF_, SF_, n, K_, c_maskt_);
+      k_sample_cat<<<nblk(n, 128), 128, 0, st>>>(c_logits_, c_maskt_, n, K_, seed_, act_calls_, c0, ADIM_, actions + (long)c0 * ADIM_,
+                                                  s_act_ + k, s_logp_ + k, s_logit_ + k * K_, s_mask_ + k * K_);
+      continue;
+    }
     k_sample<<<nblk(n, 128), 128, 0, st>>>(c_aout_, ac_->log_std(), n, NC_, seed_, act_calls_, c0, actions + (long)c0 * A_,
                                             s_act_ + k * A_, s_logp_ + k, s_mu_ + k * NC_, s_logit_ + k,
                                             s_sd_ + k * NC_);
@@ -397,7 +586,8 @@ void PPO::act(const uint8_t* img, const real* obs1d, const real* priv, real* act
 void PPO::last_act_info(int n, real* logit, real* value) const {
   if (n > N_) throw std::runtime_error("last_act_info: n > num_envs");
   const long k0 = (long)step_ * N_;
-  CK(cudaMemcpyAsync(logit, s_logit_ + k0, n * sizeof(real), cudaMemcpyDeviceToHost, ac_->stream));
+  if (disc_) std::fill(logit, logit + n, (real)0);   // 범주 판: 선언 로짓 없음
+  else CK(cudaMemcpyAsync(logit, s_logit_ + k0, n * sizeof(real), cudaMemcpyDeviceToHost, ac_->stream));
   CK(cudaMemcpyAsync(value, s_val_ + k0, n * sizeof(real), cudaMemcpyDeviceToHost, ac_->stream));
   CK(cudaStreamSynchronize(ac_->stream));
 }
@@ -420,6 +610,13 @@ void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, in
     int n = std::min(cfg_.chunk, n_all - c0);
     encode(n, img + (long)c0 * IMG_, nullptr, raw_ + (long)c0 * D_);
     ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
+    if (disc_) {
+      ac_->head.forward(st, n, c_aout_, AO_, raw_ + (long)c0 * D_, D_, SOFF_, ac_->d_params, c_logits_);
+      k_cat_mask<<<nblk((long)n * K_), 256, 0, st>>>(obs1d + (long)c0 * da, da, SOFF_, SF_, n, K_, c_maskt_);
+      k_cat_act<<<nblk(n, 128), 128, 0, st>>>(c_logits_, c_maskt_, n, K_, seed_ ^ 0x9E3779B97F4A7C15ull, sample_call, c0, ADIM_,
+                                               actions + (long)c0 * ADIM_);
+      continue;
+    }
     if (sample_call >= 0)
       k_sample_act<<<nblk(n, 128), 128, 0, st>>>(c_aout_, ac_->log_std(), n, NC_, seed_ ^ 0x9E3779B97F4A7C15ull,
                                                   (uint64_t)sample_call, c0, actions + (long)c0 * A_);
@@ -471,7 +668,9 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
       k_gather_img<<<nblk((long)n * IMG_ / 4), 256, 0, st>>>((const uint32_t*)s_img_, IMG_ / 4, ix, n,
                                                               (uint32_t*)c_img_);
     // 1D 관측과 나머지 롤아웃 값(c_* 작업 공간 하나에 몰아)을 커널 하나로 모은다
-    GatherSet gs{{s_act_, s_logp_, s_mu_, s_logit_, s_sd_, s_adv_, s_ret_, s_val_}, {}, {A_, 1, NC_, 1, NC_, 1, 1, 1}, 0};
+    // 범주 판은 μ 자리에 가림 (K), 로짓 자리에 옛 로짓 (K), σ 자리 0 칸
+    GatherSet gs = disc_ ? GatherSet{{s_act_, s_logp_, s_mask_, s_logit_, s_sd_, s_adv_, s_ret_, s_val_}, {}, {A_, 1, K_, K_, 0, 1, 1, 1}, 0}
+                         : GatherSet{{s_act_, s_logp_, s_mu_, s_logit_, s_sd_, s_adv_, s_ret_, s_val_}, {}, {A_, 1, NC_, 1, NC_, 1, 1, 1}, 0};
     real* off[8];
     real* cur = c_gat_;
     for (int g = 0; g < 8; ++g) {
@@ -492,21 +691,30 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
     ac.critic.forward(ac.cublas2, ac.stream2, n, nullptr, cx(), NF_ + D_, c_v_, nullptr, cxh());
     ac.actor.forward(ac.cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     ac.join();
-    LossArgs p{c_aout_, c_v_, ac.log_std(), off[0], off[1], off[2], off[3], off[4], off[5], off[6], off[7], n, NC_,
-               cfg_.clip, cfg_.value_coef, 1.f / mb, cfg_.clipped_value, cfg_.bound_coef, cfg_.bound_soft,
-               c_da_, c_dv_, c_dls_, c_stat_};
-    k_loss<<<nblk(n, 128), 128, 0, st>>>(p);
+    if (disc_) {   // 슬롯 머리 (특징 = 정규화 1D 의 후보 칸) → 범주 손실
+      k_gather_cols<<<nblk((long)n * K_ * SF_), 256, 0, st>>>(s_obs_, D_, SOFF_, K_ * SF_, ix, n, c_feat_);
+      ac.head.forward(st, n, c_aout_, AO_, c_feat_, K_ * SF_, 0, ac.d_params, c_logits_);
+      CatLossArgs q{c_logits_, off[2], off[3], off[0], off[1], off[5], off[6], off[7], c_v_, n, K_, cfg_.clip, cfg_.value_coef, 1.f / mb,
+                    cfg_.entropy_coef, cfg_.clipped_value, c_G_, c_dv_, c_stat_};
+      k_loss_cat<<<nblk(n, 128), 128, 0, st>>>(q);
+    } else {
+      LossArgs p{c_aout_, c_v_, ac.log_std(), off[0], off[1], off[2], off[3], off[4], off[5], off[6], off[7], n, NC_,
+                 cfg_.clip, cfg_.value_coef, 1.f / mb, cfg_.clipped_value, cfg_.bound_coef, cfg_.bound_soft,
+                 c_da_, c_dv_, c_dls_, c_stat_};
+      k_loss<<<nblk(n, 128), 128, 0, st>>>(p);
+    }
     if (backward) {
       ac.fork();
       ac.critic.backward(ac.cublas2, ac.stream2, n, nullptr, c_dv_);
       if (ac.split) ac.enc_c.backward_feat(ac.cublas2, ac.stream2, n, im, imx, ac.critic.dx0(), ac.critic.feat(), nullptr, 0);   // critic 손실만
+      if (disc_) ac.head.backward(ac.cublas, st, n, c_aout_, AO_, ac.d_params, ac.d_grads, c_G_, c_da_, AO_);   // 머리 → 임베딩 기울기 c_da_
       ac.actor.backward(ac.cublas, st, n, nullptr, c_da_);
       if (ac.split) ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), nullptr, 0);   // actor 손실만
       ac.join();
       // 공유 인코더: 두 MLP 의 특징 기울기(actor + critic, 고정 순서)를 합성곱 역방향으로 (rsl_rl·공유 인코더 PPO 와 같은 합 손실).
       // 더하기는 넷째 층 역방향이 읽으면서 한다 (모으는 버퍼 없음)
       if (!ac.split) ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), ac.critic.dx0(), ac.critic.feat());
-      col_sum(c_dls_, n, NC_, NC_, ac.log_std_grad(), true, st);
+      if (NC_ > 0) col_sum(c_dls_, n, NC_, NC_, ac.log_std_grad(), true, st);
     }
     col_sum(c_stat_, n, 4, 4, c_red_, false, st);
     CK(cudaMemcpyAsync(hs.data(), c_red_, 4 * sizeof(real), cudaMemcpyDeviceToHost, st));
@@ -518,6 +726,9 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
   CK(cudaMemcpy(ls.data(), ac.log_std(), NC_ * sizeof(real), cudaMemcpyDeviceToHost));
   double ent = 0;
   for (real l : ls) ent += 0.5 + 0.91893853320467274 + l;
+  if (disc_) {   // 범주 판: stats[3] = 샘플 엔트로피 합 (k_loss_cat), 기울기는 로짓으로 이미 들어감
+    return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * stats[3] / mb;
+  }
   if (backward) k_add_const<<<1, 32, 0, st>>>(ac.log_std_grad(), NC_, -cfg_.entropy_coef * ((real)n_all / mb));
   stats[3] = ent * n_all;  // 엔트로피 합 자리로 바꿔 쓴다 (ratio 는 안 씀)
   return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * ent * n_all / mb;

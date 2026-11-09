@@ -37,6 +37,20 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
     spec.critic = c;
     spec.norm_dim = 7;
   }
+  // 계층형 (GC_HIER=1, gradcheck --hier): 슬롯 머리 + 가린 범주 분포 — 작은 구조는 슬롯 3 개 × 특징 7 (1D 앞 5 칸 뒤), 임베딩 4, 은닉 5
+  const bool hier = std::getenv("GC_HIER") != nullptr;
+  if (hier && full) spec = explore_spec_hier();
+  if (hier && !full) {
+    spec.actor.in1d = 5 + 3 * 7;
+    spec.actor.out = 4;
+    spec.critic.in1d = spec.actor.in1d + 2;
+    spec.norm_dim = spec.critic.in1d;
+    spec.n_cont = 0;
+    spec.n_slots = 3;
+    spec.slot_feat = 7;
+    spec.slot_off = 5;
+    spec.slot_hidden = 5;
+  }
   spec.declare_bias = 0.f;  // 검사에서는 선언 확률을 중간으로 (−7 이면 베르누이 기울기가 거의 0)
   PPOConfig cfg;
   cfg.num_envs = 6;
@@ -50,7 +64,7 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   if (const char* e = std::getenv("GC_BOUND_SOFT")) cfg.bound_soft = (float)std::atof(e);
   PPO ppo(cfg, spec, 1234);
   auto& ac = ppo.ac();
-  int N = cfg.num_envs, IMG = spec.enc.img_stride, P1 = spec.actor.in1d, PR = spec.norm_dim - P1, A = spec.n_cont + 1;
+  int N = cfg.num_envs, IMG = spec.enc.img_stride, P1 = spec.actor.in1d, PR = spec.norm_dim - P1, A = std::max(spec.n_cont + 1, 4);
 
   std::mt19937 rng(7);
   std::uniform_int_distribution<int> U8(0, 255);
@@ -67,9 +81,15 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   CK(cudaMalloc(&dact, (size_t)N * A * sizeof(real)));
   CK(cudaMalloc(&dr, N * sizeof(real)));
   CK(cudaMalloc(&dd, N * sizeof(int)));
+  int fill_t = 0;
   auto fill_obs = [&]() {
+    ++fill_t;
     for (auto& v : himg) v = (uint8_t)U8(rng);
     for (auto& v : h1) v = 2.f * G(rng) + 0.5f;
+    if (spec.n_slots > 0)   // 후보 있음 칸(특징 마지막) 0/1: 샘플 i 슬롯 k 는 (i + k) % 3 ≠ 0 이면 있음, i % 5 == 4 는 모두 빈 칸(고를 것 없음)
+      for (int i = 0; i < N; ++i)
+        for (int k = 0; k < spec.n_slots; ++k)
+          h1[(size_t)i * P1 + spec.slot_off + k * spec.slot_feat + spec.slot_feat - 1] = (i % 5 != 4 && (i + k + fill_t) % 3 != 0) ? 1.f : 0.f;
     for (auto& v : hp) v = G(rng);
     CK(cudaMemcpy(d_img, himg.data(), himg.size(), cudaMemcpyHostToDevice));
     CK(cudaMemcpy(d1, h1.data(), h1.size() * sizeof(real), cudaMemcpyHostToDevice));
