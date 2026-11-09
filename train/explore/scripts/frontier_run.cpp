@@ -5,6 +5,7 @@
 //                [--seed 1] [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml] [--frontier baselines/frontier/config/frontier.yaml]
 //                [--obs-every 5] [--cpu]
 //   --modes 에 slot0 · slot0_nosafe 를 넣으면 계층형 규칙 정책(늘 0 번 후보, 아래 run_hier)을 같은 판으로
+//   --people K: 계층형 판마다 사람 0 ~ K 명 (시험 맵 넓이 = 커리큘럼 단계 2 → 2). 끝 지표는 벽 충돌·사람 충돌을 나누고 충돌 때 명령(앞·제자리 회전·뒤·멈춤)도 셈
 //   → <root>/<name>_<판>/ (run.json kind "baseline", progress.jsonl, episodes.jsonl, evals/frontier.json, replays/*.xrp)
 //
 // 판 지표(episodes.jsonl): coverage(끝 덮은 비율), t95(95 % 도달 시각), tail_s(95 % 도달 → 판 끝), floor_coverage, path_len(참 자세 이동 거리),
@@ -33,6 +34,7 @@ constexpr float kSuccessCov = 0.95f;   // 성공 기준(덮음) — mdp/README �
 struct Args {
   std::vector<std::string> scenes, modes{"nav2", "fast"};
   int episodes = 4, obs_every = 5;
+  int people = 0;   // 계층형(slot0) 판마다 사람 0 ~ 이 수 (people.h, Env::set_people_max) — 0 이면 사람 없음(옛 판과 같은 씨앗)
   uint64_t seed = 1;
   std::string root = "train/explore/runs", name = "frontier";
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
@@ -402,6 +404,11 @@ int run_hier(const Args& a, const std::string& mode) {
     sim::Env env(hc, one, lidar, N, a.seed * 1000003ull + wi * 7919ull, !a.cpu);
     env.reset();
     env.sync();
+    if (a.people > 0) {   // 사람 상한은 판 시작 인자 — 놓고 다시 리셋 (people 0 이면 안 건드려 옛 판과 같은 씨앗)
+      env.set_people_max(std::vector<int>(N, a.people));
+      env.reset();
+      env.sync();
+    }
     float* d_act = nullptr;
     std::vector<float> act((size_t)mdp::act::DIM * N, 0.f);   // 늘 0 번
     if (!a.cpu) {
@@ -416,6 +423,7 @@ int run_hier(const Args& a, const std::string& mode) {
     std::vector<sim::EnvState> st;
     std::vector<int> reached(N, 0), dec(N, 0);   // 목표 칸 0.25 m 안에 서 있던 결정 수 (도착했는데 덩어리가 안 풀림 — "가도 안 풀리는 프론티어")
     std::vector<int> n_plans(N, 0), n_fb(N, 0);   // 판 동안 경로 계획 수 · 그중 느슨(지도 막힘만)으로 짠 수 (약한 막힘을 피해 못 닿을 때)
+    std::vector<int> n_mon(N, 0);   // 판 동안 충돌 감시(collision_monitor approach)가 명령을 줄인 걸음 수
     int left = N;
     for (int d = 0; left > 0 && d < c.max_steps / c.decide_steps + 10; ++d) {
       env.step(a.cpu ? act.data() : d_act);
@@ -432,6 +440,7 @@ int run_hier(const Args& a, const std::string& mode) {
           const sim::EnvState& s = st[i];
           n_plans[i] = s.p_plans;
           n_fb[i] = s.p_fb;
+          n_mon[i] = s.p_mon;
           if (s.p_n > 0) {
             const float gx = W.ox + (s.wp[2 * (s.p_n - 1)] + 0.5f) * c.res, gy = W.oy + (s.wp[2 * (s.p_n - 1) + 1] + 0.5f) * c.res;
             if (std::hypot(gx - (s.x + s.ex), gy - (s.y + s.ey)) <= c.goal_tol) reached[i] += 1;
@@ -446,6 +455,7 @@ int run_hier(const Args& a, const std::string& mode) {
     }
     if (d_act) cudaFree(d_act);
     double n = N, succ = 0, coll = 0, idle = 0, trunc = 0, ts = 0, cov_s = 0, rsum = 0, stand = 0, pl = 0, fb = 0;
+    double c_wall = 0, c_person = 0, t_all = 0, mon = 0, steps_all = 0, ck[5] = {0, 0, 0, 0, 0};   // 벽·사람 충돌, 판 길이 합, 충돌 때 명령 (EpInfo::coll_kind)
     for (int i = 0; i < N; ++i) { pl += n_plans[i]; fb += n_fb[i]; }
     for (int i = 0; i < N; ++i) {
       const sim::EpInfo& f = first[i];
@@ -455,6 +465,12 @@ int run_hier(const Args& a, const std::string& mode) {
                        : dd == mdp::cur::kNoProgress ? rf::outcome::NO_PROGRESS : rf::outcome::TRUNCATED;
       succ += dd == mdp::cur::kDeclareOk;
       coll += dd == mdp::cur::kCollision || dd == mdp::cur::kCollisionPerson;
+      c_wall += dd == mdp::cur::kCollision;
+      c_person += dd == mdp::cur::kCollisionPerson;
+      if (fin[i] && (dd == mdp::cur::kCollision || dd == mdp::cur::kCollisionPerson)) ck[std::min(4, std::max(0, f.coll_kind))] += 1;
+      t_all += fin[i] ? f.t : dec[i] * dec_s;
+      mon += n_mon[i];
+      steps_all += dec[i] * c.decide_steps;
       idle += dd == mdp::cur::kNoProgress;
       trunc += !fin[i] || dd == mdp::cur::kTruncated;
       if (dd == mdp::cur::kDeclareOk) { ts += f.t; cov_s += f.coverage; }
@@ -463,6 +479,7 @@ int run_hier(const Args& a, const std::string& mode) {
       rf::Json line = rf::Json::object();
       line.set("iter", (int)wi).set("env", i).set("ep", run.new_episode_id()).set("map", W.name).set("stage", mode).set("outcome", oc)
           .set("success", dd == mdp::cur::kDeclareOk).set("collided", dd == mdp::cur::kCollision || dd == mdp::cur::kCollisionPerson)
+          .set("collided_person", dd == mdp::cur::kCollisionPerson).set("coll_kind", fin[i] ? f.coll_kind : 0)
           .set("t", f.t).set("coverage", f.coverage).set("reward", ret[i]).set("decisions", dec[i]).set("at_goal_frac", dec[i] ? (double)reached[i] / dec[i] : 0.0)
           .set("mode", mode);
       run.episode(line);
@@ -470,10 +487,14 @@ int run_hier(const Args& a, const std::string& mode) {
     rf::Json row = rf::Json::object();
     row.set("eval", W.name).set("split", mode).set("n", n).set("success", succ / n).set("collision", coll / n).set("no_progress", idle / n)
         .set("truncation", trunc / n).set("t_success", succ > 0 ? ts / succ : 0.0).set("cov_at_success", succ > 0 ? cov_s / succ : 0.0)
-        .set("reward", rsum / n).set("at_goal_frac", stand / n).set("loose_plan_frac", pl > 0 ? fb / pl : 0.0);
+        .set("reward", rsum / n).set("at_goal_frac", stand / n).set("loose_plan_frac", pl > 0 ? fb / pl : 0.0)
+        .set("collision_wall", c_wall / n).set("collision_person", c_person / n).set("t_mean", t_all / n).set("monitor_frac", steps_all > 0 ? mon / steps_all : 0.0)
+        .set("coll_fwd", ck[1] / n).set("coll_rotate", ck[2] / n).set("coll_back", ck[3] / n).set("coll_stopped", ck[4] / n);
     eval_rows.push(row);
     std::fprintf(stderr, "[%s %s] 성공 %.3f 충돌 %.3f 진행 없음 %.3f 끊김 %.3f, 성공까지 %.1f s (성공 판 정답 덮음 %.3f), 판 합 보상 %.2f, 목표에 서 있던 결정 비율 %.3f, 느슨 계획 비율 %.3f\n", mode.c_str(),
                  W.name.c_str(), succ / n, coll / n, idle / n, trunc / n, succ > 0 ? ts / succ : 0.0, succ > 0 ? cov_s / succ : 0.0, rsum / n, stand / n, pl > 0 ? fb / pl : 0.0);
+    std::fprintf(stderr, "[%s %s] 사람 %d: 벽 충돌 %.3f 사람 충돌 %.3f · 충돌 때 명령 앞 %.3f 제자리 회전 %.3f 뒤 %.3f 멈춤 %.3f · 판 평균 길이 %.1f s · 충돌 감시가 줄인 걸음 비율 %.3f\n", mode.c_str(),
+                 W.name.c_str(), a.people, c_wall / n, c_person / n, ck[1] / n, ck[2] / n, ck[3] / n, ck[4] / n, t_all / n, steps_all > 0 ? mon / steps_all : 0.0);
   }
   rf::Json ev = rf::Json::object();
   ev.set("iter", (int)a.scenes.size() - 1).set("ckpt", "hier_" + mode).set("rows", eval_rows);
@@ -502,6 +523,7 @@ int main(int argc, char** argv) {
     else if (k == "--model") a.model = nx();
     else if (k == "--frontier") a.frontier = nx();
     else if (k == "--obs-every") a.obs_every = std::max(1, std::stoi(nx()));
+    else if (k == "--people") a.people = std::stoi(nx());
     else if (k == "--cpu") a.cpu = true;
     else { std::fprintf(stderr, "모르는 인자 %s\n", k.c_str()); return 2; }
   }

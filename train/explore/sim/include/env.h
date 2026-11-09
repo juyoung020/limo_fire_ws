@@ -102,6 +102,12 @@ struct EnvCfg {
   float reg_min_radius, reg_min_speed;   // RPP 곡률 감속 (nav2_params regulated_linear_scaling_*)
   float path_obs_range, path_fp_pad, path_coll_time;   // RPP 충돌 검사: 장애물 층 obstacle_max_range · footprint_padding · max_allowed_time_to_collision_up_to_carrot
   float path_backup_v;      // 충돌 검사에 걸리면 물러나는 속도 (Nav2 BT BackUp backup_speed)
+  // 사람·움직이는 장애물 피하기 (2026-11-09, hier_path.h "지금 스캔"): 정답 사람 자리는 안 쓰고 지금 라이다 장(링 최신 칸)만.
+  // path_scan: 경로 계획이 지금 스캔 끝점(obstacle_max_range 안)을 막힘으로 (Nav2 obstacle_layer marking) — 0 끔 · 1 지도가 빈 칸으로 아는 칸의 점만 · 2 모든 점,
+  // mon_on = 1 이면 추종기 뒤 collision_monitor approach (발자국을 명령대로 mon_t 초까지 mon_dt 마다 굴려 스캔 점 > mon_max_points 이면 그때까지 시간 / mon_t 배로 줄임).
+  // SIM_HIER_AVOID=0 이면 둘 다 끔 (옛 동작 — 앞뒤 비교용)
+  int path_scan, mon_on, mon_max_points;
+  float mon_t, mon_dt;
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -130,6 +136,8 @@ constexpr int kClassLog = 16384;                          // 한 장에 칸 종�
 struct EpInfo {
   float coverage, t95, t;  // 끝날 때 벽 덮음, 95 % 처음 닿은 시각 (s, 못 닿으면 −1), 판 길이 (s)
   int32_t done, collided, stage, map;
+  int32_t coll_kind;       // 충돌이면 그때 명령: 1 앞으로 · 2 제자리 회전 · 3 뒤로 · 4 멈춤 (기록 — frontier_run 이 나눠 셈), 아니면 0
+  int32_t pad_;
 };
 
 struct EnvState {
@@ -156,6 +164,7 @@ struct EnvState {
   int32_t since_occ, occ[kProgRing], occ_sum, pad_occ;
   int32_t kb_x0, kb_y0, kb_x1, kb_y1;   // 지도에서 건드린 칸 범위 (프론티어 요약을 이 안에서만)
   int32_t lid_head, delay;     // 라이다 링 최신 칸, 이 판 관측 지연 (걸음)
+  float lid_pose[3 * kLidarRing];   // 링 칸마다 그 장을 넣을 때 지도 자세 (x, y, θ) — 계층형 제자리 회전 검사가 지난 장 점을 지금 로봇 기준으로 옮김 (hier_path.h (c))
   int32_t stage, cur_n;        // 커리큘럼 단계, 최근 판 기록 수
   uint32_t cur_hist;           // 최근 판 끝 덮음 ×1000 합 (curriculums.h on_episode_end)
   int32_t t95_step;            // 덮음 95 % 처음 닿은 걸음 (−1 아직)
@@ -169,7 +178,7 @@ struct EnvState {
   People people;              // 이 판 움직이는 사람 (people.h)
   // 계층형 행동 (kActPath, include/hier_path.h): 지금 목표 칸 (y · gw + x, −1 없음), 웨이포인트 수·지금 구간·고른 후보 번호·앞 부분만 담았나, 웨이포인트 칸 (x, y)
   int32_t goal_cell, p_n, p_i, p_slot, p_trunc, p_stops;   // p_stops: 판 동안 충돌 검사로 멈추거나 물러난 걸음 수 (기록)
-  int32_t p_mode, p_fb, p_plans, p_pad;   // 지난 계획 칸 기준 (1 엄격: 약한 막힘도 피함 · 2 느슨: 지도 막힘만 — hier_path.h), 판 동안 느슨으로 짠 수·계획 수 (기록)
+  int32_t p_mode, p_fb, p_plans, p_mon;   // 지난 계획 칸 기준 (1 엄격: 약한 막힘도 피함 · 2 느슨: 지도 막힘만 — hier_path.h), 판 동안 느슨으로 짠 수·계획 수·충돌 감시가 줄인 걸음 수 (기록)
   int16_t wp[2 * mdp::hier::kPathMax];
 };
 
@@ -387,6 +396,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.kb_x0 = e.kb_y0 = 1 << 30;
   e.kb_x1 = e.kb_y1 = -1;
   e.lid_head = 0;
+  for (int i = 0; i < 3 * kLidarRing; ++i) e.lid_pose[i] = 0.f;
   // 관측 지연: 판마다 0~150 ms 고르게 (실물 라이다 지연 0.10 s + 추론). 관측은 행동마다(0.1 s) 만들므로 걸음 단위로 내림 → 0 걸음(2/3)·1 걸음(1/3)
   e.delay = (int)(dm::rand01(e.rng) * 150.f) / 100;
   if (e.delay > c.max_delay) e.delay = c.max_delay;
@@ -394,7 +404,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.goal_cell = -1;   // 계층형 경로 없음 (다른 모드에선 안 씀)
   e.p_slot = -1;
   e.p_n = e.p_i = e.p_trunc = e.p_stops = 0;
-  e.p_mode = e.p_fb = e.p_plans = e.p_pad = 0;
+  e.p_mode = e.p_fb = e.p_plans = e.p_mon = 0;
   if (c.curriculum) e.people.k_max = mdp::cur::people_of(e.stage);   // 단계별 사람 수 (curriculums.h)
   people_reset(b, e);   // 사람 놓기 (로봇 자세·world_seed 뒤)
 }
@@ -552,6 +562,9 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
       vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;   // 0.1 m = 결정 둘(2 s) 동안 물러나는 거리
       wc = 0.f;
       e.p_stops += 1;
+    } else if (c.mon_on && vc == 0.f && wc != 0.f && path_rotate_blocked(b, e, env)) {
+      wc = 0.f;   // 제자리 회전: 못 보는 뒤에 직전 장에서 본 점이 몸통 회전 원 안 (hier_path.h (c)) — 이번 걸음은 돌지 않음
+      e.p_mon += 1;
     }
     const float dt_act = (float)c.substeps * c.dt;
     const float vt = dm::maxf(-c.path_v, dm::minf(c.path_v, vc));
@@ -559,6 +572,14 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
     e.vs = e.vs + (dv > sv ? sv : (dv < -sv ? -sv : dv));
     e.ws = e.ws + (dw > sw ? sw : (dw < -sw ? -sw : dw));
     float v = e.vs, w = e.ws;
+    {   // collision_monitor approach (hier_path.h "지금 스캔" (b)): velocity_smoother 뒤 — Nav2 처럼 smoother 상태는 그대로 두고 내보내는 명령만 줄임
+      const float k = path_monitor_scale(b, e, env, v, w);
+      if (k < 1.f) {
+        v *= k;
+        w *= k;
+        e.p_mon += 1;
+      }
+    }
     if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) v = 0.f;
     if (c.sweep_guard) {
       const float k = sweep_scale(b, e, env, v, 0.f, w);
@@ -1032,6 +1053,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   in.cov = cov;
   in.slip = e.slip_acc;
   in.turn = dm::absf(e.w) * dt_act;   // 행동 끝 몸통 ω 로 (rewards.h kTurn)
+  in.hier = c.action_mode == kActPath ? 1 : 0;   // 계층형: 헛돎·회전 항 0 (rewards.h 근거 "계층형")
   // 진행 없음 (curriculums.h kIdleTime·kIdleOccMin): 지도 시계 since_occ(map_progress, 이 함수 앞에서 갱신) — 충돌·선언이 먼저.
   // 막힘 칸 아무 하나가 아니라 한 행동에 kIdleOccMin 개 이상일 때만 되돌림: 멈춰 있어도 자세 오차·빔 잡음으로 막힘 칸이 드문드문 생기므로.
   // since_wall(정답 벽 면 칸 첫 관측 뒤 걸음)은 가치 전용 참값(PRIV_IDLE)으로만.
@@ -1078,12 +1100,23 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
     I.collided = e.collided;
     I.stage = e.stage;
     I.map = e.map;
+    I.coll_kind = !e.collided ? 0
+                  : (e.cmd_v > 0.01f ? 1 : (e.cmd_v < -0.01f ? 3 : (dm::absf(e.cmd_w) > 0.01f ? 2 : 4)));
+    I.pad_ = 0;
     if (c.curriculum) {
       // 맨 위 단계 무작위 (실험, 켤 때만 난수를 뽑아 끈 쪽은 난수 흐름이 그대로)
       const uint32_t rnd = c.cur_top_random ? (uint32_t)(dm::splitmix64(e.rng) >> 32) : 0u;
       mdp::cur::on_episode_end(&e.stage, &e.cur_hist, &e.cur_n, cov, b.max_stage, c.cur_top_random != 0, rnd);
     }
   }
+}
+
+// 스레드 0: 링 다음 칸으로 (이번 장이 있을 때) — 그 칸의 지도 자세도 적음 (걸음 끝 자세, 장은 걸음 동안 쏨)
+DEV void ring_advance(EnvState& e) {
+  e.lid_head = (e.lid_head + 1) % kLidarRing;
+  e.lid_pose[3 * e.lid_head] = e.x + e.ex;
+  e.lid_pose[3 * e.lid_head + 1] = e.y + e.ey;
+  e.lid_pose[3 * e.lid_head + 2] = e.th + e.eth;
 }
 
 // 모든 스레드: 이번 장 라이다 칸을 링 다음 칸에 (lid_head 는 스레드 0 이 먼저 올림)

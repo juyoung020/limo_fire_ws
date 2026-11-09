@@ -81,6 +81,7 @@ struct StepIn {
   int new_occ;          // 이번 걸음 로봇 지도에서 판 처음 막힘이 된 칸 수 (첫 걸음 0)
   int reward_occ;       // 1: 덮음 항 = kOccCell × new_occ (로봇 지도), 0: kCov × cov_gain (정답 벽 — 보관)
   float turn;           // 이번 걸음 몸통이 돈 각도 (rad, ≥ 0)
+  int hier;             // 1: 계층형 행동(sim kActPath) — 헛돎·회전 항 0 (아래 근거 "계층형", 상위 정책이 못 고르는 하위 걸음 항)
 };
 
 // 항마다 값 → out[kTerms], 합을 돌려줌 (더하는 순서 고정 — 결정적)
@@ -91,9 +92,9 @@ DEV float terms(const StepIn& in, float* out) {
   out[kTermCollPerson] = in.collided_person ? kCollPerson : 0.f;
   out[kTermPersonNear] = kPersonNear * in.near_person;
   out[kTermDeclare] = in.closed ? kDeclareSuccess : (in.declared ? declare_reward(in.cov) : 0.f);
-  out[kTermSlip] = kSlip * in.slip;
+  out[kTermSlip] = in.hier ? 0.f : kSlip * in.slip;
   out[kTermIdle] = in.idle ? kIdlePenalty : 0.f;
-  out[kTermTurn] = kTurn * in.turn;
+  out[kTermTurn] = in.hier ? 0.f : kTurn * in.turn;
   float r = 0.f;
   for (int k = 0; k < kTerms; ++k) r += out[k];
   return r;
@@ -134,5 +135,10 @@ DEV float terms(const StepIn& in, float* out) {
 //   회전 감점 kTurn −0.001 / rad (2026-11-05, 잠정): explore_v4 정책은 늘 한쪽으로 거의 최대 회전(직전 ω 정규 평균 +0.74, 1 m 당 2.7 rad).
 //     v4 성공 판(68 s, |ω| 2.8)이면 −0.19, 헤맨 판(510 s)이면 −1.4 — 덮음(20)에 비해 작게. 부등식에 안 넣는다: 제자리 회전은
 //     한 바퀴 뒤엔 새 막힘 칸이 문턱(kIdleOccMin)을 못 넘어 진행 없음(60 s)으로 끝나므로 최대 3.14 · 60 · 0.001 ≈ −0.19 (첫 바퀴 몫 조금 더).
+//   계층형(--hier, 2026-11-09): 상위 정책은 1 s 마다 후보만 고르고 (v, ω) 는 추종기(hier_path.h)가 낸다 — 헛돎(가속·바닥)·회전(제자리 회전·RPP 회전)은
+//     후보 선택으로 거의 못 바꾸는 하위 걸음 몫이라 정책 기울기엔 잡음만 더한다 → 0 (StepIn::hier). 사람 근접(person_near)은 남긴다: 어느 후보(어느 길)를
+//     고르냐가 사람 곁을 지나는 거리를 바꾸고, 사람 충돌(판 끝 −9)보다 먼저 오는 촘촘한 신호다. 덮음·시간·충돌·진행 없음·닫힘 성공은 그대로(판 끝 정의도 그대로).
+//     ARiADNE(Cao et al., ICRA 2023, arXiv 2301.11575 III-A)의 결정당 보상 a·|새로 본 프론티어| − b·이동 거리 + 끝 보너스 20 과 맞대면
+//     덮음(새 막힘 칸) ↔ 새로 본 프론티어, 시간(1 m/s 근처 일정 속도라 이동 거리에 비례) ↔ 거리, 닫힘 성공 ↔ 끝 보너스로 이미 같은 꼴 — 그래서 항을 더 바꾸지 않는다.
 //   진행 없음 감점 kIdlePenalty −4: 버티다 끝(−4) > 박기(−6), 버티다 끝 < 기준선 따라 선언 — reward_probe 가 검사.
 //     (진행 없음 끝을 둔 까닭과 kIdleTime 근거는 curriculums.h "판 끝 조건".)

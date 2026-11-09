@@ -806,7 +806,7 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int su
     mdp::obsgen::far_dirty_robot(b, e, g);   // 지나간 곳 표시도 먼 지도 다시 그릴 곳에
     b.reward[env] = e.reward;
     b.done[env] = e.done;
-    if (g.scanned) e.lid_head = (e.lid_head + 1) % kLidarRing;
+    if (g.scanned) ring_advance(e);
     if (sub >= 0) {   // 계층형: 결정 동안 합 (걸음 차례대로 더함 — CPU 참조판과 같은 차례)
       const float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
       float* A = b.tacc + (size_t)env * mdp::rew::kTerms;
@@ -890,6 +890,9 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   uint32_t* D2 = D1 + nf;
   uint32_t* LT = P + kPpLT * nf;
   uint32_t* SST = P + kPpSST * nf;
+  uint32_t* LO = P + kPpLO * nf;     // 느슨 막힘 = 지도 막힘 ∪ 지금 스캔 (path_scan 일 때만 씀)
+  uint32_t* SLO = P + kPpSLO * nf;   // 그 설 수 있음
+  const bool scan = c.path_scan != 0;
   const auto Bp = [&](int t) { return P + (size_t)(kPpB + (t & 3)) * nf; };
   if (tid == 0) {
     const int k = slot_of(actions[(size_t)mdp::act::DIM * env]);
@@ -931,18 +934,33 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
       if (dx * dx + dy * dy <= rr) w |= 1u << q;
     }
     LT[wi] = w;
+    if (scan) LO[wi] = OCC[wi];
   }
   __syncthreads();
+  // 지금 스캔 끝점 (hier_path.h "지금 스캔" (a)) → 엄격·느슨 막힘 둘 다. 범위(LT 를 채운 줄·낱말) 밖 점은 둘레 계산에 안 닿으므로 버림 (CPU 와 같은 결과)
+  if (scan) {
+    for (int k = tid; k < mdp::obs::LIDAR_BINS; k += kRT) {
+      int x, y;
+      if (!path_scan_cell(b, e, env, k, &x, &y)) continue;
+      if (y < ly0 || y > ly1 || (x >> 5) < lw0 || (x >> 5) > lw1) continue;
+      atomicOr(&LT[y * ws + (x >> 5)], 1u << (x & 31));
+      atomicOr(&LO[y * ws + (x >> 5)], 1u << (x & 31));
+    }
+    __syncthreads();
+  }
   for (int k = tid; k < nbox; k += kRT) {
     const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
     SST[wi] = stand_word(LT, KN, ws, m.gh, y, wx, rb);
+    if (scan) SLO[wi] = stand_word(LO, KN, ws, m.gh, y, wx, rb);
   }
   __syncthreads();
+  const uint32_t* LPASS = scan ? SLO : ST;    // 느슨 계획의 설 수 있음 · 무게 경계 막힘
+  const uint32_t* LOBS = scan ? LO : OCC;
   // 같은 후보 · 경로 그대로? (지난 계획이 엄격이면 엄격 칸, 느슨이면 느슨 칸으로 남은 경로 확인)
   if (tid == 0) {
     const int k = e.p_slot;
     const bool same = ((b.cand_cur[env] >> k) & 1) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc &&
-                      path_clear(e, [&](int x, int y) { return bit_of(e.p_mode == 1 ? SST : ST, x, y) != 0u; });
+                      path_clear(e, [&](int x, int y) { return bit_of(e.p_mode == 1 ? SST : LPASS, x, y) != 0u; });
     if (same) s_plan = 0;
     else {
       e.goal_cell = s_target;
@@ -1020,9 +1038,9 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   };
   int mode = 0;
   if (s_tgt_ok && run(SST, LT)) mode = 1;           // 엄격 (블록 전체 같은 값)
-  else if (run(ST, OCC)) mode = 2;                  // 느슨: 목표가 약한 막힘 둘레 안이거나 엄격으로 못 닿음
+  else if (run(LPASS, LOBS)) mode = 2;              // 느슨: 목표가 약한 막힘 둘레 안이거나 엄격으로 못 닿음 (지금 스캔은 느슨에서도 막힘)
   if (tid != 0 || !mode) return;
-  const uint32_t* PASS = mode == 1 ? SST : ST;
+  const uint32_t* PASS = mode == 1 ? SST : LPASS;
   // 뒤로 짚기 (스레드 0): 이웃 차례 nb4 에서 처음으로 거리 ≡ 내 거리 − 내 무게 (mod 7) 인 칸
   const int start = s_start;
   const auto dcode = [&](int x, int y) { return (int)(bit_of(D0, x, y) | (bit_of(D1, x, y) << 1) | (bit_of(D2, x, y) << 2)); };

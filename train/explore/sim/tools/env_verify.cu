@@ -287,14 +287,15 @@ int main(int argc, char** argv) {
   if (hier) {
     // 계층형 마지막 관측: 후보 수·지금 목표 표시, 경로 있는 환경 수
     using mdp::hier::FEAT; using mdp::hier::F_VALID; using mdp::hier::F_CUR;
-    int nc = 0, ncur = 0, npath = 0, ngoal = 0;
+    int nc = 0, ncur = 0, npath = 0, ngoal = 0, nmon = 0;
     for (int i = 0; i < n_env; ++i) {
       const float* O = oc1.data() + (size_t)i * gpu.batch().o1d + mdp::obs::POLICY_1D;
       for (int k = 0; k < mdp::hier::K; ++k) { nc += O[k * FEAT + F_VALID] > 0.5f; ncur += O[k * FEAT + F_CUR] > 0.5f; }
       npath += sc[i].p_n > 0;
       ngoal += sc[i].goal_cell >= 0;
+      nmon += sc[i].p_mon;
     }
-    std::printf("계층형: 환경당 후보 %.2f 개, 지금 목표 표시 %d, 목표 있음 %d · 경로 있음 %d (환경 %d)\n", (double)nc / n_env, ncur, ngoal, npath, n_env);
+    std::printf("계층형: 환경당 후보 %.2f 개, 지금 목표 표시 %d, 목표 있음 %d · 경로 있음 %d (환경 %d), 이번 판 충돌 감시가 줄인 걸음 합 %d\n", (double)nc / n_env, ncur, ngoal, npath, n_env, nmon);
     // 정답 격자를 안 쓰나: CPU 묶음 사본의 맵 격자를 모두 막힘(0xff)·모두 0 으로 바꿔 경로 계획·추종기 명령을 다시 — 같아야 함
     const sim::EnvBatch& B = cpu.batch();
     std::vector<sim::MapDev> m_blk(B.maps, B.maps + B.n_maps), m_free(B.maps, B.maps + B.n_maps);
@@ -305,7 +306,7 @@ int main(int argc, char** argv) {
     sim::EnvBatch Bb = B, Bf = B;
     Bb.maps = m_blk.data();
     Bf.maps = m_free.data();
-    int n_cmp = 0, n_diff = 0, n_planned = 0;
+    int n_cmp = 0, n_diff = 0, n_planned = 0, n_mon = 0;
     for (int i = 0; i < n_env; ++i)
       for (int k = 0; k < mdp::hier::K; ++k) {
         sim::EnvState e0 = sc[i], e1 = sc[i], e2 = sc[i];
@@ -317,14 +318,19 @@ int main(int argc, char** argv) {
         sim::path_follow(B, e0, i, &v0, &w0);
         sim::path_follow(Bb, e1, i, &v1, &w1);
         sim::path_follow(Bf, e2, i, &v2, &w2);
+        // 충돌 감시(collision_monitor approach — 지금 스캔만)도 같은 명령에서 같은 배율
+        const float k0 = sim::path_monitor_scale(B, e0, i, v0, w0), k1 = sim::path_monitor_scale(Bb, e1, i, v1, w1), k2 = sim::path_monitor_scale(Bf, e2, i, v2, w2);
         ++n_cmp;
         n_planned += e0.p_n > 0;
+        n_mon += k0 < 1.f;
         const bool same_p = std::memcmp(&e0, &e1, sizeof(e0)) == 0 && std::memcmp(&e0, &e2, sizeof(e0)) == 0;
-        if (!same_p || v0 != v1 || v0 != v2 || w0 != w1 || w0 != w2) ++n_diff;
+        if (!same_p || v0 != v1 || v0 != v2 || w0 != w1 || w0 != w2 || k0 != k1 || k0 != k2) ++n_diff;
       }
     gt_ok = n_diff == 0 && n_planned > 0;
-    std::printf("정답 격자 안 씀: 환경 × 후보 %d 개 중 경로 짠 것 %d, 정답 격자를 모두 막힘·모두 빈 칸으로 바꿔 경로·명령이 달라진 것 %d — %s\n", n_cmp, n_planned, n_diff,
-                gt_ok ? "통과" : "실패");
+    std::printf("정답 격자 안 씀: 환경 × 후보 %d 개 중 경로 짠 것 %d (충돌 감시가 줄인 것 %d), 정답 격자를 모두 막힘·모두 빈 칸으로 바꿔 경로·명령·감시 배율이 달라진 것 %d — %s\n",
+                n_cmp, n_planned, n_mon, n_diff, gt_ok ? "통과" : "실패");
+    // 지금 스캔 막힘·감시가 켜져 있나 (SIM_HIER_AVOID=0 이면 끔)
+    std::printf("사람 피하기: 지금 스캔 막힘 %d · 충돌 감시 %d (T %.1f s, 걸음 %.2f s, 점 > %d)\n", B.cfg.path_scan, B.cfg.mon_on, B.cfg.mon_t, B.cfg.mon_dt, B.cfg.mon_max_points);
   }
   const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_obs == 0;
   const bool range_ok = n_nan == 0 && bad_range == 0;

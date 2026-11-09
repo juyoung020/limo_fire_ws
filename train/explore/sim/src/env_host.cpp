@@ -121,6 +121,21 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     c.path_r_mid = ap["weight_mid_dist"].as<float>();
     c.path_backup_v = ap["backup_speed"].as<float>();
     c.path_fp_pad += ap["extra_padding"].as<float>();   // nav2 footprint_padding 위에 더 (잠정)
+    // 사람·움직이는 장애물 피하기 (hier_path.h "지금 스캔"): 지금 스캔 막힘 · collision_monitor approach. SIM_HIER_AVOID=0 이면 둘 다 끔 (앞뒤 비교)
+    {
+      const std::string sm = need(ap, "scan_obstacles", path).as<std::string>();
+      if (sm != "off" && sm != "map_free" && sm != "all") throw std::runtime_error(path + ": action.path.scan_obstacles 는 off · map_free · all");
+      c.path_scan = sm == "off" ? 0 : (sm == "map_free" ? 1 : 2);
+    }
+    if (const char* g = std::getenv("SIM_SCAN_OBSTACLES")) c.path_scan = std::atoi(g);   // 실험용 (0 · 1 · 2) — 앞뒤 비교
+    const YAML::Node cm = need(ap, "collision_monitor", path);
+    c.mon_on = cm["enabled"].as<bool>() ? 1 : 0;
+    c.mon_t = cm["time_before_collision"].as<float>();
+    c.mon_dt = cm["simulation_time_step"].as<float>();
+    c.mon_max_points = cm["max_points"].as<int>();
+    if (!(c.mon_dt > 0.f) || c.mon_t < c.mon_dt || c.mon_t / c.mon_dt > 64.f) throw std::runtime_error(path + ": collision_monitor 시간 (0 < 걸음 ≤ 시간, 걸음 수 ≤ 64)");
+    if (const char* g = std::getenv("SIM_COLLISION_MONITOR")) c.mon_on = g[0] == '1' ? 1 : 0;   // 실험용 — 앞뒤 비교
+    if (const char* g = std::getenv("SIM_HIER_AVOID"); g && g[0] == '0') c.path_scan = c.mon_on = 0;
   }
 
   // 섀시 구동 (drive.h) · 바닥 재질

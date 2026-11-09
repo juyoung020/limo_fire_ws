@@ -82,7 +82,7 @@ viewer/target/release/trainview --root runs --port 8097
 ../../build/frontier/frontier_check scenes/bookstore.scene scenes/small-house.scene             # + --negative 로 검사가 틀림을 잡는지
 ```
 
-`frontier_run` 옵션: `--episodes N`(장면마다 GPU 환경 N 개 = 판 N 개), `--obs-every K`(재생 관측 지도 K 걸음마다, 기본 5 = 0.5 s), `--cpu`(CPU 참조 시뮬), `--env`·`--model`·`--frontier`(설정 파일). `FRONTIER_DEBUG=1` 이면 고를 때마다·충돌 직전 상태를 stderr 에.
+`frontier_run` 옵션: `--episodes N`(장면마다 GPU 환경 N 개 = 판 N 개), `--obs-every K`(재생 관측 지도 K 걸음마다, 기본 5 = 0.5 s), `--cpu`(CPU 참조 시뮬), `--env`·`--model`·`--frontier`(설정 파일). `FRONTIER_DEBUG=1` 이면 고를 때마다·충돌 직전 상태를 stderr 에. `--people K`(계층형 `slot0` 만): 판마다 사람 0 ~ K 명 — 끝 지표에 벽 충돌·사람 충돌·충돌 때 명령(앞·제자리 회전·뒤·멈춤)·판 평균 길이·충돌 감시 비율이 따로 나온다(`SIM_HIER_AVOID=0` 이면 사람 피하기 끔, mdp/README "계층형").
 
 
 ## 실행 폴더 (`viewer/include/runfolder.h`)

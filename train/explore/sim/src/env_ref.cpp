@@ -114,12 +114,20 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   for (int y = ey0; y <= ey1; ++y)
     for (int x = ex0; x <= ex1; ++x) {
       const int16_t l = L[(size_t)y * c.size + x];
-      uint8_t v = mdp::cell_class(l) == mdp::kOcc ? 3 : 0;   // bit0 occ · bit1 lt
+      uint8_t v = mdp::cell_class(l) == mdp::kOcc ? 3 : 0;   // bit0 occ · bit1 lt · bit2 지금 스캔 (아래) — 느슨 막힘 = bit0 · bit2
       if (!v && l != mdp::kUnknownL && l > 0) {
         const float dx = (float)(x - rcx) * c.res, dy = (float)(y - rcy) * c.res;
         if (dx * dx + dy * dy <= rr) v = 2;
       }
       lt[(size_t)y * m.gw + x] = v;
+    }
+  // 지금 스캔 끝점 (hier_path.h "지금 스캔" (a)): bit2 — 엄격·느슨 둘 다 막힘 (GPU LT·LO 판)
+  if (c.path_scan)
+    for (int k = 0; k < mdp::obs::LIDAR_BINS; ++k) {
+      int x, y;
+      if (!path_scan_cell(b, e, env, k, &x, &y)) continue;
+      if (x < ex0 || x > ex1 || y < ey0 || y > ey1) continue;
+      lt[(size_t)y * m.gw + x] |= 4;
     }
   // 막힘까지 가장 가까운 거리² (칸, 반경 ro 안만) — 범위 안 칸마다 occ·lt 따로. mdp::standable 과 같은 원판 규칙
   for (int y = y0; y <= y1; ++y)
@@ -135,7 +143,7 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
           const int d2 = dx * dx + dy * dy;
           int32_t& ql = d2l[(size_t)w * m.gw + u];
           ql = std::min(ql, d2);
-          if (v & 1) {
+          if (v & 5) {
             int32_t& qo = d2o[(size_t)w * m.gw + u];
             qo = std::min(qo, d2);
           }
@@ -147,7 +155,7 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   const auto pass = [&](int mode, int x, int y) -> bool {
     if (!inbox(x, y) || !known(x, y)) return false;
     const size_t i = (size_t)y * m.gw + x;
-    return mode == 1 ? (!lt[i] && d2l[i] > rb.r2) : (!(lt[i] & 1) && d2o[i] > rb.r2);
+    return mode == 1 ? (!lt[i] && d2l[i] > rb.r2) : (!(lt[i] & 5) && d2o[i] > rb.r2);
   };
   const auto weight = [&](int mode, int x, int y) -> int {
     if (!pass(mode, x, y)) return 0;
@@ -294,7 +302,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
       for (int k = 0; k < mdp::rew::kTerms; ++k) A[k] += T[k];
     }
   }
-  if (sh.scanned) e.lid_head = (e.lid_head + 1) % kLidarRing;
+  if (sh.scanned) ring_advance(e);
   if (sh.scanned)
     for (int tid = 0; tid < kThreads; ++tid) push_bins(b, e, env, sh, tid);
   const bool was_done = e.done != 0;

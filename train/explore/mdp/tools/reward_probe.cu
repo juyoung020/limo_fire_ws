@@ -33,6 +33,8 @@ struct Result {
   std::vector<int> done, steps;
   std::vector<float> cov;
   double terms[mdp::rew::kTerms] = {};
+  std::vector<long> sub;                       // 계층형: 판 동안 더한 시뮬 걸음 수 (시간 항으로 셈)
+  long n_dec = 0, bad_sum = 0, bad_steps = 0, bad_len = 0;   // 행동(결정) 수 · 보상 ≠ 항 합 · 결정 걸음 수 어긋남 · 판 길이 어긋남
 };
 
 double mean(const std::vector<double>& v) {
@@ -98,6 +100,7 @@ int main(int argc, char** argv) {
       R.done.assign(n_env, 0);
       R.steps.assign(n_env, 0);
       R.cov.assign(n_env, 0.f);
+      R.sub.assign(n_env, 0);
       std::vector<char> active(n_env, 1), stopped(n_env, 0);
       int n_active = n_env;
       std::vector<uint8_t> h_img;
@@ -148,7 +151,19 @@ int main(int argc, char** argv) {
         for (int i = 0; i < n_env; ++i) {
           if (!active[i]) continue;
           R.ret[i] += rew[i];
-          for (int k = 0; k < K; ++k) R.terms[k] += terms[(size_t)K * i + k];
+          double tsum = 0;
+          for (int k = 0; k < K; ++k) { R.terms[k] += terms[(size_t)K * i + k]; tsum += terms[(size_t)K * i + k]; }
+          // 보상 = 항 합 (행동 하나 — 계층형이면 결정 하나의 묶음 합)
+          R.n_dec += 1;
+          if (std::fabs(tsum - rew[i]) > 1e-4 * std::max(1.0, std::fabs((double)rew[i]))) R.bad_sum += 1;
+          if (hier) {   // 시간 항 / 걸음당 시간 항 = 이 결정에 더한 시뮬 걸음 수: 판이 안 끝났으면 decide_steps, 끝났으면 1 ~ decide_steps
+            const double per = -(double)mdp::rew::kTime * hc.cfg.substeps * hc.cfg.dt / mdp::rew::t_ref(W.n_wall);
+            const double ns = terms[(size_t)K * i + mdp::rew::kTermTime] / per;
+            const int ni = (int)std::lround(ns);
+            if (std::fabs(ns - ni) > 1e-3 || (done[i] == 0 ? ni != dec : (ni < 1 || ni > dec))) R.bad_steps += 1;
+            R.sub[i] += ni;
+            if (done[i] != 0 && std::fabs(R.sub[i] * hc.cfg.substeps * hc.cfg.dt - ep[i].t) > 1e-3) R.bad_len += 1;   // 판 길이 = 더한 걸음 수 × 0.1 s
+          }
           if (done[i] != 0 || stopped[i]) {
             active[i] = 0;
             --n_active;
@@ -171,12 +186,25 @@ int main(int argc, char** argv) {
       std::printf("             항 평균:");
       for (int k = 0; k < K; ++k) std::printf(" %s %+.3f", mdp::rew::term_name(k), R.terms[k] / n_env);
       std::printf("\n");
+      if (hier)
+        std::printf("             결정 %ld 개: 보상 ≠ 항 합 %ld · 결정 걸음 수 어긋남 %ld · 판 길이 ≠ 더한 걸음 × 0.1 s %ld\n", R.n_dec, R.bad_sum, R.bad_steps, R.bad_len);
     }
     auto has = [&](const char* k) { return res.count(k) > 0; };
     auto check = [&](bool ok, const char* what) {
       std::printf("  [%s] %s\n", ok ? "통과" : "실패", what);
       all_ok = all_ok && ok;
     };
+    {
+      long bs = 0, bst = 0, bl = 0;
+      for (auto& kv : res) { bs += kv.second.bad_sum; bst += kv.second.bad_steps; bl += kv.second.bad_len; }
+      check(bs == 0, "행동(결정)마다 보상 = 항 합");
+      if (hier) {
+        check(bst == 0 && bl == 0, "계층형 결정 보상 = 묶음 걸음 합: 안 끝난 결정은 10 걸음, 끝난 결정은 1~10 걸음, 판 길이 = 더한 걸음 × 0.1 s");
+        double sl = 0, tu = 0;
+        for (auto& kv : res) { sl += std::fabs(kv.second.terms[mdp::rew::kTermSlip]); tu += std::fabs(kv.second.terms[mdp::rew::kTermTurn]); }
+        check(sl == 0 && tu == 0, "계층형: 헛돎·회전 항 0 (rewards.h 근거 \"계층형\")");
+      }
+    }
     if (has("still")) {
       double mx = -1e9;
       for (double r : res["still"].ret) mx = std::max(mx, r);
