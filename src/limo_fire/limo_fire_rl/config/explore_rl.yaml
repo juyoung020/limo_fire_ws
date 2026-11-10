@@ -1,0 +1,26 @@
+# 탐사 RL 실물 노드 (src/explore_rl_node.cpp). 관측·결정 주기·닫힘 판정은 학습 설정(train/explore/sim/config/env.yaml)을 그대로 읽는다 — 여기에는 ROS 쪽만
+explore_rl:
+  ros__parameters:
+    checkpoint: ""            # 계층형 체크포인트 .bin (launch 인자 checkpoint 로)
+    policy: rl                # rl: 정책 · nearest: BFS 거리 가장 짧은 후보 (같은 후보 계산 위 프론티어 규칙)
+    dry_run: false            # true: 후보·목표만 계산·표시하고 Nav2 에 안 보냄 (녹화 다시 돌리기·첫 확인)
+    enabled: true             # false 로 띄우면 ~/enable 서비스로 켤 때까지 목표 안 보냄
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan
+    odom_topic: /odom         # 바퀴 오도메트리 (관측 바퀴 v·ω — 시뮬 drive.wv·ww). EKF 속도 칸은 시뮬과 같은 1 차 필터로 노드가 셈
+    imu_topic: /imu
+    cmd_vel_topic: /cmd_vel   # Nav2 velocity_smoother 출력 (관측 직전 행동)
+    depth_topic: /camera/depth/image_raw
+    depth_info_topic: /camera/depth/camera_info
+    tf_timeout: 0.2           # s, 장 시각의 map → base_link 기다림 — 잠정
+    input_timeout: 1.0        # s, 라이다·TF 가 이만큼 없으면 목표 취소 — 잠정
+    camera_layer: true        # 깊이 카메라 장애물 층 (학습과 같음). 깊이 정렬 끔·카메라 숙임이 바뀌면 바닥을 장애물로 찍어 거짓 닫힘 → 그때만 false
+    depth_timeout: 0.5        # s, 이보다 오래된 깊이 영상은 안 씀(구멍 0) — 잠정
+    stop_on_no_progress: false   # 지도 진척 60 s 없음(시뮬은 판 끝)에서 멈출지. 기본은 알리고 계속
+    spin_angle: 1.57          # rad, 후보가 없을 때 제자리 회전 (시뮬은 rotate_to_heading 속도로 계속 돎) — 잠정
+    blacklist_time: 10.0      # s, Nav2 가 포기한 목표 둘레를 피하는 시간 (env.yaml action.path.recovery blacklist_time 과 같은 값)
+    blacklist_radius: 0.5     # m, (env.yaml recovery same_goal_radius 와 같은 값)
+    resend_min_dist: 0.25     # m, 같은 덩어리의 후보 칸이 이만큼 안에서 옮기면 Nav2 목표를 다시 안 보냄 — 잠정
+    continue_after_done: false   # 시험용: 끝(닫힘 성공) 뒤에도 결정 기록을 이어 감 (목표는 안 보냄)
+    debug_dir: ""             # 비우지 않으면 결정 기록(decisions.csv)·관측(obs.bin)·로봇 지도(lmap.bin)를 이 폴더에

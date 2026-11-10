@@ -7,18 +7,10 @@
 #include <vector>
 
 #include "env.h"
+#include "env_cfg.h"   // EnvHostCfg · load_env_cfg (CUDA 없는 호스트 코드)
 #include "scene_host.h"
 
 namespace sim {
-
-struct EnvHostCfg {
-  EnvCfg cfg{};
-  float band_lo = 0.f, band_hi = 0.f, spawn_clearance = 0.f;
-  float brake_dist = 0.f;   // 안전층 문턱 근거: V_FWD 에서 명령 0 → 멈출 때까지 (m)
-};
-
-// env.yaml + 그 안에서 가리키는 nav2_params.yaml
-EnvHostCfg load_env_cfg(const std::string& env_yaml);
 
 // 맵 하나: 장면 + 칸 격자 + 시작 칸
 struct World {
@@ -139,6 +131,14 @@ inline void to_normalized(const EnvCfg& c, float v, float vy, float w, float dec
 // 한 걸음 (src/env_kernel.cu, src/env_ref.cpp)
 void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);   // actions: [N][mdp::act::DIM]
 void env_step_cpu(const EnvBatch& b, const float* actions);
+// 시험용 (tools/rl_node_check): CPU 참조판 걸음 안의 라이다 장(지도 쪽 준비 뒤 빔마다 거리·세기)과 걸음 끝 상태(판 끝 판정 뒤, 링·관측 전)를
+// 밖으로 넘긴다 — 실물 노드(limo_fire_rl RobotEnv)에 같은 센서 값을 넣어 관측이 같은지 본다. 탭은 스레드 1 개(set_cpu_threads(1))일 때만 쓴다
+struct CpuTap {
+  virtual ~CpuTap() = default;
+  virtual void scan(int env, const EnvState& e, const Shared& sh, const std::vector<float>& r, const std::vector<float>& inten) = 0;
+  virtual void step_end(int env, const EnvState& e) = 0;
+};
+void set_cpu_tap(CpuTap* t);   // nullptr = 끔 (기본)
 // CPU 참조판 스레드 수 (기본 1). 환경을 스레드에 나눠 돌린다 — 결과는 스레드 수와 무관하게 같다
 void set_cpu_threads(int n);
 // 시험용 (env_verify --hier): 계층형 결정 하나의 경로 계획을 CPU 참조판 그대로 (상태 e 의 경로 칸만 바꿈). b 는 CPU 묶음

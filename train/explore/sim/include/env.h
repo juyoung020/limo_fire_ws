@@ -552,6 +552,16 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
 
 #include "hier_path.h"   // 계층형 경로 추종 (apply_action 이 부름)
 
+// 계층형 관측 "직전 행동": 이번 걸음 명령 (v, ω) — 추종기·smoother·안전층 뒤 /cmd_vel — 을 정규 단위로 밀어 넣음 (vy·선언 0).
+// 실물 노드(limo_fire_rl)는 Nav2 가 낸 /cmd_vel 로 같은 함수를 부른다
+DEV void path_last_act(const EnvCfg& c, EnvState& e, float v, float w) {
+  for (int i = mdp::act::DIM * 4 - 1; i >= mdp::act::DIM; --i) e.last_act[i] = e.last_act[i - mdp::act::DIM];
+  e.last_act[0] = dm::clampf(v >= 0.f ? v / c.act_v_fwd : v / c.act_v_back, -1.f, 1.f);
+  e.last_act[1] = 0.f;
+  e.last_act[2] = dm::clampf(w / c.act_w_max, -1.f, 1.f);
+  e.last_act[3] = 0.f;
+}
+
 // a: 환경마다 float mdp::act::DIM 개. 속도 행동이면 (v, vy, ω, 선언) — 정규 단위 [−1, 1] (act_raw 면 물리 단위),
 // 목표점 행동이면 a[0] = 행동 번호 (a[3] 선언은 같음)
 DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
@@ -643,11 +653,7 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
     e.cmd_vy = 0.f;
     e.cmd_w = w;
     e.last_action = e.p_slot;
-    for (int i = mdp::act::DIM * 4 - 1; i >= mdp::act::DIM; --i) e.last_act[i] = e.last_act[i - mdp::act::DIM];
-    e.last_act[0] = dm::clampf(v >= 0.f ? v / c.act_v_fwd : v / c.act_v_back, -1.f, 1.f);
-    e.last_act[1] = 0.f;
-    e.last_act[2] = dm::clampf(w / c.act_w_max, -1.f, 1.f);
-    e.last_act[3] = 0.f;
+    path_last_act(c, e, v, w);
   } else {
     set_goal(b, e, (int)a[0]);
   }
@@ -754,6 +760,22 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
 
 // ---------- 라이다 + 지도 ----------
 
+// 스레드 0: 이번 장의 지도 쪽 준비 — 지도 자세(e.x + e.ex …)의 라이다 위치·방향, 펴기 각속도 w, 건드린 범위·각도 칸 비우기.
+// 시뮬은 scan_begin 이 부르고, 실물 노드(limo_fire_rl)는 /scan 마다 Cartographer 자세·자이로 ω 로 같은 함수를 부른다
+DEV void scan_begin_map(const EnvCfg& c, const EnvState& e, float w, Shared& sh) {
+  const float pth = e.th + e.eth;
+  float ps, pc;
+  dm::sincosf_d(pth, &ps, &pc);
+  sh.mx = (e.x + e.ex + pc * c.mount_x) - ps * c.mount_y;
+  sh.my = (e.y + e.ey + ps * c.mount_x) + pc * c.mount_y;
+  sh.mth = pth;
+  sh.mw = w;
+  sh.bx0 = sh.by0 = 1 << 30;
+  sh.bx1 = sh.by1 = -1;
+  for (int k = 0; k < mdp::obs::LIDAR_BINS; ++k) sh.bins[k] = kBinNone;
+  sh.scanned = 1;
+}
+
 // 스레드 0: 이번 장 준비
 DEV void scan_begin(const EnvBatch& b, const EnvState& e, Shared& sh) {
   const EnvCfg& c = b.cfg;
@@ -773,17 +795,7 @@ DEV void scan_begin(const EnvBatch& b, const EnvState& e, Shared& sh) {
   in.pad = 0;
   sh.n_beams = scan_beams(e.noise, in.n_rev);
   sh.inc = kTwoPi / in.n_rev;
-  const float pth = e.th + e.eth;
-  float ps, pc;
-  dm::sincosf_d(pth, &ps, &pc);
-  sh.mx = (e.x + e.ex + pc * c.mount_x) - ps * c.mount_y;
-  sh.my = (e.y + e.ey + ps * c.mount_x) + pc * c.mount_y;
-  sh.mth = pth;
-  sh.mw = e.w;
-  sh.bx0 = sh.by0 = 1 << 30;
-  sh.bx1 = sh.by1 = -1;
-  for (int k = 0; k < mdp::obs::LIDAR_BINS; ++k) sh.bins[k] = kBinNone;
-  sh.scanned = 1;
+  scan_begin_map(c, e, e.w, sh);
 }
 
 // 관측 라이다 칸: ROS 가 적는 빔 각도(−fov/2 + j·inc — 실물 /scan 과 같은 각도, 펴기 전)로 ±110° 를 248 칸에 나누고 칸마다 가장 가까운 거리.
@@ -869,17 +881,27 @@ DEV bool wall_credit(const EnvCfg& c, const MapDev& m, const BeamRay& ray, float
 
 // 빔 j: 재고, 지도 자세로 펴서 지나간 칸·맞은 칸 표시 (Bresenham), 끝점이 떨어진 벽 면 칸 표시 (wall_credit)
 // 잰 뒤 (r = lidar_beam_real, ray = 그 참 광선) — GPU 는 광선을 묶어 쏜 뒤 이것만 부른다
-DEV void scan_beam_mark(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int j, float r, const BeamRay& ray) {
+DEV void scan_beam_map(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int j, float r, float inten, const BeamRay* ray);
+// 반환 = 그 빔 세기 (빠짐이면 0) — CPU 참조판 시험 탭(env_api.h CpuTap)이 실물 노드에 같은 값을 넘기려고
+DEV float scan_beam_mark(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int j, float r, const BeamRay& ray) {
+  if (r <= 0.f) return 0.f;   // 빠짐: Cartographer 는 min_range 아래로 버린다
+  uint64_t si = sh.scan.seed ^ ((uint64_t)(j + 1) * 0xD6E8FEB86659FD93ull);   // 세기 흔들림 난수 (빔마다)
+  const float it = lidar_intensity(e.noise, e.world_seed, ray.obj, r, ray.cosi, false, si);
+  scan_beam_map(b, e, env, sh, j, r, it, &ray);
+  return it;
+}
+
+// 빔 j 의 지도 쪽 (세기 inten 은 시뮬 모델 값 · 실물은 /scan intensities): 관측 각도 칸, 지도 자세로 펴서 지나간 칸·맞은 칸 표시,
+// ray 가 있으면(시뮬) 끝점이 떨어진 벽 면 칸 표시(덮음 — 정답 격자). 실물 노드(limo_fire_rl)는 ray = nullptr 로 같은 함수를 부른다.
+// 빔 각도·시각 = ROS LaserScan 과 같은 격자: −fov/2 + j·inc, j · scan_time / n_rev (실물은 fov = −2·angle_min, scan_time / n_rev = time_increment)
+DEV void scan_beam_map(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int j, float r, float inten, const BeamRay* ray) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   if (r <= 0.f) return;   // 빠짐: Cartographer 는 min_range 아래로 버린다
   // ROS 가 적는 빔 각도(격자) + 빔 시각만큼 돈 몫 (Cartographer 가 펴 줌)
   const float t = (float)j * (e.noise.scan_time / sh.scan.n_rev);
   const float a_ros = -0.5f * e.noise.fov + (float)j * sh.inc;
-  {
-    uint64_t si = sh.scan.seed ^ ((uint64_t)(j + 1) * 0xD6E8FEB86659FD93ull);   // 세기 흔들림 난수 (빔마다)
-    bin_beam(sh, a_ros, r, c.map_max_range, lidar_intensity(e.noise, e.world_seed, ray.obj, r, ray.cosi, false, si));
-  }
+  bin_beam(sh, a_ros, r, c.map_max_range, inten);
   const float a = sh.mth + a_ros + sh.mw * t;
   float s, co;
   dm::sincosf_d(a, &s, &co);
@@ -931,7 +953,7 @@ DEV void scan_beam_mark(const EnvBatch& b, const EnvState& e, int env, Shared& s
   }
   // 벽 덮음은 지도와 같은 거리 한도(max_range 안 = 지도에 맞음으로 들어가는 빔)만
   int wx, wy;
-  if (hit && ray.obj != kObjPerson && wall_credit(c, m, ray, r, &wx, &wy)) {   // 사람을 맞은 빔은 덮음에 안 셈
+  if (ray && hit && ray->obj != kObjPerson && wall_credit(c, m, *ray, r, &wx, &wy)) {   // 사람을 맞은 빔은 덮음에 안 셈
     mark(M, c.size, wx, wy, 4u);
     grow(wx, wy);   // scan_apply 가 이 칸을 지나가게 (참 광선 끝점은 지도 자세 Bresenham 범위 밖일 수 있음)
   }
@@ -943,10 +965,12 @@ DEV void scan_beam_mark(const EnvBatch& b, const EnvState& e, int env, Shared& s
   }
 }
 
-DEV void scan_beam(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int j) {
+DEV void scan_beam(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int j, float* r_out = nullptr, float* it_out = nullptr) {
   BeamRay ray;
   const float r = lidar_beam_real(with_people(b.maps[e.map].scene, e.people), e.noise, sh.scan, j, &ray);
-  scan_beam_mark(b, e, env, sh, j, r, ray);
+  const float it = scan_beam_mark(b, e, env, sh, j, r, ray);
+  if (r_out) *r_out = r;
+  if (it_out) *it_out = it;
 }
 
 // 먼 지도 칸 표시: 지도 칸 묶음 [cx0, cx1] × {cy} (같은 줄 4 칸 낱말) 안에서 로그 오즈가 바뀌면 그 칸들 안 점을 읽는 먼 지도 칸

@@ -9,6 +9,7 @@
 | `tools/bench.cu` | 처리량·GPU 메모리 (환경 2048 개 기본) |
 | `tools/cnn_check.cu` · `tools/cnn_bench.cu` | 합성곱 융합 커널: 텐서 코어 판 vs fp32 판 정확도(덜 찬 타일·색인 읽기 포함), 커널만 속도·TFLOPS |
 | `tools/tail_check.cu` | 합성곱 넷째 층 융합 커널(`cnn_tail`) vs host fp64 기준: 출력·dF3·dW·db 오차, 덧댄 칸·가지 밖 열, 두 번 비트 같음 |
+| `tools/policy_cpu_check.cu` | 실물 노드의 CPU 정방향(`network/policy_cpu.h`) vs `act_inference`(정확 경로·bf16 기본 경로): 같은 관측에서 결정 슬롯·로짓 차 (`src/limo_fire/limo_fire_rl/README.md` "확인") |
 | (`runner.cpp`) | 아직 없음 — S6 에서 러너가 이 라이브러리를 부른다 |
 
 ## 빌드

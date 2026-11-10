@@ -40,7 +40,7 @@ target_link_libraries(gc32 PUBLIC explore_ppo)
 add_executable(gradcheck tools/gradcheck.cu)
 target_link_libraries(gradcheck gc32 explore_ppo64)
 
-foreach(t toy_train toy_slot bench gemm_bench)
+foreach(t toy_train toy_slot bench gemm_bench policy_cpu_check)
   add_executable(${t} tools/${t}.cu)
   target_link_libraries(${t} explore_ppo)
 endforeach()

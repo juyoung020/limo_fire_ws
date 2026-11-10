@@ -1,0 +1,38 @@
+<!-- 탐사 RL 실물 노드 (limo_fire_rl/README). 먼저 robot.launch.xml 을 켜 둔다.
+     ros2 launch limo_fire_rl explore_rl.launch.xml checkpoint:=/경로/model.bin [stack:=true] [dry_run:=true] [policy:=nearest]
+     stack:=true 면 Cartographer(mapping.launch.xml) + Nav2 주행만(navigation.launch.xml localization:=false) 을 같이 띄운다.
+     이미 따로 띄웠으면 stack:=false (기본) -->
+<launch>
+  <arg name="checkpoint" default="" description="계층형 체크포인트 .bin (policy:=nearest 면 비워도 됨)"/>
+  <arg name="policy" default="rl" description="rl · nearest"/>
+  <arg name="dry_run" default="false" description="true: Nav2 에 목표를 안 보냄"/>
+  <arg name="enabled" default="true" description="false: ~/enable 서비스로 켤 때까지 목표 안 보냄"/>
+  <arg name="stack" default="false" description="true: Cartographer + Nav2(지도 없이 주행) 같이"/>
+  <arg name="rviz" default="false"/>
+  <arg name="use_sim_time" default="false"/>
+  <arg name="camera_layer" default="true" description="false: 깊이 카메라 장애물 층 끔 (깊이 정렬·숙임이 학습과 다를 때만)"/>
+  <arg name="debug_dir" default="" description="결정 기록·관측·로봇 지도를 쓸 폴더 (비우면 안 씀)"/>
+
+  <group if="$(var stack)">
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/mapping.launch.xml">
+      <arg name="rviz" value="$(var rviz)"/>
+      <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    </include>
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/navigation.launch.xml">
+      <arg name="localization" value="false"/>
+      <arg name="rviz" value="false"/>
+      <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    </include>
+  </group>
+
+  <node pkg="limo_fire_rl" exec="explore_rl" name="explore_rl" output="screen">
+    <param from="$(find-pkg-share limo_fire_rl)/config/explore_rl.yaml"/>
+    <param name="checkpoint" value="$(var checkpoint)"/>
+    <param name="policy" value="$(var policy)"/>
+    <param name="dry_run" value="$(var dry_run)"/>
+    <param name="enabled" value="$(var enabled)"/>
+    <param name="camera_layer" value="$(var camera_layer)"/>
+    <param name="debug_dir" value="$(var debug_dir)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+</launch>

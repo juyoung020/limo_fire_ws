@@ -31,7 +31,7 @@ endif()
 
 find_package(yaml-cpp REQUIRED)
 
-add_library(limo_sim STATIC src/sensors_kernel.cu src/sensors_ref.cpp src/w3d.cpp src/sensor_model.cpp
+add_library(limo_sim STATIC src/sensors_kernel.cu src/sensors_ref.cpp src/w3d.cpp src/sensor_model.cpp src/env_cfg.cpp
             src/env_kernel.cu src/env_ref.cpp src/env_host.cpp src/people_host.cpp)
 target_include_directories(limo_sim PUBLIC include ${CMAKE_CURRENT_SOURCE_DIR}/../mdp)
 find_package(Threads REQUIRED)
@@ -120,3 +120,9 @@ set_source_files_properties(src/env_ref.cpp PROPERTIES COMPILE_OPTIONS "-O3;-mar
 add_executable(mesh2scene tools/mesh2scene.cpp)
 target_include_directories(mesh2scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools)
 target_link_libraries(mesh2scene limo_sim)
+
+# 실물 노드 관측 == 시뮬 관측 (src/limo_fire/limo_fire_rl RobotEnv 에 CPU 시뮬 걸음의 센서 값을 넣어 비트 비교) — limo_fire_rl/README "확인"
+set(RL_NODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../src/limo_fire/limo_fire_rl)
+add_executable(rl_node_check tools/rl_node_check.cpp ${RL_NODE_DIR}/src/robot_env.cpp)
+target_include_directories(rl_node_check PRIVATE ${RL_NODE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/../network)
+target_link_libraries(rl_node_check limo_sim)

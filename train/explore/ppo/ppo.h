@@ -93,6 +93,8 @@ class PPO {
   // 평가 (정규화 통계·학습 난수 안 바꿈). actions 는 [N][n_cont+1]. sample_call < 0: 결정적(평균 행동, 선언 = 확률 > 0.5).
   // sample_call ≥ 0: 정책 분포에서 샘플(학습과 같은 분포, 다른 난수 계열 — 걸음마다 다른 값을 넘긴다). 학습 성공과 평가 성공의 차이를 가르려고.
   void act_inference(const uint8_t* img, const real* obs1d, real* actions, int n = -1, int64_t sample_call = -1);
+  // 계층형만: 직전 act_inference 의 슬롯 로짓 (장치 [n][K], 가림 전) — n 이 한 묶음(chunk) 안일 때. 실물 CPU 정방향 비교(tools/policy_cpu_check)용
+  const real* last_logits() const { return c_logits_; }
 
   // 체크포인트: 가중치·Adam(m, v, 걸음)·정규화 통계·반복 수·학습률·난수 계수. 롤아웃 도중 저장은 안 됨.
   void save(const std::string& path) const;
