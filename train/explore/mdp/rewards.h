@@ -27,6 +27,7 @@ constexpr float kCollWall = -6.f;         // collision_wall    벽·물체에 �
 constexpr float kCollPerson = -9.f;       // collision_person  사람과 부딪혀 판 끝 (벽보다 크게)
 constexpr float kPersonNear = -0.5f;      // person_near       사람 근처(kNearDist 안)에서 움직인 거리 m 당
 constexpr float kDeclareSuccess = 10.f;   // declare           끝 선언 때 덮음 ≥ 성공 기준(curriculums.h kSuccessCov)
+constexpr float kFast = 10.f;             // declare           성공 때 더: kFast × max(0, 1 − 걸린 시간 / T_ref) — 빨리 끝낼수록 큼 (2026-11-10, 잠정, 아래 근거 "빠르기")
 constexpr float kDeclareFail = -3.f;      // declare           끝 선언 때 덮음이 0 에 가까울 때 (기준 근처로 갈수록 kDeclareNear 로)
 constexpr float kSlip = -0.05f;           // slip              바퀴가 몸통보다 더 돈 각도 rad 당
 constexpr float kTurn = -0.001f;          // turn              몸통이 돈 각도 rad 당 (|ω|·걸음 길이) — 작게: 사각(라이다 220°)을 메우는 회전은 남기고 늘 최대로 도는 것만 줄이게
@@ -66,6 +67,12 @@ DEV float declare_reward(float c) {
   return kDeclareFail + (kDeclareNear - kDeclareFail) * (c - kDeclareRampFrom) / (cur::kSuccessCov - kDeclareRampFrom);
 }
 
+// 성공 빠르기 보너스 (성공 판에만): T_ref(기준선 속도로 다 덮는 시간) 안에 끝내면 0 ~ kFast, 넘으면 0
+DEV float fast_bonus(float t, float t_ref) {
+  const float f = 1.f - t / t_ref;
+  return f > 0.f ? kFast * f : 0.f;
+}
+
 // 한 걸음 항 입력
 struct StepIn {
   float cov_gain;       // 이번 걸음 벽 덮음 증가 (첫 걸음은 0)
@@ -81,6 +88,7 @@ struct StepIn {
   int new_occ;          // 이번 걸음 로봇 지도에서 판 처음 막힘이 된 칸 수 (첫 걸음 0)
   int reward_occ;       // 1: 덮음 항 = kOccCell × new_occ (로봇 지도), 0: kCov × cov_gain (정답 벽 — 보관)
   float turn;           // 이번 걸음 몸통이 돈 각도 (rad, ≥ 0)
+  float t;              // 판 시작부터 이번 걸음 끝까지 시간 (s) — 성공 빠르기 보너스 kFast
   int hier;             // 1: 계층형 행동(sim kActPath) — 헛돎·회전 항 0 (아래 근거 "계층형", 상위 정책이 못 고르는 하위 걸음 항)
 };
 
@@ -91,7 +99,11 @@ DEV float terms(const StepIn& in, float* out) {
   out[kTermCollWall] = in.collided_wall ? kCollWall : 0.f;
   out[kTermCollPerson] = in.collided_person ? kCollPerson : 0.f;
   out[kTermPersonNear] = kPersonNear * in.near_person;
-  out[kTermDeclare] = in.closed ? kDeclareSuccess : (in.declared ? declare_reward(in.cov) : 0.f);
+  {
+    const bool success = in.closed || (in.declared && in.cov >= cur::kSuccessCov);
+    out[kTermDeclare] = in.closed ? kDeclareSuccess : (in.declared ? declare_reward(in.cov) : 0.f);
+    if (success) out[kTermDeclare] += fast_bonus(in.t, in.t_ref);
+  }
   out[kTermSlip] = in.hier ? 0.f : kSlip * in.slip;
   out[kTermIdle] = in.idle ? kIdlePenalty : 0.f;
   out[kTermTurn] = in.hier ? 0.f : kTurn * in.turn;
@@ -142,3 +154,10 @@ DEV float terms(const StepIn& in, float* out) {
 //     덮음(새 막힘 칸) ↔ 새로 본 프론티어, 시간(1 m/s 근처 일정 속도라 이동 거리에 비례) ↔ 거리, 닫힘 성공 ↔ 끝 보너스로 이미 같은 꼴 — 그래서 항을 더 바꾸지 않는다.
 //   진행 없음 감점 kIdlePenalty −4: 버티다 끝(−4) > 박기(−6), 버티다 끝 < 기준선 따라 선언 — reward_probe 가 검사.
 //     (진행 없음 끝을 둔 까닭과 kIdleTime 근거는 curriculums.h "판 끝 조건".)
+//   빠르기 kFast 10 × max(0, 1 − t / T_ref) (2026-11-10, 잠정): explore_h3 반복 50~300 동안 시험 맵 결정적 평가의 성공까지 시간이 그대로
+//     (bookstore 177~189 s, small-house 135~146 s). 그 판 시간 감점 합은 −0.2 × t / T_ref ≈ −0.11 로 덮음(+20)·성공(+10)에 묻혔다.
+//     시간 감점(kTime)을 키우면 위 충돌 부등식(kCollWall < kDeclareFail − kTime · 10)이 깨져 "일찍 박아 감점 아끼기" 가 이득이 되므로,
+//     대신 성공 판에만 빠르기 몫을 더한다 — 성공 끝 보상을 경로 효율(SPL)로 키우는 꼴(Wijmans et al. DD-PPO, arXiv 1911.00357;
+//     곱셈형 길이 보정 arXiv 2603.10535: 덧셈 길이 감점은 과제 성능을 깎으며 악용될 수 있다). 실패·충돌 판엔 0 이라 위 부등식은 그대로.
+//     크기: bookstore(T_ref 321 s) 180 s 성공 → +4.4, 120 s → +6.3 (10 s 당 +0.31, 할인 전). 10 = kDeclareSuccess 와 같은 크기로 둠.
+//     닫힘 성공(로봇 지도로만 판정)에도 준다 — 가짜 닫힘(정답 덮음 < 0.95)이 늘면 평가의 참 성공을 보고 정답 덮음 조건을 붙인다.

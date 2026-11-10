@@ -136,6 +136,43 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     if (!(c.mon_dt > 0.f) || c.mon_t < c.mon_dt || c.mon_t / c.mon_dt > 64.f) throw std::runtime_error(path + ": collision_monitor 시간 (0 < 걸음 ≤ 시간, 걸음 수 ≤ 64)");
     if (const char* g = std::getenv("SIM_COLLISION_MONITOR")) c.mon_on = g[0] == '1' ? 1 : 0;   // 실험용 — 앞뒤 비교
     if (const char* g = std::getenv("SIM_HIER_AVOID"); g && g[0] == '0') c.path_scan = c.mon_on = 0;
+    // 깊이 카메라 장애물 층 (hier_path.h "깊이 카메라 장애물 층"): 절이 없으면 끔 (옛 설정 그대로). SIM_CAM_OBSTACLES=0/1 이면 그 값 (앞뒤 비교)
+    c.cam_on = c.cam_nz = 0;
+    c.cam_min_h = c.cam_max_h = c.cam_obs_range = c.cam_ray_range = 0.f;
+    if (const YAML::Node co = ap["camera_obstacles"]) {
+      c.cam_on = co["enabled"].as<bool>() ? 1 : 0;
+      c.cam_min_h = co["min_obstacle_height"].as<float>();
+      c.cam_max_h = co["max_obstacle_height"].as<float>();
+      c.cam_nz = co["z_voxels"].as<int>();
+      c.cam_obs_range = co["obstacle_max_range"].as<float>();
+      c.cam_ray_range = co["raytrace_max_range"].as<float>();
+      if (c.cam_nz < 1 || c.cam_nz > 8 || !(c.cam_max_h > c.cam_min_h))
+        throw std::runtime_error(path + ": camera_obstacles (z_voxels 1~8, max_obstacle_height > min_obstacle_height)");
+    }
+    if (const char* g = std::getenv("SIM_CAM_OBSTACLES")) c.cam_on = (g[0] == '1' && c.cam_nz > 0) ? 1 : 0;
+    // 계획·충돌 검사 일치 (hier_path.h "계획·충돌 검사 일치"): 절이 없으면 끔 (옛 동작). SIM_PATH_CONSISTENT=0/1 (앞뒤 비교)
+    c.path_consistent = ap["consistent_plan"] && ap["consistent_plan"].as<bool>() ? 1 : 0;
+    if (const char* g = std::getenv("SIM_PATH_CONSISTENT")) c.path_consistent = g[0] == '1' ? 1 : 0;
+    {
+      // 계획 반경 = 충돌 검사 발자국(footprint + 패딩) 외접 반경 + 칸 대각(칸 가운데끼리 거리로 재는 반경 → 발자국 점이 든 칸까지 · 로봇이 칸 안 어디든 — 칸 반 대각 × 2)
+      const float hl = c.half_len + c.path_fp_pad, hw = c.half_wid + c.path_fp_pad;
+      c.path_r_plan = std::sqrt(hl * hl + hw * hw) + c.res * std::sqrt(2.f);
+      c.path_goal_tol = need(need(nav["planner_server"]["ros__parameters"], "GridBased", nav_path), "tolerance", nav_path).as<float>();   // Smac tolerance
+      c.path_goal_far = ap["goal_far_tolerance"] ? ap["goal_far_tolerance"].as<float>() : c.path_goal_tol;
+      if (c.path_goal_far < c.path_goal_tol || c.path_goal_far > 1.5f) throw std::runtime_error(path + ": goal_far_tolerance 는 tolerance ~ 1.5 m");
+      if (c.path_consistent && (c.path_r_plan >= c.path_r_out || c.path_r_plan < 0.2f))
+        throw std::runtime_error(path + ": consistent_plan 계획 반경 " + std::to_string(c.path_r_plan) + " 은 0.2 이상 팽창 반경 미만이어야 함");
+    }
+    // 복구 (hier_path.h "복구"): 절이 없으면 끔. 물러나기 걸음 = BT BackUp backup_dist / backup_speed / 행동 주기. SIM_PATH_RECOVERY=0/1 (앞뒤 비교)
+    c.rec_on = c.rec_backup_steps = c.rec_bl_steps = 0;
+    c.rec_bl_r = 0.f;
+    if (const YAML::Node rc = ap["recovery"]) {
+      c.rec_on = rc["enabled"].as<bool>() ? 1 : 0;
+      c.rec_backup_steps = (int)std::lround(rc["backup_dist"].as<float>() / c.path_backup_v / pv);
+      c.rec_bl_steps = (int)std::lround(rc["blacklist_time"].as<float>() / pv);
+      c.rec_bl_r = rc["same_goal_radius"].as<float>();
+    }
+    if (const char* g = std::getenv("SIM_PATH_RECOVERY")) c.rec_on = (g[0] == '1' && c.rec_bl_r > 0.f) ? 1 : 0;
   }
 
   // 섀시 구동 (drive.h) · 바닥 재질
@@ -234,16 +271,27 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.sweep_margin = 0.02f;
     }
     {
-      // 판 끝·성공 (2026-11-08, mdp/README "판 끝"): 성공 = 굵은 격자 지도 닫힘 + 지도 진행 없음 시계 ≥ 10 s. SIM_SUCCESS_CLOSED=0 이면 옛 규칙
-      // (선언 + 정답 덮음 ≥ 0.95, 보관). 굵은 칸 4 × 5 cm = 20 cm, 로봇 반경 0.2 m (frontier 기준선과 같은 팽창), 1 s(10 걸음)마다 판정 —
-      // 근거는 explore_v9 정책 64 판씩 측정(엄격 닫힘 1~2/64, 로봇 폭 규칙 1~3/64, 굵은 격자만은 bookstore 닫힘의 33 % 가 정답 덮음 < 0.8 로 이름,
-      // 시계 10 s 를 더하면 정답 덮음 < 0.9 인 닫힘 0 %)
+      // 판 끝·성공 (2026-11-08, 닫힘 정의는 2026-11-10 고침 — mdp/README "판 끝"·"닫힘"): 성공 = 로봇 지도 닫힘(아래 닫힘 규칙) + 지도 진행 없음
+      // 시계 ≥ 10 s, 1 s(10 걸음)마다 판정. SIM_SUCCESS_CLOSED=0 이면 옛 규칙(선언 + 정답 덮음 ≥ 0.95, 보관).
+      // 옛 굵은 격자(20 cm) 닫힘은 로봇이 문틀에 서면 번지기가 둘레 주머니에 갇혀 거짓 닫힘(oracle 성공의 7~14 % 가 정답 덮음 < 0.8)이라 바꿈
       const char* g = std::getenv("SIM_SUCCESS_CLOSED");
       c.success_closed = (g && g[0] == '0') ? 0 : 1;
-      c.close_f = 4;
       c.close_every = 10;
-      c.close_radius = 0.2f;
       c.close_idle_s = 10.f;
+      // 닫힘 규칙 (2026-11-10, mdp/README "닫힘" — 값의 근거는 그 절의 oracle 측정): 로봇 시작 칸 + 지나간 칸에서 번진 프론티어 덩어리 중
+      // close_min 칸 이상 덩어리의, 옆 모름 칸이 라이다 시야 안 close_look m 안에 든 적이 없는 칸이 하나라도 있으면 안 닫힘.
+      // 번지기 몸통 반경 close_radius = 계층형 계획기가 길을 찾는 가장 작은 반경 — consistent_plan 이면 path_r_plan(발자국+패딩 외접 + 칸 대각)으로
+      // 먼저 짜고 못 짜면 관측 BFS 반경 mdp::obsgen::kRobotRadius(= nav2 robot_radius)로 한 번 더 짜므로(hier_path.h (e)) 둘 중 작은 것.
+      // 이 반경 + 깊이 카메라 층(계획기와 같은 막힘)으로 못 가는 곳의 프론티어는 닫힘·후보에서 빠짐. 계획 반경 0.293 m 를 그대로 쓰면 좁은 문 너머가
+      // 빠져 oracle 거짓 닫힘이 0.044 → 0.211 (학습 단계 1 사람 끔 256 판, mdp/README "닫힘").
+      // SIM_CLOSE_MIN·SIM_CLOSE_LOOK·SIM_CLOSE_RADIUS 는 측정 비교용 (학습·확인은 기본값)
+      c.close_radius = c.path_consistent ? std::min(c.path_r_plan, mdp::obsgen::kRobotRadius) : mdp::obsgen::kRobotRadius;
+      c.close_min = 4;
+      c.close_look = 1.5f;
+      if (const char* v = std::getenv("SIM_CLOSE_MIN")) c.close_min = std::atoi(v);
+      if (const char* v = std::getenv("SIM_CLOSE_LOOK")) c.close_look = (float)std::atof(v);
+      if (const char* v = std::getenv("SIM_CLOSE_RADIUS")) c.close_radius = (float)std::atof(v);
+      if (mdp::robot_cells(c.close_radius, c.res).r > 12) throw std::runtime_error("닫힘 반경 close_radius 는 0.6 m 이하");   // GPU stand_word 낱말 밀기 < 32
       // 덮음 보상: 로봇 지도 처음 막힘 칸 (rewards.h kOccCell) — 기본. SIM_REWARD_GT=1 이면 옛 정답 벽 덮음 보상 (보관)
       const char* r = std::getenv("SIM_REWARD_GT");
       c.reward_occ = (r && r[0] == '1') ? 0 : 1;
@@ -251,6 +299,25 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     {
       const char* g = std::getenv("SIM_CUR_TOPRAND");   // 커리큘럼 맨 위 단계 무작위 (curriculums.h on_episode_end) — 기본 켬, SIM_CUR_TOPRAND=0 으로 끔
       c.cur_top_random = (g && g[0] == '0') ? 0 : 1;      // explore_v8_cur A/B: 맨 위 단계에 고여 중간 크기 맵을 잊던 것
+    }
+    {
+      // 오르내림 규칙 (env.yaml curriculum, curriculums.h). 절이 없으면 옛 덮음 규칙(8 판 · 0.8 · 0.4) — 옛 설정 파일과 같은 동작
+      c.cur_rule = mdp::cur::kCurCoverage;
+      c.cur_window = mdp::cur::kWindow;
+      c.cur_up = mdp::cur::kProgUp;
+      c.cur_down = mdp::cur::kProgDown;
+      if (const YAML::Node cu = y["curriculum"]) {
+        const std::string rule = need(cu, "rule", path).as<std::string>();
+        if (rule != "success" && rule != "coverage") throw std::runtime_error(path + ": curriculum.rule 은 success · coverage");
+        c.cur_rule = rule == "success" ? mdp::cur::kCurSuccess : mdp::cur::kCurCoverage;
+        const YAML::Node r = need(cu, rule.c_str(), path);
+        c.cur_window = need(r, "window", path).as<int>();
+        c.cur_up = need(r, "up", path).as<float>();
+        c.cur_down = need(r, "down", path).as<float>();
+        if (c.cur_window < 1 || (c.cur_rule == mdp::cur::kCurSuccess && c.cur_window > mdp::cur::kCurWindowMax))
+          throw std::runtime_error(path + ": curriculum." + rule + ".window 는 1 ~ " + std::to_string(mdp::cur::kCurWindowMax));
+        if (!(c.cur_down <= c.cur_up)) throw std::runtime_error(path + ": curriculum." + rule + " down ≤ up 이어야 함");
+      }
     }
   }
   c.people = load_people_cfg(path);
@@ -527,6 +594,10 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     b_.racc = alloc<float>(n_env);
     b_.tacc = alloc<float>((size_t)mdp::rew::kTerms * n_env);
     if (gpu) b_.pplanes = alloc<uint32_t>((size_t)n_env * kPathPlanes * hc.cfg.size * ((hc.cfg.size + 31) / 32));
+    if (hc.cfg.cam_on) {   // 깊이 카메라 장애물 층 (hier_path.h) — 리셋(reset_map)이 비움
+      b_.cvox = alloc<uint8_t>(cells * n_env);
+      b_.cpts = alloc<float>((size_t)mdp::obs::DEPTH_W * 2 * n_env);
+    }
   }
   b_.priv = alloc<float>((size_t)mdp::obs::PRIV * n_env);
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
@@ -537,18 +608,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   b_.done = alloc<int32_t>(n_env);
   b_.ep = alloc<EpInfo>(n_env);
   b_.scratch = alloc<Shared>(n_env);
-  {   // 굵은 격자 닫힘 버퍼 (env.h finish_step, mdp::coarse_closed): 환경마다 (size/f)² 칸
-    const int cd = mdp::coarse_dim(hc.cfg.size, std::max(1, hc.cfg.close_f));
-    b_.coarse_cells = cd * cd;
-    const size_t nc = (size_t)b_.coarse_cells;
-    int16_t* cl = alloc<int16_t>(nc * n_env);
-    uint8_t* cf = alloc<uint8_t>(nc * n_env);
-    int32_t* ca = alloc<int32_t>(nc * n_env);
-    int32_t* cb = alloc<int32_t>(nc * n_env);
-    std::vector<mdp::CoarseBuf> bufs(n_env);
-    for (int i = 0; i < n_env; ++i) bufs[i] = mdp::CoarseBuf{cl + nc * i, cf + nc * i, ca + nc * i, cb + nc * i};
-    b_.coarse = upload(bufs);
-  }
+  // 닫힘 규칙의 지나간 길 (env.h EnvBatch::trail, trail_mark): CPU·GPU 모두
+  b_.trail = alloc<uint32_t>((size_t)n_env * 2 * hc.cfg.size * ((hc.cfg.size + 31) / 32));
   if (gpu) {
     const size_t px = (size_t)mdp::obs::DEPTH_SIZE * n_env;
     b_.dep_z = alloc<float>(px);
@@ -635,12 +696,20 @@ void Env::set_state(int env, const EnvState& s) {
 void Env::get_map(std::vector<int16_t>& out) const {
   fetch(gpu_, b_.lmap, (size_t)b_.cfg.size * b_.cfg.size * b_.n_env, out);
 }
+void Env::get_camlayer(std::vector<uint8_t>& vox, std::vector<float>& pts) const {
+  if (!b_.cvox) { vox.clear(); pts.clear(); return; }
+  fetch(gpu_, b_.cvox, (size_t)b_.cfg.size * b_.cfg.size * b_.n_env, vox);
+  fetch(gpu_, b_.cpts, (size_t)mdp::obs::DEPTH_W * 2 * b_.n_env, pts);
+}
 void Env::get_seen(std::vector<uint8_t>& out) const {
   std::vector<uint32_t> m;
   const size_t cells = (size_t)b_.cfg.size * b_.cfg.size * b_.n_env;
   fetch(gpu_, b_.marks, cells / 4, m);
   out.resize(cells);
   for (size_t i = 0; i < cells; ++i) out[i] = (uint8_t)((m[i >> 2] >> (8 * (i & 3) + 3)) & 3u);
+}
+void Env::get_trail(std::vector<uint32_t>& out) const {
+  fetch(gpu_, b_.trail, (size_t)b_.n_env * 2 * b_.cfg.size * ((b_.cfg.size + 31) / 32), out);
 }
 void Env::get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d, std::vector<float>& priv) const {
   fetch(gpu_, b_.obs_img, (size_t)mdp::obs::IMG_SIZE * b_.n_env, img);

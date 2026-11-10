@@ -3,6 +3,7 @@
 //   train [--envs 2048] [--iters 0] [--minutes 0] [--name explore] [--seed 1] [--lr-max 1e-3] [--std-max 1] [--mlp 2] [--chunk N] [--eval-every 50] [--ckpt-every 50]
 //         [--replay-every 25] [--eval-episodes 32] [--resume] [--root train/explore/runs] [--list train/explore/scenes/train/list.tsv]
 //         [--test a.scene,b.scene] [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml]
+//         [--slot-cm-coef 1e-3]  계층형 슬롯 로짓 공통 성분 벌점 (0 = 끔, ppo.h PPOConfig::slot_cm_coef)
 //         [--hier]  계층형: 1 s 마다 프론티어 후보 K 개 중 하나(가린 범주 분포) → 시뮬 경로 계획·추종 (mdp/README "계층형"). 반복 = 결정 24 개
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
 //
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <csignal>
 #include <cstdio>
 #include <fstream>
@@ -53,6 +55,7 @@ struct Args {
   float lr_max = 1e-3f;
   float bound_coef = -1;  // < 0 = PPOConfig 기본. 평균 행동 경계 손실 계수 (0 = 끔, explore_v7 과 같음)
   float entropy = -1, desired_kl = -1, std_min = -1;   // < 0 = PPOConfig 기본 (엔트로피 계수 · KL 적응 목표 · σ 하한)
+  float slot_cm_coef = -1;   // < 0 = PPOConfig 기본 (계층형 슬롯 로짓 공통 성분 벌점, ppo.h)
   float std_max = 0;  // 0 = PPOConfig 기본(1). 정책 σ 상한 — 크게(예 1e6) 주면 사실상 상한 없음, 하한 std_min 은 그대로
   int mlp = 2, chunk = 0;  // chunk 0 = PPOConfig 기본 (미니배치 하나)
   bool resume = false;
@@ -204,6 +207,7 @@ int main(int argc, char** argv) {
       else if (k == "--std-max") a.std_max = std::stof(nx());
       else if (k == "--entropy") a.entropy = std::stof(nx());
       else if (k == "--desired-kl") a.desired_kl = std::stof(nx());
+      else if (k == "--slot-cm-coef") a.slot_cm_coef = std::stof(nx());
       else if (k == "--std-min") a.std_min = std::stof(nx());
       else if (k == "--bound-coef") a.bound_coef = std::stof(nx());
       else if (k == "--mlp") a.mlp = std::stoi(nx());
@@ -266,6 +270,7 @@ int main(int argc, char** argv) {
     if (a.std_max > 0) pc.std_max = a.std_max;
     if (a.entropy >= 0) pc.entropy_coef = a.entropy;
     if (a.desired_kl >= 0) pc.desired_kl = a.desired_kl;
+    if (a.slot_cm_coef >= 0) pc.slot_cm_coef = a.slot_cm_coef;
     if (a.std_min > 0) pc.std_min = a.std_min;
     if (a.bound_coef >= 0) pc.bound_coef = a.bound_coef;
     if (a.chunk > 0) pc.chunk = a.chunk;
@@ -288,7 +293,7 @@ int main(int argc, char** argv) {
       // 커리큘럼 단계 되살리기: 단계는 환경 상태라 체크포인트에 없다 — 그냥 이으면 모든 환경이 단계 0 에서 다시 오른다
       // (explore_v7 반복 2608·8850 재개 때 단계 평균 2.9 → 0 → ~1500 반복 동안 다시 오름, value 손실 튐).
       // ckpt/stages_latest.bin(환경마다 int32, 저장 때 같이 씀)이 있으면 그대로, 없으면 episodes.jsonl 끝 2000 판의 단계 분포를
-      // 환경 번호 순서로 나눠 준다(옛 실행 폴더용 근사). 최근 판 덮음 기록(창)은 비운다.
+      // 환경 번호 순서로 나눠 준다(옛 실행 폴더용 근사). 오르내림 창은 아래 cur_window_latest.bin.
       if (hc.cfg.curriculum) {
         std::vector<int32_t> stg;
         {
@@ -324,20 +329,42 @@ int main(int argc, char** argv) {
             how = "episodes.jsonl 끝 판 분포";
           }
         }
+        // 오르내림 창(cur_hist·cur_n): ckpt/cur_window_latest.bin(머리 "CURW" · 판 1 · 규칙 · 창 · 환경 수, 그 뒤 환경마다 uint32 hist · int32 n)이
+        // 지금 설정(규칙·창 크기·환경 수)과 맞으면 그대로. 없거나 안 맞으면(옛 실행 폴더·규칙 바꿈) 창을 비운다 — 그러면 환경마다 창이 다시 찰 때까지
+        // (성공 규칙 window 판) 단계가 안 바뀐다(단계 자체는 위대로 되살림)
+        std::vector<uint32_t> wh;
+        std::vector<int32_t> wn;
+        const char* how_w = "없음 — 창 비움";
+        if (!stg.empty()) {
+          std::ifstream f(ckdir + "/cur_window_latest.bin", std::ios::binary);
+          int32_t hd[5] = {0, 0, 0, 0, 0};
+          if (f && f.read(reinterpret_cast<char*>(hd), sizeof(hd))) {
+            if (std::memcmp(hd, "CURW", 4) == 0 && hd[1] == 1 && hd[2] == hc.cfg.cur_rule && hd[3] == hc.cfg.cur_window && hd[4] == N) {
+              wh.resize(N);
+              wn.resize(N);
+              f.read(reinterpret_cast<char*>(wh.data()), sizeof(uint32_t) * N);
+              f.read(reinterpret_cast<char*>(wn.data()), sizeof(int32_t) * N);
+              if (!f) { wh.clear(); wn.clear(); how_w = "파일 짧음 — 창 비움"; }
+              else how_w = "cur_window_latest.bin";
+            } else {
+              how_w = "규칙·창·환경 수가 달라 — 창 비움";
+            }
+          }
+        }
         if (!stg.empty()) {
           std::vector<sim::EnvState> es;
           env.get_state(es);
           double mean = 0;
           for (int i = 0; i < N; ++i) {
             es[i].stage = stg[i];
-            es[i].cur_hist = 0u;
-            es[i].cur_n = 0;
+            es[i].cur_hist = wh.empty() ? 0u : wh[i];
+            es[i].cur_n = wn.empty() ? 0 : wn[i];
             env.set_state(i, es[i]);
             mean += stg[i];
           }
           env.reset();
           env.sync();
-          std::fprintf(stderr, "커리큘럼 단계 되살림 (%s): 평균 %.2f\n", how, mean / N);
+          std::fprintf(stderr, "커리큘럼 단계 되살림 (%s): 평균 %.2f · 오르내림 창 (%s)\n", how, mean / N, how_w);
         }
       }
     }
@@ -385,7 +412,7 @@ int main(int argc, char** argv) {
         .set("n_params", (long long)ppo.ac().n_params)
         .set("ppo", rf::Json::object().set("epochs", pc.epochs).set("minibatches", pc.minibatches).set("clip", pc.clip)
                         .set("gamma", pc.gamma).set("lam", pc.lam).set("entropy_coef", pc.entropy_coef).set("lr", pc.lr)
-                        .set("desired_kl", pc.desired_kl).set("max_grad_norm", pc.max_grad_norm)
+                        .set("desired_kl", pc.desired_kl).set("max_grad_norm", pc.max_grad_norm).set("slot_cm_coef", pc.slot_cm_coef)
                         .set("std_min", pc.std_min).set("std_max", pc.std_max)
                         .set("bound_coef", pc.bound_coef).set("bound_soft", pc.bound_soft));
     rf::RunFolder::Options opt;
@@ -681,6 +708,18 @@ int main(int argc, char** argv) {
         f.write(reinterpret_cast<const char*>(stg.data()), sizeof(int32_t) * N);
         f.close();
         std::rename((p + ".tmp").c_str(), p.c_str());
+        // 오르내림 창 (위 "되살리기" — 규칙·창 크기를 머리에 적어 바뀌면 안 씀)
+        std::vector<uint32_t> wh(N);
+        std::vector<int32_t> wn(N);
+        for (int i = 0; i < N; ++i) { wh[i] = es[i].cur_hist; wn[i] = es[i].cur_n; }
+        const int32_t hd[5] = {0x57525543 /* "CURW" */, 1, hc.cfg.cur_rule, hc.cfg.cur_window, N};
+        const std::string pw = ckdir + "/cur_window_latest.bin";
+        std::ofstream fw(pw + ".tmp", std::ios::binary);
+        fw.write(reinterpret_cast<const char*>(hd), sizeof(hd));
+        fw.write(reinterpret_cast<const char*>(wh.data()), sizeof(uint32_t) * N);
+        fw.write(reinterpret_cast<const char*>(wn.data()), sizeof(int32_t) * N);
+        fw.close();
+        std::rename((pw + ".tmp").c_str(), pw.c_str());
       }
     };
 
@@ -696,6 +735,7 @@ int main(int argc, char** argv) {
     const auto t_start = std::chrono::steady_clock::now();
     const int it0 = ppo.iteration();
     int it_done = 0;
+    int lr_lock_run = 0;   // 학습률 하한 갇힘이 이어진 반복 수 (아래 감시)
     while (!g_stop) {
       const int it = ppo.iteration();
       if (a.iters > 0 && it - it0 >= a.iters) break;
@@ -821,6 +861,24 @@ int main(int argc, char** argv) {
         run.finish();
         return 3;
       }
+      // 학습률 하한 갇힘 감시 (ppo/README "슬롯 로짓 공통 성분"): 적응 학습률은 KL 이 학습률 탓이라 가정한다. 하한(lr_min)에서도 반복 평균 KL 이 목표의
+      // 2 배를 넘는 반복이 kLockIters 번 이어지면 KL 은 학습률로 줄지 않는 것(수치 오차·과민한 망)이라 그대로 갇힌다 — explore_h2 반복 2889 → 3799 (kl 0.05 → 14),
+      // 공통 성분 벌점 끈 처음부터 학습 lr 상한 1e-2 반복 54 → (kl 0.12, 걸음 전 kl0 1e-3). 이어 가면 model_latest 만 망가지므로 멈춘다
+      {
+        constexpr int kLockIters = 10;
+        const bool locked = pc.desired_kl > 0 && us.lr <= pc.lr_min * 1.0001f && us.kl > 2.f * pc.desired_kl;
+        lr_lock_run = locked ? lr_lock_run + 1 : 0;
+        if (lr_lock_run >= kLockIters) {
+          char msg[240];
+          std::snprintf(msg, sizeof msg, "lr locked at floor %.1e with kl %.3g > 2*desired_kl for %d iterations at iteration %d (kl0 %.3g) - stop",
+                        pc.lr_min, us.kl, kLockIters, it, us.kl0);
+          run.event(msg);
+          std::fprintf(stderr, "학습률 하한 갇힘: 반복 %d 까지 %d 반복 동안 lr %.1e 에서 kl %.3g > 목표 2 배 (걸음 전 kl0 %.3g, 로짓 공통 성분 %.3g) — 멈춤\n", it,
+                       kLockIters, pc.lr_min, us.kl, us.kl0, us.logit_cm);
+          run.finish();
+          return 4;
+        }
+      }
       float ls[3] = {0.f, 0.f, 0.f};   // 계층형은 σ 없음
       if (!a.hier) cudaMemcpy(ls, ppo.ac().log_std(), sizeof(ls), cudaMemcpyDeviceToHost);
       size_t fr, tot;
@@ -860,6 +918,12 @@ int main(int argc, char** argv) {
       r.last(rf::key::ENTROPY_LOSS, -us.entropy);
       r.last(rf::key::APPROX_KL, us.kl);
       r.last(rf::key::GRAD_NORM, us.grad_norm);
+      r.last("train/kl0", us.kl0);
+      if (a.hier) {
+        r.last("train/logit_cm", us.logit_cm);
+        r.last("train/logit_spread", us.logit_spread);
+        r.last("train/logit_absmax", us.logit_absmax);
+      }
       r.last(rf::key::LEARNING_RATE, us.lr);
       r.last(rf::key::VALUE_MEAN, us.mean_value);
       r.last(rf::key::STD, (std::exp(ls[0]) + std::exp(ls[1]) + std::exp(ls[2])) / 3.0);

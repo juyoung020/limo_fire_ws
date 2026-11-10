@@ -53,6 +53,10 @@ struct PPOConfig {
   float desired_kl = 0.003f;    // adaptive 학습률. 2026-11-06 0.01 → 0.003: 적응 학습률이 업데이트마다 KL 0.013 만큼 정책을 계속 움직여 σ 가 작아진 뒤 신호 없이 표류 — ppo/README "장기 하락"
   float lr_min = 1e-5f, lr_max = 1e-2f;  // KL 적응 학습률 한계 (rsl_rl ppo.py:291,293)
   float max_grad_norm = 1.0f;
+  // 계층형 슬롯 로짓 공통 성분 벌점 계수 c: 손실 += c · mean_i h(l̄_i), l̄ = 있는 칸 로짓 평균, h = Huber(δ 10: |l̄| ≤ 10 이면 l̄², 넘으면 선형). 범주 분포가 공통 성분에 무관(shift invariance)해
+  // 그 방향엔 기울기가 없고 Adam 이 떠내려 보내 explore_h2 가 반복 2889 에서 발산했다 (공통 성분 1e3~1e4 → 1.7e9). 정책엔 영향 없음.
+  // ST-MoE router z-loss (Zoph 2022, 1e-3)·PaLM z-loss (1e-4) 와 같은 결. 0 = 끔(옛 동작). ppo/README "슬롯 로짓 공통 성분"
+  float slot_cm_coef = 1e-3f;
   float adam_b1 = 0.9f, adam_b2 = 0.999f, adam_eps = 1e-8f;  // torch.optim.Adam 기본
   int chunk = 0;                // 한 번에 신경망에 넣는 샘플 수 (메모리 한도 — 넘는 미니배치는 나눠 기울기를 더한다). 0 = 미니배치 하나(N·T/미니배치 수)를 한 번에:
                                 // 2048 환경이면 12 288, update 717 → 690 ms (4096 대비, ppo/README "속도 4"), GPU 메모리 +0.7 GB
@@ -64,6 +68,8 @@ struct PPOConfig {
 struct UpdateStats {
   float surrogate = 0, value = 0, entropy = 0, kl = 0, lr = 0, grad_norm = 0;
   float mean_value = 0, mean_return = 0;
+  // 진단: kl0 = 첫 미니배치(걸음 전) KL — 0 이 아니면 롤아웃·갱신 정방향이 다름(수치). 계층형 롤아웃 로짓: 공통 성분 |l̄|·있는 칸 표준편차·max |l| 의 샘플 평균
+  float kl0 = 0, logit_cm = 0, logit_spread = 0, logit_absmax = 0;
 };
 
 class PPO {
@@ -116,7 +122,7 @@ class PPO {
   // critic 입력 버퍼 (split 이면 c_xc_, 아니면 공유 c_x_)
   real* cx() const { return c_xc_ ? c_xc_ : c_x_; }
   uint16_t* cxh() const { return c_xc_ ? c_xch_ : c_xh_; }
-  double minibatch(const int* d_idx, int n, int mb_size, bool backward, double stats[4]);
+  double minibatch(const int* d_idx, int n, int mb_size, bool backward, double stats[5]);
 
   PPOConfig cfg_;
   XNET_NS::ActorCritic* ac_;
@@ -125,7 +131,7 @@ class PPO {
   // 계층형 (spec.n_slots > 0): 범주 행동 — 슬롯 K_, actor 출력(임베딩) AO_, 환경 행동 칸 ADIM_ (mdp::act::DIM), 후보 특징 자리 SOFF_·칸 SF_
   bool disc_ = false;
   int K_ = 0, AO_ = 0, ADIM_ = 0, SOFF_ = 0, SF_ = 0;
-  real *s_mask_ = nullptr, *c_logits_ = nullptr, *c_G_ = nullptr, *c_feat_ = nullptr, *c_maskt_ = nullptr;
+  real *s_mask_ = nullptr, *s_lstat_ = nullptr, *c_logits_ = nullptr, *c_G_ = nullptr, *c_feat_ = nullptr, *c_maskt_ = nullptr;
   int step_ = 0, iter_ = 0;
   uint64_t act_calls_ = 0;
   float lr_;

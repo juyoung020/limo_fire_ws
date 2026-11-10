@@ -80,22 +80,50 @@ inline int stage_of_area(float area_m2) {
   return kNumStages - 1;
 }
 
-// 판 끝: 끝 덮음 cov 를 기록에 더하고(hist = 덮음×1000 합, n = 기록 수) kWindow 판이 차면 단계를 고침. max_stage = 맵이 있는 가장 높은 단계
+// 오르내림 규칙 (EnvCfg::cur_rule — env.yaml curriculum.rule)
+enum CurRule : int32_t { kCurCoverage = 0, kCurSuccess = 1 };
+constexpr int kCurWindowMax = 32;   // 성공 규칙 창 상한 (창 = cur_hist 비트)
+
+// 판 끝 (덮음 규칙, 옛 규칙 그대로): 끝 덮음 cov 를 기록에 더하고(hist = 덮음×1000 합, n = 기록 수) window 판이 차면 단계를 고침. max_stage = 맵이 있는 가장 높은 단계
 // top_random (기본 켬 — EnvCfg::cur_top_random, SIM_CUR_TOPRAND=0 이면 끔): 맨 위 단계에서 또 올림 조건을 넘으면 단계를 rnd % (max_stage + 1) 로 —
 //   legged_gym/envs/base/legged_robot.py _update_terrain_curriculum "Robots that solve the last level are sent to a random one"
 //   (torch.where(levels >= max_level, randint_like(levels, max_level), clip(levels, 0))). 근거: explore_v7 은 반복 ~5000 부터 단계 평균 2.9+ 로
 //   거의 큰 맵(단계 3, 92 개)만 보고, 결정적 평가에서 단계 3 학습 맵 성공은 0.50 → 0.54 → 0.56(반복 3900 → 7000 → 14000)로 오르는데
 //   시험 맵과 같은 크기의 단계 2 학습 맵은 0.37 → 0.37 → 0.34, 충돌 0.34 → 0.41 → 0.52 로 나빠졌다(맵 8 개 × 32 판, ppo/README "explore_v8 A/B").
-DEV void on_episode_end(int32_t* stage, uint32_t* hist, int32_t* n, float cov, int max_stage, bool top_random = false, uint32_t rnd = 0u) {
+// window·up·down 기본 = kWindow·kProgUp·kProgDown (env.yaml curriculum.coverage 가 같은 값이면 옛 빌드와 비트 같음)
+DEV void on_episode_end(int32_t* stage, uint32_t* hist, int32_t* n, float cov, int max_stage, bool top_random = false, uint32_t rnd = 0u,
+                        int window = kWindow, float up = kProgUp, float down = kProgDown) {
   *hist += (uint32_t)(cov * 1000.f + 0.5f);
   *n += 1;
-  if (*n < kWindow) return;
-  const float avg = (float)*hist / (1000.f * (float)kWindow);
-  if (avg >= kProgUp && *stage < max_stage) *stage += 1;
-  else if (avg >= kProgUp && top_random) *stage = (int32_t)(rnd % (uint32_t)(max_stage + 1));
-  else if (avg < kProgDown && *stage > 0) *stage -= 1;
+  if (*n < window) return;
+  const float avg = (float)*hist / (1000.f * (float)window);
+  if (avg >= up && *stage < max_stage) *stage += 1;
+  else if (avg >= up && top_random) *stage = (int32_t)(rnd % (uint32_t)(max_stage + 1));
+  else if (avg < down && *stage > 0) *stage -= 1;
   *hist = 0u;
   *n = 0;
+}
+
+// 판 끝 (성공 규칙, 2026-11-09 — mdp/README "커리큘럼"): 최근 window 판(미끄러지는 창)의 성공(판 끝 코드 kDeclareOk = 지도 닫힘 성공) 비율.
+//   hist = 최근 판 성공 비트(비트 0 이 가장 최근, window ≤ kCurWindowMax), n = 창에 든 판 수(≤ window).
+//   창이 차면 판마다: 비율 ≥ up → 올림(맨 위면 top_random 규칙), 비율 < down → 내림, 단계가 바뀌면 창을 비움(새 단계 판만 셈). 그 사이면 그대로(창은 계속 미끄러짐).
+//   근거: 덮음 규칙은 충돌로 끝난 판도 덮음만 넘으면 올렸다(성공 0.72 정체 때 단계 0~3 성공 0.94·0.79·0.73·0.66). legged_gym 은 판마다 결정하므로
+//   창이 찬 뒤엔 판마다 보는 미끄러지는 창. 값과 출처는 env.yaml curriculum.success.
+DEV void on_episode_end_success(int32_t* stage, uint32_t* hist, int32_t* n, bool success, int max_stage, bool top_random, uint32_t rnd,
+                                int window, float up, float down) {
+  const uint32_t mask = window >= 32 ? 0xffffffffu : ((1u << window) - 1u);
+  *hist = ((*hist << 1) | (success ? 1u : 0u)) & mask;
+  if (*n < window) *n += 1;
+  if (*n < window) return;
+  int k = 0;
+  for (uint32_t h = *hist; h; h &= h - 1u) ++k;   // 성공 수 (비트 수)
+  const int32_t s0 = *stage;
+  // 문턱 비교는 정수로: k ≥ up·window ⇔ k·1000 ≥ round(up·1000)·window (부동소수 경계 흔들림 없이)
+  const int up_m = (int)(up * 1000.f + 0.5f), down_m = (int)(down * 1000.f + 0.5f);
+  if (k * 1000 >= up_m * window && *stage < max_stage) *stage += 1;
+  else if (k * 1000 >= up_m * window && top_random) *stage = (int32_t)(rnd % (uint32_t)(max_stage + 1));
+  else if (k * 1000 < down_m * window && *stage > 0) *stage -= 1;
+  if (*stage != s0) { *hist = 0u; *n = 0; }
 }
 
 }  // namespace mdp::cur

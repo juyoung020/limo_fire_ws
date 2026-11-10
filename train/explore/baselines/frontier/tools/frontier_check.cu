@@ -3,6 +3,8 @@
 //   2. 진짜 시뮬 지도(장면마다 GPU 환경을 무작위 속도 행동으로 돌려 여러 시점에 꺼냄)마다
 //      a. 칸마다 프론티어 판정 + 칸 수: GPU 칸 하나 = 스레드 하나, atomicAdd  vs  CPU 순차
 //      b. frontier_search(닫힘 + 덩어리 + BFS 거리, 로봇 반경 = nav2 robot_radius): GPU 환경 하나 = 스레드 하나  vs  CPU — 결과·덩어리 배열 바이트 비교
+//      c. 같은 찾기에 sim 닫힘 규칙(지나간 칸 씨앗 · 본 칸 · 덩어리 문턱 · 자격 반경 — EnvCfg close_*, 그 환경의 지나간 칸 비트 판·칸 표시)을 켠 것:
+//         GPU 스레드 하나 vs CPU — 결과(n_block·닫힘 포함)·덩어리 배열 바이트 비교
 //   3. RL 관측 프론티어 요약(mdp/observations.h)의 크기 문턱·로봇 반경이 기준선 설정과 같은지
 //   (관측 요약의 GPU 블록 병렬판 == CPU frontier_search 는 sim/tools/env_verify 가 관측 비트로 본다)
 //   frontier_check <장면.scene> [장면 …] [--envs 4] [--steps 300] [--every 100] [--negative]
@@ -72,6 +74,7 @@ int main(int argc, char** argv) {
                       mdp::obsgen::reach_min_cells(hc.cfg) == min_cells;
   std::printf("관측 요약 상수: 로봇 반경 %.3f (기준선 %.3f), 크기 문턱 %.3f m = %d 칸 (기준선 %.3f m = %d 칸) → %s\n", mdp::obsgen::kRobotRadius,
               fp.robot_radius, mdp::obsgen::kFrontMinSize, mdp::obsgen::reach_min_cells(hc.cfg), fp.min_frontier_size, min_cells, obs_ok ? "같음" : "다름");
+  size_t n_rule = 0, bad_rule = 0, n_rule_closed = 0, sum_block = 0;
   size_t n_maps = 0, bad_cells = 0, bad_sum = 0, bad_search = 0, bad_dist = 0, total_frontier_cells = 0, total_clusters = 0, total_small = 0, n_closed = 0;
   for (const auto& sp : scenes) {
     std::vector<sim::World> worlds{sim::build_world(sp, sim::load_scene(sp), hc)};
@@ -102,6 +105,10 @@ int main(int argc, char** argv) {
     uint64_t rng = 5;
     std::vector<sim::EnvState> st;
     std::vector<int16_t> L;
+    std::vector<uint32_t> T;
+    const int ws = (S + 31) / 32;
+    uint32_t* dvis;
+    need(cudaMalloc(&dvis, sizeof(uint32_t) * 2 * S * ws), "malloc");
     for (int t = 1; t <= n_steps; ++t) {
       std::vector<float> act((size_t)mdp::act::DIM * n_env);
       for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)mdp::act::DIM * i]);
@@ -111,6 +118,7 @@ int main(int argc, char** argv) {
       if (t % every != 0) continue;
       env.get_state(st);
       env.get_map(L);
+      env.get_trail(T);
       for (int i = 0; i < n_env; ++i) {
         std::vector<int16_t> Lc(L.begin() + (size_t)i * S * S, L.begin() + (size_t)(i + 1) * S * S), Lg = Lc;
         int rx = (int)std::floor((st[i].x + st[i].ex - W.ox) / hc.cfg.res), ry = (int)std::floor((st[i].y + st[i].ey - W.oy) / hc.cfg.res);
@@ -168,6 +176,31 @@ int main(int argc, char** argv) {
         const bool sr = std::memcmp(&rc, &rg, sizeof(rc)) == 0 &&
                         std::memcmp(out_c.data(), out_g.data(), sizeof(mdp::Frontier) * std::min(kMaxOut, rc.n_found)) == 0;
         bad_search += !sr;
+        // c. 닫힘 규칙 켬 (sim 과 같은 값·같은 판)
+        {
+          const uint32_t* vis = T.data() + (size_t)i * 2 * S * ws;
+          mdp::SearchBuf bc{flag.data(), qa.data(), qb.data(), dist.data()};
+          bc.vis = vis; bc.look = vis + (size_t)S * ws; bc.tws = ws; bc.close_min = hc.cfg.close_min; bc.rbc = mdp::robot_cells(hc.cfg.close_radius, hc.cfg.res);
+          std::memset(out_c.data(), 0, sizeof(mdp::Frontier) * kMaxOut);
+          const mdp::SearchResult rcr = mdp::frontier_search(mc, rx, ry, rb, 1, bc, out_c.data(), kMaxOut);
+          cudaMemcpy(dvis, vis, sizeof(uint32_t) * 2 * S * ws, cudaMemcpyHostToDevice);
+          mdp::SearchBuf bg{dflag, dqa, dqb, ddist};
+          bg.vis = dvis; bg.look = dvis + (size_t)S * ws; bg.tws = ws; bg.close_min = hc.cfg.close_min; bg.rbc = bc.rbc;
+          cudaMemset(dout, 0, sizeof(mdp::Frontier) * kMaxOut);
+          k_search<<<1, 1>>>(mg, rx, ry, rb, 1, bg, dout, dres);
+          need(cudaDeviceSynchronize(), "kernel");
+          mdp::SearchResult rgr;
+          cudaMemcpy(&rgr, dres, sizeof(rgr), cudaMemcpyDeviceToHost);
+          cudaMemcpy(out_g.data(), dout, sizeof(mdp::Frontier) * kMaxOut, cudaMemcpyDeviceToHost);
+          const bool same_r = std::memcmp(&rcr, &rgr, sizeof(rcr)) == 0 &&
+                              std::memcmp(out_c.data(), out_g.data(), sizeof(mdp::Frontier) * std::min(kMaxOut, rcr.n_found)) == 0;
+          bad_rule += !same_r;
+          ++n_rule;
+          n_rule_closed += mdp::closed(rcr);
+          sum_block += rcr.n_block;
+          std::printf("  %s 걸음 %d 환경 %d 닫힘 규칙: 번진 칸 %d (로봇 쪽 %d), 프론티어 칸 %d, 막는 칸 %d, 닫힘 %d — 찾기 %s\n", W.name.c_str(), t, i, rcr.n_reach,
+                      rcr.n_reach0, rcr.n_cells, rcr.n_block, (int)mdp::closed(rcr), same_r ? "같음" : "다름");
+        }
         ++n_maps;
         total_frontier_cells += cnt_c;
         total_clusters += rc.n_found;
@@ -181,11 +214,13 @@ int main(int argc, char** argv) {
                     cnt_c == cnt_g ? "같음" : "다름", sr ? "같음" : "다름", dist_same ? "같음" : "다름");
       }
     }
-    for (void* p : std::initializer_list<void*>{d_act, dL, dmask, dflag, dqa, dqb, ddist, dcount, dout, dres}) cudaFree(p);
+    for (void* p : std::initializer_list<void*>{d_act, dL, dmask, dflag, dqa, dqb, ddist, dcount, dout, dres, dvis}) cudaFree(p);
   }
   cudaDeviceProp prop;
   cudaGetDeviceProperties(&prop, 0);
-  const bool same = bad_cells == 0 && bad_sum == 0 && bad_search == 0;   // GPU == CPU (--negative 가 어긋나게 하는 것)
+  const bool same = bad_cells == 0 && bad_sum == 0 && bad_search == 0 && bad_rule == 0;   // GPU == CPU (--negative 가 어긋나게 하는 것)
+  std::printf("닫힘 규칙 찾기 (덩어리 ≥ %d 칸, 본 칸 %.2f m): 지도 %zu 장, 닫힘 %zu, 막는 칸 합 %zu, 다름 %zu\n", hc.cfg.close_min,
+              hc.cfg.close_look, n_rule, n_rule_closed, sum_block, bad_rule);
   std::printf("GPU %s (sm_%d%d), 지도 %zu 장: 프론티어 칸 합 %zu, 덩어리 합 %zu (작은 것 %zu), 닫힌 지도 %zu\n", prop.name, prop.major, prop.minor, n_maps,
               total_frontier_cells, total_clusters, total_small, n_closed);
   std::printf("칸 판정 다름 %zu, 칸 수 다름 %zu, 찾기 다름 %zu%s, 거리 켬/끔 다름 %zu\n", bad_cells, bad_sum, bad_search, negative ? " (일부러 어긋나게)" : "",

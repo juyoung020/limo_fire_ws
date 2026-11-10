@@ -24,6 +24,11 @@ target_include_directories(frontier_run PRIVATE ${EXPLORE}/viewer/include)
 target_link_libraries(frontier_run frontier_explorer)
 target_compile_options(frontier_run PRIVATE -Wall -Wextra)
 
+# 정답(GT) 허용 상한 측정 (scripts/oracle_run.cpp): 시뮬은 env_api 로만 몰고 정답은 러너 안에서만 — 학습 환경·관측과 무관
+add_executable(oracle_run ${EXPLORE}/scripts/oracle_run.cpp)
+target_link_libraries(oracle_run frontier_explorer)
+target_compile_options(oracle_run PRIVATE -Wall -Wextra)
+
 # mdp/frontier.h CPU == GPU 비트 비교
 add_executable(frontier_check tools/frontier_check.cu)
 target_link_libraries(frontier_check frontier_explorer)

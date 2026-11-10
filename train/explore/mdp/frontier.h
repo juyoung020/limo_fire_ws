@@ -6,7 +6,14 @@
 //          갈 수 있음 = 그 밖에 건드린 칸. 빈 칸 확정 문턱(p < 0.196, 지나감 36 번)은 쓰지 않는다 — 그 문턱이 95 % 뒤 긴 꼬리의 원인이었다.
 //   로봇 중심이 설 수 있는 칸 = 갈 수 있음이고 반지름(로봇 반경) 안에 막힘이 없는 칸 (막힘을 로봇 반경만큼 팽창).
 //   프론티어 칸 = 갈 수 있음 칸 중 모름에 4 이웃으로 닿은 것.
-//   닫힘 = 로봇 칸(에서 가장 가까운 설 수 있는 칸)부터 설 수 있는 칸을 4 이웃 flood fill 해서 프론티어 칸에 하나도 안 닿음.
+//   닫힘 = 로봇 칸(에서 가장 가까운 설 수 있는 칸)부터 설 수 있는 칸을 4 이웃 flood fill 해서 프론티어 칸에 하나도 안 닿음 (기준선·옛 정의).
+//   sim 성공 판정의 닫힘 규칙 (2026-11-10, mdp/README "닫힘" — SearchBuf::vis 를 주면 켬):
+//     (1) 번지기 = 계획기가 설 수 있는 칸(반경 rbc + 깊이 카메라 층 막힘도 팽창) — 로봇 시작 칸에서, 그리고 판 동안 지나간 칸(씨앗)에서.
+//         막힘 아닌 지나간 칸은 설 수 없어도 지나감(몸통이 실제로 지나간 칸) — 문틀·가구 다리 사이에 선 로봇의 작은 주머니에 갇히지 않게.
+//     (2) close_min 칸 미만 덩어리는 안 막음 (explore_lite min_frontier_size 와 같은 꼴의 크기 문턱, 값은 측정으로 4 칸).
+//     (3) 본 칸: 프론티어 칸 옆 모름 칸이 모두 라이다 시야 부채꼴 안·센서에서 close_look 안에 든 적이 있거나(가까이서 봐도 모름 = 가려짐·빔 빠짐)
+//         몸통이 지나간 칸이면 안 막음.
+//     닫힘 = 시작 칸이 있고 막는 칸(n_block)이 0. 계층형 후보도 같은 칸만(cand_keys).
 //
 // 쓰는 곳
 //   - 프론티어 탐사 기준선(baselines/frontier): frontier_search — 찾기·끝(닫힘) 조건
@@ -107,11 +114,36 @@ DEV bool standable(const MapView& m, int x, int y, Robot rb) {
   return true;
 }
 
+// 칸 비트 판 (줄마다 낱말 ws 개, 칸 x 는 낱말 x / 32 의 비트 x % 32 — sim fmap 과 같은 꼴)
+DEV bool plane_bit(const uint32_t* P, int ws, int x, int y) { return (P[y * ws + (x >> 5)] >> (x & 31)) & 1u; }
+// 칸 바이트 판 (sim cam 층 꼴: 칸마다 한 바이트, 줄 stride) 이 (x, y) 둘레 반경 rb 원판 안에 0 아닌 칸이 있나 (맵 밖은 안 봄)
+DEV bool byte_near(const uint8_t* B, int stride, const MapView& m, int x, int y, Robot rb) {
+  for (int dy = -rb.r; dy <= rb.r; ++dy)
+    for (int dx = -rb.r; dx <= rb.r; ++dx) {
+      if (dx * dx + dy * dy > rb.r2) continue;
+      const int u = x + dx, v = y + dy;
+      if (u >= 0 && v >= 0 && u < m.w && v < m.h && B[v * stride + u]) return true;
+    }
+  return false;
+}
+// 본 프론티어 칸 (SearchBuf::look): 4 이웃 모름 칸(맵 안)이 모두 look 비트 — 가까이서 라이다 시야에 들었는데도 모름으로 남은 칸 —
+// 이거나 vis 비트(몸통 가운데가 지나간 칸: 라이다가 제 몸 밑은 못 보지만 몸통이 그 자리에 있었으니 빈 곳 — Nav2 footprint_clearing 과 같은 뜻)
+DEV bool looked_cell(const MapView& m, const uint32_t* look, const uint32_t* vis, int ws, int x, int y) {
+  for (int k = 0; k < 4; ++k) {
+    int dx, dy;
+    nb4(k, &dx, &dy);
+    const int u = x + dx, v = y + dy;
+    if (u < 0 || v < 0 || u >= m.w || v >= m.h || cls_at(m, u, v) != kUnk) continue;
+    if (!plane_bit(look, ws, u, v) && !(vis && plane_bit(vis, ws, u, v))) return false;
+  }
+  return true;
+}
 // ---------------------------------------------------------------------------------------------------------------
 // 닫힘 + 프론티어 덩어리: 로봇 칸 (rx, ry) 에서 설 수 있는 칸으로 이어진 프론티어 덩어리들.
 // 덩어리 하나 — 모든 값이 칸 단위 정수(결정적). 세계 좌표는 쓰는 쪽에서: 중심 = 원점 + (sx / n + ½) · res
 struct Frontier {
   int32_t n;            // 칸 수
+  int32_t n_open;       // 그중 닫힘을 막을 수 있는 칸: 안 본(looked_cell 아님) 칸 — 본 칸 판이 없으면 n
   int64_t sx, sy;       // 칸 x·y 합 (중심 = 합 / n)
   int32_t min_d2;       // 로봇 칸에서 가장 가까운 칸까지 거리² (칸²)
   int32_t middle;       // 그 칸 번호 (y · w + x)
@@ -127,6 +159,16 @@ struct SearchBuf {
   int32_t* qb;          // 덩어리 BFS 큐
   int32_t* dist = nullptr;   // 있으면 번진 칸마다 시작 칸에서 4 이웃 BFS 거리(칸)를 적고 덩어리 near_dist·near_cell 을 셈 (번지기는 FIFO 라 거리 = 부모 + 1)
   int32_t* label = nullptr;  // 있으면 덩어리로 묶인 칸(flag bit1)마다 그 덩어리 번호(찾은 차례, 문턱과 무관 — 계층형 후보의 "지금 목표" 판정)
+  // 닫힘 규칙 (2026-11-10, mdp/README "닫힘"). 기본값이면 옛 정의(로봇 칸에서만 번짐, 번진 프론티어 칸 하나라도 있으면 안 닫힘)
+  const uint32_t* vis = nullptr;    // 닫힘 규칙을 켬 + 지나간 칸 비트 판. 켜면 번지기 칸 = 계획기가 설 수 있는 칸(plan_ok: 반경 rbc, 지도 막힘·cam 둘 다 팽창)
+                                    // — 로봇 시작 칸(nearestCell, 반경 rb)에서 이 칸으로 번진 곳이 BFS 거리·후보 쪽(qa[0 … n_reach0)), 그 위에
+                                    // 지나간 칸 씨앗 + 막힘 아닌 지나간 칸(몸통이 실제로 지나감)으로 더 번진 곳(dist −1)까지가 닫힘 쪽
+  const uint32_t* look = nullptr;   // 본 칸 비트 판 (sim EnvBatch::trail 판 1 — 라이다 시야 부채꼴 안·센서에서 close_look 안에 들었던 칸).
+                                    // 프론티어 칸 옆 모름 칸(4 이웃)이 모두 본 칸이면(가까이서 시야에 들고도 모름 = 가려져 못 봄) 닫힘을 안 막음
+  int tws = 0;                      // vis·look 판 한 줄 낱말 수
+  int close_min = 1;                // 이 칸 수 미만 덩어리는 닫힘을 안 막음
+  Robot rbc{-1, -1};                // vis 가 있을 때 번지기의 몸통 반경 = 계획기 반경 (r < 0 이면 rb)
+  const uint8_t* cam = nullptr;     // vis 가 있을 때 계획기가 더 막는 칸 (sim 깊이 카메라 층 — 칸마다 한 바이트, 줄 = MapView::stride, 0 아님 = 막힘)
 };
 
 struct SearchResult {
@@ -136,38 +178,31 @@ struct SearchResult {
   int32_t n_reach;      // 번진(설 수 있는) 칸 수
   int32_t start;        // 번지기 시작 칸 (가장 가까운 설 수 있는 칸, 없으면 로봇 칸)
   int32_t start_free;   // 1 = 설 수 있는 칸에서 시작함 (0 이면 아직 설 수 있는 칸이 없음 — 시작 직후)
+  int32_t n_reach0;     // 그중 로봇 시작 칸에서 번진 칸 수 (qa 앞부분 — BFS 거리가 있는 칸). 지나간 칸 씨앗이 없으면 n_reach
+  int32_t n_block;      // 닫힘을 막는 칸 수 = close_min 이상 덩어리의 n_open 합
 };
 
 // 닫힘: 설 수 있는 칸에서 번졌고 프론티어 칸에 하나도 안 닿음
-DEV bool closed(const SearchResult& r) { return r.start_free != 0 && r.n_cells == 0; }
+DEV bool closed(const SearchResult& r) { return r.start_free != 0 && r.n_block == 0; }
 
-// ---------------------------------------------------------------------------------------------------------------
-// 굵은 격자 닫힘 (판 끝 성공 판정, 2026-11-08 — mdp/README "판 끝"): 지도를 f×f 칸으로 줄여(막힘 하나라도 있으면 막힘, 모두 모름이면 모름,
-// 그 밖은 갈 수 있음) 그 격자에서 로봇 반경 radius 로 엄격 닫힘(closed). 버퍼는 쓰는 쪽이 굵은 칸 수만큼(L int16, flag u8, qa·qb int32).
-struct CoarseBuf {
-  int16_t* L;
-  uint8_t* flag;
-  int32_t* qa;
-  int32_t* qb;
-};
-DEV int coarse_dim(int n, int f) { return (n + f - 1) / f; }
 namespace detail {
 // buildNewFrontier (원본 97-170): 8 이웃으로, 번진 칸 안의 프론티어 칸을 묶음. 첫 칸도 합·거리에 넣는다(위 "원본과 다른 점")
-DEV Frontier build(const MapView& m, int init, int rx, int ry, SearchBuf b, int lab) {
+DEV Frontier build(const MapView& m, int init, int rx, int ry, Robot rb, SearchBuf b, int lab) {
   Frontier f;
-  f.n = 0; f.sx = 0; f.sy = 0; f.min_d2 = 0x7fffffff; f.middle = init; f.initial = init; f.near_dist = -1; f.near_cell = -1;
+  f.n = 0; f.n_open = 0; f.sx = 0; f.sy = 0; f.min_d2 = 0x7fffffff; f.middle = init; f.initial = init; f.near_dist = -1; f.near_cell = -1;
   int head = 0, tail = 0;
   b.qb[tail++] = init;
   while (head < tail) {
     const int idx = b.qb[head++];
     const int x = idx % m.w, y = idx / m.w;
     f.n += 1; f.sx += x; f.sy += y;
+    if (!(b.look && looked_cell(m, b.look, b.vis, b.tws, x, y))) f.n_open += 1;
     if (b.label) b.label[idx] = lab;
     const int dx0 = x - rx, dy0 = y - ry, d2 = dx0 * dx0 + dy0 * dy0;
     if (d2 < f.min_d2) { f.min_d2 = d2; f.middle = idx; }
     if (b.dist) {
       const int bd = b.dist[idx];
-      if (f.near_dist < 0 || bd < f.near_dist || (bd == f.near_dist && idx < f.near_cell)) { f.near_dist = bd; f.near_cell = idx; }
+      if (bd >= 0 && (f.near_dist < 0 || bd < f.near_dist || (bd == f.near_dist && idx < f.near_cell))) { f.near_dist = bd; f.near_cell = idx; }
     }
     for (int k = 0; k < 8; ++k) {
       int dx, dy;
@@ -187,7 +222,7 @@ DEV Frontier build(const MapView& m, int init, int rx, int ry, SearchBuf b, int 
 // min_cells: 원본 min_frontier_size / 해상도 (원본 78 줄: size · res ≥ min_frontier_size). rb: 로봇 반경 (robot_cells)
 DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int min_cells, SearchBuf b, Frontier* out, int max_out) {
   SearchResult r;
-  r.n_found = 0; r.n_small = 0; r.n_cells = 0; r.n_reach = 0; r.start = -1; r.start_free = 0;
+  r.n_found = 0; r.n_small = 0; r.n_cells = 0; r.n_reach = 0; r.start = -1; r.start_free = 0; r.n_reach0 = 0; r.n_block = 0;
   const int n = m.w * m.h;
   if (rx < 0 || ry < 0 || rx >= m.w || ry >= m.h) return r;   // 원본 33-36: 로봇이 지도 밖
   for (int i = 0; i < n; ++i) b.flag[i] = 0;
@@ -215,7 +250,12 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
     }
   }
   if (!r.start_free) return r;
-  // 번지기: 설 수 있는 칸, 4 이웃 (닫힘 판정과 같은 flood fill)
+  // 번지기: 설 수 있는 칸, 4 이웃 (닫힘 판정과 같은 flood fill). 닫힘 규칙(b.vis)이면 계획기가 설 수 있는 칸 (plan_ok)
+  const Robot rc = b.rbc.r < 0 ? rb : b.rbc;
+  const auto plan_ok = [&](int x, int y) {
+    if (!b.vis) return standable(m, x, y, rb);
+    return standable(m, x, y, rc) && !(b.cam && byte_near(b.cam, m.stride, m, x, y, rc));
+  };
   int head = 0, tail = 0;
   b.qa[tail++] = r.start;
   b.flag[r.start] |= 1;
@@ -229,10 +269,42 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
       const int u = x + dx, v = y + dy;
       if (u < 0 || v < 0 || u >= m.w || v >= m.h) continue;
       const int j = v * m.w + u;
-      if ((b.flag[j] & 1) || !standable(m, u, v, rb)) continue;
+      if ((b.flag[j] & 1) || !plan_ok(u, v)) continue;
       b.flag[j] |= 1;
       if (b.dist) b.dist[j] = b.dist[idx] + 1;
       b.qa[tail++] = j;
+    }
+  }
+  r.n_reach0 = tail;
+  // 지나간 칸 (닫힘 규칙): 판 동안 몸통 가운데가 지나간 칸에서도 번지고, 막힘이 아닌 지나간 칸은 설 수 없어도 지나간다 — 로봇이 문틀·가구 다리 사이처럼
+  // 좁은 곳에 서 있거나 지나와서(지도 막힘 팽창으로 설 수 있는 칸이 끊김) 그 둘레 작은 주머니만 번지는 일이 없게. 결과는 집합이라 차례와 무관
+  // (로봇 시작 칸 쪽 설 수 있는 칸 성분 위에 다시 번짐 + 씨앗). 거리는 위 로봇 시작 칸 BFS 만 (여기서 더한 칸은 −1)
+  if (b.vis) {
+    const auto pass = [&](int x, int y) {
+      return plan_ok(x, y) || (plane_bit(b.vis, b.tws, x, y) && cls_at(m, x, y) != kOcc && !(b.cam && b.cam[y * m.stride + x]));
+    };
+    for (int i = 0; i < n; ++i) {
+      const int x = i % m.w, y = i / m.w;
+      if ((b.flag[i] & 1) || !plane_bit(b.vis, b.tws, x, y) || !pass(x, y)) continue;
+      b.flag[i] |= 1;
+      if (b.dist) b.dist[i] = -1;
+      b.qa[tail++] = i;
+    }
+    head = 0;
+    while (head < tail) {
+      const int idx = b.qa[head++];
+      const int x = idx % m.w, y = idx / m.w;
+      for (int k = 0; k < 4; ++k) {
+        int dx, dy;
+        nb4(k, &dx, &dy);
+        const int u = x + dx, v = y + dy;
+        if (u < 0 || v < 0 || u >= m.w || v >= m.h) continue;
+        const int j = v * m.w + u;
+        if ((b.flag[j] & 1) || !pass(u, v)) continue;
+        b.flag[j] |= 1;
+        if (b.dist) b.dist[j] = -1;
+        b.qa[tail++] = j;
+      }
     }
   }
   r.n_reach = tail;
@@ -244,7 +316,8 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
     r.n_cells += 1;
     if (b.flag[idx] & 2) continue;
     b.flag[idx] |= 2;
-    const Frontier f = detail::build(m, idx, rx, ry, b, r.n_found + r.n_small);
+    const Frontier f = detail::build(m, idx, rx, ry, rb, b, r.n_found + r.n_small);
+    if (f.n >= b.close_min) r.n_block += f.n_open;
     if (f.n >= min_cells) {
       if (r.n_found < max_out) out[r.n_found] = f;
       r.n_found += 1;
@@ -284,7 +357,7 @@ DEV void reach_clear(ReachSummary* s) {
 DEV void reach_pick(const SearchResult& r, const Frontier* out, int n_out, int min_cells, int n_tot, ReachSummary* s) {
   reach_clear(s);
   s->start_free = r.start_free;
-  s->closed = closed(r) ? 1 : 0;
+  s->closed = closed(r) && n_tot <= kReachCap ? 1 : 0;   // 넘침이면 덩어리를 안 셈 → 안 닫힘으로 (GPU reach_block 과 같은 규칙)
   s->n_cells = r.n_cells;
   if (n_tot > kReachCap) { s->overflow = 1; return; }
   uint64_t last = 0;
@@ -293,7 +366,7 @@ DEV void reach_pick(const SearchResult& r, const Frontier* out, int n_out, int m
     uint64_t best = ~0ull;
     int bi = -1;
     for (int i = 0; i < n_out; ++i) {
-      if (out[i].n < min_cells) continue;
+      if (out[i].n < min_cells || out[i].near_dist < 0) continue;   // 지나간 칸 씨앗에서만 번진 덩어리는 로봇에서 BFS 로 안 닿음
       const uint64_t key = ((uint64_t)(uint32_t)out[i].near_dist << 32) | (uint32_t)out[i].near_cell;
       if (have_last && key <= last) continue;
       if (key < best) { best = key; bi = i; }
@@ -358,14 +431,17 @@ DEV void cand_pick(const Frontier* out, const uint64_t* key2, int n_out, int n_t
     last = best;
   }
 }
-// 덩어리마다 후보 열쇠 (위 cand_pick 의 key2): 번진 칸(qa[0 … r.n_reach)) 중 덩어리로 묶인 프론티어 칸이고 거리 ≥ kCandMinDist 인 칸
-DEV void cand_keys(const SearchResult& r, const SearchBuf& b, int n_out, uint64_t* key2) {
+// 덩어리마다 후보 열쇠 (위 cand_pick 의 key2): 로봇 시작 칸에서 번진 칸(qa[0 … r.n_reach0)) 중 덩어리로 묶인 프론티어 칸이고 거리 ≥ kCandMinDist 이며
+// 닫힘을 막을 수 있는 칸(덩어리 칸 수 ≥ close_min, 자격 있음, 안 봄 — 닫힘 규칙과 같은 칸)
+DEV void cand_keys(const MapView& m, Robot rb, const SearchResult& r, const SearchBuf& b, const Frontier* out, int n_out, uint64_t* key2) {
   for (int i = 0; i < n_out; ++i) key2[i] = ~0ull;
-  for (int q = 0; q < r.n_reach; ++q) {
+  for (int q = 0; q < r.n_reach0; ++q) {
     const int idx = b.qa[q];
     if (!(b.flag[idx] & 2) || b.dist[idx] < hier::kCandMinDist) continue;
     const int l = b.label[idx];
-    if (l < 0 || l >= n_out) continue;
+    if (l < 0 || l >= n_out || out[l].n < b.close_min) continue;
+    const int x = idx % m.w, y = idx / m.w;
+    if (b.look && looked_cell(m, b.look, b.vis, b.tws, x, y)) continue;
     const uint64_t key = ((uint64_t)(uint32_t)b.dist[idx] << 32) | (uint32_t)idx;
     if (key < key2[l]) key2[l] = key;
   }
@@ -382,24 +458,5 @@ DEV int cand_util(const MapView& m, int cx, int cy, int R) {
   return n;
 }
 
-
-DEV bool coarse_closed(const MapView& m, int rx, int ry, float res, int f, float radius, CoarseBuf cb) {
-  const int cw = coarse_dim(m.w, f), ch = coarse_dim(m.h, f);
-  for (int cy = 0; cy < ch; ++cy)
-    for (int cx = 0; cx < cw; ++cx) {
-      bool occ = false, unk = true;
-      for (int yy = cy * f; yy < cy * f + f && yy < m.h; ++yy)
-        for (int xx = cx * f; xx < cx * f + f && xx < m.w; ++xx) {
-          const uint8_t k = cls_at(m, xx, yy);
-          occ = occ || k == kOcc;
-          unk = unk && k == kUnk;
-        }
-      cb.L[cy * cw + cx] = occ ? (int16_t)1000 : (unk ? kUnknownL : (int16_t)-1000);
-    }
-  const MapView cv{cb.L, cw, cw, ch};
-  const SearchResult r = frontier_search(cv, rx < 0 ? -1 : rx / f, ry < 0 ? -1 : ry / f, robot_cells(radius, res * (float)f), 1 << 30,
-                                         SearchBuf{cb.flag, cb.qa, cb.qb}, nullptr, 0);
-  return closed(r);
-}
 
 }  // namespace mdp

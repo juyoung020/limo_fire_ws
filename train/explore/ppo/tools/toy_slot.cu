@@ -5,6 +5,8 @@
 //   toy_slot [--iters 200] [--envs 256] [--seed 1]                    학습 → 결정 정확도(새 표본 4096) > 0.9 이면 통과
 //   toy_slot --check-mask                                              가린 칸을 고른 샘플 수 = 0 (학습 샘플 · 평가 샘플 · 결정)
 //   toy_slot --check-determinism [--iters 30]                          같은 씨앗 두 번 → 가중치·Adam 비트 같음
+//   toy_slot --check-common-mode [--iters 400]                          슬롯 로짓 공통 성분 |l̄| (ppo/README "슬롯 로짓 공통 성분"): 학습률 상한 1e-2·목표 KL 0.05 로
+//                                                                       벌점 끔(0) vs 기본(PPOConfig::slot_cm_coef) — 기본에서 마지막 |l̄| < 10 이고 정확도 > 0.9 이면 통과
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -98,8 +100,18 @@ struct Dev {
 };
 
 // 학습 iters 반복. 반환 = 마지막 결정 정확도 (새 표본 4096). bad_mask 에 가린 칸을 고른 수를 더함
+struct Opt {
+  float cm_coef = -1, lr_max = -1, desired_kl = -1;   // < 0 = PPOConfig 기본
+  bool cm_log = false;                              // 반복마다(50 번째) 롤아웃 로짓 공통 성분 찍기
+  double last_cm = 0;
+};
+Opt g_opt;
+
 double train(int iters, int n, uint64_t seed, const std::string& save, long* bad_mask, bool verbose) {
   xppo::PPOConfig cfg;
+  if (g_opt.cm_coef >= 0) cfg.slot_cm_coef = g_opt.cm_coef;
+  if (g_opt.lr_max > 0) cfg.lr_max = g_opt.lr_max;
+  if (g_opt.desired_kl > 0) cfg.desired_kl = g_opt.desired_kl;
   cfg.num_envs = n;
   cfg.steps_per_env = 8;
   cfg.minibatches = 4;
@@ -132,6 +144,10 @@ double train(int iters, int n, uint64_t seed, const std::string& save, long* bad
       d.up(env);
     }
     const auto us = ppo.update(d.img, d.o1, d.pr);
+    g_opt.last_cm = us.logit_cm;
+    if (g_opt.cm_log && (it % 50 == 0 || it == iters - 1))
+      std::printf("  반복 %3d: 공통 성분 |l̄| %.4g, 있는 칸 표준편차 %.3g, max|l| %.4g, 기울기 노름 %.3g, kl0 %.2g, kl %.4f, lr %.2e\n", it, us.logit_cm,
+                  us.logit_spread, us.logit_absmax, us.grad_norm, us.kl0, us.kl, us.lr);
     if (verbose && (it % 20 == 0 || it == iters - 1))
       std::printf("반복 %d: 학습 정확도 %.3f, 엔트로피 %.3f, kl %.4f, value %.4f, lr %.2e\n", it, hit / (n * cfg.steps_per_env), us.entropy, us.kl, us.value, us.lr);
   }
@@ -157,7 +173,7 @@ double train(int iters, int n, uint64_t seed, const std::string& save, long* bad
 int main(int argc, char** argv) {
   int iters = 200, n = 256;
   uint64_t seed = 1;
-  bool det = false, mask = false;
+  bool det = false, mask = false, cmode = false;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--iters" && i + 1 < argc) iters = std::atoi(argv[++i]);
@@ -165,6 +181,25 @@ int main(int argc, char** argv) {
     else if (a == "--seed" && i + 1 < argc) seed = std::strtoull(argv[++i], nullptr, 10);
     else if (a == "--check-determinism") det = true;
     else if (a == "--check-mask") mask = true;
+    else if (a == "--check-common-mode") { cmode = true; if (iters == 200) iters = 400; }
+  }
+  if (cmode) {
+    g_opt.lr_max = 1e-2f;
+    g_opt.desired_kl = 0.05f;
+    g_opt.cm_log = true;
+    long b0 = 0, b1 = 0;
+    std::printf("벌점 끔 (slot_cm_coef 0):\n");
+    g_opt.cm_coef = 0;
+    const double a0 = train(iters, n, seed, "", &b0, false);
+    const double cm0 = g_opt.last_cm;
+    std::printf("벌점 기본 (slot_cm_coef %g):\n", xppo::PPOConfig{}.slot_cm_coef);
+    g_opt.cm_coef = -1;
+    const double a1 = train(iters, n, seed, "", &b1, false);
+    const double cm1 = g_opt.last_cm;
+    const bool ok = cm1 < 10 && a1 > 0.9 && b1 == 0;
+    std::printf("공통 성분 마지막 |l̄|: 끔 %.4g (정확도 %.3f) → 기본 %.4g (정확도 %.3f) — %s (기준: 기본 |l̄| < 10, 정확도 > 0.9)\n", cm0, a0, cm1, a1,
+                ok ? "통과" : "실패");
+    return ok ? 0 : 1;
   }
   long bad = 0;
   if (det) {

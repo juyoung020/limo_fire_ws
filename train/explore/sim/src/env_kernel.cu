@@ -118,6 +118,8 @@ __device__ void reach_fix(const EnvBatch& b, const EnvState& e, int env, const S
   uint32_t* KN = RB + kRbKnown * nf;
   uint32_t* QF = RB + kRbQueued * nf;   // 다시 셀 낱말 표시 (reach_block BFS 와 같은 칸 — 둘 다 쓰고 0 으로 되돌림)
   uint32_t* ST = RB + kRbStand * nf;
+  uint32_t* STC = RB + kRbStandC * nf;
+  const mdp::Robot rbc = mdp::robot_cells(c.close_radius, c.res);   // 닫힘·후보 번지기 반경 (= 계층형 계획기 반경)
   int32_t* QC = b.rlist + (size_t)env * mdp::kReachCap * kReachLists + 6 * mdp::kReachCap;
   const mdp::Robot rb = mdp::obsgen::reach_robot(c);
   const auto fix = [&](int x, int y) {
@@ -140,15 +142,16 @@ __device__ void reach_fix(const EnvBatch& b, const EnvState& e, int env, const S
     const int w = sh.bx1 - sh.bx0 + 1, h = sh.by1 - sh.by0 + 1;
     for (int k = tid; k < w * h; k += kThreads) fix(sh.bx0 + k % w, sh.by0 + k / w);
   }
+  const int RR = rb.r > rbc.r ? rb.r : rbc.r;   // 다시 셀 범위 = 두 반경 중 큰 것
   if (tid == 0) s_nd = 0;
   __syncthreads();   // 막힘·앎 다 고침
   if (listed) {
     // 바뀐 낱말(4 칸 x0..x0+3, 줄 y)에서 반경 r 안: 줄 y−r..y+r, 낱말 (x0−r)/32..(x0+3+r)/32 — 표시해 한 번씩만
-    const int span = 2 * rb.r + 1;
+    const int span = 2 * RR + 1;
     for (int k = tid; k < n_chg * span * 2; k += kThreads) {
       const int ci = list[k / (span * 2)], q = k % (span * 2);
-      const int x0 = ci % c.size, y = ci / c.size + q / 2 - rb.r;
-      const int xa = max(0, x0 - rb.r), xb = min(m.gw - 1, x0 + 3 + rb.r);
+      const int x0 = ci % c.size, y = ci / c.size + q / 2 - RR;
+      const int xa = max(0, x0 - RR), xb = min(m.gw - 1, x0 + 3 + RR);
       const int wx = (q & 1) ? (xb >> 5) : (xa >> 5);
       if (y < 0 || y >= m.gh || ((q & 1) && (xb >> 5) == (xa >> 5))) continue;
       const int wi = y * ws + wx;
@@ -159,14 +162,16 @@ __device__ void reach_fix(const EnvBatch& b, const EnvState& e, int env, const S
     for (int i = tid; i < nd; i += kThreads) {
       const int wi = QC[i];
       ST[wi] = stand_word(OCC, KN, ws, m.gh, wi / ws, wi % ws, rb);
+      STC[wi] = stand_word(OCC, KN, ws, m.gh, wi / ws, wi % ws, rbc);
       QF[wi] = 0u;
     }
   } else if (sh.bx1 >= 0) {   // 넘침: 장 범위 ± r 전체
-    const int y0 = max(0, sh.by0 - rb.r), y1 = min(m.gh - 1, sh.by1 + rb.r);
-    const int w0 = max(0, sh.bx0 - rb.r) >> 5, w1 = min(m.gw - 1, sh.bx1 + rb.r) >> 5, nw = w1 - w0 + 1;
+    const int y0 = max(0, sh.by0 - RR), y1 = min(m.gh - 1, sh.by1 + RR);
+    const int w0 = max(0, sh.bx0 - RR) >> 5, w1 = min(m.gw - 1, sh.bx1 + RR) >> 5, nw = w1 - w0 + 1;
     for (int k = tid; k < nw * (y1 - y0 + 1); k += kThreads) {
       const int y = y0 + k / nw, wx = w0 + k % nw;
       ST[y * ws + wx] = stand_word(OCC, KN, ws, m.gh, y, wx, rb);
+      STC[y * ws + wx] = stand_word(OCC, KN, ws, m.gh, y, wx, rbc);
     }
   }
 }
@@ -234,7 +239,7 @@ __device__ __forceinline__ uint32_t run_fill_up(uint32_t t, uint32_t m) {
 __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::ReachSummary& RS, mdp::CandSummary& CS, int tid) {
   constexpr int kHitCap = 64;
   __shared__ int s_tot, s_any, s_start, s_cells, s_found, s_hits, s_nhit, s_cntA[2], s_cntC[2];
-  __shared__ int s_found_all, s_hits_all, s_groot, s_best_r;   // 계층형 후보: 문턱 kCandMinCells 덩어리 수·맞힌 수, 지금 목표 덩어리 뿌리
+  __shared__ int s_found_all, s_hits_all, s_groot, s_best_r, s_block;   // s_block: 닫힘을 막는 칸 수 (mdp::SearchResult::n_block)   // 계층형 후보: 문턱 kCandMinCells 덩어리 수·맞힌 수, 지금 목표 덩어리 뿌리
   __shared__ uint32_t s_a[kAccShared];   // 범위가 작으면: 채우기 동안 설 수 있는 칸, BFS 동안 후보 비트
   __shared__ uint32_t s_r[kAccShared];   // 범위가 작으면: 번진 곳 (RE 대신)
   __shared__ int s_scan[kRT];
@@ -252,6 +257,26 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   const int ws = fmap_row(c), nf = c.size * ws;
   uint32_t* RB = b.rbits + (size_t)env * kReachBits * nf;
   const uint32_t* ST = RB + kRbStand * nf;
+  const uint32_t* STC = RB + kRbStandC * nf;
+  uint32_t* CAMW = RB + kRbCam * nf;    // 깊이 카메라 층 막힘 비트 (이번 관측, 범위 ± 반경)
+  uint32_t* PLW = RB + kRbPlan * nf;    // 계획기가 설 수 있음 = STC & ~(CAMW 팽창) (이번 관측, 범위 안)
+  const uint32_t* OCCB = RB + kRbOcc * nf;
+  const uint32_t* VIS = b.trail + (size_t)env * 2 * nf;   // 닫힘 규칙의 지나간 칸 · 본 칸 (trail_mark)
+  const uint32_t* LOOK = VIS + nf;
+  const uint32_t* KNW = RB + kRbKnown * nf;
+  // 본 프론티어 칸 (mdp::looked_cell 과 같은 값): 4 이웃 중 맵 안 모름 칸(앎 비트 0)이 모두 LOOK 또는 VIS(몸통이 지나간 칸)
+  const auto looked = [&](int x, int y) -> bool {
+    for (int k = 0; k < 4; ++k) {
+      int dx, dy;
+      mdp::nb4(k, &dx, &dy);
+      const int u = x + dx, v = y + dy;
+      if (u < 0 || v < 0 || u >= m.gw || v >= m.gh) continue;
+      const int wi = v * ws + (u >> 5);
+      const uint32_t bit = 1u << (u & 31);
+      if (!(KNW[wi] & bit) && !((LOOK[wi] | VIS[wi]) & bit)) return false;
+    }
+    return true;
+  };
   uint32_t* RE = RB + kRbReach * nf;
   uint32_t* ACC = RB + kRbAcc * nf;     // BFS 다음 층 후보 비트 — 쓰고 나면 0 으로 되돌려 늘 0 (리셋이 비움)
   const uint32_t* F = b.fmap + (size_t)env * nf;
@@ -270,13 +295,57 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   const bool small = nbox <= kAccShared;
   const auto bidx = [&](int wi) { return (wi / ws - by0) * nbw + (wi % ws - bw0); };
   const auto REp = [&](int wi) -> uint32_t* { return small ? &s_r[bidx(wi)] : &RE[wi]; };
-  const auto STv = [&](int wi) -> uint32_t { return small ? s_a[bidx(wi)] : ST[wi]; };
+  // 0. 계획기가 설 수 있는 칸 (mdp::frontier_search plan_ok): 닫힘 반경 rbc 로 지도 막힘 팽창(STC, reach_fix) & 깊이 카메라 층 막힘을 같은 반경으로 팽창한 곳 밖
+  const mdp::Robot rbc = mdp::robot_cells(c.close_radius, c.res);
+  const bool cam = b.cvox != nullptr;
+  if (cam) {   // 층 비트: 범위 ± rbc 줄 · ± 1 낱말 (팽창이 읽는 곳 — 맵 안만)
+    const int y0 = max(0, by0 - rbc.r), y1 = min(m.gh - 1, by1 + rbc.r), w0 = max(0, bw0 - 1), w1 = min(ws - 1, bw1 + 1), nw = w1 - w0 + 1;
+    const uint32_t* V = reinterpret_cast<const uint32_t*>(b.cvox + (size_t)env * c.size * c.size);
+    for (int k = tid; k < nw * (y1 - y0 + 1); k += kRT) {
+      const int y = y0 + k / nw, wx = w0 + k % nw;
+      uint32_t bits = 0u;
+      for (int q = 0; q < 8; ++q) {
+        const int x = wx * 32 + q * 4;
+        if (x >= c.size) break;
+        const uint32_t v = V[((size_t)y * c.size + x) >> 2];
+        for (int j = 0; j < 4; ++j) bits |= ((v >> (8 * j)) & 0xffu) && x + j < m.gw ? 1u << (q * 4 + j) : 0u;
+      }
+      CAMW[y * ws + wx] = bits;
+    }
+    __syncthreads();
+  }
+  for (int k = tid; k < nbox; k += kRT) {
+    const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
+    uint32_t dil = 0u;
+    if (cam)
+      for (int dy = -rbc.r; dy <= rbc.r; ++dy) {
+        const int yy = y + dy;
+        if (yy < 0 || yy >= m.gh || dy * dy > rbc.r2) continue;
+        int hw = 0;
+        while ((hw + 1) * (hw + 1) + dy * dy <= rbc.r2) ++hw;
+        const int i = yy * ws + wx;
+        const uint32_t a = CAMW[i], l = wx > 0 ? CAMW[i - 1] : 0u, r = wx + 1 < ws ? CAMW[i + 1] : 0u;
+        uint32_t d = a;
+        for (int h = 1; h <= hw; ++h) d |= (a << h) | (l >> (32 - h)) | (a >> h) | (r << (32 - h));
+        dil |= d;
+      }
+    PLW[wi] = STC[wi] & ~dil;
+  }
+  __syncthreads();
+  // 번지기 칸 = 계획기가 설 수 있는 칸 ∪ 막힘(지도·카메라 층) 아닌 지나간 칸 ∪ 시작 칸 (mdp::frontier_search 의 pass — 닫힘 규칙).
+  // 범위가 작으면 공유 메모리 사본 s_a (시작 칸 비트는 시작 칸을 찾은 뒤 더함)
+  int swi = -1;
+  uint32_t sbit = 0u;
+  const auto CAMv = [&](int wi) -> uint32_t { return cam ? CAMW[wi] : 0u; };
+  const auto STv = [&](int wi) -> uint32_t {
+    return small ? s_a[bidx(wi)] : (PLW[wi] | (VIS[wi] & ~OCCB[wi] & ~CAMv(wi)) | (wi == swi ? sbit : 0u));
+  };
   // 1. 번진 곳 비우기 (설 수 있는 칸 비트는 지도 갱신 때 reach_fix 가 바뀐 곳만 고쳐 둠)
   int any = 0;
   for (int k = tid; k < nbox; k += kRT) {
     const int wi = (by0 + k / nbw) * ws + bw0 + k % nbw;
     const uint32_t st = ST[wi];
-    if (small) { s_r[k] = 0u; s_a[k] = st; } else RE[wi] = 0u;
+    if (small) { s_r[k] = 0u; s_a[k] = PLW[wi] | (VIS[wi] & ~OCCB[wi] & ~CAMv(wi)); } else RE[wi] = 0u;
     any |= st != 0u;
   }
   // 프론티어 칸 앞합 (스레드마다 이어진 낱말 덩이)
@@ -321,6 +390,7 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   __syncthreads();
   const int start = s_start;
   const int sx = start % m.gw, sy = start / m.gw;
+  if (start >= 0) { swi = sy * ws + (sx >> 5); sbit = 1u << (sx & 31); }
   if (tid == 0) {
     s_cells = 0;
     s_found = 0;
@@ -330,9 +400,22 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
     s_nhit2 = 0;
     s_hits_all = 0;
     s_groot = -1;
-    if (start >= 0) *REp(sy * ws + (sx >> 5)) = 1u << (sx & 31);
+    s_block = 0;
+    if (start >= 0) {
+      *REp(sy * ws + (sx >> 5)) = 1u << (sx & 31);
+      if (small) s_a[bidx(sy * ws + (sx >> 5))] |= 1u << (sx & 31);   // 시작 칸은 번지기 칸 (계획 반경으로 설 수 없어도)
+    }
   }
   __syncthreads();
+  // 지나간 칸 씨앗 (mdp::frontier_search b.vis 와 같음): 시작 칸이 있을 때 지나간 칸 ∩ 설 수 있는 칸을 번진 곳에 더함 — 고정점은 씨앗들의 연결 성분 합
+  if (start >= 0) {
+    for (int k = tid; k < nbox; k += kRT) {
+      const int wi = (by0 + k / nbw) * ws + bw0 + k % nbw;
+      const uint32_t sd = VIS[wi] & STv(wi);
+      if (sd) *REp(wi) |= sd;
+    }
+    __syncthreads();
+  }
   // 3. 번진 곳 = 시작 칸의 4 이웃 연결 성분 (가로 줄 채우기 ↔ 세로 쓸기, 바뀜이 없을 때까지)
   if (start >= 0) {
     for (;;) {
@@ -462,6 +545,25 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   atomicAdd(&s_found, found);
   if (hier) atomicAdd(&s_found_all, found_all);
   __syncthreads();
+  // 닫힘을 막는 칸 (mdp::frontier_search n_block 과 같은 값): 칸 수 ≥ close_min 덩어리의 칸 중 안 본(looked 아님) 칸
+  {
+    int blk = 0;
+    if (!over && start >= 0)
+      for (int k = tid; k < nbox; k += kRT) {
+        const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
+        const uint32_t fr = F[wi] & *REp(wi);
+        if (!fr) continue;
+        for_runs(fr, [&](int lo, int len) {
+          if (CNT[uf_find(PAR, list_pos(wx * 32 + lo, y))] < c.close_min) return;
+          const uint32_t run = (len == 32 ? ~0u : ((1u << len) - 1u)) << lo;
+          for (uint32_t q = run; q; q &= q - 1u) {
+            const int x = wx * 32 + __ffs(q) - 1;
+            if (!looked(x, y)) ++blk;
+          }
+        });
+      }
+    if (blk) atomicAdd(&s_block, blk);
+  }
   const int need = over ? 0 : min(mdp::kReachTop, s_found);
   const int need_all = (over || !hier) ? 0 : min(mdp::hier::K, s_found_all);
   // 계층형: 지금 목표 칸이 번진 프론티어 칸이면 그 덩어리 뿌리 (CPU 참조: frontier_search 의 flag bit1 · label)
@@ -476,7 +578,9 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   // 계층형 후보는 따로 열쇠(KEY2)·목록: 크기 문턱 kc, 거리 hier::kCandMinDist 칸 이상인 칸만 (mdp::cand_pick 과 같은 규칙)
   const auto hit = [&](int x, int y, int dd) {
     const int r = uf_find(PAR, list_pos(x, y));
-    const bool big = CNT[r] >= min_cells, cand = hier && CNT[r] >= kc && dd >= mdp::hier::kCandMinDist;
+    const bool big = CNT[r] >= min_cells;
+    // 후보 = 닫힘을 막을 수 있는 칸만 (mdp::cand_keys 와 같은 규칙): 덩어리 ≥ close_min, 안 봄
+    const bool cand = hier && CNT[r] >= kc && dd >= mdp::hier::kCandMinDist && CNT[r] >= c.close_min && !looked(x, y);
     if (!big && !cand) return;
     const unsigned long long key = ((unsigned long long)(uint32_t)dd << 32) | (uint32_t)(y * m.gw + x);
     if (big && atomicMin(&KEY[r], key) == ~0ull) {
@@ -537,7 +641,7 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
         const int wi = QC[i];
         uint32_t* ap = acc_ref(wi);
         uint32_t* rp = REp(wi);
-        const uint32_t n = *ap & *rp;
+        const uint32_t n = *ap & *rp & PLW[wi];   // 거리는 계획기가 설 수 있는 칸으로만 (지나간 칸으로만 이어진 칸은 거리 없음 — 후보 아님)
         *ap = 0u;
         if (!n) continue;
         *rp &= ~n;
@@ -555,7 +659,7 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
     mdp::ReachSummary& R = RS;
     R.start_free = start >= 0 ? 1 : 0;
     R.n_cells = s_cells;
-    R.closed = (start >= 0 && s_cells == 0) ? 1 : 0;
+    R.closed = (start >= 0 && !over && s_block == 0) ? 1 : 0;   // mdp::reach_pick 과 같음 (넘침이면 안 닫힘)
     R.overflow = over ? 1 : 0;
     R.n_found = over ? 0 : s_found;
     if (hier) CS.n = 0;
@@ -629,8 +733,13 @@ __global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate)
   if (gate == 1 && b.done[env] != 0) return;   // 블록 전체 같은 값
   if (gate == 2 && b.done[env] == 0) return;
   const EnvState& e = b.st[env];
+  trail_mark(b, e, env, tid, kRT);   // 닫힘 규칙의 지나간 길에 지금 자세 (CPU write_obs 와 같은 때)
+  __syncthreads();
   reach_block(b, e, env, rs, cs, tid);
-  if (tid == 0) mdp::obsgen::obs_reach(b, e, env, rs);
+  if (tid == 0) {
+    mdp::obsgen::obs_reach(b, e, env, rs);
+    b.st[env].map_closed = rs.closed;   // 다음 걸음 finish_step 성공 판정 (CPU env_ref.cpp write_obs 와 같음)
+  }
   if (!b.cand) return;
   // 계층형 후보: 주변 프론티어 칸 수 = 프론티어 칸 비트 지도(fmap)의 ±R 네모 안 비트 수 (mdp::cand_util 과 같은 값) — (후보, 줄)마다 스레드
   const EnvCfg& c = b.cfg;
@@ -878,7 +987,8 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   const uint32_t* KN = RB + kRbKnown * nf;
   const uint32_t* ST = RB + kRbStand * nf;
   const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
-  __shared__ int s_plan, s_target, s_start, s_tgt_ok;
+  __shared__ int s_plan, s_target, s_start, s_tgt_ok, s_goal, s_force;
+  __shared__ unsigned long long s_key;
   const int by0 = e.kb_y0, by1 = e.kb_y1, bw0 = e.kb_x0 >> 5, bw1 = e.kb_x1 >> 5;
   const auto in_box = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh && y >= by0 && y <= by1 && (x >> 5) >= bw0 && (x >> 5) <= bw1; };
   const auto bit_of = [&](const uint32_t* P, int x, int y) -> uint32_t { return in_box(x, y) ? (P[y * ws + (x >> 5)] >> (x & 31)) & 1u : 0u; };
@@ -892,12 +1002,14 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   uint32_t* SST = P + kPpSST * nf;
   uint32_t* LO = P + kPpLO * nf;     // 느슨 막힘 = 지도 막힘 ∪ 지금 스캔 (path_scan 일 때만 씀)
   uint32_t* SLO = P + kPpSLO * nf;   // 그 설 수 있음
-  const bool scan = c.path_scan != 0;
+  const bool scan = c.path_scan != 0 || b.cvox != nullptr || path_rb_plan(c, mdp::obsgen::reach_robot(c)).r2 != mdp::obsgen::reach_robot(c).r2;   // 느슨 판 LO·SLO 를 따로 만드나 (지금 스캔 · 깊이 카메라 층 · 계획 반경)
   const auto Bp = [&](int t) { return P + (size_t)(kPpB + (t & 3)) * nf; };
   if (tid == 0) {
-    const int k = slot_of(actions[(size_t)mdp::act::DIM * env]);
+    int force = 0;   // 복구 (hier_path.h path_recovery): 다시 계획 · 포기한 목표면 다른 후보(없으면 −1)
+    const int k = path_recovery(b, e, env, slot_of(actions[(size_t)mdp::act::DIM * env]), &force);
     e.p_slot = k;
     const int tgt = k >= 0 ? b.cand[(size_t)env * mdp::hier::K + k] : -1;
+    s_force = force;
     s_target = tgt;
     if (tgt < 0) {
       e.goal_cell = -1;
@@ -917,7 +1029,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   const int nbw = bw1 - bw0 + 1, nbox = nbw * (by1 - by0 + 1);
   int rcx, rcy;
   cell_of(c, m, e.x + e.ex, e.y + e.ey, &rcx, &rcy);
-  const mdp::Robot rb = mdp::obsgen::reach_robot(c), rm = path_rb_mid(c), ro = path_rb_out(c);
+  const mdp::Robot rb = path_rb_plan(c, mdp::obsgen::reach_robot(c)), rm = path_rb_mid(c), ro = path_rb_out(c);   // rb: 계획 반경 (path_consistent 면 충돌 검사 발자국 반경, hier_path.h)
   // 엄격 막힘 판 LT = 지도 막힘 ∪ 약한 막힘(로그 오즈 > 0, 로봇 칸에서 obstacle_max_range 안 — path_lethal 과 같은 규칙), 엄격 설 수 있음 SST
   // LT 는 범위 둘레(줄 ± 팽창 반경, 낱말 ± 1)까지 — stand_word 가 거기를 읽는다 (범위 밖은 모름이라 지도 막힘과 같지만 판에는 옛 값이 남아 있음)
   const float rr = c.path_obs_range * c.path_obs_range;
@@ -938,7 +1050,22 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   }
   __syncthreads();
   // 지금 스캔 끝점 (hier_path.h "지금 스캔" (a)) → 엄격·느슨 막힘 둘 다. 범위(LT 를 채운 줄·낱말) 밖 점은 둘레 계산에 안 닿으므로 버림 (CPU 와 같은 결과)
-  if (scan) {
+  if (b.cvox) {   // 깊이 카메라 장애물 층 (hier_path.h): 지금 스캔과 같은 몫 — 엄격·느슨 둘 다 막힘. 범위는 LT 를 채운 줄·낱말 (CPU ex0..ex1 보다 넓어도 둘레 계산 결과 같음)
+    const uint8_t* V = b.cvox + (size_t)env * c.size * c.size;
+    for (int k = tid; k < lnw * (ly1 - ly0 + 1); k += kRT) {
+      const int y = ly0 + k / lnw, wx = lw0 + k % lnw, wi = y * ws + wx;
+      uint32_t w = 0u;
+      for (int q = 0; q < 32; ++q) {
+        const int x = wx * 32 + q;
+        if (x >= m.gw) break;
+        if (V[y * c.size + x]) w |= 1u << q;
+      }
+      LT[wi] |= w;
+      LO[wi] |= w;
+    }
+    __syncthreads();
+  }
+  if (c.path_scan) {
     for (int k = tid; k < mdp::obs::LIDAR_BINS; k += kRT) {
       int x, y;
       if (!path_scan_cell(b, e, env, k, &x, &y)) continue;
@@ -959,7 +1086,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   // 같은 후보 · 경로 그대로? (지난 계획이 엄격이면 엄격 칸, 느슨이면 느슨 칸으로 남은 경로 확인)
   if (tid == 0) {
     const int k = e.p_slot;
-    const bool same = ((b.cand_cur[env] >> k) & 1) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc &&
+    const bool same = !s_force && ((b.cand_cur[env] >> k) & 1) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc &&
                       path_clear(e, [&](int x, int y) { return bit_of(e.p_mode == 1 ? SST : LPASS, x, y) != 0u; });
     if (same) s_plan = 0;
     else {
@@ -967,15 +1094,27 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
       path_set_none(e);
       e.p_plans += 1;
     }
-    s_tgt_ok = bit_of(SST, s_target % m.gw, s_target / m.gw) != 0u ? 1 : 0;
+    // 엄격으로 짤 목표 칸이 있나: 목표가 설 수 있거나, 목표에서 path_goal_tol 안 설 수 있는 칸 (hier_path.h "계획·충돌 검사 일치", CPU any_goal)
+    const int gx = s_target % m.gw, gy = s_target / m.gw;
+    const mdp::Robot rt = path_rb_far(c);
+    int ok = bit_of(SST, gx, gy) != 0u ? 1 : 0;
+    for (int dy = -rt.r; dy <= rt.r && !ok && rt.r2 > 0; ++dy)
+      for (int dx = -rt.r; dx <= rt.r && !ok; ++dx)
+        ok = dx * dx + dy * dy <= rt.r2 && bit_of(SST, gx + dx, gy + dy) != 0u;
+    s_tgt_ok = ok;
   }
   __syncthreads();
   if (!s_plan) return;
   const int target = s_target, tx = target % m.gw, ty = target / m.gw, twi = ty * ws + (tx >> 5);
+  const mdp::Robot rt = path_rb_tol(c), rf = path_rb_far(c);
+  const int tol_w = 2 * rt.r + 1, n_reg = rt.r2 > 0 ? tol_w * tol_w : 0;
+  const int far_w = 2 * rf.r + 1, n_far = rf.r2 > 0 ? far_w * far_w : 0;
   const uint32_t tbit = 1u << (tx & 31);
   int32_t* LST = b.rlist + (size_t)env * mdp::kReachCap * kReachLists;
   // 한 번 계획: PASS = 설 수 있는 칸, OBS = 무게 경계를 셀 막힘 판. 닿으면 true (D0..D2 에 거리 mod 7, C3·C45 에 무게 경계)
   const auto run = [&](const uint32_t* PASS, const uint32_t* OBS) -> bool {
+    // 목표가 PASS 면 목표 하나(옛 길), 아니면 목표 둘레 path_goal_tol 안 칸 중 처음 닿는 층의 (거리², 칸) 최소 — CPU plan_cpu 와 같은 규칙
+    const bool exact = bit_of(PASS, tx, ty) != 0u || n_reg == 0;
     int any = 0;
     for (int k = tid; k < nbox; k += kRT) {
       const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
@@ -1018,8 +1157,45 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
       a = __syncthreads_or(a);
       pend = __syncthreads_or(pend);
       h = __syncthreads_or(h);
-      if (h) return true;
-      if (!a && !pend) return false;
+      if (h) {
+        if (tid == 0) s_goal = target;
+        __syncthreads();
+        return true;
+      }
+      if (!exact && a) {
+        if (tid == 0) s_key = ~0ull;
+        __syncthreads();
+        for (int q = tid; q < n_reg; q += kRT) {
+          const int dx = q % tol_w - rt.r, dy = q / tol_w - rt.r, x = tx + dx, y = ty + dy;
+          if (dx * dx + dy * dy > rt.r2 || !bit_of(Bt, x, y)) continue;
+          atomicMin(&s_key, ((unsigned long long)(dx * dx + dy * dy) << 20) | (unsigned long long)(y * m.gw + x));
+        }
+        __syncthreads();
+        if (s_key != ~0ull) {
+          const int g = (int)(s_key & 0xfffffull);
+          __syncthreads();
+          if (tid == 0) s_goal = g;
+          __syncthreads();
+          return true;
+        }
+      }
+      if (!a && !pend) {   // BFS 끝: 먼 허용 안 정해진 칸 중 (거리², 칸) 최소 (CPU far_goal)
+        if (n_far == 0) return false;
+        if (tid == 0) s_key = ~0ull;
+        __syncthreads();
+        for (int q = tid; q < n_far; q += kRT) {
+          const int dx = q % far_w - rf.r, dy = q / far_w - rf.r, x = tx + dx, y = ty + dy;
+          if (dx * dx + dy * dy > rf.r2 || !bit_of(PASS, x, y) || !(bit_of(D0, x, y) | bit_of(D1, x, y) | bit_of(D2, x, y))) continue;
+          atomicMin(&s_key, ((unsigned long long)(dx * dx + dy * dy) << 20) | (unsigned long long)(y * m.gw + x));
+        }
+        __syncthreads();
+        const unsigned long long key = s_key;
+        __syncthreads();
+        if (key == ~0ull) return false;
+        if (tid == 0) s_goal = (int)(key & 0xfffffull);
+        __syncthreads();
+        return true;
+      }
       if (!a) continue;
       for (int k = tid; k < nbox; k += kRT) {
         const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
@@ -1039,6 +1215,15 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   int mode = 0;
   if (s_tgt_ok && run(SST, LT)) mode = 1;           // 엄격 (블록 전체 같은 값)
   else if (run(LPASS, LOBS)) mode = 2;              // 느슨: 목표가 약한 막힘 둘레 안이거나 엄격으로 못 닿음 (지금 스캔은 느슨에서도 막힘)
+  else if (c.path_consistent && rb.r2 != mdp::obsgen::reach_robot(c).r2) {   // 계획 반경으로 못 짬: 느슨 막힘 + 관측 BFS 반경 (hier_path.h (e)) — SLO 판을 고쳐 씀
+    const mdp::Robot r3 = mdp::obsgen::reach_robot(c);
+    for (int k = tid; k < nbox; k += kRT) {
+      const int y = by0 + k / nbw, wx = bw0 + k % nbw;
+      SLO[y * ws + wx] = stand_word(LO, KN, ws, m.gh, y, wx, r3);
+    }
+    __syncthreads();
+    if (run(SLO, LO)) mode = 3;
+  }
   if (tid != 0 || !mode) return;
   const uint32_t* PASS = mode == 1 ? SST : LPASS;
   // 뒤로 짚기 (스레드 0): 이웃 차례 nb4 에서 처음으로 거리 ≡ 내 거리 − 내 무게 (mod 7) 인 칸
@@ -1046,7 +1231,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   const auto dcode = [&](int x, int y) { return (int)(bit_of(D0, x, y) | (bit_of(D1, x, y) << 1) | (bit_of(D2, x, y) << 2)); };
   const auto wfn = [&](int x, int y) { return path_weight(bit_of(PASS, x, y) != 0u, bit_of(C3, x, y) != 0u, bit_of(C45, x, y) != 0u); };
   int32_t* list = LST + 6 * mdp::kReachCap;
-  int n = 0, v = target;
+  int n = 0, v = s_goal;
   list[n++] = v;
   while (v != start) {
     const int x = v % m.gw, y = v / m.gw;
@@ -1067,7 +1252,28 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   e.p_i = 0;
   e.p_trunc = trunc;
   e.p_mode = mode;
-  if (mode == 2) e.p_fb += 1;
+  if (mode >= 2) e.p_fb += 1;
+}
+
+// 깊이 카메라 장애물 층 갱신 (환경 하나 = 블록 하나, 결정 앞 — hier_path.h "깊이 카메라 장애물 층"). CPU 참조판 env_ref.cpp hier_camlayer_cpu 와 같은 결과:
+// 모든 픽셀 지우기(원자 AND) → 모든 픽셀 표시(원자 OR) → 몸통 밑 지우기 — 끄기·켜기라 스레드 차례와 무관
+__global__ void __launch_bounds__(kRT) env_camlayer_kernel(EnvBatch b) {
+  const int env = blockIdx.x, tid = threadIdx.x;
+  const EnvState& e = b.st[env];
+  uint32_t* V = reinterpret_cast<uint32_t*>(b.cvox + (size_t)env * b.cfg.size * b.cfg.size);
+  for (int i = tid; i < mdp::obs::DEPTH_SIZE; i += kRT)
+    cam_pixel(b, e, env, i, 0, [&](int ci, uint8_t bit) { atomicAnd(&V[ci >> 2], ~((uint32_t)bit << (8 * (ci & 3)))); });
+  __syncthreads();
+  for (int i = tid; i < mdp::obs::DEPTH_SIZE; i += kRT)
+    cam_pixel(b, e, env, i, 1, [&](int ci, uint8_t bit) { atomicOr(&V[ci >> 2], (uint32_t)bit << (8 * (ci & 3))); });
+  for (int col = tid; col < mdp::obs::DEPTH_W; col += kRT) cam_column(b, e, env, col);
+  __syncthreads();
+  if (tid == 0) cam_compact(b, env);
+  const int nfp = cam_fp_cells(b.cfg);
+  for (int j = tid; j < nfp; j += kRT) {
+    const int ci = cam_fp_cell(b, e, j);
+    if (ci >= 0) atomicAnd(&V[ci >> 2], ~(0xffu << (8 * (ci & 3))));
+  }
 }
 
 // 묶음 끝 (환경 하나 = 블록 하나): 보상·항 = 묶음 합, 판이 끝난 환경은 리셋 + 새 판 관측 (끝난 걸음 env_finish_kernel 이 미룬 것 — 그 커널의 was_done 길과 같은 차례)
@@ -1394,6 +1600,7 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
     return;
   }
   // 계층형: 결정 하나 = 경로 계획 → 속도 행동 decide_steps 걸음 → 묶음 끝 (보상 합·끝난 판 리셋·관측)
+  if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b);   // 깊이 카메라 장애물 층 (cam_on) — 계획 앞
   env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions);
   for (int s = 0; s < b.cfg.decide_steps; ++s) step_once(b, actions, st, s);
   env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);

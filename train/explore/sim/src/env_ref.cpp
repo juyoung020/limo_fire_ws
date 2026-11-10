@@ -53,7 +53,16 @@ void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh) {
     if (out.size() < (size_t)mdp::kReachCap + 1) out.resize(mdp::kReachCap + 1);
     int rx, ry;
     cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
-    const mdp::SearchBuf sb{flag.data(), qa.data(), qb.data(), dist.data(), b.cand ? label.data() : nullptr};
+    mdp::SearchBuf sb{flag.data(), qa.data(), qb.data(), dist.data(), b.cand ? label.data() : nullptr};
+    {   // 닫힘 규칙 (GPU reach_block 과 같은 값): 지나간 칸 씨앗·본 칸·덩어리 문턱·자격 반경
+      const int ws = fmap_row(c), nf = c.size * ws;
+      sb.vis = b.trail + (size_t)env * 2 * nf;
+      sb.look = sb.vis + nf;
+      sb.tws = ws;
+      sb.close_min = c.close_min;
+      sb.rbc = mdp::robot_cells(c.close_radius, c.res);
+      sb.cam = b.cvox ? b.cvox + (size_t)env * c.size * c.size : nullptr;   // 깊이 카메라 층 (계층형 cam_on)
+    }
     // reach_summary 와 같음: 문턱 1 로 모든 덩어리를 out 에, 문턱은 고를 때
     const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, out.data(), (int)out.size());
     const int n_out = r.n_found < (int)out.size() ? r.n_found : (int)out.size();
@@ -61,7 +70,7 @@ void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh) {
     if (b.cand) {
       thread_local std::vector<uint64_t> key2;
       if (key2.size() < out.size()) key2.resize(out.size());
-      mdp::cand_keys(r, sb, n_out, key2.data());
+      mdp::cand_keys(mv, mdp::obsgen::reach_robot(c), r, sb, out.data(), n_out, key2.data());
       mdp::cand_pick(out.data(), key2.data(), n_out, n_tot, e.goal_cell, flag.data(), label.data(), &cs);
       const int R = mdp::cand_util_radius(c.res);
       for (int k = 0; k < cs.n; ++k) cs.c[k].util = mdp::cand_util(mv, cs.c[k].cell % m.gw, cs.c[k].cell / m.gw, R);
@@ -72,7 +81,9 @@ void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh) {
 
 // depth = false: 깊이 칸을 안 그림 (계층형 묶음 가운데 걸음 — GPU 도 묶음 끝에만 그림, 깊이는 상태만의 함수라 끝 값이 같다)
 void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, const mdp::obsgen::FarDirty& fd, bool depth = true) {
+  trail_mark(b, e, env, 0, 1);   // 닫힘 규칙의 지나간 길 (GPU env_reach_kernel 처음과 같은 때)
   reach_obs(b, e, env, sh);
+  e.map_closed = sh.reach.closed;   // 다음 걸음 finish_step 성공 판정 (GPU env_reach_kernel 과 같음)
   for (int tid = 0; tid < kThreads; ++tid) mdp::obsgen::obs_cells(b, e, env, sh, tid, fd);
   if (depth)
     for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) mdp::obsgen::obs_depth(b, e, env, i);
@@ -88,7 +99,9 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   const MapDev& m = b.maps[e.map];
   const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
   const mdp::MapView mv{L, c.size, m.gw, m.gh};
-  const mdp::Robot rb = mdp::obsgen::reach_robot(c), rm = path_rb_mid(c), ro = path_rb_out(c);
+  const mdp::Robot rb = path_rb_plan(c, mdp::obsgen::reach_robot(c)), rm = path_rb_mid(c), ro = path_rb_out(c);   // rb: 계획 반경 (path_consistent 면 충돌 검사 발자국 반경, hier_path.h)
+  int force = 0;   // 복구 (hier_path.h path_recovery): 다시 계획 · 포기한 목표면 다른 후보(없으면 −1)
+  k = path_recovery(b, e, env, k, &force);
   e.p_slot = k;
   const int tgt = k >= 0 ? b.cand[(size_t)env * mdp::hier::K + k] : -1;
   if (tgt < 0) {
@@ -129,6 +142,11 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
       if (x < ex0 || x > ex1 || y < ey0 || y > ey1) continue;
       lt[(size_t)y * m.gw + x] |= 4;
     }
+  // 깊이 카메라 장애물 층 (hier_path.h "깊이 카메라 장애물 층"): 지금 스캔과 같은 몫 — 엄격·느슨 둘 다 막힘 (GPU LT·LO 판)
+  if (b.cvox)
+    for (int y = ey0; y <= ey1; ++y)
+      for (int x = ex0; x <= ex1; ++x)
+        if (cam_lethal(b, env, x, y)) lt[(size_t)y * m.gw + x] |= 4;
   // 막힘까지 가장 가까운 거리² (칸, 반경 ro 안만) — 범위 안 칸마다 occ·lt 따로. mdp::standable 과 같은 원판 규칙
   for (int y = y0; y <= y1; ++y)
     for (int x = x0; x <= x1; ++x) d2l[(size_t)y * m.gw + x] = d2o[(size_t)y * m.gw + x] = 1 << 30;
@@ -152,10 +170,12 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   const auto inbox = [&](int x, int y) { return x >= x0 && y >= y0 && x <= x1 && y <= y1; };
   const auto known = [&](int x, int y) { return mdp::cls_at(mv, x, y) != mdp::kUnk; };
   // mode 1 엄격 · 2 느슨: 설 수 있음, 무게 (GPU: SST·ST 판과 stand_word(LT·OCC) 무게 경계)
+  const mdp::Robot rb3 = mdp::obsgen::reach_robot(c);
   const auto pass = [&](int mode, int x, int y) -> bool {
     if (!inbox(x, y) || !known(x, y)) return false;
     const size_t i = (size_t)y * m.gw + x;
-    return mode == 1 ? (!lt[i] && d2l[i] > rb.r2) : (!(lt[i] & 5) && d2o[i] > rb.r2);
+    // mode 3: 느슨 막힘 + 관측 BFS 반경 (계획 반경으로 못 짤 때 — hier_path.h "계획·충돌 검사 일치" (e))
+    return mode == 1 ? (!lt[i] && d2l[i] > rb.r2) : (!(lt[i] & 5) && d2o[i] > (mode == 3 ? rb3.r2 : rb.r2));
   };
   const auto weight = [&](int mode, int x, int y) -> int {
     if (!pass(mode, x, y)) return 0;
@@ -165,13 +185,40 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   };
   // 같은 후보 · 경로 그대로?
   const int pm = e.p_mode == 1 ? 1 : 2;
-  if (((b.cand_cur[env] >> k) & 1) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc && path_clear(e, [&](int x, int y) { return pass(pm, x, y); }))
+  if (!force && ((b.cand_cur[env] >> k) & 1) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc && path_clear(e, [&](int x, int y) { return pass(pm, x, y); }))
     return;
   e.goal_cell = tgt;
   path_set_none(e);
   e.p_plans += 1;
   // 한 번 계획 (mode): 시작 = 로봇 칸에서 FIFO 4 이웃 BFS 로 처음 만나는 설 수 있는 칸 (frontier_search nearestCell 과 같은 차례), Dial
-  int start = -1;
+  int start = -1, goal = tgt;
+  // 목표 칸들 (hier_path.h "목표 허용"): 가까운 목표 = 목표가 설 수 있으면 목표 하나, 아니면 목표에서 path_goal_tol(Smac tolerance) 안 설 수 있는 칸 —
+  // 처음 닿는 층에서 멈춤. 못 닿고 BFS 가 끝나면 목표에서 path_goal_far 안 닿은 칸 중 목표에 가장 가까운 칸 (Smac 이 tolerance 안 가장 가까운 노드를 내는 꼴)
+  const mdp::Robot rt = path_rb_tol(c), rf = path_rb_far(c);
+  const int gx = tgt % m.gw, gy = tgt / m.gw;
+  const auto in_goal = [&](int mode, int x, int y) -> bool {
+    if (x == gx && y == gy) return pass(mode, x, y);
+    if (pass(mode, gx, gy) || rt.r2 <= 0) return false;
+    return (x - gx) * (x - gx) + (y - gy) * (y - gy) <= rt.r2 && pass(mode, x, y);
+  };
+  const auto any_goal = [&](int mode) -> bool {
+    for (int dy = -rf.r; dy <= rf.r; ++dy)
+      for (int dx = -rf.r; dx <= rf.r; ++dx)
+        if (dx * dx + dy * dy <= rf.r2 && pass(mode, gx + dx, gy + dy)) return true;
+    return pass(mode, gx, gy);
+  };
+  // BFS 가 끝난 뒤: 먼 허용 안 닿은 칸 중 (거리², 칸) 최소 (GPU 와 같은 규칙)
+  const auto far_goal = [&](int mode) -> bool {
+    int64_t best = -1;
+    for (int dy = -rf.r; dy <= rf.r; ++dy)
+      for (int dx = -rf.r; dx <= rf.r; ++dx) {
+        const int x = gx + dx, y = gy + dy;
+        if (dx * dx + dy * dy > rf.r2 || !pass(mode, x, y) || dist[(size_t)y * m.gw + x] < 0) continue;
+        const int64_t key = ((int64_t)(dx * dx + dy * dy) << 20) | (int64_t)(y * m.gw + x);
+        if (best < 0 || key < best) { best = key; goal = y * m.gw + x; }
+      }
+    return best >= 0;
+  };
   const auto run = [&](int mode) -> bool {
     start = -1;
     if (rcx < 0 || rcy < 0 || rcx >= m.gw || rcy >= m.gh) return false;
@@ -200,13 +247,19 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
     bk[0].push_back(start);
     tent[start] = 0;
     for (int t = 0;; ++t) {
-      if (bk[0].empty() && bk[1].empty() && bk[2].empty() && bk[3].empty()) return false;
+      if (bk[0].empty() && bk[1].empty() && bk[2].empty() && bk[3].empty()) return far_goal(mode);
       std::vector<int32_t> cur;
       cur.swap(bk[t & 3]);
+      int64_t best = -1;   // 층 t 에서 정해진 목표 칸 중 (목표까지 거리², 칸) 가장 작은 것 — GPU 와 같은 규칙
       for (int v : cur) {
         if (dist[v] >= 0 || tent[v] != t) continue;
         dist[v] = t;
-        if (v == tgt) return true;
+        if (v == tgt) { best = 0; goal = tgt; }
+        else if (best != 0 && in_goal(mode, v % m.gw, v / m.gw)) {
+          const int ddx = v % m.gw - gx, ddy = v / m.gw - gy;
+          const int64_t key = ((int64_t)(ddx * ddx + ddy * ddy) << 20) | v;
+          if (best < 0 || key < best) { best = key; goal = v; }
+        }
         const int x = v % m.gw, y = v / m.gw;
         for (int q = 0; q < 4; ++q) {
           int dx, dy;
@@ -219,16 +272,18 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
           bk[(t + w) & 3].push_back(u);
         }
       }
+      if (best >= 0) return true;
     }
   };
   int mode = 0;
-  if (pass(1, tgt % m.gw, tgt / m.gw) && run(1)) mode = 1;
+  if (any_goal(1) && run(1)) mode = 1;
   else if (run(2)) mode = 2;
+  else if (c.path_consistent && rb3.r2 != rb.r2 && run(3)) mode = 3;
   if (!mode) return;   // 설 수 있는 칸이 없거나 못 닿음: 목표만 두고 섬
   const auto wfn = [&](int x, int y) { return weight(mode, x, y); };
   thread_local std::vector<int32_t> list;
   list.clear();
-  int v = tgt;
+  int v = goal;
   list.push_back(v);
   while (v != start) {
     const int x = v % m.gw, y = v / m.gw, want = dist[v] - wfn(x, y);
@@ -248,7 +303,7 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   e.p_i = 0;
   e.p_trunc = trunc;
   e.p_mode = mode;
-  if (mode == 2) e.p_fb += 1;
+  if (mode >= 2) e.p_fb += 1;
 }
 
 // 환경 하나 행동 하나. sub < 0: 기본, sub ≥ 0: 계층형 묶음 sub 번째 걸음 (GPU env_finish_kernel 의 sub 와 같은 규칙)
@@ -320,6 +375,20 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
 void set_cpu_threads(int n) { g_cpu_threads = std::max(1, n); }
 
 void hier_plan_cpu(const EnvBatch& b, EnvState& e, int env, int slot) { plan_cpu(b, e, env, slot); }
+// 깊이 카메라 장애물 층 갱신 (GPU env_camlayer_kernel 과 같은 차례: 모든 픽셀 지우기 → 모든 픽셀 표시 → 몸통 밑 지우기 — 끄기·켜기라 픽셀 차례와 무관)
+void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env) {
+  if (!b.cvox) return;
+  uint8_t* V = b.cvox + (size_t)env * b.cfg.size * b.cfg.size;
+  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) cam_pixel(b, e, env, i, 0, [&](int ci, uint8_t bit) { V[ci] &= (uint8_t)~bit; });
+  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) cam_pixel(b, e, env, i, 1, [&](int ci, uint8_t bit) { V[ci] |= bit; });
+  for (int col = 0; col < mdp::obs::DEPTH_W; ++col) cam_column(b, e, env, col);
+  cam_compact(b, env);
+  const int nfp = cam_fp_cells(b.cfg);
+  for (int j = 0; j < nfp; ++j) {
+    const int ci = cam_fp_cell(b, e, j);
+    if (ci >= 0) V[ci] = 0;
+  }
+}
 
 void env_step_cpu(const EnvBatch& b, const float* actions) {
   const EnvCfg& c = b.cfg;
@@ -330,6 +399,7 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
   // 계층형: GPU env_step_gpu 와 같은 차례 — 결정(경로 계획) → decide_steps 걸음 → 묶음 끝
   for_envs(b.n_env, [&](int env) {
     EnvState e = b.st[env];
+    hier_camlayer_cpu(b, e, env);   // 깊이 카메라 장애물 층 (cam_on 일 때만) — 계획 앞, 지난 묶음 끝 깊이 장으로
     plan_cpu(b, e, env, slot_of(actions[(size_t)mdp::act::DIM * env]));
     b.st[env] = e;
     for (int s = 0; s < c.decide_steps; ++s) step_env(b, actions, env, s);

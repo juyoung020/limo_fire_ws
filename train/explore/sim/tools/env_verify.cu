@@ -5,6 +5,7 @@
 //   --declare p: 걸음마다 끝 선언을 p 확률로 (선언 성공·실패 끝도 비교에 들어가게)
 //   --negative: GPU 쪽 행동 하나를 바꿔 일부러 어긋나게 한다 (검사가 틀림을 잡는지)
 //   --people K: 환경마다 사람 상한 K (판마다 0~K 명, people.h). --negative-person: 가운데 걸음에 GPU 쪽 사람 하나를 1 cm 옮긴다
+//   --slot0: (--hier 와) 늘 후보 0 번 — 복구·목표 허용 길까지 비교
 //   --hier: 계층형 행동 모드(kActPath — 결정 하나 = 속도 행동 10 걸음 묶음, 후보 번호 무작위). 덧붙여 정답 격자를 쓰지 않는지:
 //           CPU 묶음의 정답 격자(MapDev::grid)를 모두 막힘·모두 빈 칸으로 바꾼 사본에서 경로 계획·추종기 명령이 같은지 (--negative 는 후보 번호 하나를 바꿈)
 #include <algorithm>
@@ -58,6 +59,7 @@ int main(int argc, char** argv) {
   bool negative_person = false;
   int people = 0;
   bool spin = false;
+  bool slot0 = false;   // --slot0 (계층형): 늘 후보 0 번 — 같은 목표가 이어져 복구(hier_path.h "복구")·목표 허용 길을 GPU == CPU 로 지나가게
   bool hier = false;   // --spin: 행동을 제자리 돌기(ω 0.5 정규)로 — 작은 방에서 지도 닫힘 성공(판 끝 1) 길을 GPU == CPU 로 지나가게
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -68,6 +70,7 @@ int main(int argc, char** argv) {
     else if (a == "--negative-person") negative = negative_person = true;
     else if (a == "--people" && i + 1 < argc) people = std::stoi(argv[++i]);
     else if (a == "--spin") spin = true;
+    else if (a == "--slot0") slot0 = true;
     else if (a == "--hier") hier = true;
     else if (a == "--env" && i + 1 < argc) env_path = argv[++i];
     else if (a == "--model" && i + 1 < argc) model_path = argv[++i];
@@ -90,7 +93,7 @@ int main(int argc, char** argv) {
     std::vector<float> mixed = {1.f, 1.f, 1.f, 1.f, 0.6f, 0.6f, 0.6f, 0.6f};   // 평균 0.8 → 올림
     const bool ok = run(1, hi, 3) == 2 && run(1, lo, 3) == 0 && run(1, mid, 3) == 1 && run(1, edge, 3) == 2 && run(1, mixed, 3) == 2 &&
                     run(1, seven, 3) == 1 && run(3, hi, 3) == 3 && run(0, lo, 3) == 0;
-    std::printf("커리큘럼 규칙 %s (8 판 덮음 평균 ≥ 0.8 → 올림, < 0.4 → 내림, 그 사이·7 판까지 → 그대로, 끝 단계에서 멈춤)\n", ok ? "통과" : "실패");
+    std::printf("커리큘럼 덮음 규칙(옛, curriculum.rule: coverage) %s (8 판 덮음 평균 ≥ 0.8 → 올림, < 0.4 → 내림, 그 사이·7 판까지 → 그대로, 끝 단계에서 멈춤)\n", ok ? "통과" : "실패");
     if (!ok) return 1;
     // 맨 위 단계 무작위 (실험 top_random): 맨 위에서 올림 조건 → rnd % (max + 1), 끄면 그대로, 맨 위 아니면 보통 올림, 내림은 그대로
     auto run_r = [](int stage, std::vector<float> covs, int max_stage, bool tr, uint32_t rnd) {
@@ -105,6 +108,76 @@ int main(int argc, char** argv) {
     if (!ok2) return 1;
   }
   sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
+  // 성공 규칙 (curriculums.h on_episode_end_success, env.yaml curriculum.success): 덱(deque)으로 따로 짠 참조 규칙과 무작위 판 열 4 만 판에서
+  // 단계·창이 판마다 같은지 (창 크기·문턱 여러 벌 + 지금 설정 값), 그리고 손으로 정한 경우
+  {
+    struct Ref {   // 참조: 최근 W 판 성공을 덱에, 문턱은 정수 비교(k·1000 ≥ round(up·1000)·W)
+      int W, up_m, down_m, max_stage;
+      bool tr;
+      int stage = 0;
+      std::vector<int> win;
+      void step(bool succ, uint32_t rnd) {
+        win.push_back(succ ? 1 : 0);
+        if ((int)win.size() > W) win.erase(win.begin());
+        if ((int)win.size() < W) return;
+        int k = 0;
+        for (int b : win) k += b;
+        const int s0 = stage;
+        if (k * 1000 >= up_m * W) stage = stage < max_stage ? stage + 1 : (tr ? (int)(rnd % (uint32_t)(max_stage + 1)) : stage);
+        else if (k * 1000 < down_m * W && stage > 0) stage -= 1;
+        if (stage != s0) win.clear();
+      }
+    };
+    struct P { int W; float up, down; };
+    const sim::EnvCfg& c0 = hc.cfg;
+    const P ps[] = {{24, 0.8f, 0.5f}, {24, 0.9f, 0.5f}, {8, 0.75f, 0.25f}, {32, 0.7f, 0.4f}, {1, 1.f, 1.f},
+                    {c0.cur_window > 32 ? 32 : c0.cur_window, c0.cur_up, c0.cur_down}};
+    bool ok = true;
+    long n_up = 0, n_down = 0, n_top = 0;
+    uint64_t rng = 12345;
+    for (const P& q : ps)
+      for (int tr = 0; tr < 2; ++tr) {
+        Ref ref{q.W, (int)(q.up * 1000.f + 0.5f), (int)(q.down * 1000.f + 0.5f), 3, tr != 0};
+        int32_t st = 0, n = 0;
+        uint32_t h = 0;
+        for (int e = 0; e < 40000 && ok; ++e) {
+          const double p_succ = 0.3 + 0.65 * ((e / 997) % 3) / 2.0;   // 성공 확률을 0.3 · 0.625 · 0.95 로 바꿔 가며 (오르내림 모두)
+          const bool succ = dm::rand01(rng) < p_succ;
+          const uint32_t rnd = (uint32_t)(dm::splitmix64(rng) >> 32);
+          const int s_before = st;
+          mdp::cur::on_episode_end_success(&st, &h, &n, succ, 3, tr != 0, rnd, q.W, q.up, q.down);
+          ref.step(succ, rnd);
+          n_up += st > s_before;
+          n_down += st < s_before;
+          n_top += s_before == 3 && st != 3 && tr;
+          if (st != ref.stage || n != (int)ref.win.size()) ok = false;
+        }
+      }
+    // 손으로: 창 24 · 올림 0.8(20/24 아님 — 19.2 → 20 판 성공) · 내림 0.5(12 판)
+    auto run = [](int stage, const std::vector<int>& seq, bool tr = false, uint32_t rnd = 0u, int32_t* n_out = nullptr) {
+      int32_t s = stage, n = 0;
+      uint32_t h = 0;
+      for (int b : seq) mdp::cur::on_episode_end_success(&s, &h, &n, b != 0, 3, tr, rnd, 24, 0.8f, 0.5f);
+      if (n_out) *n_out = n;
+      return s;
+    };
+    auto seq = [](int succ, int fail) { std::vector<int> v(succ, 1); v.insert(v.end(), fail, 0); return v; };
+    int32_t n_after = -1;
+    const bool hand = run(1, seq(23, 0)) == 1 &&                     // 창이 덜 참 → 그대로
+                      run(1, seq(24, 0), false, 0u, &n_after) == 2 && n_after == 0 &&   // 다 성공 → 올림, 창 비움
+                      run(1, seq(20, 4)) == 2 && run(1, seq(19, 5)) == 1 &&            // 20/24 = 0.833 올림 · 19/24 = 0.79 그대로
+                      run(1, seq(12, 12)) == 1 && run(1, seq(11, 13)) == 0 &&          // 12/24 = 0.5 그대로 · 11/24 내림
+                      run(0, seq(0, 24)) == 0 &&                                       // 맨 아래에서 멈춤
+                      run(3, seq(24, 0), false) == 3 && run(3, seq(24, 0), true, 5u) == 1 &&   // 맨 위: 그대로 · 무작위(5 % 4)
+                      run(1, [] { std::vector<int> v(19, 1); v.insert(v.end(), 5, 0); v.push_back(1); return v; }()) == 1 &&   // 창이 미끄러져 첫 성공이 빠짐: 19/24 그대로
+                      run(1, [] { std::vector<int> v(5, 0); v.insert(v.end(), 19, 1); v.push_back(1); return v; }()) == 2;    // 첫 실패가 빠짐: 20/24 올림
+    ok = ok && hand && n_up > 0 && n_down > 0 && n_top > 0;
+    std::printf("커리큘럼 성공 규칙 %s (최근 N 판 성공 비율 ≥ 올림 문턱 → 올림, < 내림 문턱 → 내림, 단계 바뀌면 창 비움, 미끄러지는 창 — 참조 구현과 판 %d 벌 × 4 만 판 같음 "
+                "(올림 %ld · 내림 %ld · 맨 위 무작위 %ld), 손 경우 %s; 지금 설정: %s 규칙, 창 %d · 올림 %.2f · 내림 %.2f)\n",
+                ok ? "통과" : "실패", (int)(sizeof(ps) / sizeof(ps[0])) * 2, n_up, n_down, n_top, hand ? "같음" : "다름",
+                c0.cur_rule == mdp::cur::kCurSuccess ? "성공" : "덮음", c0.cur_window, c0.cur_up, c0.cur_down);
+    if (!ok) return 1;
+  }
   if (hier) hc.cfg.action_mode = sim::kActPath;
   if (people > 0) hc.cfg.curriculum = 0;   // 커리큘럼이 켜져 있으면 단계가 사람 수를 정함 — --people 로 정한 수를 쓰려고 끔
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
@@ -151,6 +224,8 @@ int main(int argc, char** argv) {
     for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)A * i], p_declare);
     if (spin)
       for (int i = 0; i < n_env; ++i) { float* q = &act[(size_t)A * i]; q[0] = 0.f; q[1] = 0.f; q[2] = 0.5f; }
+    if (slot0)
+      for (int i = 0; i < n_env; ++i) act[(size_t)A * i] = 0.f;
     std::vector<float> gact = act;
     if (negative_person && t == n_steps / 2) {   // 사람이 있는 첫 환경의 사람 0 을 1 cm
       gpu.get_state(sg);
@@ -215,11 +290,35 @@ int main(int argc, char** argv) {
   cpu.get_map(mc);
   size_t bad_map = 0, known = 0;
   for (size_t i = 0; i < mg.size(); ++i) { bad_map += mg[i] != mc[i]; known += mc[i] != sim::kUnknown; }
+  // 깊이 카메라 장애물 층 (계층형 cam_on): 높이 칸 비트·마지막 장 점이 GPU == CPU
+  size_t bad_cam = 0, cam_cells = 0, cam_only = 0;
+  {
+    std::vector<uint8_t> vg, vc;
+    std::vector<float> pg2, pc2;
+    gpu.get_camlayer(vg, pg2);
+    cpu.get_camlayer(vc, pc2);
+    bad_cam += vg.size() != vc.size() || pg2.size() != pc2.size();
+    for (size_t i = 0; i < vg.size() && i < vc.size(); ++i) {
+      bad_cam += vg[i] != vc[i];
+      cam_cells += vc[i] != 0;
+      cam_only += vc[i] != 0 && i < mc.size() && mdp::cell_class(mc[i]) != mdp::kOcc;   // 로봇 지도는 막힘이 아닌데 카메라 층만 막힘
+    }
+    for (size_t i = 0; i < pg2.size() && i < pc2.size(); ++i) bad_cam += std::memcmp(&pg2[i], &pc2[i], 4) != 0;
+    if (!vc.empty())
+      std::printf("깊이 카메라 장애물 층: 막힘 칸 %zu (그중 로봇 지도 막힘 아님 %zu), GPU != CPU 칸 %zu\n", cam_cells, cam_only, bad_cam);
+  }
   std::vector<uint8_t> seen_g, seen_c;
   gpu.get_seen(seen_g);
   cpu.get_seen(seen_c);
   size_t bad_seen = 0, seen_wall = 0;
   for (size_t i = 0; i < seen_g.size(); ++i) { bad_seen += seen_g[i] != seen_c[i]; seen_wall += seen_c[i] & 1; }
+  // 닫힘 규칙의 지나간 길 비트 판 (지나간 칸 · 본 칸 — env.h trail_mark)
+  std::vector<uint32_t> trail_g, trail_c;
+  gpu.get_trail(trail_g);
+  cpu.get_trail(trail_c);
+  size_t bad_trail = 0, trail_bits = 0;
+  for (size_t i = 0; i < trail_g.size(); ++i) { bad_trail += trail_g[i] != trail_c[i]; trail_bits += __builtin_popcount(trail_c[i]); }
+  std::printf("닫힘 규칙 지나간 길 비트 판: 켜진 칸 %zu, 다른 낱말 %zu\n", trail_bits, bad_trail);
   // 마지막 관측 채널마다 0 아닌 값 수 (env 전체)
   size_t nz_near[mdp::obs::NEAR_C] = {}, nz_far[mdp::obs::FAR_C] = {}, depth_valid = 0;
   for (int i = 0; i < n_env; ++i) {
@@ -306,7 +405,29 @@ int main(int argc, char** argv) {
     sim::EnvBatch Bb = B, Bf = B;
     Bb.maps = m_blk.data();
     Bf.maps = m_free.data();
-    int n_cmp = 0, n_diff = 0, n_planned = 0, n_mon = 0;
+    int n_cmp = 0, n_diff = 0, n_planned = 0, n_mon = 0, n_tol = 0;
+    // 깊이 카메라 장애물 층도: 정답 격자를 바꾼 묶음에서 다시 갱신해도 층·점이 같은지 (층은 깊이 영상(장면 삼각형 광선)·지도 자세만 씀)
+    int n_cam_diff = 0;
+    if (B.cvox) {
+      const size_t cs = (size_t)B.cfg.size * B.cfg.size, ps = (size_t)mdp::obs::DEPTH_W * 2;
+      for (int i = 0; i < n_env; ++i) {
+        std::vector<uint8_t> v0(B.cvox + cs * i, B.cvox + cs * (i + 1));
+        std::vector<float> p0(B.cpts + ps * i, B.cpts + ps * (i + 1));
+        std::vector<uint8_t> r[3];
+        std::vector<float> q[3];
+        const sim::EnvBatch* bs[3] = {&B, &Bb, &Bf};
+        for (int k = 0; k < 3; ++k) {
+          std::copy(v0.begin(), v0.end(), B.cvox + cs * i);
+          std::copy(p0.begin(), p0.end(), B.cpts + ps * i);
+          sim::hier_camlayer_cpu(*bs[k], sc[i], i);
+          r[k].assign(B.cvox + cs * i, B.cvox + cs * (i + 1));
+          q[k].assign(B.cpts + ps * i, B.cpts + ps * (i + 1));
+        }
+        n_cam_diff += r[0] != r[1] || r[0] != r[2] || std::memcmp(q[0].data(), q[1].data(), 4 * ps) != 0 || std::memcmp(q[0].data(), q[2].data(), 4 * ps) != 0;
+        // 아래 계획·명령 비교는 갱신한 층 위에서 (세 묶음이 같은 층을 씀 — 층 포인터 공유)
+      }
+      std::printf("정답 격자 안 씀 (깊이 카메라 층): 환경 %d 개 층을 정답 격자 모두 막힘·모두 빈 칸 묶음으로 다시 갱신해 달라진 것 %d\n", n_env, n_cam_diff);
+    }
     for (int i = 0; i < n_env; ++i)
       for (int k = 0; k < mdp::hier::K; ++k) {
         sim::EnvState e0 = sc[i], e1 = sc[i], e2 = sc[i];
@@ -322,17 +443,24 @@ int main(int argc, char** argv) {
         const float k0 = sim::path_monitor_scale(B, e0, i, v0, w0), k1 = sim::path_monitor_scale(Bb, e1, i, v1, w1), k2 = sim::path_monitor_scale(Bf, e2, i, v2, w2);
         ++n_cmp;
         n_planned += e0.p_n > 0;
+        if (e0.p_n > 0 && e0.goal_cell >= 0) n_tol += (int)e0.wp[2 * (e0.p_n - 1)] + (int)e0.wp[2 * (e0.p_n - 1) + 1] * B.maps[e0.map].gw != e0.goal_cell && !e0.p_trunc;
         n_mon += k0 < 1.f;
         const bool same_p = std::memcmp(&e0, &e1, sizeof(e0)) == 0 && std::memcmp(&e0, &e2, sizeof(e0)) == 0;
         if (!same_p || v0 != v1 || v0 != v2 || w0 != w1 || w0 != w2 || k0 != k1 || k0 != k2) ++n_diff;
       }
-    gt_ok = n_diff == 0 && n_planned > 0;
+    gt_ok = n_diff == 0 && n_planned > 0 && n_cam_diff == 0;
     std::printf("정답 격자 안 씀: 환경 × 후보 %d 개 중 경로 짠 것 %d (충돌 감시가 줄인 것 %d), 정답 격자를 모두 막힘·모두 빈 칸으로 바꿔 경로·명령·감시 배율이 달라진 것 %d — %s\n",
                 n_cmp, n_planned, n_mon, n_diff, gt_ok ? "통과" : "실패");
+    {
+      long stops = 0, gave = 0;
+      for (int i = 0; i < n_env; ++i) { stops += sc[i].p_stops; gave += sc[i].p_gaveup; }
+      std::printf("계획·충돌 검사 일치 %d (계획 반경 %.3f m, 목표 허용 %.2f m — 위 경로 중 목표 둘레 칸에서 끝난 것 %d) · 깊이 카메라 층 %d · 복구 %d (지금 판들 충돌 검사 멈춤 걸음 %ld, 목표 포기 %ld)\n",
+                  B.cfg.path_consistent, B.cfg.path_r_plan, B.cfg.path_goal_tol, n_tol, B.cfg.cam_on, B.cfg.rec_on, stops, gave);
+    }
     // 지금 스캔 막힘·감시가 켜져 있나 (SIM_HIER_AVOID=0 이면 끔)
     std::printf("사람 피하기: 지금 스캔 막힘 %d · 충돌 감시 %d (T %.1f s, 걸음 %.2f s, 점 > %d)\n", B.cfg.path_scan, B.cfg.mon_on, B.cfg.mon_t, B.cfg.mon_dt, B.cfg.mon_max_points);
   }
-  const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_obs == 0;
+  const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_trail == 0 && bad_obs == 0 && bad_cam == 0;
   const bool range_ok = n_nan == 0 && bad_range == 0;
   std::printf("%s\n", same ? "환경 V0 통과: GPU == CPU (비트 같음)" : "다름");
   std::printf("%s\n", range_ok ? "관측 범위 통과" : "관측 범위 실패");

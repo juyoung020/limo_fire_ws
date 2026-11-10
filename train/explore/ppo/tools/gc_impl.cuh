@@ -62,6 +62,9 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   cfg.mlp = mlp;
   // 평균 행동 경계 손실 검사: GC_BOUND_SOFT 로 경계를 좁히면(예 0.02) 작은 무작위 μ 도 경계 밖이라 그 항의 기울기가 차분과 비교된다
   if (const char* e = std::getenv("GC_BOUND_SOFT")) cfg.bound_soft = (float)std::atof(e);
+  // 슬롯 로짓 공통 성분 벌점(ppo.h slot_cm_coef): 기본 1e-3 은 작은 구조에서 기울기에 거의 안 보여 검사에선 0.05 로 키운다 (GC_SLOT_CM 로 바꿈)
+  cfg.slot_cm_coef = 0.05f;
+  if (const char* e = std::getenv("GC_SLOT_CM")) cfg.slot_cm_coef = (float)std::atof(e);
   PPO ppo(cfg, spec, 1234);
   auto& ac = ppo.ac();
   int N = cfg.num_envs, IMG = spec.enc.img_stride, P1 = spec.actor.in1d, PR = spec.norm_dim - P1, A = std::max(spec.n_cont + 1, 4);
