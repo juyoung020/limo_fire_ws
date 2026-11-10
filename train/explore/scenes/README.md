@@ -10,6 +10,7 @@ ROADMAP S2. 장면 파일(`.scene`, 형식 2 — `sim/include/scene_host.h`)과 
 | `grids/` | 중간 격자(Nav2 map_server 형식 PGM + YAML) + `manifest.tsv`(출발점) + `skipped.tsv`(격자 단계에서 버린 것) |
 | `preview/` | 눈 확인용 build_world 격자 그림(흰 바닥, 검정 벽 면 칸, 회색 그 밖 막힘, 진회색 점 출발점) |
 | `src/procthor_10k/` | 받은 데이터 (아래) |
+| `hssd_train/`·`hssd_test/` | HSSD 3D 메시 집 (`hssd_<id>_l<층>.scene` + `list.tsv` 같은 꼴). 학습 목록에 넣을지는 따로 정함 — 아래 "HSSD 메시 장면" |
 
 ## 크기 등급 (커리큘럼이 고르는 값)
 
@@ -83,6 +84,54 @@ ROADMAP S2. 장면 파일(`.scene`, 형식 2 — `sim/include/scene_host.h`)과 
 - 고립: 놓을 때마다 로봇이 설 칸(막힘까지 0.15 m 이상)을 출발점에서 다시 번져, 전에 닿던 칸 중 아직 설 수 있는데 못 닿는 칸이 생기면 그 가구를 뺀다.
 - 씨앗 1: 벽 상자 3426, 탁자 870, 의자 1948, 작은 물체 3999 개, 고립시켜 뺀 것 120 개. 가구 판 260 개 모두 닫힘 검사 통과. 가구 없는 판 260 개는 이 옵션을 켜도 바이트까지 같다.
 
+## HSSD 메시 장면 (`mesh2scene`, `sim/tools/mesh2scene.cpp`)
+
+학습 맵이 바닥 평면도를 2.4 m 로 세운 벽뿐이라, 실제 3D 메시 집(가구·의자 다리·창틀·계단 포함)을 넣으려고 HSSD(Habitat Synthetic Scenes Dataset, `huggingface.co/datasets/hssd/hssd-hab`)를 바꾼다.
+
+1. 데이터 받기 (gated — HF 계정에서 라이선스 동의 후 `hf auth login`). 장면이 쓰는 물체만 받으면 약 8.5 GB(렌더 glb + object_config). 원본은 저장소에 넣지 않는다
+   ```bash
+   hf download hssd/hssd-hab --repo-type dataset --local-dir ~/datasets/hssd-hab \
+       --include "stages/*" --include "scenes/*" --include "metadata/*" --include "scene_splits.yaml" --include "*.scene_dataset_config.json"
+   # 물체: scenes/*.scene_instance.json 의 template_name 에 해당하는 objects/**/<이름>.glb·.object_config.json (전체 objects/ 는 10.4 GB)
+   ```
+2. 빌드: `cmake --build build --target mesh2scene scene_list`
+3. 바꾸기·검사 (HSSD 자체 나눔 `scene_splits.yaml`: train 125 → 학습, val 43 → 시험. small-house·bookstore 는 그대로 시험)
+   ```bash
+   D=~/datasets/hssd-hab; B=../sim/build
+   for s in train val; do d=$([ $s = train ] && echo hssd_train || echo hssd_test); mkdir -p $d
+     awk -v s=$s '/^[a-z]+:/{k=$1} /^- /&&k==s":"{gsub(/[-\x27 ]/,""); print}' $D/scene_splits.yaml | \
+       xargs -P 8 -n 4 $B/mesh2scene --hssd $D --out $d --seed 1 >> hssd_convert.tsv
+     $B/scene_list --list $d/list.tsv --rejected $d/rejected.tsv --png preview --png-every 1 $d/*.scene; done
+   ```
+
+무엇을 하는가 (자세한 규칙은 `mesh2scene.cpp` 머리 주석):
+- 무대(stage) glb + `scene_instance.json` 물체마다 번역·회전(쿼터니언 [w, x, y, z])·크기를 곱하고 glTF y 위 → z 위. glTF 는 `sim/tools/cgltf/cgltf.h`(MIT, v1.15)로 읽는다.
+- 층: 무대의 위를 보는 수평면 넓이를 5 cm 높이 칸으로 모은 봉우리(≥ 8 m², 1.5 m 넘게 떨어짐). 층마다 장면 `hssd_<id>_l<층>` — 바닥 −0.05 ~ +2.0 m 만 남기고(삼각형을 잘라) 바닥을 z = 0 으로.
+- 바닥 ±5 cm 안에 다 든 삼각형(바닥·문턱·깔개)은 빼고 평평한 바닥 판으로 — 작은 턱이 몸통 높이(0.03 ~ 0.25 m)에 걸려 막힘이 되지 않게.
+- 닫기: 갈 수 있는 바닥(바닥 칸 중 막힘 아닌 가장 큰 덩어리)에 닿은 "바닥도 막힘도 아닌 칸"(계단 구멍, 바깥 문, 메시 없는 유리)에 2.4 m 가상 벽(`virtual_wall`). 문(metadata `main_category = door`, 닫힌 문짝)은 빼서 방 사이 문을 연다 — 바깥 문 자리는 바깥에 바닥이 없어 가상 벽이 막는다.
+  둘레 중 가상 벽 몫이 0.5 를 넘는 층(지붕·천장 윗면)은 버린다(문턱 잠정).
+- 25.5 m 를 넘으면 갈 수 있는 바닥이 가장 많은 25.5 m 창을 고르고 잘린 가장자리도 가상 벽. 모든 삼각형을 창으로 잘라 BVH 상자 = 창.
+- 출발점: 서는 칸의 가장 큰 덩어리 중 막힘(가상 벽 포함)에서 0.4 m 넘는 칸을 씨앗·이름 해시로.
+- 물체: 무대 = `hssd_stage` 하나, HSSD 물체 인스턴스마다 `furniture_<번호>_<틀 이름>`(라이다 재질을 물체마다 뽑음, `scene_list` 의 furnished = 1).
+- 마당 빼기: 8 방향 중 6 방향 이상이 20 m 안에서 벽 높이(0.3 ~ 2.0 m) 형상에 닿는 바닥 칸만 갈 수 있는 바닥으로(잠정 값). 천장 유무로 가리면 HSSD 위층(무대에 지붕이 없는 집이 많음)이 통째로 빠져 둘러싸임으로 본다.
+- 삼각형 줄이기: 물체마다 꼭짓점을 칸으로 모음(vertex clustering) — 바닥 위 0.35 m 아래는 4 cm, 위는 12 cm. 물체의 몸통 높이 발자국이 한 칸 넘게 바뀌면(가는 다리가 사라짐) 2 cm·1 cm, 그래도 바뀌면 원래 메시.
+- 끝에 학습과 같은 `build_world` 로 닫힘을 다시 재 닫힌 것만 저장. 표준 출력은 층마다 TSV 한 줄(머리줄 `mesh2scene --header`).
+
+씨앗 1 결과 (2026-11-11, 168 집 모두 받음 — 장면 JSON 이 가리키는 물체 중 저장소에 없는 틀 3 개(`3759`·`3760`·`5804`, 인스턴스 13 개)만 빠짐):
+
+| | 학습 (train 125 집) | 시험 (val 43 집) |
+|---|---|---|
+| 장면(층) | 129 | 44 |
+| 등급 0/1/2/3 | 4 / 25 / 56 / 44 | 1 / 8 / 13 / 22 |
+| 넓이 범위 (m²) | 15.7 ~ 601.2 | 21.2 ~ 571.7 |
+| `scene_list` 닫힘 버림 | 0 | 0 |
+
+- 층 후보 329 개 중 장면 173, 버림 156 = 갈 수 있는 바닥 < 3 m² 151(천장·지붕 윗면 높이) + 열린 층 5. 모든 집이 장면 하나 이상, 두 층 이상 5 집.
+- 25.5 m 창으로 자른 장면 38 개. 문 물체 뺀 인스턴스 486 개. 꼭짓점 모으기에서 q/2·q/4 로 내린 물체 1232, 원래 메시 89.
+- 삼각형 장면당 중앙값 7.2 만·최대 23.8 만, 합 1380 만, 파일 train 566 MB·test 209 MB (ProcTHOR 판은 장면당 수천 개 — GPU 메모리·광선 비용이 늘어남).
+- CPU 참조판(`env_bench --cpu --threads 6`, 환경 32 × 100 걸음): HSSD 학습 목록 54.0 ms/걸음, ProcTHOR 학습 목록 23.6 ms/걸음.
+- 같은 인자로 다시 돌리면 장면 파일이 바이트까지 같다.
+
 ## 라이선스
 
 | 출처 | 라이선스 | 비고 |
@@ -90,6 +139,8 @@ ROADMAP S2. 장면 파일(`.scene`, 형식 2 — `sim/include/scene_host.h`)과 
 | ProcTHOR-10K (`github.com/allenai/procthor-10k`, Deitke et al., NeurIPS 2022) | Apache-2.0 (저장소 `LICENSE`, `sim/maps/procthor_10k/LICENSE` 사본) | 생성 장면은 이 데이터의 2 차 산출물 — 재배포 시 Apache-2.0 고지·출처 표기 |
 | 절차 방 | 우리 코드 | |
 | AWS RoboMaker small-house·bookstore (시험) | MIT-0 | `sim/maps/README.md` |
+| HSSD (`huggingface.co/datasets/hssd/hssd-hab`, Khanna et al., "Habitat Synthetic Scenes Dataset", CVPR 2024) | CC BY-NC 4.0 | 비영리 연구라 바꾼 `hssd_*.scene` 을 팀 안에서 써도 되나 출처 표기 필수·상업 이용 금지. 원본 데이터는 저장소에 안 넣음 |
+| cgltf (`github.com/jkuhlmann/cgltf` v1.15) | MIT | `sim/tools/cgltf/LICENSE` |
 | HouseExpo | 코드 MIT, 데이터 SUNCG 유래 | **이 묶음에 안 씀** — SUNCG 는 재배포 금지라 로컬 학습만 가능. ProcTHOR 만으로 등급마다 충분해서 넣지 않았다 |
 
 ## 한계
@@ -97,4 +148,6 @@ ROADMAP S2. 장면 파일(`.scene`, 형식 2 — `sim/include/scene_host.h`)과 
 - ProcTHOR 가구(`objects`)는 크기 정보가 없어 쓰지 않고, 가구 판은 위 절차 가구다(축에 맞춘 직사각만, 비스듬한 가구 없음).
 - 벽 전체는 덩어리 하나라 재질이 하나(큰 구조물 = 보통). 탁자·의자 다리는 다리마다 따로 물체라 재질도 다리마다 뽑힌다(실물은 한 가구의 다리가 같은 재질).
 - 탁자 상판·가구 윗면은 만들지 않는다(map2scene 은 옆면만) — 라이다 평면에는 영향 없고, 깊이 카메라에는 다리 기둥·뚜껑 없는 상자로 보인다.
-- 등급 3 은 25.6 m 상한 안의 집만이라 300 m² 를 넘는 집은 없다.
+- 등급 3 은 25.6 m 상한 안의 집만이라 300 m² 를 넘는 집은 없다 (HSSD 는 창으로 잘라 600 m² 까지).
+- HSSD: 둘러싸임 검사가 담·생울타리·큰 가구에 둘러싸인 마당·테라스를 집 안으로 남길 때가 있다(큰 저택 몇 개). 둘러싸임 경계가 광선 꼴이라 테라스 쪽 가상 벽이 지그재그가 된다.
+  계단 위층으로 가는 계단은 몸통 높이에 걸려 막힘(층 사이 이동 없음). 문은 모두 열림(뺌).

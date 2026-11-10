@@ -116,3 +116,7 @@ if(SIM_OPTIX AND EXISTS ${OPTIX_INC}/optix.h)
 endif()
 # CPU 참조판은 이 기기에 맞춰 최적화(-O3 -march=native)하되 곱·합을 합치지 않아(-ffp-contract=off) GPU 와 비트 같음 그대로 — env_bench --cpu 속도 비교용
 set_source_files_properties(src/env_ref.cpp PROPERTIES COMPILE_OPTIONS "-O3;-march=native;-ffp-contract=off")
+# HSSD 메시 집 → 장면 (train/explore/scenes/README.md "HSSD 메시 장면"). glTF 읽기는 tools/cgltf (MIT, 헤더 하나)
+add_executable(mesh2scene tools/mesh2scene.cpp)
+target_include_directories(mesh2scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+target_link_libraries(mesh2scene limo_sim)
