@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-11
+
 ### Added
 
 - 인식 성능 벤치마크: 시뮬에서 탐지 정확도와 처리 속도를 잼.
@@ -176,7 +178,8 @@
 
 - WeGo 패키지 내려받기 스크립트. 저장소에 직접 포함함.
 
-[unreleased]: https://github.com/juyoung020/limo_fire_ws/compare/v0.6.0...HEAD
+[unreleased]: https://github.com/juyoung020/limo_fire_ws/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/juyoung020/limo_fire_ws/compare/v0.3.0...v0.4.0
