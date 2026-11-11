@@ -13,12 +13,12 @@
 | 바퀴 오도메트리 | LIMO 본체 (파랑 메카넘 모드) | UART `/dev/ttylimo` | `/odom`, EKF → `/odometry/filtered` | 장착 · 동작 확인 |
 | 카메라 틸트 | LIMO Pro 카메라 마운트 (손으로 고정) | — | URDF 인자 `camera_pitch` (`limo_fire.urdf.xacro`) | 장착 |
 | 오디오 | USB PnP Audio (JMTek 0c76:161f) | USB | — | 장착, 스피커·마이크 여부 확인 필요 |
-| 열화상 | GY-MCU90640 (MLX90640 BAB 55°, 32×24) | ESP32 UART | 예정 | 부품 대기 |
-| 레이더 | HLK-LD2450 24GHz | ESP32 UART 256000baud | 예정 | 부품 대기 |
+| 열화상 | GY-MCU90640 (MLX90640 BAB 55°, 32×24) | ESP32 UART 115200baud | 예정 | 보유 · ESP32-S3 에 단독 연결해 온도 확인(11-11), 로봇 미장착 |
+| 레이더 | HLK-LD2450 24GHz | ESP32 UART 256000baud | 예정 | 보유 · ESP32-C3 에 단독 연결해 표적 확인(11-11), 로봇 미장착 |
 | 초음파 | HC-SR04 × 3 | ESP32 GPIO | `/ultrasonic/front·left·right` (`sensor_msgs/Range`) | 키트 보유 · 펌웨어·다리 준비(실물 시험 전), 시뮬엔 있음 |
 | 노즐 팬·틸트 | MG996R(팬) + DS3218 PRO 20kg(틸트) | ESP32 PWM | 예정 `/joint_states` | 부품 대기 |
 | 펌프 | DP-521 12V 다이어프램 + D4184 MOSFET | ESP32 GPIO | 예정 `std_srvs/SetBool` | 부품 대기 |
-| 제어 보드 | ESP32 | USB 시리얼 115200 (`/dev/esp32`) | `limo_fire_esp32_bridge` (펌웨어 `firmware/limo_fire_esp32`) | 보유 확인 필요 |
+| 제어 보드 | ESP32-S3-N16R8 개발 보드 · ESP32-C3 SuperMini | USB 시리얼 115200 (`/dev/esp32`) | `limo_fire_esp32_bridge` (펌웨어 `firmware/limo_fire_esp32`) | 보유(11-11). 펌웨어 초음파 핀은 원래 ESP32 기준이라 이 보드들에 맞춰야 함 |
 
 ## LIMO Pro 기본 모듈 (실측)
 
@@ -94,7 +94,7 @@
 | EKF | `robot_localization` `ekf_filter_node_odom` → `/odometry/filtered` 30 Hz. 기동 때 `odom0_differential` 과 `odom0_relative` 가 둘 다 true 라는 오류가 찍힌다(차동 모드로 동작) — 설정 정리 필요 |
 | 주행 중 정확도 | 확인 필요 (직진·회전 시험) |
 
-## 추가 모듈 (ESP32 쪽, 부품 대기)
+## 추가 모듈 (ESP32 쪽)
 
 | 모듈 | 핵심 사양 | 용도 | 비고 |
 |---|---|---|---|
@@ -107,6 +107,28 @@
 | 전원 | LM2596 × 3, XL4015 5 A, DC Y 분배 케이블 | 서보 6 V, 센서·ESP32 5 V | 확인 사항은 [parts.md](parts.md#받은-뒤-확인할-것) |
 
 장착 위치가 정해지면 모듈마다 xacro 하나씩 `limo_fire_description` 에 더한다.
+
+### 열화상·레이더 단독 연결 시험 (2026-11-11)
+
+시험 코드와 배선은 [firmware/sensor_check](../firmware/sensor_check/README.md). 로봇에 달거나 ROS 로 잇기 전, 모듈 하나씩 ESP32 에 꽂아 데이터가 맞게 나오는지만 봤다.
+
+| 모듈 | 보드 · 핀 | 결과 |
+|---|---|---|
+| 열화상 GY-MCU90640 | ESP32-S3, 전원 3V3, 모듈 TX → GPIO 10, RX ← GPIO 11 | 115200 baud 에서 약 4~4.5 프레임/s, 체크섬 실패 약 0.6 %(6/972). 실내 17~21 °C, 손 25~31 °C |
+| 레이더 HLK-LD2450 | ESP32-C3 SuperMini, 전원 **5V**, 모듈 TX → GPIO 4, RX ← GPIO 3 | 10~12 프레임/s(매뉴얼 10). 앞 0.2~0.35 m 표적 좌표가 나옴. 걸어 다니는 사람 추적은 아직 안 봄 |
+
+![열화상 시험 화면](assets/thermal_viewer_demo.gif)
+
+알게 된 것
+
+- **레이더 전원은 5 V** (매뉴얼 4.5~5.5 V). 3.3 V 를 넣으면 켜지지 않는다 — TX 선이 LOW 로 떨어져 있고 데이터 0 바이트(S3·C3 둘 다). 5 V 에서는 TX 가 HIGH 로 떠 있다.
+  신호선(TX·RX)은 3.3 V 라 ESP32 에 바로 꽂는다. 레이더 뒷면 핀 헤더의 `3.3V` 핀은 전원 입력이 아니다.
+- **ESP32-S3 개발 보드의 5Vin 핀에서 5 V 가 안 나왔다**(사용자 측정). 레이더처럼 5 V 가 필요한 모듈은 다른 5 V 에서 받는다.
+- **열화상은 3.3 V 로 동작했다**(매뉴얼 3~5 V). PS 핀은 비워 둔다 — GND 에 닿으면 UART 가 꺼지고 I2C 모드가 된다(매뉴얼).
+- **열화상 그림의 바둑판 무늬**: MLX90640 이 화소 절반씩(체스판) 번갈아 새로 읽어 두 묶음 사이에 0.1~0.3 °C 차가 난다. 화면에 그릴 때 2×2 이웃 평균으로 없앴다. 온도 숫자(최고·최저)는 원래 값.
+- 열화상 속도는 115200 baud 가 한계라 약 4 Hz 다. 매뉴얼상 460800 baud(명령 `A5 15 03 BD`)면 최대 8 Hz — 아직 안 바꿨다.
+- 레이더는 블루투스가 기본으로 켜져 있고 비밀번호가 없다(HLKRadarTool 앱으로 설정 변경 가능) — 시연 전에 앱에서 끄는 것을 검토한다.
+- 레이더 뒷면의 IPEX 단자는 레이더 블루투스용 외부 안테나 자리다. 사람 감지(24 GHz)는 앞면 금색 패치 안테나가 하고, 이 단자 없이 동작했다.
 
 ## 시뮬레이션에 넣을 센서 모델
 
