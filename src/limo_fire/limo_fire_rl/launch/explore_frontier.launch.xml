@@ -1,0 +1,31 @@
+<!-- 프론티어 탐사 노드 (limo_fire_rl/README "프론티어 탐사"). 멈춘 채(idle) 뜨고, RViz 탐사 패널 버튼이나 서비스로 켠다:
+       ros2 service call /explore_frontier/enable std_srvs/srv/SetBool "{data: true}"   (false 면 Nav2 목표를 취소해 멈춤)
+     실물: 먼저 robot.launch.xml. stack:=true 면 Cartographer(mapping.launch.xml, RViz 포함 rviz:=true) + Nav2 주행만(navigation.launch.xml localization:=false) 을 같이 띄운다.
+     ros2 launch limo_fire_rl explore_frontier.launch.xml [stack:=true] [rviz:=true] [enabled:=true]
+     시뮬은 sim.launch.xml explore:=true (slam:=true 면 기본으로 켜짐) 가 이 파일을 쓴다 -->
+<launch>
+  <arg name="enabled" default="false" description="true: 띄우자마자 탐사 시작"/>
+  <arg name="stack" default="false" description="true: Cartographer + Nav2(지도 없이 주행) 같이"/>
+  <arg name="rviz" default="false" description="stack:=true 일 때 운용 화면(탐사 패널 포함)"/>
+  <arg name="use_sim_time" default="false"/>
+
+  <group if="$(var stack)">
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/mapping.launch.xml">
+      <arg name="rviz" value="$(var rviz)"/>
+      <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    </include>
+  </group>
+  <group if="$(var stack)">
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/navigation.launch.xml">
+      <arg name="localization" value="false"/>
+      <arg name="rviz" value="false"/>
+      <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    </include>
+  </group>
+
+  <node pkg="limo_fire_rl" exec="explore_frontier" name="explore_frontier" output="screen">
+    <param from="$(find-pkg-share limo_fire_rl)/config/explore_frontier.yaml"/>
+    <param name="enabled" value="$(var enabled)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+</launch>

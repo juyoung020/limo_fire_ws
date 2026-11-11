@@ -188,6 +188,10 @@ global_costmap:
       robot_radius: 0.2
       resolution: 0.05
       track_unknown_space: true
+      # 지도 값이 이 이상이면 막힘 (Nav2 기본 100). Cartographer /map 은 막힌 칸도 100 이 아니라(2026-11-11 Webots 미로: 65 넘는 칸 343 개 중 100 은 0, 가장 큰 값 87)
+      # 기본값이면 지도 만들며 주행할 때 static_layer 가 벽을 하나도 안 넣는다 → 라이다 3 m 밖 벽을 뚫는 경로. 0.65 = Cartographer ros_map occupied_thresh.
+      # 저장 지도(map_server trinary: 0 · 100)에는 바뀌는 것 없음
+      lethal_cost_threshold: 65
       plugins: ["static_layer", "obstacle_layer", "range_layer", "inflation_layer"]
       # 초음파 HC-SR04 × 3 (/ultrasonic/*) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
       # 점으로 찍기만 해 잡음이 쌓였다. 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다. 값은 Nav2 기본 + 메아리 없음(최대 거리) = 지움

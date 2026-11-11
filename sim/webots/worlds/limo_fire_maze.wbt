@@ -1,6 +1,8 @@
 #VRML_SIM R2025a utf8
 # limo_fire_maze: 시연장(약 6×8 m 추정, docs/spec.md) 모양 덕트호스 미로. 정답 물체·시작·순찰점은 limo_fire_maze.yaml
-# 방 x -4~4, y -3~3. 덕트호스 두 줄이 통로 셋을 만든다: 남(y -3~-1.5) → 동쪽 끝으로 꺾어 가운데(-1.5~0.5) → 서쪽 끝으로 꺾어 북(0.5~3)
+# 방 x -4~4, y -3~3. 덕트호스(지름 0.30 m — LIMO Pro 높이 0.251 m 보다 큼, 라이다·깊이 카메라 모두 벽으로 봄) 두 줄이 통로 셋을 만든다:
+#   남(y -3~-1.575, 1.425 m) → 동쪽 끝 틈(x 2.8~4, 1.2 m)으로 꺾어 가운데(-1.275~0.425, 1.70 m) → 서쪽 끝 틈(x -4~-2.8, 1.2 m)으로 꺾어 북(0.725~3, 2.275 m)
+#   너비 근거는 docs/simulation.md "덕트호스 미로" 
 
 EXTERNPROTO "webots://projects/objects/backgrounds/protos/TexturedBackground.proto"
 EXTERNPROTO "../protos/LimoFire.proto"
@@ -99,14 +101,16 @@ Solid {
 
 # ---------------- 덕트호스 미로 ----------------
 DuctHose {
-  translation -0.6 -1.5 0
+  translation -0.6 -1.425 0
   name "duct_south"
   length 6.8
+  diameter 0.30
 }
 DuctHose {
-  translation 0.6 0.5 0
+  translation 0.6 0.575 0
   name "duct_north"
   length 6.8
+  diameter 0.30
 }
 
 # ---------------- 장애물 ----------------
@@ -119,11 +123,11 @@ CardboardBox {
   name "box_candle"
 }
 TrafficCone {
-  translation 1.2 -1.05 0
+  translation 1.2 -0.975 0
   name "cone_1"
 }
 TrafficCone {
-  translation -2 -1.05 0
+  translation -2 -0.975 0
   name "cone_2"
 }
 TrafficCone {

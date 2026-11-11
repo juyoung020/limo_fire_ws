@@ -42,7 +42,15 @@ target_link_libraries(explore_rl limo_fire_rl_core)
 target_compile_definitions(explore_rl PRIVATE LIMO_FIRE_RL_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
 ament_target_dependencies(explore_rl rclcpp rclcpp_action geometry_msgs nav_msgs nav2_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs)
 
-install(TARGETS explore_rl DESTINATION lib/${PROJECT_NAME})
+# 프론티어 탐사 노드: 탐사 기준선과 같은 찾기(mdp/frontier.h)·고르기(baselines/frontier/include/explore_lite.h), 값도 기준선 설정 그대로
+find_package(ament_index_cpp REQUIRED)
+add_executable(explore_frontier src/explore_frontier_node.cpp)
+target_include_directories(explore_frontier PRIVATE ${EXPLORE_DIR}/sim/include ${EXPLORE_DIR}/mdp ${EXPLORE_DIR}/baselines/frontier/include)
+target_link_libraries(explore_frontier yaml-cpp)
+target_compile_definitions(explore_frontier PRIVATE LIMO_FIRE_FRONTIER_YAML="${EXPLORE_DIR}/baselines/frontier/config/frontier.yaml")
+ament_target_dependencies(explore_frontier rclcpp rclcpp_action nav2_msgs nav_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs ament_index_cpp)
+
+install(TARGETS explore_rl explore_frontier DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 
 ament_package()

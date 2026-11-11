@@ -1,6 +1,7 @@
 #VRML_SIM R2025a utf8
 # 시연장 미로 벽으로 쓰는 알루미늄 주름 덕트호스 한 토막. 바닥(z=0)에 눕고 로컬 x 방향으로 뻗는다. translation 은 토막 가운데.
-# 라이다(높이 0.111 m)에 잡히려면 diameter 가 0.111 m 보다 커야 한다(docs/spec.md "덕트호스가 LIMO 라이다 높이에 걸리는지").
+# 라이다(높이 0.111 m)에 잡히려면 diameter 가 0.111 m 보다 커야 하고, 깊이 카메라(광축 0.188 m)까지 벽으로 보려면 더 커야 한다.
+# 미로(limo_fire_maze)는 0.30 m — LIMO Pro 전체 높이 0.251 m(AgileX 데이터시트 322 × 220 × 251 mm)보다 크게. 실제 시연장 호스 지름은 잠정(아직 안 잼).
 # 충돌은 되고(boundingObject) 물리는 없다(움직이지 않음). 꺾인 통로는 토막 여러 개로 만든다.
 # template language: javascript
 

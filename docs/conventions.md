@@ -21,7 +21,8 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 │       ├── limo_fire_navigation/    Nav2 파라미터·지도·연기 모드
 │       ├── limo_fire_sim/           Webots 우리 판: 드라이버 설정, 인식 벤치마크 정답 카메라 플러그인(C++)
 │       ├── limo_fire_bt/            BT 플러그인 + 트리 XML
-│       ├── limo_fire_rl/            RL 정책 Action 서버
+│       ├── limo_fire_rl/            탐사 노드: RL 정책 · 프론티어 탐사 (Nav2 목표를 보냄)
+│       ├── limo_fire_rviz/          운용 화면 RViz 패널 플러그인 (탐사 켜기·끄기)
 │       └── limo_fire_report/        웹 앱(rosbridge)·음성 안내
 ├── sim/                       Isaac Sim 확장·USD, Webots 월드, maps/  [COLCON_IGNORE]
 ├── train/                     학습 (C++/CUDA/Rust, ROS 아님)  [COLCON_IGNORE]
@@ -37,7 +38,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 ```
 
 - 패키지는 역할마다 하나, 이름은 `limo_fire_<역할>`. 새 패키지는 위 목록에 맞춰 만들고, 목록에 없는 역할이면 이 목록부터 고친다.
-- 지금 있는 패키지는 description·bringup·base·navigation·perception·sim·esp32_bridge·bt 다. 나머지는 만들 때 위 이름을 쓴다.
+- 지금 있는 패키지는 description·bringup·base·navigation·perception·sim·esp32_bridge·bt·rl·rviz 다. 나머지는 만들 때 위 이름을 쓴다.
 - 패키지 안: `include/<패키지명>/`, `src/`, `launch/`, `config/`, `test/` (ROS 2 기본 배치).
 - 실행 파일·파라미터를 바꾸고 싶은 외부 패키지는 고치지 말고 `limo_fire_bringup` 에 우리 판을 만든다. 코드(플러그인)가 필요한 Webots 쪽 우리 판은 `limo_fire_sim`.
 

@@ -1,4 +1,56 @@
-# limo_fire_rl — 탐사 RL 실물 노드
+# limo_fire_rl — 탐사 노드 (RL 정책 · 프론티어)
+
+두 노드가 있다. 둘 다 Nav2 `NavigateToPose` 로 목표를 보내고, `~/enable`(std_srvs/SetBool)로 켜고 끄며, 운용 화면 RViz 의 **탐사 패널**
+("Auto explore ON/OFF" 버튼, [limo_fire_rviz](../limo_fire_rviz/README.md))이 이 서비스를 부른다. 실물에서 RViz 를 켜는 법은
+[limo_fire_bringup README "실물에서 운용 화면(RViz) 켜기"](../limo_fire_bringup/README.md#실물에서-운용-화면rviz-켜기).
+
+| 노드 | 무엇 | 켜기 |
+|---|---|---|
+| `explore_frontier` | 프론티어 탐사 (아래 "프론티어 탐사") — 탐사 기준선과 같은 찾기·고르기 | 멈춘 채 뜸 → 버튼 |
+| `explore_rl` | 학습한 계층형 정책 (아래부터) | 기본 바로 켜짐 (`enabled:=false` 면 버튼) |
+
+## 프론티어 탐사 (`explore_frontier`)
+
+Cartographer `/map` 에서 프론티어(아는 빈 칸과 모르는 칸의 경계) 덩어리를 찾아 하나를 Nav2 목표로 보내고, 지도가 닫히면 멈춘다. 알고리즘은 새로 쓰지 않았다:
+
+| 차례 | 코드 (탐사 기준선과 같은 것) |
+|---|---|
+| 찾기·닫힘 | `train/explore/mdp/frontier.h` `frontier_search` · `closed` — 설 수 있는 칸(로봇 반경 = `nav2_params.yaml` `robot_radius`)으로 번진 곳 안의 덩어리. 막힘 = `/map` 값 > 65 (p > 0.65) |
+| 고르기 | `train/explore/baselines/frontier/include/explore_lite.h` — explore_lite 비용(거리·크기) 오름차순, 블랙리스트 아닌 첫 덩어리의 중심. 기준선 `Explorer::make_plan` 도 이 함수를 쓴다 |
+| 값 | 기준선 설정 `baselines/frontier/config/frontier.yaml` 그대로 (3 초마다 다시 고름, 같은 목표 30 초 진척 없음 → 블랙리스트, 0.75 m 미만 덩어리는 다른 게 없을 때만) |
+| 가기 | Nav2 (기준선의 A*·RPP 흉내 대신 진짜 Nav2). 도착·포기 때 바로 다시 고름, 포기(ABORTED)한 목표는 블랙리스트 |
+| 시작 | 프론티어가 안 보이면 Nav2 `spin` (30 초 안에 안 보이면 끝) |
+| 끝 | 닫힘 · 남은 덩어리가 다 블랙리스트 → 목표 취소, `~/done` true, `~/state` done |
+
+- **끄기**: `~/enable false` → 보낸 Nav2 목표·회전을 취소한다(로봇이 선다). **켜기**: 블랙리스트를 비우고 지금 지도에서 다시 고른다(끝난 뒤 다시 켜도 처음부터).
+- 토픽: `~/state`(idle · running · done, transient local) · `~/done`(Bool) · `~/status`(한 줄) · `~/frontiers`(MarkerArray: 파랑 후보, 빨강 목표, 회색 블랙리스트 — 운용 화면 "Frontiers").
+- 설정: `config/explore_frontier.yaml` (ROS 쪽만). 저장 지도·AMCL 위에서도 돌지만 지도가 이미 닫혀 있으면 바로 끝난다 — Cartographer(지도 만들기)와 같이 쓴다.
+
+```bash
+# 시뮬: slam:=true 면 노드가 멈춘 채 같이 뜬다 (explore:=false 로 끔). RViz 탐사 패널에서 "Auto explore OFF (누르면 시작)"
+ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze slam:=true
+# 실물: robot.launch.xml 을 켠 뒤 (Cartographer + Nav2 + RViz 까지 한 번에)
+ros2 launch limo_fire_rl explore_frontier.launch.xml stack:=true rviz:=true
+# 버튼 대신 명령으로 (버튼이 부르는 것과 같음)
+ros2 service call /explore_frontier/enable std_srvs/srv/SetBool "{data: true}"    # false 면 멈춤
+ros2 topic echo /explore_frontier/state
+```
+
+### 확인 (2026-11-11, 이 PC Webots R2025a 화면 없이 · 덕트호스 미로 `slam:=true`)
+
+| 확인 | 결과 |
+|---|---|
+| 끄기 (버튼과 같은 `~/enable false`, 0.26 m/s 로 가는 중) | 0.08 s 뒤 `/cmd_vel` 0, Nav2 목표 취소(CANCELED), 끈 뒤 미끄러짐 2 cm · 그 뒤 10 s 동안 0 |
+| 다시 켜기 | 블랙리스트를 비우고 이어서 탐사 |
+| 끝까지 | 켬 60 s → 끔 10 s → 켬 65.3 s 에 닫힘으로 끝(`~/state` done). 탐사한 시간 125 s(시뮬 시간), 지도 49.5 m², 보낸 목표 18 · 포기 0 |
+| 운용 화면 패널 | `rviz2 -d limo_fire.rviz` 가 패널을 불러옴. 상태 idle → running → done, 버튼 색·글자가 바뀜 |
+
+- 프론티어 중심이 지도가 자랄 때마다 조금씩 옮겨 가서 목표를 자주 다시 보낸다(3 초마다, explore_lite 와 같음) — Nav2 로그에 앞 목표 취소가 많이 찍힌다.
+- 처음엔 전역 costmap 이 Cartographer 벽을 안 넣어(막힘 문턱 100, 아래 문서) 라이다 3 m 밖 덕트를 뚫는 경로로 7 분 넘게 맴돌았다 —
+  `nav2_params.yaml` `lethal_cost_threshold: 65` 로 고친 뒤 위 결과. [docs/simulation.md "Nav2 설정"](../../../docs/simulation.md).
+- 시뮬은 화면 없는 X 의 소프트웨어 렌더링이라 실시간의 약 0.55 배. 실물·젯슨에서는 아직 안 돌림.
+
+## RL 정책 (`explore_rl`)
 
 학습한 계층형 탐사 정책(`train --hier`)을 실물 LIMO 에서 돌린다. 1 s 마다 프론티어 후보 8 곳 중 하나를 골라 Nav2 `NavigateToPose` 목표로 보내고,
 지도가 닫히면(시뮬 성공 판정과 같음) 멈추고 `~/done` 에 `true` 를 낸다.
@@ -38,8 +90,7 @@ ros2 service call /explore_rl/enable std_srvs/srv/SetBool "{data: false}"   # �
 ```
 
 - Cartographer·Nav2 를 따로 띄웠으면 `stack:=false`(기본). Nav2 는 저장 지도 없이 `navigation.launch.xml localization:=false`.
-- 정책 없이 같은 후보 계산 위 "가장 가까운 프론티어" 로 돌리려면 `policy:=nearest` (체크포인트 필요 없음). 이 저장소에 ROS 프론티어 탐사 노드는 아직 없어
-  이것이 대체(fallback)다.
+- 정책 없이 같은 후보 계산 위 "가장 가까운 프론티어" 로 돌리려면 `policy:=nearest` (체크포인트 필요 없음). explore_lite 식 프론티어 탐사는 위 `explore_frontier`.
 - 시험 기록: `debug_dir:=/폴더` 면 결정마다 `decisions.csv`(자세·후보 8 곳·로짓·고른 칸·걸음·정방향 시간), 관측 `obs.bin`, 로봇 지도 `lmap.bin` 을 쓴다.
 
 ## 한 결정 (1 s)

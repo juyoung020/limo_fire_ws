@@ -6,6 +6,9 @@ Panels:
       Expanded: ~
       Splitter Ratio: 0.5
     Tree Height: 70
+  - Class: limo_fire_rviz/ExplorePanel
+    Name: Explore
+    mode: frontier
 Visualization Manager:
   Class: ""
   Displays:
@@ -319,6 +322,18 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /object_mapper/markers
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Frontiers
+      Namespaces:
+        frontier: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /explore_frontier/frontiers
       Value: true
     - Align Bottom: false
       Background Alpha: 0.800000011920929

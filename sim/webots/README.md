@@ -15,7 +15,7 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
 
 | 이름 | 크기 | 모양 |
 |---|---|---|
-| `limo_fire_maze` | 8 × 6 m | 시연장 추정 모양. 덕트호스(지름 0.15 m) 두 줄로 만든 ㄹ자 통로 셋 |
+| `limo_fire_maze` | 8 × 6 m | 시연장 추정 모양. 덕트호스(지름 0.30 m, 로봇보다 높음) 두 줄로 만든 ㄹ자 통로 셋 |
 | `limo_fire_office` | 12 × 8 m | 복도 + 방 셋(문 열림) + 계단실, 동쪽 끝 비상구 |
 | `limo_fire_warehouse` | 10 × 10 m | 팔레트 두 줄 사이 통로, 드럼통·상자, 닫힌 문 둘 |
 | `limo_fire_world` | 5 × 10 m | 교수님 `limo_world.wbt`(아파트 방) 복사본 |
@@ -62,7 +62,7 @@ objects:                       # YOLO 정답 물체. 벤치마크에서 카메�
 ### 월드를 만들 때 알아둘 것
 - Webots 기본 물체는 `webots://projects/...` 로 설치본 안의 것을 쓴다(인터넷 필요 없음). 교수님 원본 월드는 GitHub 주소를 쓰는데, Jetson 에서 빌드한 Webots(Qt 6.2)는 HTTP/2 다운로드가 17 % 에서 멈춘다.
 - `Door` 는 `position` 이 양수일 때 로컬 +x 쪽으로 열리고 음수는 경첩 한계로 안 열린다. 방 안쪽으로 열리게 회전을 고르고, 끝까지(1.57) 열어 문짝을 벽에 붙인다 — 비스듬히 열린 문짝에 로봇이 부딪혀 SLAM 이 틀어졌다.
-- 덕트호스(`protos/DuctHose.proto`)는 지름이 라이다 높이(0.111 m)보다 커야 라이다에 잡힌다.
+- 덕트호스(`protos/DuctHose.proto`)는 지름이 라이다 높이(0.111 m)보다 커야 라이다에 잡히고, 깊이 카메라(0.188 m)에도 벽으로 보이려면 그보다 커야 한다. 미로는 로봇 높이(0.251 m)보다 큰 0.30 m.
 - `StraightStairs` 는 원점에서 +x 로 올라간다(원점은 첫 단 앞 가운데).
 
 ## `limo_fire_world` 에 놓은 것

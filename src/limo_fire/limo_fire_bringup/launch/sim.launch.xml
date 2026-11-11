@@ -5,6 +5,7 @@
        지도  limo_fire_navigation/maps/sim/<world>.yaml
      주행:        ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze
      지도 만들기: ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze slam:=true
+                  (프론티어 탐사 노드가 멈춘 채 같이 뜬다 — RViz 탐사 패널 "Auto explore" 버튼으로 켜고 끔. explore:=false 면 안 띄움)
                   → 다 돌았으면 ros2 launch limo_fire_bringup save_map.launch.xml name:=sim/limo_fire_maze
      Nav2 는 TF·/clock·지도가 준비될 때까지 스스로 기다리므로 시간 지연을 두지 않는다 -->
 <launch>
@@ -13,6 +14,7 @@
   <arg name="slam" default="false" description="true: 저장 지도·AMCL 대신 Cartographer 로 지도를 만들며 주행"/>
   <arg name="nav" default="true" description="Nav2 를 띄운다"/>
   <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/sim/$(var world).yaml" description="slam:=false 일 때 쓰는 지도"/>
+  <arg name="explore" default="$(var slam)" description="프론티어 탐사 노드를 멈춘 채(idle) 띄운다 — RViz 탐사 패널 버튼·/explore_frontier/enable 로 켬. 기본은 slam 과 같음"/>
   <arg name="perception" default="false" description="YOLO 탐지 + 물체 지도 (limo_fire_perception yolo.launch.xml)"/>
   <arg name="benchmark" default="false"
        description="인식 벤치마크: 인식을 켜고 정답(/gt/*)과 비교해 끝낼 때 docs/benchmarks/ 에 표를 쓴다. 로봇은 따로 움직인다(RViz 목표·순찰)"/>
@@ -45,6 +47,12 @@
       <arg name="use_sim_time" value="true"/>
       <arg name="localization" value="$(not $(var slam))"/>
       <arg name="rviz" value="false"/>
+    </include>
+  </group>
+
+  <group if="$(var explore)">
+    <include file="$(find-pkg-share limo_fire_rl)/launch/explore_frontier.launch.xml">
+      <arg name="use_sim_time" value="true"/>
     </include>
   </group>
 

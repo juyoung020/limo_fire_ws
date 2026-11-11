@@ -1,0 +1,11 @@
+# 프론티어 탐사 노드 (src/explore_frontier_node.cpp). explore_lite 값(주기·진척 시간·비용·최소 크기·블랙리스트)은 탐사 기준선 설정
+# train/explore/baselines/frontier/config/frontier.yaml, 로봇 반경은 nav2_params.yaml global_costmap robot_radius 를 그대로 읽는다 — 여기에는 ROS 쪽만
+explore_frontier:
+  ros__parameters:
+    enabled: false            # 띄우면 멈춘 채 기다림. RViz 탐사 패널 버튼 또는 ~/enable 서비스로 켬
+    map_topic: /map           # Cartographer (mapping.launch.xml)
+    map_frame: map
+    base_frame: base_link
+    occupied_thresh: 65       # /map 값이 이보다 크면 막힘 = p > 0.65 (cartographer_ros ros_map.cc:44-45 occupied_thresh, mdp/frontier.h kOccL 과 같은 문턱)
+    spin_angle: 1.57          # rad, 시작 때 프론티어가 안 보이면 Nav2 spin (기준선은 계속 돎) — 잠정
+    map_timeout: 5.0          # s, /map 이 이보다 오래되면 고르지 않음 (Cartographer 발행 주기 1 s) — 잠정

@@ -10,6 +10,7 @@
 #include <stdexcept>
 
 #include "env_api.h"
+#include "explore_lite.h"
 
 namespace fb {
 
@@ -149,10 +150,7 @@ int Explorer::cell(float x, float y, int* cx, int* cy) const {
 }
 
 bool Explorer::on_blacklist(float x, float y) const {
-  const float tol = (float)p_.blacklist_tol * p_.res;   // explore.cpp:249-260
-  for (auto& b : blacklist_)
-    if (std::fabs(x - b.first) < tol && std::fabs(y - b.second) < tol) return true;
-  return false;
+  return fb::on_blacklist(blacklist_, x, y, (float)p_.blacklist_tol * p_.res);   // explore.cpp:249-260 (explore_lite.h)
 }
 
 // 전역 비용 지도: 정적(지도) 칸 종류 + 팽창. 모름은 255(NO_INFORMATION) 그대로, 단 내접 반경 안이면 253
@@ -294,17 +292,9 @@ bool Explorer::make_plan(const int16_t* L, float px, float py, double t) {
     if (r.n_found == 0 && r.n_small > 0) r = mdp::frontier_search(view(L), rx, ry, rb_, 1, sb, fr_.data(), (int)fr_.size());
     const int n = std::min<int>(r.n_found, (int)fr_.size());
     if (n == 0) { reason_ = r.start_free ? "closed" : "no_standable_cell"; return false; }
-    // 비용 (frontier_search.cpp:191-196): potential × min_distance(m) × res − gain × size × res, 오름차순
-    struct C { float cost, cx, cy, dist; int i; };
-    std::vector<C> cs;
-    for (int i = 0; i < n; ++i) {
-      const mdp::Frontier& f = fr_[i];
-      const float dist = std::sqrt((float)f.min_d2) * p_.res;
-      const float cx = ox_ + ((float)f.sx / (float)f.n + 0.5f) * p_.res, cy = oy_ + ((float)f.sy / (float)f.n + 0.5f) * p_.res;
-      cs.push_back({p_.potential_scale * dist * p_.res - p_.gain_scale * (float)f.n * p_.res, cx, cy, dist, i});
-    }
-    std::stable_sort(cs.begin(), cs.end(), [](const C& a, const C& b) { return a.cost < b.cost; });
-    auto it = std::find_if(cs.begin(), cs.end(), [&](const C& c) { return !on_blacklist(c.cx, c.cy); });
+    // 비용 (frontier_search.cpp:191-196): potential × min_distance(m) × res − gain × size × res, 오름차순 (explore_lite.h — ROS 노드와 같은 함수)
+    const std::vector<Ranked> cs = rank_frontiers(fr_.data(), n, p_.res, ox_, oy_, p_.potential_scale, p_.gain_scale);
+    auto it = std::find_if(cs.begin(), cs.end(), [&](const Ranked& c) { return !on_blacklist(c.cx, c.cy); });
     if (it == cs.end()) { reason_ = "all_blacklisted"; return false; }   // explore.cpp:200-209
     if (std::getenv("FRONTIER_DEBUG"))
       std::fprintf(stderr, "    plan t %.1f robot (%.2f %.2f) frontiers %d small %d -> goal (%.2f %.2f) n %d dist %.2f cost %.3f bl %zu\n", t, px, py, n,

@@ -16,6 +16,7 @@
   <exec_depend>rviz2</exec_depend>
   <exec_depend>rviz_2d_overlay_plugins</exec_depend>
   <exec_depend>nav2_rviz_plugins</exec_depend>
+  <exec_depend>limo_fire_rviz</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

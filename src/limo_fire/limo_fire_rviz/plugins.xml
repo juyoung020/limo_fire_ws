@@ -1,0 +1,5 @@
+<library path="limo_fire_rviz">
+  <class name="limo_fire_rviz/ExplorePanel" type="limo_fire_rviz::ExplorePanel" base_class_type="rviz_common::Panel">
+    <description>탐사 자동 모드 켜기·끄기 (프론티어 /explore_frontier · RL /explore_rl) 와 상태</description>
+  </class>
+</library>
