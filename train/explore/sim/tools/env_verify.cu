@@ -6,6 +6,8 @@
 //   --negative: GPU 쪽 행동 하나를 바꿔 일부러 어긋나게 한다 (검사가 틀림을 잡는지)
 //   --people K: 환경마다 사람 상한 K (판마다 0~K 명, people.h). --negative-person: 가운데 걸음에 GPU 쪽 사람 하나를 1 cm 옮긴다
 //   --slot0: (--hier 와) 늘 후보 0 번 — 복구·목표 허용 길까지 비교
+//   --graph: 그래프 모드(--hier 위에, mdp/graph.h — 행동 = 현재 노드의 이웃 번호, 열에 여덟은 유효 이웃 중 무작위). 노드 특징·간선·현재 노드·전역 숫자·이웃 칸이
+//            판 시작·결정마다 GPU == CPU 인지, 정답 격자를 바꾼 묶음에서 그래프 관측이 같은지 (--negative 는 유효 이웃 번호 하나를 다른 유효 이웃으로)
 //   --hier: 계층형 행동 모드(kActPath — 결정 하나 = 속도 행동 10 걸음 묶음, 후보 번호 무작위). 덧붙여 정답 격자를 쓰지 않는지:
 //           CPU 묶음의 정답 격자(MapDev::grid)를 모두 막힘·모두 빈 칸으로 바꾼 사본에서 경로 계획·추종기 명령이 같은지 (--negative 는 후보 번호 하나를 바꿈)
 #include <algorithm>
@@ -17,6 +19,7 @@
 #include <vector>
 
 #include "env_api.h"
+#include "obs_ref.h"
 
 namespace {
 // 1D 관측 칸마다 허용 범위 (observations.h 정규화 근거)
@@ -57,6 +60,9 @@ int main(int argc, char** argv) {
   float p_declare = 0.01f;
   bool negative = false;
   bool negative_person = false;
+  bool graph = false;
+  int graph_open = -1;    // --graph-open 0/1: 유틸리티가 닫힘을 막는 프론티어 칸만 세는지
+  int graph_stand = -1;   // --graph-stand 0/1: 노드·간선 칸 기준을 설정 파일 대신 (0 빈 칸 · 1 설 수 있는 칸)
   int people = 0;
   bool spin = false;
   bool slot0 = false;   // --slot0 (계층형): 늘 후보 0 번 — 같은 목표가 이어져 복구(hier_path.h "복구")·목표 허용 길을 GPU == CPU 로 지나가게
@@ -72,6 +78,9 @@ int main(int argc, char** argv) {
     else if (a == "--spin") spin = true;
     else if (a == "--slot0") slot0 = true;
     else if (a == "--hier") hier = true;
+    else if (a == "--graph") hier = graph = true;
+    else if (a == "--graph-stand") graph_stand = std::atoi(argv[++i]);
+    else if (a == "--graph-open") graph_open = std::atoi(argv[++i]);
     else if (a == "--env" && i + 1 < argc) env_path = argv[++i];
     else if (a == "--model" && i + 1 < argc) model_path = argv[++i];
     else if (a == "--dump" && i + 1 < argc) dump = argv[++i];
@@ -179,6 +188,9 @@ int main(int argc, char** argv) {
     if (!ok) return 1;
   }
   if (hier) hc.cfg.action_mode = sim::kActPath;
+  if (graph) hc.cfg.graph_on = 1;
+  if (graph_stand >= 0) hc.cfg.graph_stand = graph_stand;
+  if (graph_open >= 0) hc.cfg.graph_open = graph_open;
   if (people > 0) hc.cfg.curriculum = 0;   // 커리큘럼이 켜져 있으면 단계가 사람 수를 정함 — --people 로 정한 수를 쓰려고 끔
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   std::vector<sim::World> worlds;
@@ -219,6 +231,40 @@ int main(int argc, char** argv) {
   std::vector<int32_t> dg, dc;
   std::vector<sim::EpInfo> eg, ec;
   std::vector<uint8_t> ig, ic;
+  // 그래프 모드: 관측 버퍼 GPU == CPU (판 시작 관측부터), 통계
+  std::vector<uint8_t> gfg, gfc;
+  std::vector<uint32_t> geg, gec;
+  std::vector<int32_t> gcg, gcc, gng, gnc;
+  std::vector<float> ggg, ggc;
+  size_t bad_graph = 0, g_obs = 0, g_valid = 0, g_edges = 0, g_util = 0, g_guide = 0, g_noedge = 0, g_moved = 0;
+  int neg_done = 0;
+  const auto graph_cmp = [&](int t) {
+    if (!graph) return;
+    gpu.get_graph(gfg, geg, gcg, ggg, gng);
+    cpu.get_graph(gfc, gec, gcc, ggc, gnc);
+    size_t bg = 0;
+    for (size_t i = 0; i < gfc.size(); ++i) bg += gfg[i] != gfc[i];
+    for (size_t i = 0; i < gec.size(); ++i) bg += geg[i] != gec[i];
+    for (size_t i = 0; i < gcc.size(); ++i) bg += gcg[i] != gcc[i];
+    for (size_t i = 0; i < gnc.size(); ++i) bg += gng[i] != gnc[i];
+    for (size_t i = 0; i < ggc.size(); ++i) bg += std::memcmp(&ggg[i], &ggc[i], 4) != 0;
+    for (float v : ggc) n_nan += !std::isfinite(v);
+    bad_graph += bg;
+    if (bg && first_bad < 0) first_bad = t;
+    for (int i = 0; i < n_env; ++i) {
+      ++g_obs;
+      for (int k = 0; k < mdp::graph::N; ++k) {
+        const uint8_t* F = &gfc[((size_t)i * mdp::graph::N + k) * mdp::graph::FEAT];
+        g_valid += F[mdp::graph::F_VALID] != 0;
+        g_util += F[mdp::graph::F_UTIL] != 0;
+        g_guide += F[mdp::graph::F_LGUIDE] != 0;
+        g_edges += __builtin_popcount(gec[(size_t)i * mdp::graph::N + k]);
+      }
+      g_noedge += gec[(size_t)i * mdp::graph::N + gcc[i]] == 0u;
+    }
+  };
+  graph_cmp(-1);
+  std::vector<int32_t> cur_prev = gcc;
   for (int t = 0; t < n_steps; ++t) {
     std::vector<float> act((size_t)A * n_env);
     for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)A * i], p_declare);
@@ -226,13 +272,31 @@ int main(int argc, char** argv) {
       for (int i = 0; i < n_env; ++i) { float* q = &act[(size_t)A * i]; q[0] = 0.f; q[1] = 0.f; q[2] = 0.5f; }
     if (slot0)
       for (int i = 0; i < n_env; ++i) act[(size_t)A * i] = 0.f;
+    if (graph)   // 열에 여덟은 유효 이웃 중에서 (무작위 24 칸이면 거의 빈 칸이라 안 움직임), 나머지는 아무 번호 (빈 칸 길도 지나게)
+      for (int i = 0; i < n_env; ++i) {
+        int v[mdp::graph::NB], nv = 0;
+        for (int k = 0; k < mdp::graph::NB; ++k)
+          if (gnc[(size_t)i * mdp::graph::NB + k] >= 0) v[nv++] = k;
+        if (nv > 0 && dm::splitmix64(rng) % 10 < 8) act[(size_t)A * i] = (float)v[dm::splitmix64(rng) % (uint64_t)nv];
+      }
     std::vector<float> gact = act;
+    if (graph && negative && !negative_person && t >= n_steps / 2 && !neg_done)   // 유효 이웃이 둘 이상인 첫 환경에서 GPU 쪽만 다른 유효 이웃으로
+      for (int i = 0; i < n_env && !neg_done; ++i) {
+        int v[mdp::graph::NB], nv = 0;
+        for (int k = 0; k < mdp::graph::NB; ++k)
+          if (gnc[(size_t)i * mdp::graph::NB + k] >= 0) v[nv++] = k;
+        if (nv < 2) continue;
+        const int a0 = (int)act[(size_t)A * i];
+        gact[(size_t)A * i] = (float)(v[0] == a0 ? v[1] : v[0]);
+        neg_done = 1;
+        std::printf("일부러 어긋나게: 걸음 %d 환경 %d 의 GPU 쪽 이웃 번호 %d → %d\n", t, i, (int)act[(size_t)A * i], (int)gact[(size_t)A * i]);
+      }
     if (negative_person && t == n_steps / 2) {   // 사람이 있는 첫 환경의 사람 0 을 1 cm
       gpu.get_state(sg);
       for (int i = 0; i < n_env; ++i)
         if (sg[i].people.n > 0) { sg[i].people.cyl[0].x += 0.01f; gpu.set_state(i, sg[i]); break; }
     }
-    if (negative && !negative_person && t == n_steps / 2) gact[0] = hc.cfg.action_mode == sim::kActPath ? (float)(((int)gact[0] + 1) % mdp::hier::K) : hc.cfg.action_mode == sim::kActVelocity ? (gact[0] > 0.f ? -gact[0] : 0.5f) : (float)(((int)gact[0] + 1) % (hc.cfg.n_dir * hc.cfg.n_dist));
+    if (!graph && negative && !negative_person && t == n_steps / 2) gact[0] = hc.cfg.action_mode == sim::kActPath ? (float)(((int)gact[0] + 1) % mdp::hier::K) : hc.cfg.action_mode == sim::kActVelocity ? (gact[0] > 0.f ? -gact[0] : 0.5f) : (float)(((int)gact[0] + 1) % (hc.cfg.n_dir * hc.cfg.n_dist));
     cudaMemcpy(d_act, gact.data(), sizeof(float) * A * n_env, cudaMemcpyHostToDevice);
     gpu.step(d_act);
     cpu.step(act.data());
@@ -247,6 +311,11 @@ int main(int argc, char** argv) {
     cpu.get_ep(ec);
     gpu.get_obs(ig, og1, pg);
     cpu.get_obs(ic, oc1, pc);
+    graph_cmp(t);
+    if (graph) {
+      for (int i = 0; i < n_env; ++i) g_moved += dc[i] == 0 && gcc[i] != cur_prev[i];
+      cur_prev = gcc;
+    }
     for (int i = 0; i < n_env; ++i) {
       const bool s_ok = std::memcmp(&sg[i], &sc[i], sizeof(sim::EnvState)) == 0;
       bool r_ok = std::memcmp(&rg[i], &rc[i], 4) == 0 && dg[i] == dc[i] && std::memcmp(&tg[(size_t)K * i], &tc[(size_t)K * i], 4 * K) == 0;
@@ -429,7 +498,7 @@ int main(int argc, char** argv) {
       std::printf("정답 격자 안 씀 (깊이 카메라 층): 환경 %d 개 층을 정답 격자 모두 막힘·모두 빈 칸 묶음으로 다시 갱신해 달라진 것 %d\n", n_env, n_cam_diff);
     }
     for (int i = 0; i < n_env; ++i)
-      for (int k = 0; k < mdp::hier::K; ++k) {
+      for (int k = 0; k < sim::act_slots(B); ++k) {
         sim::EnvState e0 = sc[i], e1 = sc[i], e2 = sc[i];
         e0.p_n = e1.p_n = e2.p_n = 0;   // 늘 새로 짜게
         sim::hier_plan_cpu(B, e0, i, k);
@@ -449,6 +518,24 @@ int main(int argc, char** argv) {
         if (!same_p || v0 != v1 || v0 != v2 || w0 != w1 || w0 != w2 || k0 != k1 || k0 != k2) ++n_diff;
       }
     gt_ok = n_diff == 0 && n_planned > 0 && n_cam_diff == 0;
+    if (graph) {   // 그래프 관측도: 정답 격자를 바꾼 묶음에서 다시 만들어 같은지 (버퍼는 세 묶음이 같이 씀 — 만들 때마다 꺼내 비교)
+      int n_gdiff = 0;
+      const sim::EnvBatch* bs[3] = {&B, &Bb, &Bf};
+      std::vector<uint8_t> f0;
+      std::vector<uint32_t> e0;
+      std::vector<int32_t> c0, n0;
+      std::vector<float> q0;
+      for (int k = 0; k < 3; ++k) {
+        for (int i = 0; i < n_env; ++i) sim::graph_ref(*bs[k], sc[i], i);
+        cpu.get_graph(gfc, gec, gcc, ggc, gnc);
+        if (k == 0) { f0 = gfc; e0 = gec; c0 = gcc; n0 = gnc; q0 = ggc; }
+        else n_gdiff += f0 != gfc || e0 != gec || c0 != gcc || n0 != gnc || std::memcmp(q0.data(), ggc.data(), 4 * q0.size()) != 0;
+      }
+      const bool again = f0 == gfg && e0 == geg && c0 == gcg && n0 == gng;   // 다시 만든 것 = 걸음 끝 GPU 관측 (같은 상태에서 같은 값)
+      gt_ok = gt_ok && n_gdiff == 0 && again;
+      std::printf("정답 격자 안 씀 (그래프 관측): 정답 격자 모두 막힘·모두 빈 칸 묶음에서 다시 만들어 달라진 묶음 %d, 다시 만든 것 == 걸음 끝 GPU 관측 %s — %s\n", n_gdiff, again ? "같음" : "다름",
+                  n_gdiff == 0 && again ? "통과" : "실패");
+    }
     std::printf("정답 격자 안 씀: 환경 × 후보 %d 개 중 경로 짠 것 %d (충돌 감시가 줄인 것 %d), 정답 격자를 모두 막힘·모두 빈 칸으로 바꿔 경로·명령·감시 배율이 달라진 것 %d — %s\n",
                 n_cmp, n_planned, n_mon, n_diff, gt_ok ? "통과" : "실패");
     {
@@ -460,7 +547,11 @@ int main(int argc, char** argv) {
     // 지금 스캔 막힘·감시가 켜져 있나 (SIM_HIER_AVOID=0 이면 끔)
     std::printf("사람 피하기: 지금 스캔 막힘 %d · 충돌 감시 %d (T %.1f s, 걸음 %.2f s, 점 > %d)\n", B.cfg.path_scan, B.cfg.mon_on, B.cfg.mon_t, B.cfg.mon_dt, B.cfg.mon_max_points);
   }
-  const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_trail == 0 && bad_obs == 0 && bad_cam == 0;
+  if (graph)
+    std::printf("그래프 모드 (노드·간선 칸 기준 %s): 관측 %zu 개(환경 × (판 시작 + 결정)) GPU 와 다른 값 %zu · 관측당 유효 노드 %.1f · 간선 %.1f · 유틸리티 노드 %.2f · 길잡이 노드 %.2f, "
+                "현재 노드에 간선 없는 관측 %zu, 결정 사이 현재 노드가 바뀐 수 %zu\n", hc.cfg.graph_stand ? "설 수 있는 칸" : "빈 칸", g_obs, bad_graph, (double)g_valid / g_obs, (double)g_edges / 2 / g_obs,
+                (double)g_util / g_obs, (double)g_guide / g_obs, g_noedge, g_moved);
+  const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_trail == 0 && bad_obs == 0 && bad_cam == 0 && bad_graph == 0;
   const bool range_ok = n_nan == 0 && bad_range == 0;
   std::printf("%s\n", same ? "환경 V0 통과: GPU == CPU (비트 같음)" : "다름");
   std::printf("%s\n", range_ok ? "관측 범위 통과" : "관측 범위 실패");

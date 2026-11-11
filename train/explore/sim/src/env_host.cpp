@@ -291,6 +291,16 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.cvox = alloc<uint8_t>(cells * n_env);
       b_.cpts = alloc<float>((size_t)mdp::obs::DEPTH_W * 2 * n_env);
     }
+    if (hc.cfg.graph_on) {   // 그래프 모드 (env.h EnvBatch 아래 칸, mdp/graph.h)
+      b_.gfeat = alloc<uint8_t>((size_t)mdp::graph::N * mdp::graph::FEAT * n_env);
+      b_.gedge = alloc<uint32_t>((size_t)mdp::graph::N * n_env);
+      b_.gcur = alloc<int32_t>(n_env);
+      b_.gglob = alloc<float>((size_t)mdp::graph::GLOB * n_env);
+      b_.gcand = alloc<int32_t>((size_t)mdp::graph::NB * n_env);
+      b_.gvis = alloc<uint32_t>((size_t)(mdp::graph::N / 32) * n_env);
+      b_.gfront = alloc<uint32_t>((size_t)hc.cfg.size * fmap_row(hc.cfg) * n_env);
+      if (gpu) b_.gwork = alloc<int32_t>((size_t)mdp::graphgen::kVoxMax * n_env);
+    }
   }
   b_.priv = alloc<float>((size_t)mdp::obs::PRIV * n_env);
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
@@ -393,6 +403,24 @@ void Env::get_camlayer(std::vector<uint8_t>& vox, std::vector<float>& pts) const
   if (!b_.cvox) { vox.clear(); pts.clear(); return; }
   fetch(gpu_, b_.cvox, (size_t)b_.cfg.size * b_.cfg.size * b_.n_env, vox);
   fetch(gpu_, b_.cpts, (size_t)mdp::obs::DEPTH_W * 2 * b_.n_env, pts);
+}
+void Env::get_cand(std::vector<int32_t>& out) const {
+  if (!b_.cand) throw std::runtime_error("get_cand: 계층형 모드가 아님");
+  fetch(gpu_, b_.cand, (size_t)b_.n_env * mdp::hier::K, out);
+}
+void Env::graph_refresh() {
+  if (gpu_) env_graph_gpu(b_);
+  else env_graph_cpu(b_);
+}
+GraphOut Env::graph() const { return GraphOut{b_.gfeat, b_.gedge, b_.gcur, b_.gglob, b_.gcand}; }
+void Env::get_graph(std::vector<uint8_t>& feat, std::vector<uint32_t>& edge, std::vector<int32_t>& cur, std::vector<float>& glob, std::vector<int32_t>& cand) const {
+  if (!b_.gfeat) { feat.clear(); edge.clear(); cur.clear(); glob.clear(); cand.clear(); return; }
+  const size_t n = b_.n_env;
+  fetch(gpu_, b_.gfeat, n * mdp::graph::N * mdp::graph::FEAT, feat);
+  fetch(gpu_, b_.gedge, n * mdp::graph::N, edge);
+  fetch(gpu_, b_.gcur, n, cur);
+  fetch(gpu_, b_.gglob, n * mdp::graph::GLOB, glob);
+  fetch(gpu_, b_.gcand, n * mdp::graph::NB, cand);
 }
 void Env::get_seen(std::vector<uint8_t>& out) const {
   std::vector<uint32_t> m;

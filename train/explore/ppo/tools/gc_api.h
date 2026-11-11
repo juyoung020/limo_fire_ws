@@ -23,7 +23,34 @@ struct GcOut {
 
 namespace xppo {
 GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp);
+GcOut gc_run_graph(bool share, bool negative, bool do_fd, int K);   // 그래프 어텐션 정책 (gc_graph_impl.cuh)
 }
 namespace xppo64 {
 GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp);
+GcOut gc_run_graph(bool share, bool negative, bool do_fd, int K);
+}
+
+// ---- 그래프 어텐션 신경망을 직접 돌린 결과 (tools/graph_net_check — gk_impl.cuh) ----
+struct GkSpec {
+  int feat = 8, d = 128, heads = 8, layers = 6, ff = 512, glob = 0;
+};
+struct GkCase {   // 그래프 n 개 (격자 gw × gh)
+  int gw = 0, gh = 0, n = 0;
+  std::vector<unsigned char> feat;   // [n][gw·gh][feat]
+  std::vector<unsigned> edge;        // [n][gw·gh]
+  std::vector<int> cur;              // [n]
+  std::vector<float> glob;           // [n][glob]
+};
+struct GkOut {
+  std::vector<GcBlock> blocks;
+  std::vector<double> params, logits, E, Hc, mask, grad;   // logits·mask [n][24], E·Hc [n][d], grad = ∂(Σ coef·logits)/∂변수 (coef 를 줬을 때)
+  std::vector<unsigned char> bits;                          // logits | E | Hc 원래 바이트 (비트 비교용)
+  long rows = 0;
+};
+namespace xppo {
+// 씨앗 고정 초기화(+ perturb 면 모든 변수를 조금 흔듦 — 전역 벡터 가중치가 0 이 아니게) → 희소 정방향(+ 역방향)
+GkOut gk_run(const GkSpec& s, const GkCase& c, const std::vector<double>& coef, bool perturb);
+}
+namespace xppo64 {
+GkOut gk_run(const GkSpec& s, const GkCase& c, const std::vector<double>& coef, bool perturb);
 }

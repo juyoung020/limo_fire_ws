@@ -764,8 +764,80 @@ ACSpec explore_spec_hier() {
   return s;
 }
 
+ACSpec explore_spec_graph() {
+  namespace g = mdp::graph;
+  ACSpec s;
+  s.graph = true;
+  s.gspec.gw = g::GW;
+  s.gspec.gh = g::GH;
+  s.gspec.feat = g::FEAT;
+  s.graph_glob = g::GLOB;
+  NetSpec c;
+  c.in1d = mdp::obs::PRIV;
+  c.hidden = {128};   // 잠정 (전작의 Q 머리는 선형 한 층 — README "논문과 다른 곳")
+  c.out = 1;
+  s.critic = c;
+  s.n_cont = 0;
+  s.norm_dim = mdp::obs::PRIV;
+  return s;
+}
+
 // ---------------- ActorCritic ----------------
+void ActorCritic::alloc_common() {
+  CK(cudaMalloc(&d_params, n_params * sizeof(real)));
+  CK(cudaMalloc(&d_grads, n_params * sizeof(real)));
+  CK(cudaStreamCreate(&stream));
+  CKB(cublasCreate(&cublas));
+  CKB(cublasSetStream(cublas, stream));
+  CK(cudaStreamCreateWithFlags(&stream2, cudaStreamNonBlocking));
+  CKB(cublasCreate(&cublas2));
+  CKB(cublasSetStream(cublas2, stream2));
+  CKB(cublasSetMathMode(cublas2, CUBLAS_DEFAULT_MATH));
+  CK(cudaEventCreateWithFlags(&ev_fork_, cudaEventDisableTiming));
+  CK(cudaEventCreateWithFlags(&ev_join_, cudaEventDisableTiming));
+  CKB(cublasSetMathMode(cublas, CUBLAS_DEFAULT_MATH));  // fp32 그대로 (TF32 안 씀)
+}
+
+// 그래프 어텐션 정책: 정책 몸통 + 포인터 머리, 가치 몸통(따로 또는 공유) + 가치 머리 MLP. 계산은 한 스트림에서 차례로 (stream2 안 씀)
+void ActorCritic::init_graph(uint64_t seed) {
+  const ACSpec& sp = spec;
+  if (sp.n_cont != 0 || sp.n_slots != 0 || sp.critic.out != 1 || !sp.critic.imgs.empty() || sp.critic.in1d != sp.norm_dim || sp.norm_dim < 1 ||
+      sp.graph_glob < 0)
+    throw std::runtime_error("ACSpec(그래프): n_cont 0, critic = 참값 MLP (in1d = norm_dim ≥ 1, out 1)");
+  if (sp.graph_rows < (long)sp.gspec.gw * sp.gspec.gh) throw std::runtime_error("ACSpec(그래프): graph_rows 가 그래프 하나(gw·gh)보다 작음");
+  const int d = sp.gspec.d;
+  long cur = 0;
+  gbody.build(sp.gspec, blocks, cur, "gactor");
+  ptr.build(d, sp.graph_glob, blocks, cur, "gactor");
+  if (!sp.graph_share) gbody_c.build(sp.gspec, blocks, cur, "gcritic");
+  NetSpec cs = sp.critic;   // 입력 = [E | Hc | 참값], 앞 2d 열 기울기를 몸통으로
+  cs.in1d += 2 * d;
+  cs.grad_cols = 2 * d;
+  critic.build(cs, blocks, cur, "gcritic.v");
+  logstd_off = cur;
+  n_params = cur;
+  alloc_common();
+  gbody.bind(d_params, d_grads, sp.graph_rows, max_chunk);
+  ptr.alloc(max_chunk);
+  if (!sp.graph_share) gbody_c.bind(d_params, d_grads, sp.graph_rows, max_chunk);
+  critic.bind(d_params, d_grads, max_chunk);
+  critic.mlp_mode = 0;
+  std::vector<real> host(n_params);
+  std::mt19937_64 rng(seed);
+  gbody.init(rng, host);
+  ptr.init(rng, host);
+  if (!sp.graph_share) gbody_c.init(rng, host);
+  critic.init(rng, host);
+  CK(cudaMemcpy(d_params, host.data(), n_params * sizeof(real), cudaMemcpyHostToDevice));
+  zero_grad();
+  norm.init(sp.norm_dim);
+}
+
 ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), max_chunk(mc) {
+  if (sp.graph) {
+    init_graph(seed);
+    return;
+  }
   if (sp.n_slots > 0 ? (sp.n_cont != 0 || sp.actor.out < 1 || sp.slot_feat < 1 || sp.slot_off + sp.n_slots * sp.slot_feat > sp.actor.in1d)
                      : sp.actor.out != sp.n_cont + 1)
     throw std::runtime_error("ACSpec 출력 크기");
@@ -798,18 +870,7 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   if (sp.n_cont > 0) blocks.push_back({cur, sp.n_cont, PKind::LogStd, "log_std"});
   cur += sp.n_cont;
   n_params = cur;
-  CK(cudaMalloc(&d_params, n_params * sizeof(real)));
-  CK(cudaMalloc(&d_grads, n_params * sizeof(real)));
-  CK(cudaStreamCreate(&stream));
-  CKB(cublasCreate(&cublas));
-  CKB(cublasSetStream(cublas, stream));
-  CK(cudaStreamCreateWithFlags(&stream2, cudaStreamNonBlocking));
-  CKB(cublasCreate(&cublas2));
-  CKB(cublasSetStream(cublas2, stream2));
-  CKB(cublasSetMathMode(cublas2, CUBLAS_DEFAULT_MATH));
-  CK(cudaEventCreateWithFlags(&ev_fork_, cudaEventDisableTiming));
-  CK(cudaEventCreateWithFlags(&ev_join_, cudaEventDisableTiming));
-  CKB(cublasSetMathMode(cublas, CUBLAS_DEFAULT_MATH));  // fp32 그대로 (TF32 안 씀)
+  alloc_common();
   enc.bind(d_params, d_grads, mc);
   if (split) enc_c.bind(d_params, d_grads, mc);
   actor.bind(d_params, d_grads, mc);
@@ -851,6 +912,9 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
 
 ActorCritic::~ActorCritic() {
   if (spec.n_slots > 0) head.release();
+  gbody.free_ws();
+  gbody_c.free_ws();
+  ptr.release();
   enc.free_ws();
   if (split) enc_c.free_ws();
   actor.free_ws();
@@ -879,7 +943,8 @@ void ActorCritic::join() {
 
 void ActorCritic::params_changed() {
 #ifndef XNET_FP64
-  for (Net* m : {&actor, &critic}) to_bf16(d_params + m->wh_lo_, m->Wh_, m->wh_n_, stream);
+  for (Net* m : {&actor, &critic})
+    if (m->Wh_) to_bf16(d_params + m->wh_lo_, m->Wh_, m->wh_n_, stream);   // 그래프 모드는 bf16 사본 없음
 #endif
 }
 

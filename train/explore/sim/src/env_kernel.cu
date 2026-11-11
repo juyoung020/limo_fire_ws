@@ -548,19 +548,23 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   // 닫힘을 막는 칸 (mdp::frontier_search n_block 과 같은 값): 칸 수 ≥ close_min 덩어리의 칸 중 안 본(looked 아님) 칸
   {
     int blk = 0;
-    if (!over && start >= 0)
+    uint32_t* GF = b.gfront ? b.gfront + (size_t)env * nf : nullptr;   // 그래프 모드: 막는 칸 비트 판 (범위 낱말마다 한 스레드가 통째로 씀)
+    const bool live = !over && start >= 0;
+    if (live || GF)
       for (int k = tid; k < nbox; k += kRT) {
         const int y = by0 + k / nbw, wx = bw0 + k % nbw, wi = y * ws + wx;
-        const uint32_t fr = F[wi] & *REp(wi);
-        if (!fr) continue;
-        for_runs(fr, [&](int lo, int len) {
-          if (CNT[uf_find(PAR, list_pos(wx * 32 + lo, y))] < c.close_min) return;
-          const uint32_t run = (len == 32 ? ~0u : ((1u << len) - 1u)) << lo;
-          for (uint32_t q = run; q; q &= q - 1u) {
-            const int x = wx * 32 + __ffs(q) - 1;
-            if (!looked(x, y)) ++blk;
-          }
-        });
+        const uint32_t fr = live ? (F[wi] & *REp(wi)) : 0u;
+        uint32_t gw = 0u;
+        if (fr)
+          for_runs(fr, [&](int lo, int len) {
+            if (CNT[uf_find(PAR, list_pos(wx * 32 + lo, y))] < c.close_min) return;
+            const uint32_t run = (len == 32 ? ~0u : ((1u << len) - 1u)) << lo;
+            for (uint32_t q = run; q; q &= q - 1u) {
+              const int x = wx * 32 + __ffs(q) - 1;
+              if (!looked(x, y)) { ++blk; gw |= 1u << (x & 31); }
+            }
+          });
+        if (GF) GF[wi] = gw;
       }
     if (blk) atomicAdd(&s_block, blk);
   }
@@ -971,8 +975,7 @@ __global__ void env_reset_kernel(EnvBatch b) {
 }
 
 // ---------- 계층형 (kActPath, include/hier_path.h): 결정 때 경로 계획 · 묶음 끝 ----------
-// 고른 후보 번호 (행동 a[0], 정수 값). 범위 밖·NaN 은 −1 (빈 칸과 같음 — 제자리 회전)
-__device__ __host__ inline int slot_of(float a) { return (a >= 0.f && a < (float)mdp::hier::K) ? (int)a : -1; }
+// 고른 후보 번호 (행동 a[0], 정수 값) = hier_path.h slot_of
 // 환경 하나 = 블록 하나, 묶음 첫 걸음 앞. 후보 칸(관측 때 b.cand) → 목표. 같은 후보(그 덩어리가 지금 목표 칸을 품음)이고 남은 경로가 아직
 // 지난번 계획과 같은 칸 기준(엄격·느슨)으로 설 수 있는 칸 위면 그대로, 아니면 무게 있는 최단 경로(hier_path.h 머리말 "약한 막힘"):
 // 먼저 엄격(막힘 = 지도 막힘 ∪ 장애물 층 약한 막힘)으로, 못 닿으면 느슨(지도 막힘만)으로. 비트 판 층 BFS(Dial, 버킷 4 개) → 거리 mod 7 로 뒤로 짚기 → 웨이포인트.
@@ -1007,9 +1010,9 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   const auto Bp = [&](int t) { return P + (size_t)(kPpB + (t & 3)) * nf; };
   if (tid == 0) {
     int force = 0;   // 복구 (hier_path.h path_recovery): 다시 계획 · 포기한 목표면 다른 후보(없으면 −1)
-    const int k = path_recovery(b, e, env, slot_of(actions[(size_t)mdp::act::DIM * env]), &force);
+    const int k = path_recovery(b, e, env, slot_of(b, actions[(size_t)mdp::act::DIM * env]), &force);
     e.p_slot = k;
-    const int tgt = k >= 0 ? b.cand[(size_t)env * mdp::hier::K + k] : -1;
+    const int tgt = k >= 0 ? act_cells(b, env)[k] : -1;
     s_force = force;
     s_target = tgt;
     if (tgt < 0) {
@@ -1087,7 +1090,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   // 같은 후보 · 경로 그대로? (지난 계획이 엄격이면 엄격 칸, 느슨이면 느슨 칸으로 남은 경로 확인)
   if (tid == 0) {
     const int k = e.p_slot;
-    const bool same = !s_force && ((b.cand_cur[env] >> k) & 1) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc &&
+    const bool same = !s_force && act_same(b, e, env, k) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc &&
                       path_clear(e, [&](int x, int y) { return bit_of(e.p_mode == 1 ? SST : LPASS, x, y) != 0u; });
     if (same) s_plan = 0;
     else {
@@ -1299,6 +1302,131 @@ __global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
 // ---------- 소프트웨어 광선 묶음: 스레드마다 광선 하나씩 순회(trav_step)하고, 끝난 스레드는 워프 단위로 다음 광선을 받는다 ----------
 // 광선마다 걸음 순서는 raycast 와 같아 결과가 같고, 워프 안 광선 길이 차이로 노는 스레드가 없어진다.
 // G: make(b, job, sv, o, d, tmax) → 쏠 광선이면 true (아니면 none(b, job)), store(b, job, t, tri)
+// ---------- 그래프 모드 관측 (mdp/graph.h — CPU 참조 include/obs_ref.h graph_ref 와 비트 같음, env_verify --graph) ----------
+// 환경 하나 = 블록 하나, 결정 관측(묶음 끝·판 시작) 뒤. 지도 비트 판(막힘·앎·설 수 있음)·프론티어 칸 비트(fmap)·지도 자세만 읽는다.
+// 차례는 graph.h 머리말 1 ~ 8. 합치는 곳은 모두 차례 무관(비트 OR · 수 더하기 · 최단 거리 고정점)이라 스레드 차례와 무관하게 같은 값.
+__global__ void __launch_bounds__(kRT) env_graph_kernel(EnvBatch b) {
+  using namespace mdp::graph;
+  namespace gg = mdp::graphgen;
+  __shared__ uint32_t s_valid[N / 32], s_guide[N / 32];
+  __shared__ int s_dist[N], s_util[N];
+  __shared__ short s_list[N];
+  __shared__ int s_cur, s_forced, s_chg, s_nf, s_nn;
+  const int env = blockIdx.x, tid = threadIdx.x;
+  const EnvState& e = b.st[env];
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int ws = fmap_row(c), nfw = c.size * ws;
+  const uint32_t* RB = b.rbits + (size_t)env * kReachBits * nfw;
+  const uint32_t* OCC = RB + kRbOcc * nfw;
+  const uint32_t* KN = RB + kRbKnown * nfw;
+  const uint32_t* ST = RB + kRbStand * nfw;
+  const uint32_t* FM = b.fmap + (size_t)env * nfw;
+  const gg::Params p = graph_params(c, m, e);
+  const auto in_map = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh; };
+  const auto bit = [&](const uint32_t* P, int x, int y) -> uint32_t { return (P[y * ws + (x >> 5)] >> (x & 31)) & 1u; };
+  const auto free = [&](int x, int y) { return in_map(x, y) && bit(KN, x, y) && !bit(OCC, x, y); };
+  const auto pass = [&](int x, int y) { return c.graph_stand ? (in_map(x, y) && bit(ST, x, y) != 0u) : free(x, y); };
+  const uint32_t* GF = b.gfront + (size_t)env * nfw;
+  const auto front = [&](int x, int y) -> bool {   // 유틸리티가 세는 프론티어 칸: graph_open 이면 닫힘을 막는 칸(gfront, 건드린 범위 안만 이번 관측 값), 아니면 모든 프론티어 칸
+    if (!c.graph_open) return bit(FM, x, y) != 0u;
+    return x >= e.kb_x0 && x <= e.kb_x1 && y >= e.kb_y0 && y <= e.kb_y1 && bit(GF, x, y) != 0u;
+  };
+  uint32_t* E = b.gedge + (size_t)env * N;
+  uint32_t* VIS = b.gvis + (size_t)env * (N / 32);
+  int32_t* REP = b.gwork + (size_t)env * gg::kVoxMax;
+  if (tid < N / 32) {
+    s_valid[tid] = 0u;
+    s_guide[tid] = 0u;
+    if (e.step == 0) VIS[tid] = 0u;
+  }
+  for (int i = tid; i < N; i += kRT) {
+    E[i] = 0u;
+    s_dist[i] = gg::kInf;
+    s_util[i] = 0;
+  }
+  if (tid == 0) s_nf = s_nn = 0;
+  __syncthreads();
+  for (int i = tid; i < N; i += kRT)
+    if (gg::node_raw(p, i, pass)) atomicOr(&s_valid[i >> 5], 1u << (i & 31));
+  __syncthreads();
+  const auto valid = [&](int i) { return ((s_valid[i >> 5] >> (i & 31)) & 1u) != 0u; };
+  if (tid == 0) {
+    int rx, ry, forced;
+    cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
+    const int cur = gg::find_cur(p, rx, ry, valid, pass, &forced);
+    s_cur = cur;
+    s_forced = forced;
+    s_valid[cur >> 5] |= 1u << (cur & 31);
+    VIS[cur >> 5] |= 1u << (cur & 31);
+    s_dist[cur] = 0;
+    b.gcur[env] = cur;
+  }
+  __syncthreads();
+  const int cur = s_cur, forced = s_forced;
+  for (int i = tid; i < N; i += kRT) {   // 간선: 번호 큰 쪽 이웃(스텐실 뒤 절반)만 보고 양쪽에 적음
+    if (!valid(i) || (forced && i == cur)) continue;
+    for (int k = NB / 2; k < NB; ++k) {
+      const int j = gg::node_nb(i, k);
+      if (j < 0 || !valid(j) || (forced && j == cur) || !gg::edge_ok(p, i, j, pass)) continue;
+      atomicOr(&E[i], 1u << k);
+      atomicOr(&E[j], 1u << (NB - 1 - k));
+    }
+  }
+  __syncthreads();
+  for (;;) {   // cur 에서 최단 거리: 바뀜이 없을 때까지 풀기 (거리는 줄기만 하고 고정점은 하나)
+    if (tid == 0) s_chg = 0;
+    __syncthreads();
+    for (int i = tid; i < N; i += kRT) {
+      if (!valid(i)) continue;
+      const int d = gg::relax(s_dist, E[i], i);
+      if (d < s_dist[i]) {
+        s_dist[i] = d;
+        s_chg = 1;
+      }
+    }
+    __syncthreads();
+    const int ch = s_chg;
+    __syncthreads();
+    if (!ch) break;
+  }
+  for (int i = tid; i < N; i += kRT)   // cur 와 안 이어진 노드는 버림
+    if (valid(i) && s_dist[i] >= gg::kInf) {
+      atomicAnd(&s_valid[i >> 5], ~(1u << (i & 31)));
+      E[i] = 0u;
+    }
+  __syncthreads();
+  const int nv = gg::vox_count(p);
+  for (int v = tid; v < nv; v += kRT) {   // 프론티어 복셀 대표 칸 목록 (차례는 무관 — 세기만 한다)
+    const int cell = gg::vox_rep(p, v, front);
+    if (cell >= 0) REP[atomicAdd(&s_nf, 1)] = cell;
+  }
+  for (int i = tid; i < N; i += kRT)
+    if (valid(i) && !((VIS[i >> 5] >> (i & 31)) & 1u)) s_list[atomicAdd(&s_nn, 1)] = (short)i;
+  __syncthreads();
+  const int nf = s_nf, nn = s_nn;
+  for (int q = tid; q < nn * nf; q += kRT) {   // (노드, 복셀) 쌍마다
+    const int i = s_list[q / nf];
+    if (gg::sees(p, i, REP[q % nf], free)) atomicAdd(&s_util[i], 1);
+  }
+  __syncthreads();
+  for (int i = tid; i < N; i += kRT)
+    if (s_util[i] <= p.min_util) s_util[i] = 0;
+  __syncthreads();
+  for (int i = tid; i < N; i += kRT) {   // 지역 길잡이: 유틸리티 노드에서 앞 노드를 따라 cur 까지 (이미 표시된 노드에서 멈춤 — 그 뒤는 표시한 쪽이 잇는다)
+    if (s_util[i] <= 0) continue;
+    for (int v = i; v >= 0 && v != cur && !((s_guide[v >> 5] >> (v & 31)) & 1u); v = gg::pred_of(s_dist, E[v], v)) atomicOr(&s_guide[v >> 5], 1u << (v & 31));
+  }
+  __syncthreads();
+  for (int i = tid; i < N; i += kRT)
+    gg::write_feat(b.gfeat + ((size_t)env * N + i) * FEAT, i, cur, valid(i), s_util[i], ((s_guide[i >> 5] >> (i & 31)) & 1u) != 0u, p);
+  if (tid < NB) {
+    const int j = ((E[cur] >> tid) & 1u) ? gg::node_nb(cur, tid) : -1;
+    b.gcand[(size_t)env * NB + tid] = j >= 0 ? gg::node_y(p, j) * p.gw + gg::node_x(p, j) : -1;
+  }
+  if (tid == 0) graph_glob(b, e, env, p, cur);
+}
+
 constexpr int kRayThreads = 128;
 constexpr int kRayChunk = 64, kRayRefill = 16, kRaySteps = 4;   // 워프가 한 번에 받는 광선 수, 이만큼 놀면 채움
 enum : int { kCntDepNext = 0, kCntDepSide = 1, kCntDepSideNext = 2, kCntBeamNext = 3, kCntBeamSide = 4, kCntBeamSideNext = 5, kCounters = 16 };
@@ -1606,11 +1734,17 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
   for (int s = 0; s < b.cfg.decide_steps; ++s) step_once(b, actions, st, s);
   env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
   reach_and_depth(b, st, 2);
+  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b);   // 그래프 모드 관측
+}
+
+void env_graph_gpu(const EnvBatch& b, cudaStream_t st) {
+  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b);
 }
 
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st) {
   env_reset_kernel<<<b.n_env, kThreads, 0, st>>>(b);
   reach_and_depth(b, st);
+  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b);
 }
 
 }  // namespace sim

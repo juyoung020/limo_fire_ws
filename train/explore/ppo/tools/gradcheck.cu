@@ -15,6 +15,8 @@
 //   gradcheck --full     obs_layout.h 실제 크기 구조
 //   gradcheck --negative ELU 역방향을 일부러 틀리게 → 검사가 잡아야(실패를 찾아야) 종료 0
 //   gradcheck --hier     계층형 구조(슬롯 머리 + 가린 범주 분포 — log π·엔트로피·KL, 빈 칸·고를 것 없는 샘플 섞음)
+//   gradcheck --graph    그래프 어텐션 정책(임베딩·층 정규화·희소 어텐션·FF·디코더·포인터·가치 머리, 작은 구조). --share 면 가치가 정책 몸통을 같이 씀.
+//                        --negative 와 같이 쓰면 층 정규화 역방향을 틀리게
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -30,20 +32,23 @@ static const char* kind_name(int k) {
 }
 
 int main(int argc, char** argv) {
-  bool full = false, negative = false;
+  bool full = false, negative = false, graph = false, share = false;
   int mlp = 1;  // fp32 쪽 MLP: 1 융합 GEMM fp32(정확, 기본), 0 cuBLAS, 2 bf16 (기준 1e-3 는 0·1 에만)
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--full")) full = true;
     if (!std::strcmp(argv[i], "--negative")) negative = true;
+    if (!std::strcmp(argv[i], "--graph")) graph = true;
+    if (!std::strcmp(argv[i], "--share")) share = true;
     if (!std::strcmp(argv[i], "--hier")) setenv("GC_HIER", "1", 1);   // 계층형: 슬롯 머리 + 가린 범주 분포 (gc_impl.cuh)
     if (!std::strcmp(argv[i], "--mlp") && i + 1 < argc) mlp = std::atoi(argv[++i]);
   }
   const int K = full ? 8 : 16;
-  GcOut r64 = xppo64::gc_run(full, negative, true, K, 0);
-  GcOut r32 = xppo::gc_run(full, negative, false, K, mlp);
-  std::printf("fp32 쪽 MLP 길 --mlp %d\n", mlp);
+  GcOut r64 = graph ? xppo64::gc_run_graph(share, negative, true, K) : xppo64::gc_run(full, negative, true, K, 0);
+  GcOut r32 = graph ? xppo::gc_run_graph(share, negative, false, K) : xppo::gc_run(full, negative, false, K, mlp);
+  if (graph) std::printf("그래프 어텐션 정책 (가치 몸통 %s)\n", share ? "공유" : "따로");
+  else std::printf("fp32 쪽 MLP 길 --mlp %d\n", mlp);
   std::printf("구조 %s, 변수 %ld 개, 샘플 12 (덩이 4 × 3), 손실 fp64 %.9f / fp32 %.9f%s\n", full ? "실제(obs_layout)" : "작은",
-              r64.n_params, r64.loss, r32.loss, negative ? "  [--negative: ELU 역방향 틀림]" : "");
+              r64.n_params, r64.loss, r32.loss, negative ? (graph ? "  [--negative: 층 정규화 역방향 틀림]" : "  [--negative: ELU 역방향 틀림]") : "");
   std::map<long, double> fd;
   for (size_t i = 0; i < r64.fd_ids.size(); ++i) fd[r64.fd_ids[i]] = r64.fd[i];
   std::map<std::string, double> wk1, wk2;
@@ -83,6 +88,7 @@ int main(int argc, char** argv) {
   for (auto& [k, v] : wk2) std::printf("  %s %.2e", k.c_str(), v);
   std::printf("\n");
   for (const GcOut* r : {&r64, &r32}) {
+    if (graph) break;   // σ 없음
     std::printf("σ 범위 투영 (%s): log σ (+3, −10, +0.5) → update 뒤", r == &r64 ? "fp64" : "fp32");
     for (double l : r->proj_ls) std::printf(" %.4f", l);
     std::printf("  [%.4f, %.4f] %s\n", r->proj_lo, r->proj_hi, r->proj_ok ? "안" : "← 밖");

@@ -41,6 +41,8 @@ struct Args {
   std::string root = "train/explore/runs", name = "frontier";
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
   bool cpu = false, eval_seed = false;
+  int graph_open = -1;    // 그래프 모드 유틸리티가 안 본 프론티어 칸만 세는지 (0·1, 설정 파일 대신)
+  int graph_stand = -1;   // 그래프 모드 노드·간선 칸 기준을 설정 파일 대신 (0 빈 칸 · 1 설 수 있는 칸)
 };
 
 std::vector<std::string> split(const std::string& s, char c) {
@@ -380,12 +382,22 @@ int run_mode(const Args& a, const std::string& mode) {
 // 규칙으로 몬다. 판 = 기준선 판과 같은 씨앗 규칙(장면 차례·환경 번호가 같으면 같은 출발). 판 끝은 시뮬(닫힘 성공·충돌·진행 없음·안전 시간).
 //   slot0        : 늘 0 번 후보(BFS 가장 가까운 덩어리), 안전층 켬 (정책이 실물에서 쓰는 설정)
 //   slot0_nosafe : 같은데 안전층 끔 (기준선 frontier_run 과 같은 설정)
+// 그래프 모드(mdp/graph.h — 행동 = 현재 노드의 이웃 번호) 규칙 정책 둘. 판 조건·판 끝·하위 주행은 slot0 과 같다.
+//   graph_guide  : 간선 길이로 가장 가까운 유틸리티 노드로 가는 최단 경로의 첫 이웃 (= 지역 길잡이 위 이웃). 유틸리티 노드가 없으면 무작위 유효 이웃
+//   graph_max    : 같은데 목표가 유틸리티가 가장 큰 노드 (같으면 가까운 쪽) — 가까운 노드부터 훑는 graph_guide 와 견줄 것
+//   graph_front  : 견줌용 — 그래프 관측 밖 정보(계층형 0 번 후보 칸 = slot0 이 가는 곳)를 써서 그 칸에 가장 가까운 노드 쪽 첫 이웃.
+//                  "이웃 노드 고르기 + 같은 하위 주행" 으로 slot0 만큼 되는지(행동 공간·주행 몫)를 관측 몫과 갈라 보려는 것
+//   graph_random : 무작위 유효 이웃 (바닥선). 유효 이웃이 없으면 0 번 — 시뮬이 제자리 회전
 int run_hier(const Args& a, const std::string& mode) {
   sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
   const fb::Params P = fb::load_params(a.frontier, a.env, "fast");   // 안전 시간만 기준선과 같게
   hc.cfg.action_mode = sim::kActPath;
   hc.cfg.curriculum = 0;
   if (mode == "slot0_nosafe") hc.cfg.safety = 0;
+  const bool graph = mode.rfind("graph_", 0) == 0, by_front = mode == "graph_front", guide = mode == "graph_guide" || mode == "graph_max" || by_front, by_max = mode == "graph_max";
+  if (graph) hc.cfg.graph_on = 1;
+  if (graph && a.graph_stand >= 0) hc.cfg.graph_stand = a.graph_stand;
+  if (graph && a.graph_open >= 0) hc.cfg.graph_open = a.graph_open;
   const float dec_s = (float)(hc.cfg.substeps * hc.cfg.decide_steps) * hc.cfg.dt;
   hc.cfg.max_steps = (int)std::ceil(P.t_safe / (hc.cfg.substeps * hc.cfg.dt)) + 100;
   const sim::LidarModel lidar = sim::load_lidar_model(a.model);
@@ -426,8 +438,94 @@ int run_hier(const Args& a, const std::string& mode) {
     std::vector<int> reached(N, 0), dec(N, 0);   // 목표 칸 0.25 m 안에 서 있던 결정 수 (도착했는데 덩어리가 안 풀림 — "가도 안 풀리는 프론티어")
     std::vector<int> n_plans(N, 0), n_fb(N, 0);   // 판 동안 경로 계획 수 · 그중 느슨(지도 막힘만)으로 짠 수 (약한 막힘을 피해 못 닿을 때)
     std::vector<int> n_mon(N, 0);   // 판 동안 충돌 감시(collision_monitor approach)가 명령을 줄인 걸음 수
+    // 그래프 규칙 정책 + 실패 원인 집계
+    std::vector<uint8_t> gf;
+    std::vector<uint32_t> ge;
+    std::vector<int32_t> gc, gn;
+    std::vector<float> gg;
+    std::vector<int> n_noutil(N, 0), n_nonb(N, 0), n_offguide(N, 0), n_same(N, 0), n_back(N, 0), last_util(N, 0), last_valid(N, 0), cur1(N, -1), cur2(N, -1);
+    std::vector<double> dist_m(N, 0.0);
+    std::vector<int32_t> hcand;   // graph_front: 계층형 후보 칸
+    std::vector<float> px(N), py(N);
+    uint64_t prng = a.seed * 0x9E3779B97F4A7C15ull + wi * 104729ull + 17;
+    env.get_state(st);
+    for (int i = 0; i < N; ++i) { px[i] = st[i].x; py[i] = st[i].y; }
+    const auto choose = [&]() {
+      using namespace mdp::graph;
+      env.get_graph(gf, ge, gc, gg, gn);
+      if (by_front) env.get_cand(hcand);
+      std::vector<int> dist(mdp::graph::N);
+      for (int i = 0; i < N; ++i) {
+        if (fin[i]) continue;
+        const uint8_t* F = &gf[(size_t)i * mdp::graph::N * FEAT];
+        const uint32_t* E = &ge[(size_t)i * mdp::graph::N];
+        const int cur = gc[i];
+        int v[NB], nv = 0, nu = 0, nval = 0;
+        for (int k = 0; k < NB; ++k) if (gn[(size_t)i * NB + k] >= 0) v[nv++] = k;
+        for (int j = 0; j < mdp::graph::N; ++j) { nu += F[j * FEAT + F_UTIL] != 0; nval += F[j * FEAT + F_VALID] != 0; }
+        last_util[i] = nu;
+        last_valid[i] = nval;
+        n_same[i] += cur == cur1[i];
+        n_back[i] += cur != cur1[i] && cur == cur2[i];   // 두 결정 전 노드로 되돌아옴 (왔다 갔다)
+        cur2[i] = cur1[i];
+        cur1[i] = cur;
+        int k_sel = 0;
+        if (nv == 0) n_nonb[i] += 1;
+        else if (!guide || (nu == 0 && !by_front)) {
+          if (guide) n_noutil[i] += 1;
+          k_sel = v[dm::splitmix64(prng) % (uint64_t)nv];
+        } else {
+          for (int j = 0; j < mdp::graph::N; ++j) dist[j] = mdp::graphgen::kInf;
+          dist[cur] = 0;
+          for (bool ch = true; ch;) {
+            ch = false;
+            for (int j = 0; j < mdp::graph::N; ++j) {
+              if (!E[j]) continue;
+              const int nd = mdp::graphgen::relax(dist.data(), E[j], j);
+              if (nd < dist[j]) { dist[j] = nd; ch = true; }
+            }
+          }
+          int best = -1;
+          const int tc = by_front ? hcand[(size_t)i * mdp::hier::K] : -1;   // 0 번 후보 칸 (slot0 이 가는 곳)
+          if (by_front && tc >= 0) {   // 그 칸에 가장 가까운 노드 (현재 노드에서 닿는 것, 같으면 그래프 거리 짧은 쪽). 현재 노드가 가장 가까우면 이웃 중 가장 가까운 것
+            const int step = (int)(NODE_RES / c.res + 0.5f), k0 = v[0];
+            int sdy, sdx;
+            mdp::graphgen::stencil(k0, &sdy, &sdx);
+            const int cx = gn[(size_t)i * NB + k0] % W.gw - sdx * step, cy = gn[(size_t)i * NB + k0] / W.gw - sdy * step;
+            const int tx = tc % W.gw, ty = tc / W.gw;
+            long long bd = 0;
+            for (int pass = 0; pass < 2 && (best < 0 || best == cur); ++pass)
+              for (int j = 0; j < mdp::graph::N; ++j) {
+                if (j == cur || dist[j] >= mdp::graphgen::kInf || (pass == 1 && dist[j] > 2828)) continue;
+                const long long ddx = cx + (j % GW - cur % GW) * step - tx, ddy = cy + (j / GW - cur / GW) * step - ty, d2 = ddx * ddx + ddy * ddy;
+                if (pass == 0) {
+                  const long long c2 = (long long)(cx - tx) * (cx - tx) + (long long)(cy - ty) * (cy - ty);
+                  if (d2 >= c2) continue;   // 현재 노드보다 가까운 것만
+                }
+                if (best < 0 || best == cur || d2 < bd || (d2 == bd && dist[j] < dist[best])) { best = j; bd = d2; }
+              }
+          } else
+          for (int j = 0; j < mdp::graph::N; ++j)
+            if (F[j * FEAT + F_UTIL] != 0 && dist[j] < mdp::graphgen::kInf &&
+                (best < 0 || (by_max ? (F[j * FEAT + F_UTIL] > F[best * FEAT + F_UTIL] || (F[j * FEAT + F_UTIL] == F[best * FEAT + F_UTIL] && dist[j] < dist[best])) : dist[j] < dist[best])))
+              best = j;
+          if (best < 0 || best == cur) { n_noutil[i] += 1; k_sel = v[dm::splitmix64(prng) % (uint64_t)nv]; }
+          else {
+            int j = best;
+            for (int p = mdp::graphgen::pred_of(dist.data(), E[j], j); p >= 0 && p != cur; p = mdp::graphgen::pred_of(dist.data(), E[j], j)) j = p;
+            k_sel = -1;
+            for (int k = 0; k < NB; ++k) if (((E[cur] >> k) & 1u) && mdp::graphgen::node_nb(cur, k) == j) k_sel = k;
+            if (k_sel < 0) throw std::runtime_error("graph_guide: 첫 이웃이 현재 노드의 이웃이 아님");
+            if (!by_front) n_offguide[i] += F[j * FEAT + F_LGUIDE] == 0;   // 고른 이웃이 지역 길잡이 표시 밖 (0 이어야 — 관측의 길잡이와 같은 경로)
+          }
+        }
+        act[(size_t)mdp::act::DIM * i] = (float)k_sel;
+      }
+      if (!a.cpu) cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
+    };
     int left = N;
     for (int d = 0; left > 0 && d < c.max_steps / c.decide_steps + 10; ++d) {
+      if (graph) choose();
       env.step(a.cpu ? act.data() : d_act);
       env.sync();
       env.get_reward(rew, done);
@@ -440,6 +538,9 @@ int run_hier(const Args& a, const std::string& mode) {
         dec[i] += 1;
         if (!done[i]) {
           const sim::EnvState& s = st[i];
+          dist_m[i] += std::hypot(s.x - px[i], s.y - py[i]);   // 결정 사이 직선 거리의 합 (끝난 결정의 마지막 1 s 는 빠짐)
+          px[i] = s.x;
+          py[i] = s.y;
           n_plans[i] = s.p_plans;
           n_fb[i] = s.p_fb;
           n_mon[i] = s.p_mon;
@@ -457,6 +558,7 @@ int run_hier(const Args& a, const std::string& mode) {
     }
     if (d_act) cudaFree(d_act);
     double n = N, succ = 0, coll = 0, idle = 0, trunc = 0, ts = 0, cov_s = 0, rsum = 0, stand = 0, pl = 0, fb = 0;
+    double d_succ = 0, d_all = 0, g_noutil = 0, g_nonb = 0, g_off = 0, g_same = 0, g_back = 0, f_noutil = 0, f_util = 0, f_nonb_ep = 0;
     double c_wall = 0, c_person = 0, t_all = 0, mon = 0, steps_all = 0, ck[5] = {0, 0, 0, 0, 0};   // 벽·사람 충돌, 판 길이 합, 충돌 때 명령 (EpInfo::coll_kind)
     for (int i = 0; i < N; ++i) { pl += n_plans[i]; fb += n_fb[i]; }
     for (int i = 0; i < N; ++i) {
@@ -475,14 +577,24 @@ int run_hier(const Args& a, const std::string& mode) {
       steps_all += dec[i] * c.decide_steps;
       idle += dd == mdp::cur::kNoProgress;
       trunc += !fin[i] || dd == mdp::cur::kTruncated;
-      if (dd == mdp::cur::kDeclareOk) { ts += f.t; cov_s += f.coverage; }
+      if (dd == mdp::cur::kDeclareOk) { ts += f.t; cov_s += f.coverage; d_succ += dist_m[i]; }
+      d_all += dist_m[i];
+      g_noutil += n_noutil[i];
+      g_nonb += n_nonb[i];
+      g_off += n_offguide[i];
+      g_same += n_same[i];
+      g_back += n_back[i];
+      const bool stuck = dd == mdp::cur::kNoProgress || !fin[i] || dd == mdp::cur::kTruncated;
+      f_noutil += graph && stuck && last_util[i] == 0;   // 못 끝낸 판: 마지막 결정 때 유틸리티 노드가 하나도 없었음 (닫힘은 안 됐는데 갈 곳 표시가 없음)
+      f_util += graph && stuck && last_util[i] > 0;      // 못 끝낸 판: 유틸리티 노드는 있었음 (못 닿거나 가도 안 풀림)
+      f_nonb_ep += graph && n_nonb[i] > 0;
       rsum += ret[i];
       stand += dec[i] > 0 ? (double)reached[i] / dec[i] : 0.0;
       rf::Json line = rf::Json::object();
       line.set("iter", (int)wi).set("env", i).set("ep", run.new_episode_id()).set("map", W.name).set("stage", mode).set("outcome", oc)
           .set("success", dd == mdp::cur::kDeclareOk).set("collided", dd == mdp::cur::kCollision || dd == mdp::cur::kCollisionPerson)
           .set("collided_person", dd == mdp::cur::kCollisionPerson).set("coll_kind", fin[i] ? f.coll_kind : 0)
-          .set("t", f.t).set("coverage", f.coverage).set("reward", ret[i]).set("decisions", dec[i]).set("at_goal_frac", dec[i] ? (double)reached[i] / dec[i] : 0.0)
+          .set("t", f.t).set("coverage", f.coverage).set("dist_m", dist_m[i]).set("g_noutil", n_noutil[i]).set("g_nonb", n_nonb[i]).set("g_last_util", last_util[i]).set("reward", ret[i]).set("decisions", dec[i]).set("at_goal_frac", dec[i] ? (double)reached[i] / dec[i] : 0.0)
           .set("mode", mode);
       run.episode(line);
     }
@@ -491,12 +603,18 @@ int run_hier(const Args& a, const std::string& mode) {
         .set("truncation", trunc / n).set("t_success", succ > 0 ? ts / succ : 0.0).set("cov_at_success", succ > 0 ? cov_s / succ : 0.0)
         .set("reward", rsum / n).set("at_goal_frac", stand / n).set("loose_plan_frac", pl > 0 ? fb / pl : 0.0)
         .set("collision_wall", c_wall / n).set("collision_person", c_person / n).set("t_mean", t_all / n).set("monitor_frac", steps_all > 0 ? mon / steps_all : 0.0)
+        .set("dist_success_m", succ > 0 ? d_succ / succ : 0.0).set("dist_mean_m", d_all / n)
         .set("coll_fwd", ck[1] / n).set("coll_rotate", ck[2] / n).set("coll_back", ck[3] / n).set("coll_stopped", ck[4] / n);
     eval_rows.push(row);
     std::fprintf(stderr, "[%s %s] 성공 %.3f 충돌 %.3f 진행 없음 %.3f 끊김 %.3f, 성공까지 %.1f s (성공 판 정답 덮음 %.3f), 판 합 보상 %.2f, 목표에 서 있던 결정 비율 %.3f, 느슨 계획 비율 %.3f\n", mode.c_str(),
                  W.name.c_str(), succ / n, coll / n, idle / n, trunc / n, succ > 0 ? ts / succ : 0.0, succ > 0 ? cov_s / succ : 0.0, rsum / n, stand / n, pl > 0 ? fb / pl : 0.0);
     std::fprintf(stderr, "[%s %s] 사람 %d: 벽 충돌 %.3f 사람 충돌 %.3f · 충돌 때 명령 앞 %.3f 제자리 회전 %.3f 뒤 %.3f 멈춤 %.3f · 판 평균 길이 %.1f s · 충돌 감시가 줄인 걸음 비율 %.3f\n", mode.c_str(),
                  W.name.c_str(), a.people, c_wall / n, c_person / n, ck[1] / n, ck[2] / n, ck[3] / n, ck[4] / n, t_all / n, steps_all > 0 ? mon / steps_all : 0.0);
+    double dec_all = steps_all / c.decide_steps;
+    std::fprintf(stderr, "[%s %s] 이동 거리: 성공 판 평균 %.1f m · 모든 판 평균 %.1f m\n", mode.c_str(), W.name.c_str(), succ > 0 ? d_succ / succ : 0.0, d_all / n);
+    if (graph)
+      std::fprintf(stderr, "[%s %s] 그래프 (칸 기준 %s · 프론티어 %s): 결정 %.0f 개 중 유틸리티 노드 없어 무작위 %.4f · 유효 이웃 없음 %.4f (그런 판 %.3f) · 현재 노드 그대로 %.3f · 두 결정 전 노드로 되돌아옴 %.3f · 고른 이웃이 길잡이 표시 밖 %.0f 개 | 못 끝낸 판(진행 없음·끊김) 중 마지막에 유틸리티 노드 없음 %.3f · 있음 %.3f (판 비율)\n",
+                   mode.c_str(), W.name.c_str(), c.graph_stand ? "설 수 있는 칸" : "빈 칸", c.graph_open ? "막는 칸만" : "모두", dec_all, g_noutil / dec_all, g_nonb / dec_all, f_nonb_ep / n, g_same / dec_all, g_back / dec_all, g_off, f_noutil / n, f_util / n);
   }
   rf::Json ev = rf::Json::object();
   ev.set("iter", (int)a.scenes.size() - 1).set("ckpt", "hier_" + mode).set("rows", eval_rows);
@@ -526,6 +644,8 @@ int main(int argc, char** argv) {
     else if (k == "--frontier") a.frontier = nx();
     else if (k == "--obs-every") a.obs_every = std::max(1, std::stoi(nx()));
     else if (k == "--people") a.people = std::stoi(nx());
+    else if (k == "--graph-stand") a.graph_stand = std::stoi(nx());
+    else if (k == "--graph-open") a.graph_open = std::stoi(nx());
     else if (k == "--cpu") a.cpu = true;
     else if (k == "--eval-seed") a.eval_seed = true;
     else { std::fprintf(stderr, "모르는 인자 %s\n", k.c_str()); return 2; }
@@ -536,7 +656,7 @@ int main(int argc, char** argv) {
   }
   try {
     for (auto& m : a.modes) {
-      if (m == "slot0" || m == "slot0_nosafe") run_hier(a, m);
+      if (m == "slot0" || m == "slot0_nosafe" || m == "graph_guide" || m == "graph_max" || m == "graph_front" || m == "graph_random") run_hier(a, m);
       else run_mode(a, m);
     }
   } catch (const std::exception& e) {

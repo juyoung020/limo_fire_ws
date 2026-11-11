@@ -47,6 +47,15 @@ struct StepOut {
   int o1d;                      // 관측 1D 한 환경 칸 수
 };
 
+// 그래프 모드 관측 (cfg.graph_on — mdp/obs_layout.h mdp::graph, mdp/graph.h). StepOut 처럼 장치 포인터(CPU 판이면 호스트), 그래프 모드가 아니면 nullptr
+struct GraphOut {
+  const uint8_t* feat;          // [N][graph::N][graph::FEAT]
+  const uint32_t* edge;         // [N][graph::N]  비트 k = 스텐실 k 번 이웃과 간선
+  const int32_t* cur;           // [N]  현재 노드 (늘 유효)
+  const float* glob;            // [N][graph::GLOB]
+  const int32_t* cand;          // [N][graph::NB]  현재 노드의 이웃 칸 (y · gw + x, −1 간선 없음) — 행동 a[0] = k 의 목표. 행동 마스크 = cand ≥ 0 = edge[cur] 비트
+};
+
 class Env {
  public:
   // gpu: true 면 장치 메모리·커널, false 면 CPU 참조판
@@ -62,6 +71,8 @@ class Env {
   // 계층형 후보 칸은 관측 1D 뒤 mdp::hier::CAND_1D 칸. GPU 면 장치 포인터, CPU 면 호스트 포인터
   void step(const float* actions, cudaStream_t st = 0);
   StepOut outputs() const;
+  GraphOut graph() const;
+  void graph_refresh();   // 그래프 관측을 지금 상태에서 한 번 더 냄 (값은 그대로 — 시간 재기용, env_bench --graph)
   void sync() const;
 
   // 호스트로 꺼내기 (비교·뷰어용)
@@ -75,6 +86,8 @@ class Env {
   // 닫힘 규칙의 지나간 길 비트 판 [env · 2 · size · fmap_row] (env.h EnvBatch::trail: 0 지나간 칸 · 1 본 칸) — 도구가 닫힘을 호스트에서 다시 셀 때
   void get_trail(std::vector<uint32_t>& out) const;
   void get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d, std::vector<float>& priv) const;
+  void get_cand(std::vector<int32_t>& out) const;   // 계층형 후보 목표 칸 [N][mdp::hier::K] (−1 빈 슬롯) — 도구용
+  void get_graph(std::vector<uint8_t>& feat, std::vector<uint32_t>& edge, std::vector<int32_t>& cur, std::vector<float>& glob, std::vector<int32_t>& cand) const;
   void get_terms(std::vector<float>& terms) const;
   void get_ep(std::vector<EpInfo>& ep) const;
   void get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const;
@@ -111,7 +124,7 @@ inline void random_action(const EnvCfg& c, uint64_t& rng, float* out, float p_de
       out[2] = dm::rand_range(rng, -1.2f, 1.2f);
     }
   } else if (c.action_mode == kActPath) {   // 후보 번호 (빈 칸이면 환경이 제자리 회전)
-    out[0] = (float)(dm::splitmix64(rng) % (uint64_t)mdp::hier::K);
+    out[0] = (float)(dm::splitmix64(rng) % (uint64_t)(c.graph_on ? mdp::graph::NB : mdp::hier::K));
     out[1] = out[2] = 0.f;
   } else {
     out[0] = (float)(dm::splitmix64(rng) % (uint64_t)(c.n_dir * c.n_dist));
@@ -146,6 +159,8 @@ void hier_plan_cpu(const EnvBatch& b, EnvState& e, int env, int slot);
 // 시험용: 계층형 결정 앞 깊이 카메라 장애물 층 갱신 (CPU 참조판 그대로 — b.cvox·b.cpts 의 환경 env 칸만 바꿈, cam_on 이 아니면 아무것도 안 함)
 void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env);
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st = 0);
+void env_graph_gpu(const EnvBatch& b, cudaStream_t st = 0);   // 그래프 관측만 (graph_on)
+void env_graph_cpu(const EnvBatch& b);
 void env_reset_cpu(const EnvBatch& b);
 
 }  // namespace sim

@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "../network/actor_critic.h"
 
@@ -72,6 +73,17 @@ struct UpdateStats {
   float kl0 = 0, logit_cm = 0, logit_spread = 0, logit_absmax = 0;
 };
 
+// 그래프 어텐션 정책(ACSpec::graph)의 관측 한 묶음 (모두 GPU, 환경 n 개 — mdp/obs_layout.h mdp::graph):
+// 노드 특징 u8 [n][N][FEAT], 간선 u32 [n][N], 현재 노드 int [n], 전역 float [n][graph_glob] (graph_glob = 0 이면 안 읽음), 참값 float [n][norm_dim] (nullptr = 0).
+// 모든 환경의 현재 노드는 유효해야 한다(아니면 예외).
+struct GraphObs {
+  const uint8_t* feat = nullptr;
+  const uint32_t* edge = nullptr;
+  const int* cur = nullptr;
+  const real* glob = nullptr;
+  const real* priv = nullptr;
+};
+
 class PPO {
  public:
   PPO(const PPOConfig& cfg, const XNET_NS::ACSpec& spec, uint64_t seed);
@@ -95,6 +107,14 @@ class PPO {
   void act_inference(const uint8_t* img, const real* obs1d, real* actions, int n = -1, int64_t sample_call = -1);
   // 계층형만: 직전 act_inference 의 슬롯 로짓 (장치 [n][K], 가림 전) — n 이 한 묶음(chunk) 안일 때. 실물 CPU 정방향 비교(tools/policy_cpu_check)용
   const real* last_logits() const { return c_logits_; }
+
+  // ---- 그래프 어텐션 정책 (spec.graph) — 위 네 함수의 그래프 관측 판. store·save·load 는 같다 ----
+  // actions [N][mdp::act::DIM], a[0] = 고른 이웃 번호 (5×5 스텐실 0 … 23, 간선 있는 칸만 — 가린 범주 분포). 고를 이웃이 없으면 0
+  void act(const GraphObs& o, real* actions);
+  void compute_returns(const GraphObs& o);
+  UpdateStats update(const GraphObs& o);
+  // 가치·참값은 안 쓴다 (o.priv 무시). 직전 호출의 로짓은 last_logits() — n 이 한 묶음 안일 때
+  void act_inference(const GraphObs& o, real* actions, int n = -1, int64_t sample_call = -1);
 
   // 체크포인트: 가중치·Adam(m, v, 걸음)·정규화 통계·반복 수·학습률·난수 계수. 롤아웃 도중 저장은 안 됨.
   void save(const std::string& path) const;
@@ -125,6 +145,13 @@ class PPO {
   real* cx() const { return c_xc_ ? c_xc_ : c_x_; }
   uint16_t* cxh() const { return c_xc_ ? c_xch_ : c_xh_; }
   double minibatch(const int* d_idx, int n, int mb_size, bool backward, double stats[5]);
+  void gae();                    // 롤아웃·last_val_ → 수익·이점(정규화)
+  UpdateStats finish_update();   // compute_returns 뒤: 미니배치 갱신
+  // 그래프 판. 묶음 = 샘플 수 ≤ chunk 이고 유효 노드 합 ≤ graph_rows 인 연속 구간 (cnt = 샘플마다 유효 노드 수)
+  std::vector<int> graph_segments(const int* cnt, int n_all) const;
+  // 묶음 하나 정방향: 정책 몸통(+ 로짓 → c_logits_, 가림 → c_maskt_) · 가치(→ v_out, nullptr 이면 안 함). glob·privn 은 [n][ld] 버퍼의 열
+  void graph_forward(int n, const XNET_NS::GraphIn& in, const int* cnt, const real* glob, const real* privn, long ld, bool policy, real* v_out);
+  double minibatch_graph(const int* d_idx, int n, int mb_size, bool backward, double stats[5]);
 
   PPOConfig cfg_;
   XNET_NS::ActorCritic* ac_;
@@ -134,6 +161,13 @@ class PPO {
   bool disc_ = false;
   int K_ = 0, AO_ = 0, ADIM_ = 0, SOFF_ = 0, SF_ = 0;
   real *s_mask_ = nullptr, *s_lstat_ = nullptr, *c_logits_ = nullptr, *c_G_ = nullptr, *c_feat_ = nullptr, *c_maskt_ = nullptr;
+  // 그래프 (spec.graph): 범주 행동 K_ = 24. 노드 GN_ 자리 × GF_ 칸, 전역 GG_ 칸, 참값 GP_ 칸. 롤아웃 1D 행 s_obs_ = [전역 원값 GG_ | 정규화 참값 GP_] (D_ 칸)
+  bool graph_ = false;
+  int GN_ = 0, GF_ = 0, GG_ = 0, GP_ = 0;
+  uint8_t* s_gfeat_ = nullptr;    // [S][GN_][GF_]
+  uint32_t* s_gedge_ = nullptr;   // [S][GN_]
+  int *s_gcur_ = nullptr, *d_cnt_ = nullptr;   // [S], 유효 노드 세기 작업 버퍼 [N]
+  std::vector<int> h_cnt_;        // 롤아웃 샘플마다 유효 노드 수 (host — 미니배치를 행 상한에 맞춰 나누는 데)
   int step_ = 0, iter_ = 0;
   uint64_t act_calls_ = 0;
   float lr_;

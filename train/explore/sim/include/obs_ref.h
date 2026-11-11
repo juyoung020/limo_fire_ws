@@ -45,6 +45,18 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
     const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, out.data(), (int)out.size());
     const int n_out = r.n_found < (int)out.size() ? r.n_found : (int)out.size();
     mdp::reach_pick(r, out.data(), n_out, mdp::obsgen::reach_min_cells(c), n_tot, &sh.reach);
+    if (b.gfront) {   // 그래프 모드: 닫힘을 막는 칸 비트 판 (GPU reach_block 과 같은 값 — 넘침·시작 칸 없음이면 비움)
+      const int gws = fmap_row(c);
+      uint32_t* GF = b.gfront + (size_t)env * c.size * gws;
+      for (int y = e.kb_y0; y <= e.kb_y1; ++y)
+        for (int wx = e.kb_x0 >> 5; wx <= (e.kb_x1 >> 5); ++wx) GF[y * gws + wx] = 0u;
+      if (n_tot <= mdp::kReachCap && r.start_free)
+        for (int i = 0; i < r.n_reach; ++i) {
+          const int idx = qa[i], x = idx % m.gw, y = idx / m.gw;
+          if (!(flag[idx] & 2) || !mdp::frontier_cell(mv, x, y) || out[label[idx]].n < c.close_min) continue;
+          if (!mdp::looked_cell(mv, sb.look, sb.vis, sb.tws, x, y)) GF[y * gws + (x >> 5)] |= 1u << (x & 31);
+        }
+    }
     if (b.cand) {
       thread_local std::vector<uint64_t> key2;
       if (key2.size() < out.size()) key2.resize(out.size());
@@ -81,6 +93,35 @@ inline void camlayer_ref(const EnvBatch& b, const EnvState& e, int env) {
     const int ci = cam_fp_cell(b, e, j);
     if (ci >= 0) V[ci] = 0;
   }
+}
+
+// 그래프 모드 관측 (mdp/graph.h graph_build) — graph_on 일 때만. 지도(lmap)와 지도 자세만 쓴다: 시뮬 CPU 참조와 실물 노드가 같은 함수.
+// 부르는 때 = 결정 관측(묶음 끝·판 시작) 뒤. 판 첫 관측(e.step == 0)이 방문 표시를 비운다
+inline void graph_ref(const EnvBatch& b, const EnvState& e, int env) {
+  if (!b.gfeat) return;
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
+  const mdp::Robot rb = mdp::obsgen::reach_robot(c);
+  const mdp::graphgen::Params p = graph_params(c, m, e);
+  const auto in_map = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh; };
+  const auto free = [&](int x, int y) { return in_map(x, y) && mdp::cls_at(mv, x, y) == mdp::kFree; };
+  const auto pass = [&](int x, int y) { return c.graph_stand ? (in_map(x, y) && mdp::standable(mv, x, y, rb)) : free(x, y); };
+  const int tws = fmap_row(c);
+  const uint32_t* gf = b.gfront + (size_t)env * c.size * tws;   // 닫힘을 막는 칸 (reach_obs 가 이번 관측에 씀)
+  const auto front = [&](int x, int y) {
+    if (!c.graph_open) return mdp::frontier_cell(mv, x, y);
+    return x >= e.kb_x0 && x <= e.kb_x1 && y >= e.kb_y0 && y <= e.kb_y1 && mdp::plane_bit(gf, tws, x, y);
+  };
+  uint32_t* vis = b.gvis + (size_t)env * (mdp::graph::N / 32);
+  if (e.step == 0)
+    for (int i = 0; i < mdp::graph::N / 32; ++i) vis[i] = 0u;
+  int rx, ry;
+  cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
+  const int cur = mdp::graphgen::graph_build(p, rx, ry, pass, free, front, vis, b.gfeat + (size_t)env * mdp::graph::N * mdp::graph::FEAT,
+                                             b.gedge + (size_t)env * mdp::graph::N, b.gcand + (size_t)env * mdp::graph::NB);
+  b.gcur[env] = cur;
+  graph_glob(b, e, env, p, cur);
 }
 
 }  // namespace sim

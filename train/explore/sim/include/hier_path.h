@@ -424,6 +424,15 @@ DEV bool path_clear(const EnvState& e, const S& stand) {
 // 지난 결정이 "목표로 못 나아감"이었는지 셈: (a) 충돌 검사가 결정 걸음의 절반 넘게 멈춤·물러남, (b) 목표는 있는데 경로를 못 짬, (c) 허용 칸(목표 아닌 경로 끝)에
 // 도착해 섬 — 같은 목표(rec_bl_r 안)에서 이어지면 1·2 번째 다시 계획(*force = 1), 3 번째 (a) 면 물러나기, 4 번째 포기(rec_bl_steps 동안 그 둘레 후보 안 감).
 // 포기한 목표 둘레 후보를 고르면 포기 안 한 후보 중 번호가 가장 작은 것으로 바꿈 (explore_lite 가 실패한 목표를 goal_blacklist 에 넣고 다음 프론티어로 가는 꼴)
+// 행동 칸: 계층형은 후보 K 칸(b.cand), 그래프 모드는 현재 노드의 이웃 NB 칸(b.gcand) — 계획·복구는 이 셋으로만 고른 칸을 본다
+DEV int act_slots(const EnvBatch& b) { return b.gcand ? mdp::graph::NB : mdp::hier::K; }
+DEV const int32_t* act_cells(const EnvBatch& b, int env) { return b.gcand ? b.gcand + (size_t)env * mdp::graph::NB : b.cand + (size_t)env * mdp::hier::K; }
+DEV int slot_of(const EnvBatch& b, float a) { return (a >= 0.f && a < (float)act_slots(b)) ? (int)a : -1; }   // 범위 밖·NaN 은 −1 (빈 칸과 같음 — 제자리 회전)
+// 고른 칸이 지금 목표와 같은가: 계층형은 그 덩어리가 지금 목표 칸을 품음(cand_cur 비트), 그래프 모드는 같은 노드 칸
+DEV bool act_same(const EnvBatch& b, const EnvState& e, int env, int k) {
+  if (b.gcand) return k >= 0 && b.gcand[(size_t)env * mdp::graph::NB + k] == e.goal_cell;
+  return ((b.cand_cur[env] >> k) & 1) != 0;
+}
 DEV bool path_near(const EnvCfg& c, const MapDev& m, int a, int b, float r) {
   const int dx = a % m.gw - b % m.gw, dy = a / m.gw - b / m.gw;
   const float q = r / c.res;
@@ -439,7 +448,7 @@ DEV int path_recovery(const EnvBatch& b, EnvState& e, int env, int k, int* force
   const MapDev& m = b.maps[e.map];
   *force = 0;
   if (!c.rec_on) return k;
-  const int32_t* C = b.cand + (size_t)env * mdp::hier::K;
+  const int32_t* C = act_cells(b, env);
   // 지난 결정이 목표로 못 나아갔나
   bool stuck = e.p_blk_now * 2 > c.decide_steps;   // (a)
   const bool blocked = stuck;
@@ -468,7 +477,7 @@ DEV int path_recovery(const EnvBatch& b, EnvState& e, int env, int k, int* force
     *force = 1;
   }
   if (tgt < 0 || !path_blacklisted(c, m, e, tgt)) return k;
-  for (int j = 0; j < mdp::hier::K; ++j)   // 포기한 목표 둘레: 포기 안 한 후보 중 번호가 가장 작은 것
+  for (int j = 0; j < act_slots(b); ++j)   // 포기한 목표 둘레: 포기 안 한 후보 중 번호가 가장 작은 것
     if (C[j] >= 0 && !path_blacklisted(c, m, e, C[j])) return j;
   return -1;
 }

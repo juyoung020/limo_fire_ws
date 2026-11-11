@@ -98,6 +98,22 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   c.goal_margin = ag["goal_margin"].as<float>();
   const float period = (c.action_mode != kActGoal ? av : ag)["period"].as<float>();   // 계층형도 0.1 s 속도 행동 주기로 시뮬 걸음 (결정은 그 묶음)
   c.substeps = (int)std::lround(period / c.dt);
+  {   // 그래프 모드 (mdp/graph.h, action.graph) — 켜는 것은 도구·학습기(--graph → graph_on = 1, action_mode = path)
+    const YAML::Node gr = a["graph"];
+    const auto num = [&](const char* k, float d) { return gr && gr[k] ? gr[k].as<float>() : d; };
+    c.graph_on = 0;
+    c.graph_stand = gr && gr["standable"] ? (gr["standable"].as<bool>() ? 1 : 0) : 1;
+    c.graph_util_r = (int)(num("utility_range_ratio", 0.8f) * c.map_max_range / c.res);
+    c.graph_min_util = (int)num("min_utility", 2.f);
+    c.graph_open = gr && gr["blocking_only"] ? (gr["blocking_only"].as<bool>() ? 1 : 0) : 1;
+    c.graph_fvox = (int)std::lround(num("frontier_cell", 0.4f) / c.res);
+    if (c.graph_fvox < 1 || ((c.size + c.graph_fvox - 1) / c.graph_fvox) * ((c.size + c.graph_fvox - 1) / c.graph_fvox) > mdp::graphgen::kVoxMax)
+      throw std::runtime_error(path + ": action.graph.frontier_cell 이 너무 작음 (복셀 수 상한)");
+    c.graph_util_norm = std::max(1, (int)(c.map_max_range * 3.14f / ((float)c.graph_fvox * c.res)));   // 전작 env.py: SENSOR_RANGE * 3.14 // FRONTIER_CELL_SIZE
+    const float st = mdp::graph::NODE_RES / c.res;
+    if (std::fabs(st - std::round(st)) > 1e-3f || (int)std::lround(st) * mdp::graph::GW < c.size)
+      throw std::runtime_error(path + ": 그래프 노드 격자(NODE_RES × GW)가 지도(size × res)를 못 덮음");
+  }
   if (c.substeps < 1 || std::fabs(c.substeps * c.dt - period) > 1e-4f)
     throw std::runtime_error(path + ": action period 는 time.dt 의 배수");
   // 계층형 (include/hier_path.h): 결정 주기 = 속도 행동 주기의 정수 배, 추종기 직진 속도·장애물 근접 감속 (기준선 fast 판과 같은 값), 경로 무게 경계.

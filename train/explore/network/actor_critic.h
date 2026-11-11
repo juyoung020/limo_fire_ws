@@ -15,6 +15,7 @@
 
 #include "cnn_fused.cuh"
 #include "common.cuh"
+#include "graph_net.cuh"
 #include "slot_head.cuh"
 
 namespace XNET_NS {
@@ -169,12 +170,22 @@ struct ACSpec {
   // 계층형 (mdp/README "계층형", slot_head.cuh): n_slots > 0 이면 행동 = 후보 슬롯 하나 (가린 범주 분포). actor 출력은 상태 임베딩(actor.out 칸),
   // 머리가 슬롯마다 [임베딩 ; 정규화 1D 의 slot_off + k·slot_feat 칸] → 로짓. 이때 n_cont = 0 (σ 없음), 선언 로짓 없음
   int n_slots = 0, slot_feat = 0, slot_off = 0, slot_hidden = 64;
+  // 그래프 어텐션 정책 (graph_net.cuh, network/README "그래프 어텐션 정책"): graph = true 면 관측 = 노드 그래프, 행동 = 현재 노드의 이웃 24 칸 중 하나
+  // (가린 범주 분포). enc·actor 는 안 쓴다. critic = 가치 머리 MLP — in1d 는 참값 칸 수(= norm_dim), 입력은 [E | Hc | 정규화 참값]. n_cont = 0
+  bool graph = false;
+  GraphSpec gspec;
+  int graph_glob = 0;          // 정책 머리에 넣는 전역 벡터 칸 수 (HEADER 에 없는 우리 추가, 가중치 0 으로 시작). 0 = 끔 (논문 구조 그대로)
+  bool graph_share = false;    // true 면 가치 머리가 정책 몸통을 같이 쓴다 (몸통 기울기 = 정책 + 가치). 기본은 전작처럼 따로 (같은 구조 몸통 gbody_c)
+  long graph_rows = 8192;      // 한 번에 계산하는 유효 노드(행) 수 상한 — 작업 공간이 이만큼 (fp32, HEADER 크기에서 행마다 약 46 KB). 잠정: RTX 3060 에서
+                               // 2048·4096·8192·16384·32768 을 재 보니 4096·8192 가 가장 빨랐다 (network/README "그래프 어텐션 정책" 성능)
 };
 
 // obs_layout.h 크기로 만든 탐사 RL 기본 구조
 ACSpec explore_spec();
 // 계층형 구조 (obs_layout.h mdp::hier): 같은 인코더·MLP, actor 출력 = 임베딩 64, 슬롯 머리 (은닉 64)
 ACSpec explore_spec_hier();
+// 그래프 어텐션 구조 (obs_layout.h mdp::graph): HEADER 크기 (d 128, 인코더 6 층, 머리 8), 전역 벡터 GLOB, 가치 머리 MLP [128] (잠정)
+ACSpec explore_spec_graph();
 
 class ActorCritic {
  public:
@@ -184,7 +195,7 @@ class ActorCritic {
   ActorCritic& operator=(const ActorCritic&) = delete;
 
   void zero_grad();
-  void set_mlp_mode(int m) { actor.mlp_mode = critic.mlp_mode = m; }
+  void set_mlp_mode(int m) { actor.mlp_mode = critic.mlp_mode = spec.graph ? 0 : m; }   // 그래프 모드의 가치 머리는 cuBLAS 길
   // 학습 변수를 바꾼 뒤(Adam·불러오기·초기화·검사 도구의 직접 수정) 부른다 — bf16 사본을 새로 (stream 순서)
   void params_changed();
   // (bf16 사본은 actor·critic 이 따로 — Net::Wh_)
@@ -195,6 +206,10 @@ class ActorCritic {
   Net enc, actor, critic;  // enc = 공유 인코더 (split 이면 actor 인코더) (특징 enc.x0() [n][nf]), actor·critic = MLP (입력 [F | 1D])
   Net enc_c;               // split 일 때만: critic 인코더 (같은 구조, 따로 가중치)
   SlotHead head;            // spec.n_slots > 0 일 때만: 슬롯 점수 머리
+  // spec.graph 일 때만: 정책 몸통, 가치 몸통(graph_share 면 안 씀), 포인터 정책 머리. 가치 머리 MLP 는 critic
+  GraphBody gbody, gbody_c;
+  PointerHead ptr;
+  GraphBody& vbody() { return spec.graph_share ? gbody : gbody_c; }
   bool split = false;
   int nf = 0;              // 인코더 특징 수
   Normalizer norm;
@@ -211,6 +226,10 @@ class ActorCritic {
   void fork();
   void join();
   cudaEvent_t ev_fork_, ev_join_;
+
+ private:
+  void alloc_common();   // 변수·기울기 버퍼, 스트림, cuBLAS
+  void init_graph(uint64_t seed);
 };
 
 }  // namespace XNET_NS

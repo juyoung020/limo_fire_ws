@@ -225,7 +225,7 @@ __global__ void k_loss(LossArgs p) {
 
 
 // ---------------- 계층형: 가린 범주 분포 (ACSpec::n_slots > 0, 슬롯 머리 slot_head.cuh) ----------------
-constexpr int MAXK = 16;   // 슬롯 최대 수 (커널 안 고정 배열)
+constexpr int MAXK = 24;   // 범주 칸 최대 수 (커널 안 고정 배열) — 계층형 슬롯 16, 그래프 이웃 24
 // 로짓 l[K]·가림 m[K](1 = 있음) → 있는 칸의 log 확률 lp[K] (가린 칸 확률 0 — lp 는 0 으로 두고 쓰지 않음), 반환 = 있는 칸 수.
 // log-sum-exp 는 있는 칸 최댓값을 빼서, log p = (l − max) − log Σ — mx + log Σ 를 먼저 더하면 |l| 이 크면(> ~1e7) log Σ (≤ log K) 가
 // 반올림에 먹혀 log p = 0 · Σ p = V 가 된다 (explore_h2 반복 3500 뒤 엔트로피 0 으로 찍힌 까닭)
@@ -418,6 +418,29 @@ __global__ void k_cat_logit_stats(const real* logits, const real* mask, int n, i
   out[(long)i * 3 + 2] = (real)mx;
 }
 
+// ---------------- 그래프 어텐션 정책 (ACSpec::graph) ----------------
+// 가림: 현재 노드의 k 번 이웃 행이 있으면(간선 있고 이웃 유효) 1
+__global__ void k_nb_mask(const int* nbrow, long n, real* mask) {
+  long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (t < n) mask[t] = nbrow[t] >= 0 ? (real)1 : (real)0;
+}
+// 가치 머리 입력 [E | Hc | 정규화 참값]: dst [n][2d + p]
+__global__ void k_vcat(const real* E, const real* Hc, const real* priv, long ldp, int n, int d, int p, real* dst) {
+  long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  const int C = 2 * d + p;
+  if (t >= (long)n * C) return;
+  const int i = (int)(t / C), j = (int)(t % C);
+  dst[t] = j < d ? E[(long)i * d + j] : j < 2 * d ? Hc[(long)i * d + j - d] : priv[(long)i * ldp + j - 2 * d];
+}
+// 롤아웃 1D 행 [전역 원값 g | 참값 p (정규화 전 — 뒤에 제자리 정규화)]: 없는 쪽(nullptr)은 0
+__global__ void k_gobs(const real* glob, int g, const real* priv, int p, int n, real* dst) {
+  long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  const int D = g + p;
+  if (t >= (long)n * D) return;
+  const int i = (int)(t / D), j = (int)(t % D);
+  dst[t] = j < g ? (glob ? glob[(long)i * g + j] : (real)0) : (priv ? priv[(long)i * p + j - g] : (real)0);
+}
+
 // MLP 입력 [F | 1D] 의 1D 열: dst[i·ldd + j] = x[i·ldx + j] (j < d), dst_h 면 bf16 만. F 열은 인코더가 바로 쓴다
 __global__ void k_put_1d(const real* __restrict__ x, int ldx, int d, int n, real* dst, __nv_bfloat16* dst_h, long ldd) {
   long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
@@ -466,6 +489,8 @@ T* dmalloc(long n, size_t& acc) {
 
 PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), seed_(seed), lr_(cfg.lr) {
   if (cfg_.chunk <= 0) cfg_.chunk = std::max(1, cfg_.num_envs * cfg_.steps_per_env / std::max(1, cfg_.minibatches));  // 미니배치 하나
+  // 그래프: 한 번에 넣는 양은 유효 노드 합(ACSpec::graph_rows)이 정한다 — 샘플 수 상한은 그 안에서 넉넉히 (잠정 1024)
+  if (spec.graph && cfg.chunk <= 0) cfg_.chunk = std::min(cfg_.chunk, 1024);
   if (spec.n_cont > MAXC) throw std::runtime_error("n_cont > MAXC");
   ac_ = new ActorCritic(spec, seed, cfg_.chunk);
   CKB(cublasSetMathMode(ac_->cublas, cfg.tf32 ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH));
@@ -495,6 +520,20 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
     SF_ = spec.slot_feat;
     A_ = 1;   // 저장하는 행동 = 슬롯 번호 하나
     if (K_ > MAXK) throw std::runtime_error("n_slots > MAXK");
+  }
+  graph_ = spec.graph;
+  if (graph_) {   // 행동 = 이웃 번호 하나 (가린 범주 분포). 공통 성분 벌점은 안 씀 — 포인터 로짓은 10·tanh 로 유계라 떠내려갈 수 없다
+    disc_ = true;
+    K_ = kGNb;
+    A_ = 1;
+    AO_ = SOFF_ = SF_ = 0;
+    cfg_.slot_cm_coef = 0;
+    GN_ = spec.gspec.gw * spec.gspec.gh;
+    GF_ = spec.gspec.feat;
+    GG_ = spec.graph_glob;
+    GP_ = spec.norm_dim;
+    D_ = GG_ + GP_;
+    IMG_ = NF_ = 0;
   }
   if (IMG_ % 4) throw std::runtime_error("img_stride 는 4 의 배수여야 함");
   if (S_ % cfg.minibatches) throw std::runtime_error("N·T 가 minibatches 로 안 나뉨");
@@ -538,9 +577,19 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   c_red_ = dmalloc<real>(16, b);
   c_x_ = dmalloc<real>((long)C * (NF_ + D_), b);
   // bf16 MLP(mlp 2)는 첫 층이 cuBLAS bf16 이라 입력 bf16 사본 c_xh_ 를 둔다 (1D 열은 사본에만, F 열은 둘 다 — fp32 는 넷째 층 ELU' 용)
-  if (sizeof(real) == 4 && cfg_.mlp == 2) c_xh_ = dmalloc<uint16_t>((long)C * (NF_ + D_), b);
-  ac_->enc.set_x0(c_x_, NF_ + D_, c_xh_);  // 인코더가 특징을 MLP 입력 [F | 1D] 의 앞 열에 바로 쓴다 (모으는 복사 없음)
-  if (ac_->split) {   // critic 인코더는 자기 입력 버퍼 [F_c | 1D] 에
+  if (sizeof(real) == 4 && cfg_.mlp == 2 && !graph_) c_xh_ = dmalloc<uint16_t>((long)C * (NF_ + D_), b);
+  if (graph_) {
+    const int d = spec.gspec.d;
+    c_xc_ = dmalloc<real>((long)C * (2 * d + GP_), b);   // 가치 머리 입력 [E | Hc | 참값]
+    s_gfeat_ = dmalloc<uint8_t>((long)S_ * GN_ * GF_, b);
+    s_gedge_ = dmalloc<uint32_t>((long)S_ * GN_, b);
+    s_gcur_ = dmalloc<int>(S_, b);
+    d_cnt_ = dmalloc<int>(N_, b);
+    h_cnt_.assign(S_, 0);
+  } else {
+    ac_->enc.set_x0(c_x_, NF_ + D_, c_xh_);  // 인코더가 특징을 MLP 입력 [F | 1D] 의 앞 열에 바로 쓴다 (모으는 복사 없음)
+  }
+  if (!graph_ && ac_->split) {   // critic 인코더는 자기 입력 버퍼 [F_c | 1D] 에
     c_xc_ = dmalloc<real>((long)C * (NF_ + D_), b);
     if (c_xh_) c_xch_ = dmalloc<uint16_t>((long)C * (NF_ + D_), b);
     ac_->enc_c.set_x0(c_xc_, NF_ + D_, c_xch_);
@@ -553,7 +602,7 @@ PPO::~PPO() {
   for (void* p : std::initializer_list<void*>{m_, v_, s_img_, s_obs_, s_act_, s_logp_, s_val_, s_mu_, s_logit_, s_sd_,
                                               s_rew_, s_done_, s_ret_, s_adv_, raw_, last_obs_, last_val_, c_img_,
                                               c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_,
-                                              s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_})
+                                              s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_})
     cudaFree(p);
   delete ac_;
 }
@@ -583,6 +632,7 @@ void PPO::concat_norm(const real* obs1d, const real* priv, int n, bool upd, real
 }
 
 void PPO::act(const uint8_t* img, const real* obs1d, const real* priv, real* actions) {
+  if (graph_) throw std::runtime_error("PPO::act: 그래프 구조는 GraphObs 판을 쓴다");
   if (step_ >= T_) throw std::runtime_error("PPO::act: 롤아웃이 가득 참 — update 먼저");
   auto st = ac_->stream;
   long k0 = (long)step_ * N_;
@@ -634,6 +684,7 @@ void PPO::store(const real* reward, const int* done) {
 void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, int n_all, int64_t sample_call) {
   if (n_all < 0) n_all = N_;
   if (n_all > N_) throw std::runtime_error("act_inference: n > num_envs");
+  if (graph_) throw std::runtime_error("PPO::act_inference: 그래프 구조는 GraphObs 판을 쓴다");
   auto st = ac_->stream;
   int da = ac_->spec.actor.in1d;
   // 정책 1D 만 정규화 (같은 통계의 앞 da 차원)
@@ -658,6 +709,7 @@ void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, in
 }
 
 void PPO::compute_returns(const uint8_t* img, const real* obs1d, const real* priv) {
+  if (graph_) throw std::runtime_error("PPO::compute_returns: 그래프 구조는 GraphObs 판을 쓴다");
   if (step_ != T_) throw std::runtime_error("PPO::compute_returns: 롤아웃이 덜 참");
   auto st = ac_->stream;
   concat_norm(obs1d, priv, N_, false, last_obs_);
@@ -673,6 +725,11 @@ void PPO::compute_returns(const uint8_t* img, const real* obs1d, const real* pri
       ac_->critic.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, last_val_ + c0, nullptr, c_xh_);
     }
   }
+  gae();
+}
+
+void PPO::gae() {
+  auto st = ac_->stream;
   k_gae<<<nblk(N_, 128), 128, 0, st>>>(s_rew_, s_done_, s_val_, last_val_, T_, N_, cfg_.gamma, cfg_.lam, s_ret_,
                                        s_adv_);
   // 이점 정규화 (전체, torch.std 는 불편 추정) — rollout_storage.py:166-167
@@ -685,6 +742,7 @@ void PPO::compute_returns(const uint8_t* img, const real* obs1d, const real* pri
 
 // 미니배치 하나 (d_idx 의 n 개, 평균 분모 mb) 손실 → 기울기 누적. 반환 = 손실 (double), stats 에 [surr, value, kl, ratio] 합
 double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double stats[5]) {
+  if (graph_) return minibatch_graph(d_idx, n_all, mb, backward, stats);
   auto st = ac_->stream;
   auto& ac = *ac_;
   std::fill(stats, stats + 5, 0.0);
@@ -776,6 +834,15 @@ double PPO::loss_and_grad(const int* d_idx, int n, bool backward) {
 
 UpdateStats PPO::update(const uint8_t* img, const real* obs1d, const real* priv) {
   compute_returns(img, obs1d, priv);
+  return finish_update();
+}
+
+UpdateStats PPO::update(const GraphObs& o) {
+  compute_returns(o);
+  return finish_update();
+}
+
+UpdateStats PPO::finish_update() {
   auto st = ac_->stream;
   UpdateStats out;
   {
@@ -843,6 +910,157 @@ UpdateStats PPO::update(const uint8_t* img, const real* obs1d, const real* priv)
   step_ = 0;
   ++iter_;
   return out;
+}
+
+// ---------------- 그래프 어텐션 정책 ----------------
+std::vector<int> PPO::graph_segments(const int* cnt, int n_all) const {
+  const long cap = ac_->gbody.cap_rows();
+  std::vector<int> seg{0};
+  long rows = 0;
+  int n = 0;
+  for (int i = 0; i < n_all; ++i) {
+    if (cnt[i] < 1) throw std::runtime_error("PPO(그래프): 현재 노드가 무효이거나 유효 노드가 없는 관측 (샘플 " + std::to_string(i) + ")");
+    if (n == cfg_.chunk || rows + cnt[i] > cap) {
+      seg.push_back(i);
+      rows = 0;
+      n = 0;
+    }
+    rows += cnt[i];
+    ++n;
+  }
+  seg.push_back(n_all);
+  return seg;
+}
+
+void PPO::graph_forward(int n, const GraphIn& in, const int* cnt, const real* glob, const real* privn, long ld, bool policy, real* v_out) {
+  auto& ac = *ac_;
+  auto st = ac.stream;
+  const int d = ac.spec.gspec.d;
+  const bool share = ac.spec.graph_share;
+  if (policy || (v_out && share)) ac.gbody.forward(ac.cublas, st, n, in, cnt);
+  if (policy) {
+    ac.ptr.forward(ac.cublas, st, n, ac.gbody.E(), ac.gbody.Hc(), glob, ld, ac.gbody.Hn(), ac.d_params, c_logits_);
+    k_nb_mask<<<nblk((long)n * K_), 256, 0, st>>>(ac.gbody.nbrow(), (long)n * K_, c_maskt_);
+  }
+  if (v_out) {
+    if (!share) ac.gbody_c.forward(ac.cublas, st, n, in, cnt);
+    GraphBody& vb = ac.vbody();
+    k_vcat<<<nblk((long)n * (2 * d + GP_)), 256, 0, st>>>(vb.E(), vb.Hc(), privn, ld, n, d, GP_, c_xc_);
+    ac.critic.forward(ac.cublas, st, n, nullptr, c_xc_, 2 * d + GP_, v_out);
+  }
+}
+
+void PPO::act(const GraphObs& o, real* actions) {
+  if (!graph_) throw std::runtime_error("PPO::act(GraphObs): 그래프 구조가 아님");
+  if (step_ >= T_) throw std::runtime_error("PPO::act: 롤아웃이 가득 참 — update 먼저");
+  auto st = ac_->stream;
+  const long k0 = (long)step_ * N_;
+  uint8_t* gf = s_gfeat_ + k0 * GN_ * GF_;
+  uint32_t* ge = s_gedge_ + k0 * GN_;
+  int* gc = s_gcur_ + k0;
+  CK(cudaMemcpyAsync(gf, o.feat, (size_t)N_ * GN_ * GF_, cudaMemcpyDeviceToDevice, st));
+  CK(cudaMemcpyAsync(ge, o.edge, (size_t)N_ * GN_ * sizeof(uint32_t), cudaMemcpyDeviceToDevice, st));
+  CK(cudaMemcpyAsync(gc, o.cur, (size_t)N_ * sizeof(int), cudaMemcpyDeviceToDevice, st));
+  // 롤아웃 1D 행 = [전역 원값 | 정규화 참값] (정규화 통계는 참값만)
+  real* obs = s_obs_ + k0 * D_;
+  k_gobs<<<nblk((long)N_ * D_), 256, 0, st>>>(GG_ ? o.glob : nullptr, GG_, o.priv, GP_, N_, obs);
+  if (o.priv) ac_->norm.update(obs + GG_, N_, D_, st);
+  ac_->norm.apply(obs + GG_, N_, D_, obs + GG_, D_, st);
+  int* cnt = h_cnt_.data() + k0;
+  graph_count(ac_->spec.gspec, st, N_, GraphIn{gf, ge, gc, nullptr}, d_cnt_, cnt);
+  const std::vector<int> seg = graph_segments(cnt, N_);
+  for (size_t s = 0; s + 1 < seg.size(); ++s) {
+    const int c0 = seg[s], n = seg[s + 1] - c0;
+    const long k = k0 + c0;
+    const real* ob = obs + (long)c0 * D_;
+    graph_forward(n, GraphIn{gf + (long)c0 * GN_ * GF_, ge + (long)c0 * GN_, gc + c0, nullptr}, cnt + c0, ob, ob + GG_, D_, true, s_val_ + k);
+    k_sample_cat<<<nblk(n, 128), 128, 0, st>>>(c_logits_, c_maskt_, n, K_, seed_, act_calls_, c0, ADIM_, actions + (long)c0 * ADIM_, s_act_ + k,
+                                                s_logp_ + k, s_logit_ + k * K_, s_mask_ + k * K_);
+  }
+  ++act_calls_;
+}
+
+void PPO::act_inference(const GraphObs& o, real* actions, int n_all, int64_t sample_call) {
+  if (!graph_) throw std::runtime_error("PPO::act_inference(GraphObs): 그래프 구조가 아님");
+  if (n_all < 0) n_all = N_;
+  if (n_all > N_) throw std::runtime_error("act_inference: n > num_envs");
+  auto st = ac_->stream;
+  std::vector<int> cnt(n_all);
+  graph_count(ac_->spec.gspec, st, n_all, GraphIn{o.feat, o.edge, o.cur, nullptr}, d_cnt_, cnt.data());
+  const std::vector<int> seg = graph_segments(cnt.data(), n_all);
+  for (size_t s = 0; s + 1 < seg.size(); ++s) {
+    const int c0 = seg[s], n = seg[s + 1] - c0;
+    graph_forward(n, GraphIn{o.feat + (long)c0 * GN_ * GF_, o.edge + (long)c0 * GN_, o.cur + c0, nullptr}, cnt.data() + c0,
+                  GG_ ? o.glob + (long)c0 * GG_ : nullptr, nullptr, GG_, true, nullptr);
+    k_cat_act<<<nblk(n, 128), 128, 0, st>>>(c_logits_, c_maskt_, n, K_, seed_ ^ 0x9E3779B97F4A7C15ull, sample_call, c0, ADIM_,
+                                             actions + (long)c0 * ADIM_);
+  }
+}
+
+void PPO::compute_returns(const GraphObs& o) {
+  if (!graph_) throw std::runtime_error("PPO::compute_returns(GraphObs): 그래프 구조가 아님");
+  if (step_ != T_) throw std::runtime_error("PPO::compute_returns: 롤아웃이 덜 참");
+  auto st = ac_->stream;
+  k_gobs<<<nblk((long)N_ * D_), 256, 0, st>>>(nullptr, GG_, o.priv, GP_, N_, last_obs_);
+  ac_->norm.apply(last_obs_ + GG_, N_, D_, last_obs_ + GG_, D_, st);
+  std::vector<int> cnt(N_);
+  graph_count(ac_->spec.gspec, st, N_, GraphIn{o.feat, o.edge, o.cur, nullptr}, d_cnt_, cnt.data());
+  const std::vector<int> seg = graph_segments(cnt.data(), N_);
+  for (size_t s = 0; s + 1 < seg.size(); ++s) {
+    const int c0 = seg[s], n = seg[s + 1] - c0;
+    graph_forward(n, GraphIn{o.feat + (long)c0 * GN_ * GF_, o.edge + (long)c0 * GN_, o.cur + c0, nullptr}, cnt.data() + c0, nullptr,
+                  last_obs_ + (long)c0 * D_ + GG_, D_, false, last_val_ + c0);
+  }
+  gae();
+}
+
+// 미니배치 하나 (그래프 판): 묶음마다 롤아웃에서 색인으로 바로 읽어 정방향 → 범주 손실 → 역방향. 한 스트림에서 차례로
+double PPO::minibatch_graph(const int* d_idx, int n_all, int mb, bool backward, double stats[5]) {
+  auto& ac = *ac_;
+  auto st = ac.stream;
+  const int d = ac.spec.gspec.d;
+  std::fill(stats, stats + 5, 0.0);
+  std::vector<int> hi(n_all), cnt(n_all);
+  CK(cudaMemcpyAsync(hi.data(), d_idx, n_all * sizeof(int), cudaMemcpyDeviceToHost, st));
+  CK(cudaStreamSynchronize(st));
+  for (int i = 0; i < n_all; ++i) cnt[i] = h_cnt_[hi[i]];
+  const std::vector<int> seg = graph_segments(cnt.data(), n_all);
+  real hs[5];
+  for (size_t s = 0; s + 1 < seg.size(); ++s) {
+    const int c0 = seg[s], n = seg[s + 1] - c0;
+    const int* ix = d_idx + c0;
+    // 1D 행 [전역 | 참값] 과 롤아웃 값(행동·옛 log π·가림·옛 로짓·이점·수익·옛 가치)을 커널 하나로 모은다
+    GatherSet gs{{s_act_, s_logp_, s_mask_, s_logit_, s_sd_, s_adv_, s_ret_, s_val_}, {}, {A_, 1, K_, K_, 0, 1, 1, 1}, 0};
+    real* off[8];
+    real* cur = c_gat_;
+    for (int g = 0; g < 8; ++g) {
+      off[g] = gs.dst[g] = cur;
+      cur += (long)n * gs.w[g];
+      gs.W += gs.w[g];
+    }
+    k_gather_mb<<<nblk((long)n * (D_ + gs.W)), 256, 0, st>>>(s_obs_, D_, ix, n, c_x_, D_, nullptr, gs);
+    graph_forward(n, GraphIn{s_gfeat_, s_gedge_, s_gcur_, ix}, cnt.data() + c0, c_x_, c_x_ + GG_, D_, true, c_v_);
+    CatLossArgs q{c_logits_, off[2], off[3], off[0], off[1], off[5], off[6], off[7], c_v_, n, K_, cfg_.clip, cfg_.value_coef, (real)1 / mb,
+                  cfg_.entropy_coef, (real)0, cfg_.clipped_value, c_G_, c_dv_, c_stat_};
+    k_loss_cat<<<nblk(n, 128), 128, 0, st>>>(q);
+    if (backward) {
+      ac.critic.backward(ac.cublas, st, n, nullptr, c_dv_);
+      ac.ptr.backward(ac.cublas, st, n, ac.gbody.Hn(), ac.d_params, ac.d_grads, c_G_);
+      const real* dv = ac.critic.dx0();   // [n][feat]: 앞 d = dE, 다음 d = dHc
+      const long ldv = ac.critic.feat();
+      if (ac.spec.graph_share) {   // 몸통 기울기 = 정책 + 가치 (고정 순서)
+        ac.gbody.backward(ac.cublas, st, n, ac.ptr.d_E(), ac.ptr.d_Hc(), ac.ptr.ld(), ac.ptr.d_Hn(), dv, dv + d, ldv);
+      } else {
+        ac.gbody.backward(ac.cublas, st, n, ac.ptr.d_E(), ac.ptr.d_Hc(), ac.ptr.ld(), ac.ptr.d_Hn());
+        ac.gbody_c.backward(ac.cublas, st, n, dv, dv + d, ldv, nullptr);
+      }
+    }
+    col_sum(c_stat_, n, 5, 5, c_red_, false, st);
+    CK(cudaMemcpyAsync(hs, c_red_, sizeof(hs), cudaMemcpyDeviceToHost, st));
+    CK(cudaStreamSynchronize(st));
+    for (int k = 0; k < 5; ++k) stats[k] += hs[k];
+  }
+  return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * stats[3] / mb;
 }
 
 // ---------------- 체크포인트 ----------------

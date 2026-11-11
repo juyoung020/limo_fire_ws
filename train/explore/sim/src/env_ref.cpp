@@ -33,7 +33,6 @@ void reset_env(const EnvBatch& b, EnvState& e, int env) {
   reset_state(b, e);
 }
 
-int slot_of(float a) { return (a >= 0.f && a < (float)mdp::hier::K) ? (int)a : -1; }
 
 // 계층형 결정 (GPU env_plan_kernel 과 같은 규칙·같은 경로): 엄격(지도 막힘 ∪ 약한 막힘) → 못 닿으면 느슨(지도 막힘만).
 // 거리 배열 위 Dial 최단 경로(무게 hier_path.h) → 거리 = 내 거리 − 내 무게 인 첫 nb4 이웃으로 뒤로 짚기
@@ -46,7 +45,7 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   int force = 0;   // 복구 (hier_path.h path_recovery): 다시 계획 · 포기한 목표면 다른 후보(없으면 −1)
   k = path_recovery(b, e, env, k, &force);
   e.p_slot = k;
-  const int tgt = k >= 0 ? b.cand[(size_t)env * mdp::hier::K + k] : -1;
+  const int tgt = k >= 0 ? act_cells(b, env)[k] : -1;
   if (tgt < 0) {
     e.goal_cell = -1;
     path_set_none(e);
@@ -128,7 +127,7 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   };
   // 같은 후보 · 경로 그대로?
   const int pm = e.p_mode == 1 ? 1 : 2;
-  if (!force && ((b.cand_cur[env] >> k) & 1) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc && path_clear(e, [&](int x, int y) { return pass(pm, x, y); }))
+  if (!force && act_same(b, e, env, k) && e.goal_cell >= 0 && e.p_n > 0 && !e.p_trunc && path_clear(e, [&](int x, int y) { return pass(pm, x, y); }))
     return;
   e.goal_cell = tgt;
   path_set_none(e);
@@ -340,18 +339,22 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
   for_envs(b.n_env, [&](int env) {
     EnvState e = b.st[env];
     hier_camlayer_cpu(b, e, env);   // 깊이 카메라 장애물 층 (cam_on 일 때만) — 계획 앞, 지난 묶음 끝 깊이 장으로
-    plan_cpu(b, e, env, slot_of(actions[(size_t)mdp::act::DIM * env]));
+    plan_cpu(b, e, env, slot_of(b, actions[(size_t)mdp::act::DIM * env]));
     b.st[env] = e;
     for (int s = 0; s < c.decide_steps; ++s) step_env(b, actions, env, s);
     b.reward[env] = b.racc[env];
     for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = b.tacc[(size_t)env * mdp::rew::kTerms + k];
-    if (b.done[env] == 0) return;
+    if (b.done[env] == 0) {
+      graph_ref(b, b.st[env], env);   // 그래프 모드 관측 (graph_on 일 때만 — GPU env_graph_kernel 과 같은 때: 묶음 끝)
+      return;
+    }
     Shared sh;
     Shared& g = b.scratch[env];
     e = b.st[env];
     reset_env(b, e, env);
     write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, true));
     b.st[env] = e;
+    graph_ref(b, b.st[env], env);
   });
 }
 
@@ -364,10 +367,15 @@ void env_reset_cpu(const EnvBatch& b) {
     shape_obs(b, e, env, sh.reach);   // 판 첫 관측: 값만 적음
     b.scratch[env].far_ok = 0;   // GPU 리셋 커널과 같게: 다음 걸음은 다시 전부
     b.st[env] = e;
+    graph_ref(b, b.st[env], env);
     b.reward[env] = 0.f;
     b.done[env] = 0;
     for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = 0.f;
   });
+}
+
+void env_graph_cpu(const EnvBatch& b) {
+  for_envs(b.n_env, [&](int env) { graph_ref(b, b.st[env], env); });
 }
 
 }  // namespace sim

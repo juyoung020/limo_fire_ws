@@ -28,6 +28,7 @@
 #include "frontier.h"      // mdp/ — 칸 종류 (안 넓이·프론티어 요약)
 #include "lidar_real.h"
 #include "obs_layout.h"    // mdp/ — 관측·행동 크기
+#include "graph.h"         // mdp/ — 그래프 모드 관측 (순수 함수)
 #include "rewards.h"       // mdp/ — 보상 항
 #include "people.h"
 #include "sensor_model.h"
@@ -129,6 +130,11 @@ struct EnvCfg {
   // 다시 계획 → 물러나기(rec_backup_steps 걸음, BackUp 0.30 m @ 0.05 m/s) → 그 목표 포기(rec_bl_steps 걸음 동안 그 둘레 rec_bl_r m 안 후보를 고르면 제자리 회전)
   int rec_on, rec_backup_steps, rec_bl_steps;
   float rec_bl_r;
+  // 그래프 모드 (kActPath 위에 얹음 — mdp/graph.h, env.yaml action.graph). graph_on = 0 이면 모두 끔 (계층형과 비트 같음).
+  // graph_stand: 노드·간선이 지나는 칸 1 = 로봇이 설 수 있는 칸 · 0 = 빈 칸(전작). graph_util_r: 유틸리티 범위(칸), graph_min_util: 이 수 이하는 0,
+  // graph_fvox: 프론티어 복셀 변(칸), graph_util_norm: 유틸리티 정규화 분모 (호스트가 셈)
+  // graph_open: 1 = 유틸리티가 닫힘을 막는 프론티어 칸만 셈 (EnvBatch::gfront — 설 수 있는 칸으로 닿고, close_min 칸 이상 덩어리이고, 본 칸이 아님), 0 = 모든 프론티어 칸
+  int graph_on, graph_stand, graph_util_r, graph_min_util, graph_fvox, graph_util_norm, graph_open;
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -314,6 +320,17 @@ struct EnvBatch {
   // 마지막 깊이 장 열마다 가장 가까운 높이 띠 안 점 (지도 좌표 x, y — 앞으로 모음, 끝 x = kCamNone) [env · DEPTH_W · 2] — collision_monitor 점 출처
   uint8_t* cvox;
   float* cpts;
+  // 그래프 모드 (graph_on 일 때만, 아니면 nullptr — mdp/obs_layout.h mdp::graph, mdp/graph.h): 노드 특징 [env · N · FEAT] (uint8),
+  // 간선 비트 [env · N], 현재 노드 [env], 전역 숫자 [env · GLOB], cur 의 이웃 칸 = 행동 목표 [env · NB] (−1 간선 없음),
+  // 방문 노드 비트 [env · N / 32] (판 동안 남는 상태 — 판 첫 관측이 비움), GPU 프론티어 복셀 대표 칸 [env · kVoxMax]
+  uint8_t* gfeat;
+  uint32_t* gedge;
+  int32_t* gcur;
+  float* gglob;
+  int32_t* gcand;
+  uint32_t* gvis;
+  int32_t* gwork;
+  uint32_t* gfront;   // 닫힘을 막는 프론티어 칸 비트 판 [env · size · fmap_row] (mdp::frontier_search n_block 이 세는 칸 — reach_block·obs_ref reach_obs 가 관측마다 건드린 범위 안을 씀)
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)
@@ -580,6 +597,7 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
 }
 
 #include "hier_path.h"   // 계층형 경로 추종 (apply_action 이 부름)
+#include "graph_env.h"   // 그래프 모드 풀 (hier_path.h 뒤)
 
 // 계층형 관측 "직전 행동": 이번 걸음 명령 (v, ω) — 추종기·smoother·안전층 뒤 /cmd_vel — 을 정규 단위로 밀어 넣음 (vy·선언 0).
 // 실물 노드(limo_fire_rl)는 Nav2 가 낸 /cmd_vel 로 같은 함수를 부른다
