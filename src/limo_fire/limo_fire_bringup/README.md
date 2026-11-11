@@ -15,6 +15,11 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=<맵>        # 시뮬: 1(sim
 
 ## 실물에서 운용 화면(RViz) 켜기
 
+<img src="../../../docs/assets/auto_explore.gif" width="720" alt="Webots 덕트호스 미로: 운용 화면 탐사 패널 버튼을 눌러 프론티어 자동 탐사를 켜고, 중간에 끄면 로봇이 서고, 다시 켜면 지도가 닫힐 때까지 탐사">
+
+시뮬(덕트호스 미로, `sim.launch.xml slam:=true`)에서 탐사 패널 버튼을 마우스로 눌러 켬 → 끔(로봇 섬) → 다시 켬 → 지도가 닫혀 끝.
+실제 걸린 시간은 시뮬 시간 약 300 초이고 GIF 는 구간마다 2 ~ 14 배로 빠르게 돌렸다(화면 위 sim time). 실물은 아래 차례로 같은 화면을 띄운다.
+
 운용 화면은 `limo_fire_description/rviz/limo_fire.rviz` 하나다(지도·라이다·Nav2 경로·물체, 왼쪽 아래 **탐사 패널** "Auto explore ON/OFF" —
 [limo_fire_rviz](../limo_fire_rviz/README.md)). 두 가지로 띄운다: (가) 노트북·PC 에서 네트워크로, (나) 젯슨에 모니터를 꽂고 젯슨에서.
 
