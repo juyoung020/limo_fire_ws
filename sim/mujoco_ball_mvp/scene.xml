@@ -1,0 +1,46 @@
+<mujoco model="ball_topple_mvp">
+  <compiler angle="degree"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <visual>
+    <global azimuth="135" elevation="-22"/>
+    <scale contactwidth="0.08" contactheight="0.05"/>
+  </visual>
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1="0.84 0.85 0.86" rgb2="0.67 0.70 0.74"/>
+    <material name="floor" texture="grid" texrepeat="6 6" reflectance="0.05"/>
+  </asset>
+  <worldbody>
+    <light pos="0 -2 3" dir="0 0 -1" diffuse="0.9 0.9 0.9"/>
+    <geom name="ground" type="plane" size="5 5 0.1" material="floor" friction="1.2 0.1 0.01"/>
+    <!-- A fixed launch marker. No actual launcher hardware is modeled in this MVP. -->
+    <geom name="launch_marker" type="box" pos="-0.22 0 0.15" size="0.16 0.12 0.15" rgba="0.22 0.31 0.43 1" contype="0" conaffinity="0"/>
+    <geom name="muzzle_marker" type="cylinder" pos="-0.03 0 0.30" size="0.055 0.10" euler="0 90 0" rgba="0.2 0.2 0.23 1" contype="0" conaffinity="0"/>
+    <!-- 40 mm, 2.7 g table-tennis projectile, matching the local launcher simulation. -->
+    <body name="launcher_yaw_root" pos="0 0 0.30">
+      <joint name="launcher_yaw" type="hinge" axis="0 0 1" limited="true" range="-65 65" damping="0.3"/>
+      <inertial pos="0 0 0" mass="0.1" diaginertia="0.005 0.005 0.005"/>
+      <body name="launcher_pitch_root">
+        <joint name="launcher_pitch" type="hinge" axis="0 1 0" limited="true" range="-20 65" damping="0.3"/>
+        <inertial pos="0 0 0" mass="0.1" diaginertia="0.005 0.005 0.005"/>
+      </body>
+    </body>
+    <body name="ball" pos="0.042 0 0.30">
+      <freejoint name="ball_free"/>
+      <geom name="ball_geom" type="sphere" size="0.020" mass="0.0027" rgba="0.96 0.97 0.98 1" friction="0.8 0.01 0.001" condim="1"/>
+    </body>
+    <!-- Tip-over target rotates around a fixed ground hinge, avoiding false "sliding" success. -->
+    <!-- 8 cm elevated fixed hinge: 7.5 cm half-thickness needs clearance to rotate.
+         The old 2 cm pivot trapped the lower corner against the ground at 15.47 deg.
+         Ground collision, dimensions, mass, damping and friction remain unchanged. -->
+    <body name="fire_target" pos="1.25 0 0.08">
+      <joint name="target_hinge" type="hinge" axis="0 1 0" limited="true" range="-115 115" damping="0.02" frictionloss="0.002"/>
+      <geom name="target_hitbox" type="box" pos="0 0 0.23" size="0.075 0.09 0.23" mass="0.14" rgba="0.91 0.20 0.12 1" friction="1 0.1 0.01"/>
+      <geom name="flame_visual" type="ellipsoid" pos="0 0 0.38" size="0.065 0.075 0.10" density="0" contype="0" conaffinity="0" rgba="1 0.72 0.07 0.9"/>
+    </body>
+    <camera name="overview" pos="2 -3 1.6" xyaxes="0.83 0.55 0 -0.16 0.25 0.95"/>
+  </worldbody>
+  <actuator>
+    <position name="yaw_servo" joint="launcher_yaw" kp="2"/>
+    <position name="pitch_servo" joint="launcher_pitch" kp="2"/>
+  </actuator>
+</mujoco>
