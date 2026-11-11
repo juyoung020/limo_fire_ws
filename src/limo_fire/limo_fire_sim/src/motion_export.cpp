@@ -37,6 +37,9 @@
 namespace
 {
 double stamp(const builtin_interfaces::msg::Time & t) {return t.sec + t.nanosec * 1e-9;}
+// 녹화에서 받은 시각 (ns). rosbag2 필드 이름이 Humble time_stamp → Jazzy recv_timestamp 로 바뀌어 둘 다 받는다
+template<class M> auto recv_ns(const M & m) -> decltype(m.time_stamp) {return m.time_stamp;}
+template<class M> auto recv_ns(const M & m) -> decltype(m.recv_timestamp) {return m.recv_timestamp;}
 
 struct S { double t; double a, b; };
 // IMU 원값 한 메시지 (REP-103 roll·pitch)
@@ -102,7 +105,7 @@ int main(int argc, char ** argv)
   while (reader.has_next()) {
     const auto m = reader.read_next();
     rclcpp::SerializedMessage raw(*m->serialized_data);
-    const double tb = m->time_stamp * 1e-9;   // 받은 시각 (/cmd_vel 은 stamp 가 없다)
+    const double tb = recv_ns(*m) * 1e-9;   // 받은 시각 (/cmd_vel 은 stamp 가 없다)
     if (m->topic_name == "/odom") {
       nav_msgs::msg::Odometry o;
       odom_ser.deserialize_message(&raw, &o);
