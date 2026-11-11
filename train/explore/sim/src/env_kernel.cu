@@ -739,6 +739,10 @@ __global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate,
   if (gate == 2 && b.done[env] == 0) return;
   const EnvState& e = b.st[env];
   trail_mark(b, e, env, tid, kRT);   // 닫힘 규칙의 지나간 길에 지금 자세 (CPU write_obs 와 같은 때)
+  // 그래프 모드(전작 방식 판 끝) 결정 가운데 걸음: 요약을 읽는 곳이 없다 — 닫힘 값은 finish_step 이 안 보고(gterm), 보상(shape_obs)은 계층형에서 0,
+  // 후보·막는 칸 판(gfront)·닫힘 값은 결정 끝 걸음의 것만 쓰인다. 덩어리 칸 관측은 지연 없는 환경이면 마지막 걸음 값이 그대로 덮어쓴다(O = P = 지금).
+  // 지연 환경(e.delay > 0)은 O 가 한 걸음 전 값이라 걸음마다 내야 한다. → 지연 없는 환경은 결정이 끝난 걸음에만 요약 (값은 그대로)
+  if (gate == 1 && b.gdec && b.cfg.graph_on && b.cfg.graph_term && b.gdec[env].reason == kGdRun && e.delay <= 0) return;   // 블록 전체 같은 값
   __syncthreads();
   reach_block(b, e, env, rs, cs, tid);
   if (tid == 0) {
@@ -803,6 +807,15 @@ __device__ void physics_until_scan(const EnvBatch& b, EnvState& e, Shared& sh) {
   sh.k_next = k;
 }
 
+// 걸음 첫머리: 이번 걸음의 장·지도 갱신 집계를 비움 (행동을 정한 뒤)
+__device__ void step_begin(Shared& sh, const EnvState& e) {
+  sh.new_wall = sh.new_floor = sh.d_known = sh.n_new = sh.n_occ = 0;
+  mdp::obsgen::far_dirty_clear(sh);
+  sh.scanned = 0;
+  sh.k_next = 0;
+  sh.tick0 = e.tick;
+}
+
 __global__ void __launch_bounds__(kPhysThreads) env_phys_kernel(EnvBatch b, const float* actions, int first, int sub) {
   const int env = blockIdx.x * kPhysThreads + threadIdx.x;
   if (env >= b.n_env) return;
@@ -814,13 +827,84 @@ __global__ void __launch_bounds__(kPhysThreads) env_phys_kernel(EnvBatch b, cons
     e.collided = 0;
     if (sub == 0) gdec_begin(b, e, env);
     apply_action(b, e, env, actions + mdp::act::DIM * env);
-    sh.new_wall = sh.new_floor = sh.d_known = sh.n_new = sh.n_occ = 0;
-    mdp::obsgen::far_dirty_clear(sh);
-    sh.scanned = 0;
-    sh.k_next = 0;
-    sh.tick0 = e.tick;
+    step_begin(sh, e);
   }
   physics_until_scan(b, e, sh);
+}
+
+// 계층형 행동 (걸음 첫머리 — 다른 행동 방식에서 env_phys_kernel 의 first 몫): 블록 = 환경 하나, 스레드 kActT.
+// 예전에는 환경마다 스레드 하나가 apply_action 을 통째로 돌아, 그 안의 긴 직렬 루프(막힘까지 거리 · RPP 충돌 검사의 굴린 발자국 · 제자리 회전 검사 ·
+// collision_monitor 의 점 × 굴린 자세)가 걸음마다 커널 시간을 정했다 (커널 시간 = 가장 오래 걸린 스레드). 여기서는 그 루프들만 블록 스레드가 나눠 돌고
+// (hier_path.h 의 t0·stride — 개수는 정수 합, 거리²는 정수 최솟값, 걸림은 OR 이라 나눠도 답이 같다), 차례가 있는 나머지(path_step_a·b·c)는 스레드 0 이
+// CPU 참조판과 같은 함수로 돈다 → 값은 비트까지 그대로
+constexpr int kActT = 128;
+__global__ void __launch_bounds__(kActT) env_act_kernel(EnvBatch b, const float* actions, int sub) {
+  const int env = blockIdx.x, tid = threadIdx.x;
+  if (sub > 0 && b.done[env] != 0) return;   // 계층형 묶음: 판이 이 묶음 앞 걸음에서 끝남 — 묶음 끝까지 쉼
+  if (gdec_idle(b, env, sub)) return;          // 그래프 모드: 결정이 앞 걸음에서 끝남
+  __shared__ PathPre pre;
+  __shared__ PathStep ps;
+  __shared__ MonPoses mp;
+  __shared__ int cnt[65];   // collision_monitor: 굴린 자세마다 점 수 [64] · 지금 발자국 안 점 수
+  __shared__ int imm;
+  const EnvCfg& c = b.cfg;
+  EnvState& e = b.st[env];
+  __syncthreads();   // 위 판정(블록 전체 같은 값)을 모두 읽은 뒤에 스레드 0 이 상태를 고친다
+  if (tid == 0) {
+    e.collided = 0;
+    if (sub == 0) gdec_begin(b, e, env);
+    action_begin(c, e, actions + mdp::act::DIM * env);
+    pre.od_best = 1 << 30;
+    pre.rot_cnt = 0;
+    pre.now_hit = 0;
+    pre.arr_hit = 0;
+    imm = 0;
+  }
+  if (tid < 65) cnt[tid] = 0;
+  __syncthreads();
+  {   // 걸음 앞 상태만으로 정해지는 값 (쓰일지는 추종기가 정한다 — 안 쓰이면 버림)
+    const int od = c.path_cost_reg ? path_obstacle_d2(b, e, env, path_cs_r(c), tid, kActT) : (1 << 30);
+    const int rc = c.mon_on ? path_rotate_count(b, e, env, tid, kActT) : 0;
+    const bool nh = path_now_hits(b, e, env, tid, kActT);
+    if (od < (1 << 30)) atomicMin(&pre.od_best, od);
+    if (rc) atomicAdd(&pre.rot_cnt, rc);
+    if (nh) atomicOr(&pre.now_hit, 1);
+  }
+  __syncthreads();
+  if (path_imminent_now(c, pre.now_hit != 0)) {
+    if (tid == 0) pre.arr_hit = 1;
+  } else if (path_imminent_roll(b, e, env, 0.f, c.rot_w, 1e9f, pre.now_hit != 0, false, tid, kActT)) {
+    atomicOr(&pre.arr_hit, 1);
+  }
+  __syncthreads();
+  if (tid == 0) path_step_a(b, e, env, &pre, ps);
+  __syncthreads();
+  if (ps.want_imm) {   // RPP 충돌 검사 (블록 전체 같은 값)
+    if (path_imminent_now(c, pre.now_hit != 0)) {
+      if (tid == 0) imm = 1;
+    } else if (path_imminent_roll(b, e, env, ps.vc, ps.wc, ps.cd, pre.now_hit != 0, false, tid, kActT)) {
+      atomicOr(&imm, 1);
+    }
+  }
+  __syncthreads();
+  if (tid == 0) {
+    path_step_b(b, e, env, imm != 0, &pre, ps);
+    path_monitor_poses(b, env, ps.v, ps.w, mp);
+  }
+  __syncthreads();
+  if (mp.n > 0) {
+    int lc[64], l0 = 0;
+    for (int j = 0; j < mp.n; ++j) lc[j] = 0;
+    path_monitor_count(b, e, env, mp, tid, kActT, lc, &l0);
+    if (l0) atomicAdd(&cnt[64], l0);
+    for (int j = 0; j < mp.n; ++j)
+      if (lc[j]) atomicAdd(&cnt[j], lc[j]);
+  }
+  __syncthreads();
+  if (tid == 0) {
+    path_step_c(b, e, env, path_monitor_result(c, mp, cnt, cnt[64]), ps);
+    step_begin(b.scratch[env], e);
+  }
 }
 
 constexpr int kSums = 5;
@@ -1773,8 +1857,10 @@ void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub
   // 한 행동의 라이다 장 수 ≤ ⌈substeps / lidar_every⌉ — 장마다 물리·빔·지도 갱신 한 바퀴
   const int n_scan = (c.substeps + c.lidar_every - 1) / c.lidar_every;
   const int phys_blocks = (b.n_env + kPhysThreads - 1) / kPhysThreads;
+  const bool staged = c.action_mode == kActPath;   // 계층형: 행동(걸음 첫머리)은 env_act_kernel 이 — 무거운 검사를 블록 스레드로 나눠 본다
   for (int s = 0; s < n_scan; ++s) {
-    env_phys_kernel<<<phys_blocks, kPhysThreads, 0, st>>>(b, actions, s == 0, sub);
+    if (s == 0 && staged) env_act_kernel<<<b.n_env, kActT, 0, st>>>(b, actions, sub);
+    env_phys_kernel<<<phys_blocks, kPhysThreads, 0, st>>>(b, actions, s == 0 && !staged, sub);
     beams_gpu(b, st);
     env_apply_kernel<<<b.n_env, kThreads, 0, st>>>(b);
   }

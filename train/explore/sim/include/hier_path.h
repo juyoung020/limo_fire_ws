@@ -247,7 +247,9 @@ DEV bool cam_lethal(const EnvBatch& b, int env, int x, int y) {
 // (c) 제자리 회전 검사: 직전 장들(링의 지난 kLidarRing − 1 장, 0.1~0.4 s 전 — 장마다 그때 지도 자세 lid_pose)의 점을 지금 로봇 기준으로 옮겨,
 // 지금 라이다가 못 보는 곳(라이다에서 ±110° 밖 — 뒤 140°)에 있고 몸통이 돌며 쓰는 원(발자국 꼭짓점 반경) 안·지금 발자국 밖인 점이 max_points 넘으면 true.
 // 보이는 곳은 지금 장이 더 새 값이라 (b) 가 맡는다. 지도로는 안 잡히는 경우(사람이 빈 칸으로 여러 번 본 바닥에 섬 — 위 머리말)를 위한 짧은 기억
-DEV bool path_rotate_blocked(const EnvBatch& b, const EnvState& e, int env) {
+// 나눠 세기 (t0, stride): 점 번호(장 차례 · 각도 칸)가 stride 로 나눠 t0 남는 점만 — 직렬은 (0, 1), GPU env_act_kernel 은 블록 스레드가 한 몫씩 세어 더한다
+// (점마다 식이 따로라 값이 같고, 개수는 정수 합이라 나눠 더해도 같다)
+DEV int path_rotate_count(const EnvBatch& b, const EnvState& e, int env, int t0 = 0, int stride = 1) {
   const EnvCfg& c = b.cfg;
   const float hl = c.half_len + c.path_fp_pad, hw = c.half_wid + c.path_fp_pad;
   const float rs2 = hl * hl + hw * hw;
@@ -262,7 +264,8 @@ DEV bool path_rotate_blocked(const EnvBatch& b, const EnvState& e, int env) {
     const float fx = e.lid_pose[3 * slot], fy = e.lid_pose[3 * slot + 1];
     float fs, fc;
     dm::sincosf_d(e.lid_pose[3 * slot + 2], &fs, &fc);
-    for (int k = 0; k < mdp::obs::LIDAR_BINS; ++k) {
+    const int base = (f - 1) * mdp::obs::LIDAR_BINS;
+    for (int k = ((t0 - base) % stride + stride) % stride; k < mdp::obs::LIDAR_BINS; k += stride) {
       const float r = R[k];
       if (!(r < c.map_max_range) || r > 1.f) continue;   // 1 m 밖 점은 몸통 원(≈ 0.27 m)에 못 듦 — 라이다는 몸통 앞 0.1 m
       const float a = mdp::obs::kLidarMin + ((float)k + 0.5f) * mdp::obs::kLidarBin;
@@ -278,18 +281,27 @@ DEV bool path_rotate_blocked(const EnvBatch& b, const EnvState& e, int env) {
       ++cnt;
     }
   }
-  return cnt > c.mon_max_points;
+  return cnt;
 }
+DEV bool path_rotate_blocked(const EnvBatch& b, const EnvState& e, int env) { return path_rotate_count(b, e, env) > b.cfg.mon_max_points; }
 
-// (b) collision_monitor approach: 명령 (v, ω) 에 곱할 배율 [0, 1] (1 = 걸림 없음)
-DEV float path_monitor_scale(const EnvBatch& b, const EnvState& e, int env, float v, float w) {
+// (b) collision_monitor approach: 명령 (v, ω) 에 곱할 배율 [0, 1] (1 = 걸림 없음).
+// 세 토막 — 굴린 자세(path_monitor_poses) · 점 세기(path_monitor_count, 나눠 세기) · 배율(path_monitor_result). 직렬은 path_monitor_scale 이 차례로 부르고,
+// GPU env_act_kernel 은 가운데 토막을 블록 스레드로 나눠 센다 (자세마다 개수는 정수 합 — 나눠 더해도 같다)
+struct MonPoses {
+  float qx[64], qy[64], qc[64], qs[64];
+  float reach, hl, hw;
+  int n;       // 굴릴 걸음 수 (≤ 64, env_host 가 확인). 0 = 검사 안 함 (배율 1)
+  int n_cam;   // 깊이 카메라 점 수 (cam_compact 가 모은 점 — kCamNone 앞까지)
+};
+DEV void path_monitor_poses(const EnvBatch& b, int env, float v, float w, MonPoses& P) {
   const EnvCfg& c = b.cfg;
-  if (!c.mon_on || (v == 0.f && w == 0.f)) return 1.f;
+  P.n = 0;
+  P.n_cam = 0;
+  if (!c.mon_on || (v == 0.f && w == 0.f)) return;
   const int n = (int)(c.mon_t / c.mon_dt + 1e-3f);   // 굴릴 걸음 수 (≤ 64, env_host 가 확인)
   const float hl = c.half_len + c.path_fp_pad, hw = c.half_wid + c.path_fp_pad;
   // 굴린 자세 (지금 base_link 기준, Euler — nav2 projectState 와 같은 차례: 방향을 먼저 돌리고 그 방향으로 나아감)
-  float qx[64], qy[64], qc[64], qs[64];
-  int cnt[64];
   {
     float x = 0.f, y = 0.f, th = 0.f;
     for (int j = 0; j < n; ++j) {
@@ -298,22 +310,39 @@ DEV float path_monitor_scale(const EnvBatch& b, const EnvState& e, int env, floa
       dm::sincosf_d(th, &s, &co);
       x += v * co * c.mon_dt;
       y += v * s * c.mon_dt;
-      qx[j] = x;
-      qy[j] = y;
-      qc[j] = co;
-      qs[j] = s;
-      cnt[j] = 0;
+      P.qx[j] = x;
+      P.qy[j] = y;
+      P.qc[j] = co;
+      P.qs[j] = s;
     }
   }
-  const float reach = dm::absf(v) * c.mon_t + sqrtf(hl * hl + hw * hw);   // 이보다 먼 점은 어느 자세의 발자국에도 안 듦
-  int cnt0 = 0;   // 지금 발자국 안이고 첫 걸음에 더 깊이 드는 점 (위 머리말 "Nav2 와 다른 한 곳")
+  P.reach = dm::absf(v) * c.mon_t + sqrtf(hl * hl + hw * hw);   // 이보다 먼 점은 어느 자세의 발자국에도 안 듦
+  P.hl = hl;
+  P.hw = hw;
+  P.n = n;
+  if (b.cpts) {   // 깊이 카메라 점 출처 (cam_column — 마지막 깊이 장의 열마다 가장 가까운 띠 안 점). cam_compact 가 모은 점 끝까지
+    const float* Q = b.cpts + (size_t)env * mdp::obs::DEPTH_W * 2;
+    int i = 0;
+    while (i < mdp::obs::DEPTH_W && Q[2 * i] != kCamNone) ++i;
+    P.n_cam = i;
+  }
+}
+// 점 번호 = 라이다 각도 칸 0 … LIDAR_BINS − 1, 그 뒤 깊이 카메라 점. stride 로 나눠 t0 남는 점만. cnt[j] (j < n) · *cnt0 에 더한다 (부르는 쪽이 0 으로)
+DEV void path_monitor_count(const EnvBatch& b, const EnvState& e, int env, const MonPoses& P, int t0, int stride, int* cnt, int* cnt0) {
+  const int n = P.n;
+  const float hl = P.hl, hw = P.hw, reach = P.reach;
+  const float* qx = P.qx;
+  const float* qy = P.qy;
+  const float* qc = P.qc;
+  const float* qs = P.qs;
+  // cnt0: 지금 발자국 안이고 첫 걸음에 더 깊이 드는 점 (위 머리말 "Nav2 와 다른 한 곳")
   const auto count = [&](float px, float py) {
     if (px * px + py * py > reach * reach) return;
     if (dm::absf(px) <= hl && dm::absf(py) <= hw) {   // 지금 발자국 안: 발자국 가장자리까지 깊이가 첫 걸음에 늘면 지금 걸림, 아니면(빠져나감) 안 셈
       const float dx = px - qx[0], dy = py - qy[0];
       const float u = qc[0] * dx + qs[0] * dy, t = qc[0] * dy - qs[0] * dx;
       const float d0 = dm::minf(hl - dm::absf(px), hw - dm::absf(py)), d1 = dm::minf(hl - dm::absf(u), hw - dm::absf(t));
-      cnt0 += d1 > d0;
+      *cnt0 += d1 > d0;
       return;
     }
     for (int j = 0; j < n; ++j) {
@@ -322,26 +351,39 @@ DEV float path_monitor_scale(const EnvBatch& b, const EnvState& e, int env, floa
       if (dm::absf(u) <= hl && dm::absf(t) <= hw) cnt[j] += 1;
     }
   };
-  for (int k = 0; k < mdp::obs::LIDAR_BINS; ++k) {
+  if (n <= 0) return;
+  int i = t0;
+  for (; i < mdp::obs::LIDAR_BINS; i += stride) {
     float px, py, r;
-    if (!scan_point(b, e, env, k, &px, &py, &r)) continue;
+    if (!scan_point(b, e, env, i, &px, &py, &r)) continue;
     count(px, py);
   }
-  if (b.cpts) {   // 깊이 카메라 점 출처 (cam_column — 마지막 깊이 장의 열마다 가장 가까운 띠 안 점, 지도 좌표 → 지금 지도 자세 base_link)
+  if (P.n_cam > 0) {   // 지도 좌표 → 지금 지도 자세 base_link
     const float mx = e.x + e.ex, my = e.y + e.ey;
     float ms, mc;
     dm::sincosf_d(e.th + e.eth, &ms, &mc);
-    const float* P = b.cpts + (size_t)env * mdp::obs::DEPTH_W * 2;
-    for (int i = 0; i < mdp::obs::DEPTH_W; ++i) {
-      if (P[2 * i] == kCamNone) break;   // cam_compact 가 모은 점 끝
-      const float dx = P[2 * i] - mx, dy = P[2 * i + 1] - my;
+    const float* Q = b.cpts + (size_t)env * mdp::obs::DEPTH_W * 2;
+    for (i -= mdp::obs::LIDAR_BINS; i < P.n_cam; i += stride) {
+      const float dx = Q[2 * i] - mx, dy = Q[2 * i + 1] - my;
       count(mc * dx + ms * dy, mc * dy - ms * dx);
     }
   }
+}
+DEV float path_monitor_result(const EnvCfg& c, const MonPoses& P, const int* cnt, int cnt0) {
+  if (P.n <= 0) return 1.f;
   if (cnt0 > c.mon_max_points) return 0.f;   // getCollisionTime 이 0 을 내는 경우 (processApproach → 멈춤)
-  for (int j = 0; j < n; ++j)
+  for (int j = 0; j < P.n; ++j)
     if (cnt[j] > c.mon_max_points) return (float)(j + 1) * c.mon_dt / c.mon_t;   // 첫 걸린 시각 / T (processApproach change_ratio)
   return 1.f;
+}
+DEV float path_monitor_scale(const EnvBatch& b, const EnvState& e, int env, float v, float w) {
+  MonPoses P;
+  path_monitor_poses(b, env, v, w, P);
+  if (P.n <= 0) return 1.f;
+  int cnt[64], cnt0 = 0;
+  for (int j = 0; j < P.n; ++j) cnt[j] = 0;
+  path_monitor_count(b, e, env, P, 0, 1, cnt, &cnt0);
+  return path_monitor_result(b.cfg, P, cnt, cnt0);
 }
 constexpr int kSegMax = 40;      // 웨이포인트 사이 경로 칸 수 상한 (2 m) — 잠정
 
@@ -489,7 +531,8 @@ DEV void path_set_none(EnvState& e) {
 }
 
 // 지도 자세 칸에서 막힘(mdp::kOcc)까지 칸 가운데끼리 거리 (m), r 안에 없으면 r (기준선 obstacle_dist 와 같은 뜻 — 막힘 씨앗은 지도 막힘만)
-DEV float path_obstacle_dist(const EnvBatch& b, const EnvState& e, int env, float r) {
+// 나눠 찾기: 칸 번호(줄 차례)가 stride 로 나눠 t0 남는 칸만 — 가장 가까운 막힘 칸까지 정수 거리² (없으면 1 << 30). 정수 최솟값이라 나눠 찾아도 같다
+DEV int path_obstacle_d2(const EnvBatch& b, const EnvState& e, int env, float r, int t0 = 0, int stride = 1) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
@@ -497,18 +540,23 @@ DEV float path_obstacle_dist(const EnvBatch& b, const EnvState& e, int env, floa
   cell_of(c, m, e.x + e.ex, e.y + e.ey, &cx, &cy);
   const int R = (int)ceilf(r / c.res);
   int best = 1 << 30;
-  for (int dy = -R; dy <= R; ++dy)
-    for (int dx = -R; dx <= R; ++dx) {
-      const int u = cx + dx, v = cy + dy;
-      if (u < 0 || v < 0 || u >= m.gw || v >= m.gh) continue;
-      if (mdp::cell_class(L[v * c.size + u]) != mdp::kOcc && !cam_lethal(b, env, u, v)) continue;   // 깊이 카메라 층도 (Nav2 costmap 은 모든 층 합)
-      const int d2 = dx * dx + dy * dy;
-      best = d2 < best ? d2 : best;
-    }
+  const int W = 2 * R + 1;
+  for (int i = t0; i < W * W; i += stride) {
+    const int dx = i % W - R, dy = i / W - R;
+    const int u = cx + dx, v = cy + dy;
+    if (u < 0 || v < 0 || u >= m.gw || v >= m.gh) continue;
+    if (mdp::cell_class(L[v * c.size + u]) != mdp::kOcc && !cam_lethal(b, env, u, v)) continue;   // 깊이 카메라 층도 (Nav2 costmap 은 모든 층 합)
+    const int d2 = dx * dx + dy * dy;
+    best = d2 < best ? d2 : best;
+  }
+  return best;
+}
+DEV float path_obstacle_from(const EnvCfg& c, int best, float r) {
   if (best == (1 << 30)) return r;
   const float d = sqrtf((float)best) * c.res;
   return d < r ? d : r;
 }
+DEV float path_obstacle_dist(const EnvBatch& b, const EnvState& e, int env, float r) { return path_obstacle_from(b.cfg, path_obstacle_d2(b, e, env, r), r); }
 
 // RPP 충돌 검사 (regulated_pure_pursuit_controller.cpp isCollisionImminent, 기준선 frontier_explorer.cpp collision_imminent 와 같은 식):
 // 막힘 씨앗 칸 = 지도 막힘(kOcc) 또는 로봇에서 obstacle_max_range 안의 맞음 > 지나감 칸(로그 오즈 > 0 — Nav2 장애물 층이 스캔 끝점을 바로
@@ -524,7 +572,9 @@ DEV bool path_lethal(const EnvBatch& b, const EnvState& e, int env, int x, int y
   const float dx = (float)(x - rcx) * c.res, dy = (float)(y - rcy) * c.res;
   return dx * dx + dy * dy <= c.path_obs_range * c.path_obs_range;
 }
-DEV bool path_fp_hits(const EnvBatch& b, const EnvState& e, int env, float x, float y, float th, int rcx, int rcy, bool unk = false, bool body = false) {
+// t0, stride: 둘레 점 번호(변 차례)가 stride 로 나눠 t0 남는 점만 — 하나라도 걸리면 true 라 나눠 본 답의 OR 이 직렬 답과 같다
+DEV bool path_fp_hits(const EnvBatch& b, const EnvState& e, int env, float x, float y, float th, int rcx, int rcy, bool unk = false, bool body = false,
+                      int t0 = 0, int stride = 1) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   float s, co;
@@ -532,33 +582,41 @@ DEV bool path_fp_hits(const EnvBatch& b, const EnvState& e, int env, float x, fl
   const float pad = body ? 0.f : c.path_fp_pad;   // body: 몸통만 (패딩 없음 — "계획·충돌 검사 일치" 빠져나오기)
   const float hl = c.half_len + pad, hw = c.half_wid + pad;
   const float cx[4] = {hl, -hl, -hl, hl}, cy[4] = {hw, hw, -hw, -hw};
+  int i0 = 0;   // 이 변 첫 점의 번호
   for (int k = 0; k < 4; ++k) {
     const float ax = cx[k], ay = cy[k], bx = cx[(k + 1) & 3], by = cy[(k + 1) & 3];
     const float len = sqrtf((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
     int n = (int)ceilf(len / (0.5f * c.res));
     n = n < 1 ? 1 : n;
-    for (int q = 0; q <= n; ++q) {
+    for (int q = ((t0 - i0) % stride + stride) % stride; q <= n; q += stride) {
       const float u = ax + (bx - ax) * (float)q / (float)n, v = ay + (by - ay) * (float)q / (float)n;
       int qx, qy;
       if (cell_of(c, m, (x + co * u) - s * v, (y + s * u) + co * v, &qx, &qy) < 0) return true;
       if (path_lethal(b, e, env, qx, qy, rcx, rcy, unk)) return true;
     }
+    i0 += n + 1;
   }
   return false;
 }
 // check_now = false: 지금 자세는 안 봄 (물러나기 — 이미 발자국이 막힘에 닿아 있어도 빠져나오게)
-DEV bool path_imminent(const EnvBatch& b, const EnvState& e, int env, float v, float w, float carrot_dist, bool check_now = true, bool unk = false) {
+// 두 토막 — 지금 자세(path_now_hits) · 굴린 자세(path_imminent_roll, 나눠 보기: 자세는 스레드마다 같은 차례로 굴리고 둘레 점만 나눈다 → OR 이 직렬 답과 같다).
+// 직렬은 path_imminent 가 차례로, GPU env_act_kernel 은 둘 다 블록 스레드로 나눠 본다
+DEV bool path_now_hits(const EnvBatch& b, const EnvState& e, int env, int t0 = 0, int stride = 1) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   const float px = e.x + e.ex, py = e.y + e.ey, pth = e.th + e.eth;
   int rcx, rcy;
   cell_of(c, m, px, py, &rcx, &rcy);
-  // 지금 자세가 이미 패딩에 걸림: 옛 동작(Nav2 그대로)은 모든 명령 막힘 → 추종 중 갇힘의 41~59 %. path_consistent 면 굴린 자세를 몸통으로만 검사 (빠져나오기)
-  bool body = false;
-  if (check_now && path_fp_hits(b, e, env, px, py, pth, rcx, rcy)) {
-    if (!c.path_consistent) return true;
-    body = true;
-  }
+  return path_fp_hits(b, e, env, px, py, pth, rcx, rcy, false, false, t0, stride);
+}
+// body: 굴린 자세를 몸통으로만 검사 (지금 자세가 이미 패딩에 걸림 — path_imminent)
+DEV bool path_imminent_roll(const EnvBatch& b, const EnvState& e, int env, float v, float w, float carrot_dist, bool body, bool unk = false, int t0 = 0,
+                            int stride = 1) {
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const float px = e.x + e.ex, py = e.y + e.ey, pth = e.th + e.eth;
+  int rcx, rcy;
+  cell_of(c, m, px, py, &rcx, &rcy);
   float dt;
   if (dm::absf(v) < 0.01f && dm::absf(w) > 0.01f) {
     const float rmax = sqrtf(c.half_len * c.half_len + c.half_wid * c.half_wid);
@@ -576,13 +634,29 @@ DEV bool path_imminent(const EnvBatch& b, const EnvState& e, int env, float v, f
     y += dt * v * s;
     th += dt * w;
     if (sqrtf((x - px) * (x - px) + (y - py) * (y - py)) > carrot_dist) break;
-    if (path_fp_hits(b, e, env, x, y, th, rcx, rcy, unk, body)) return true;
+    if (path_fp_hits(b, e, env, x, y, th, rcx, rcy, unk, body, t0, stride)) return true;
   }
   return false;
 }
+// now_hit: 지금 자세가 패딩 발자국으로 걸림 (path_now_hits). 걸렸고 path_consistent 가 아니면 굴린 자세는 안 보고 true (옛 동작 — Nav2 그대로)
+DEV bool path_imminent_now(const EnvCfg& c, bool now_hit) { return now_hit && !c.path_consistent; }
+DEV bool path_imminent(const EnvBatch& b, const EnvState& e, int env, float v, float w, float carrot_dist, bool check_now = true, bool unk = false) {
+  // 지금 자세가 이미 패딩에 걸림: 옛 동작(Nav2 그대로)은 모든 명령 막힘 → 추종 중 갇힘의 41~59 %. path_consistent 면 굴린 자세를 몸통으로만 검사 (빠져나오기)
+  const bool now_hit = check_now && path_now_hits(b, e, env);
+  if (path_imminent_now(b.cfg, now_hit)) return true;
+  return path_imminent_roll(b, e, env, v, w, carrot_dist, now_hit, unk);
+}
 
+// 추종기·충돌 검사가 쓰는 값 가운데 걸음 앞 상태만으로 정해지는 것 — GPU env_act_kernel 이 블록 스레드로 미리 낸다 (직렬은 nullptr — 쓰는 자리에서 같은 함수로 낸다)
+struct PathPre {
+  int od_best;   // path_obstacle_d2 (반경 path_cs_r)
+  int rot_cnt;   // path_rotate_count
+  int now_hit;   // path_now_hits
+  int arr_hit;   // 도착 제자리 회전 (0, rot_w, 당근 무한) 의 path_imminent
+};
+DEV float path_cs_r(const EnvCfg& c) { return dm::minf(c.path_cs_dist, c.path_r_out); }
 // 추종기 한 번 (행동 주기 0.1 s, 스레드 하나): 웨이포인트 따라 (vc, ωc) — velocity_smoother 앞 명령. p_i(지금 구간)를 앞으로만 옮긴다
-DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* wc_o, float* carrot_o = nullptr) {
+DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* wc_o, float* carrot_o = nullptr, const PathPre* pre = nullptr) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   *vc_o = 0.f;
@@ -642,7 +716,7 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
   // 도착: 다음 결정까지 제자리 회전 — 라이다가 뒤 140° 를 못 봐서(sensor_model.yaml fov 220°) 목표 덩어리가 로봇 뒤·발밑에 남는 일이 많다
   // (2026-11-08 규칙 정책 시험: 서 있기만 하면 0 번 후보가 거리 0 인 채로 안 풀려 128 판 모두 진행 없음 실패)
   if (d_goal <= c.goal_tol) {   // (모름 칸까지 막힘으로 보면 판 시작의 뒤쪽 모름 때문에 영영 안 돌아 128 판 모두 정체 — 지도 막힘만 봄)
-    if (!path_imminent(b, e, env, 0.f, c.rot_w, 1e9f)) *wc_o = c.rot_w;
+    if (!(pre ? pre->arr_hit != 0 : path_imminent(b, e, env, 0.f, c.rot_w, 1e9f))) *wc_o = c.rot_w;
     return;
   }
   const float err = dm::wrap_pi(dm::atan2f_d(cy - py, cx - px) - pth);
@@ -662,8 +736,8 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
     if (radius < c.reg_min_radius) v_curv = vc * radius / c.reg_min_radius;
   }
   if (c.path_cost_reg) {
-    const float r_eff = dm::minf(c.path_cs_dist, c.path_r_out);
-    const float d = path_obstacle_dist(b, e, env, r_eff);
+    const float r_eff = path_cs_r(c);
+    const float d = pre ? path_obstacle_from(c, pre->od_best, r_eff) : path_obstacle_dist(b, e, env, r_eff);
     if (d < r_eff) v_cost = vc * c.path_cs_gain * d / c.path_cs_dist;
   }
   vc = dm::maxf(dm::minf(v_curv, v_cost), c.reg_min_speed);

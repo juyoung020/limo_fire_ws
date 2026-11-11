@@ -646,12 +646,79 @@ DEV void path_last_act(const EnvCfg& c, EnvState& e, float v, float w) {
   e.last_act[3] = 0.f;
 }
 
+// 계층형 행동 한 걸음의 세 토막 (apply_action 의 kActPath 가지 — 직렬(CPU 참조판·검증)은 apply_action 이, GPU 는 env_act_kernel 이 같은 토막을 부른다).
+// pre: GPU 가 미리 낸 값 (hier_path.h PathPre), 없으면 그 자리에서 직렬로
+struct PathStep {
+  float vc, wc, cd;   // 추종기 명령 · 당근 거리
+  float v, w;         // velocity_smoother 뒤 명령
+  int want_imm;       // RPP 충돌 검사를 볼 차례인가 (복구 물러나기 중이 아니고 명령이 0 이 아님)
+};
+// a: 추종기
+DEV void path_step_a(const EnvBatch& b, EnvState& e, int env, const PathPre* pre, PathStep& s) {
+  path_follow(b, e, env, &s.vc, &s.wc, &s.cd, pre);
+  s.want_imm = e.p_rec <= 0 && (s.vc != 0.f || s.wc != 0.f) ? 1 : 0;
+  s.v = s.w = 0.f;
+}
+// b: 복구·충돌 검사 결과(imm = want_imm 이고 path_imminent)·제자리 회전 검사 → velocity_smoother
+DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const PathPre* pre, PathStep& s) {
+  const EnvCfg& c = b.cfg;
+  float vc = s.vc, wc = s.wc;
+  // RPP 충돌 검사 (hier_path.h path_imminent): 걸리면 Nav2 BT 복구의 BackUp 처럼 물러남 (뒤도 막히면 섬)
+  if (e.p_rec > 0) {   // 복구 물러나기 (hier_path.h "복구" — Nav2 BT BackUp): 추종기 대신. 뒤가 막히면 그만
+    e.p_rec -= 1;
+    vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;
+    wc = 0.f;
+    if (vc == 0.f) e.p_rec = 0;
+  } else if (imm) {
+    vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;   // 0.1 m = 결정 둘(2 s) 동안 물러나는 거리
+    wc = 0.f;
+    e.p_stops += 1;
+    e.p_blk_now += 1;
+  } else if (c.mon_on && vc == 0.f && wc != 0.f && (pre ? pre->rot_cnt > c.mon_max_points : path_rotate_blocked(b, e, env))) {
+    wc = 0.f;   // 제자리 회전: 못 보는 뒤에 직전 장에서 본 점이 몸통 회전 원 안 (hier_path.h (c)) — 이번 걸음은 돌지 않음
+    e.p_mon += 1;
+  }
+  const float dt_act = (float)c.substeps * c.dt;
+  const float vt = dm::maxf(-c.path_v, dm::minf(c.path_v, vc));
+  const float dv = vt - e.vs, dw = wc - e.ws, sv = c.a_max * dt_act, sw = c.alpha_max * dt_act;
+  e.vs = e.vs + (dv > sv ? sv : (dv < -sv ? -sv : dv));
+  e.ws = e.ws + (dw > sw ? sw : (dw < -sw ? -sw : dw));
+  s.v = e.vs;
+  s.w = e.ws;
+}
+// c: collision_monitor 배율 k (hier_path.h "지금 스캔" (b) path_monitor_scale(s.v, s.w)): velocity_smoother 뒤 — Nav2 처럼 smoother 상태는 그대로 두고
+// 내보내는 명령만 줄임 → 안전층 → 명령
+DEV void path_step_c(const EnvBatch& b, EnvState& e, int env, float k, const PathStep& s) {
+  const EnvCfg& c = b.cfg;
+  float v = s.v, w = s.w;
+  if (k < 1.f) {
+    v *= k;
+    w *= k;
+    e.p_mon += 1;
+  }
+  if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) v = 0.f;
+  if (c.sweep_guard) {
+    const float k2 = sweep_scale(b, e, env, v, 0.f, w);
+    v *= k2;
+    w *= k2;
+  }
+  e.cmd_v = v;
+  e.cmd_vy = 0.f;
+  e.cmd_w = w;
+  e.last_action = e.p_slot;
+  path_last_act(c, e, v, w);
+}
+
 // a: 환경마다 float mdp::act::DIM 개. 속도 행동이면 (v, vy, ω, 선언) — 정규 단위 [−1, 1] (act_raw 면 물리 단위),
 // 목표점 행동이면 a[0] = 행동 번호 (a[3] 선언은 같음)
-DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
-  const EnvCfg& c = b.cfg;
+// 행동 앞머리 (모든 행동 방식 — GPU env_act_kernel 도 부른다)
+DEV void action_begin(const EnvCfg& c, EnvState& e, const float* a) {
   e.people.hit_person = 0;
   e.declared = a[3] > 0.5f && !c.success_closed ? 1 : 0;   // 베르누이 표본 0/1. 닫힘 성공 규칙이면 선언 출력은 무시 (관측 직전 행동에도 0)
+}
+DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
+  const EnvCfg& c = b.cfg;
+  action_begin(c, e, a);
   if (c.action_mode == kActVelocity) {
     float v, vy, w;
     float n0, n1, n2;
@@ -695,49 +762,13 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
     e.last_act[2] = dm::clampf(n2, -1.f, 1.f);
     e.last_act[3] = (float)e.declared;
   } else if (c.action_mode == kActPath) {
-    // 계층형: 경로(결정 때 plan 단계가 짬)를 추종기가 따라감 → velocity_smoother(행동 주기) → 안전층. 고른 후보 번호는 결정 때 p_slot 에
-    float vc, wc, cd;
-    path_follow(b, e, env, &vc, &wc, &cd);
-    // RPP 충돌 검사 (hier_path.h path_imminent): 걸리면 Nav2 BT 복구의 BackUp 처럼 물러남 (뒤도 막히면 섬)
-    if (e.p_rec > 0) {   // 복구 물러나기 (hier_path.h "복구" — Nav2 BT BackUp): 추종기 대신. 뒤가 막히면 그만
-      e.p_rec -= 1;
-      vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;
-      wc = 0.f;
-      if (vc == 0.f) e.p_rec = 0;
-    } else if ((vc != 0.f || wc != 0.f) && path_imminent(b, e, env, vc, wc, cd)) {
-      vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;   // 0.1 m = 결정 둘(2 s) 동안 물러나는 거리
-      wc = 0.f;
-      e.p_stops += 1;
-      e.p_blk_now += 1;
-    } else if (c.mon_on && vc == 0.f && wc != 0.f && path_rotate_blocked(b, e, env)) {
-      wc = 0.f;   // 제자리 회전: 못 보는 뒤에 직전 장에서 본 점이 몸통 회전 원 안 (hier_path.h (c)) — 이번 걸음은 돌지 않음
-      e.p_mon += 1;
-    }
-    const float dt_act = (float)c.substeps * c.dt;
-    const float vt = dm::maxf(-c.path_v, dm::minf(c.path_v, vc));
-    const float dv = vt - e.vs, dw = wc - e.ws, sv = c.a_max * dt_act, sw = c.alpha_max * dt_act;
-    e.vs = e.vs + (dv > sv ? sv : (dv < -sv ? -sv : dv));
-    e.ws = e.ws + (dw > sw ? sw : (dw < -sw ? -sw : dw));
-    float v = e.vs, w = e.ws;
-    {   // collision_monitor approach (hier_path.h "지금 스캔" (b)): velocity_smoother 뒤 — Nav2 처럼 smoother 상태는 그대로 두고 내보내는 명령만 줄임
-      const float k = path_monitor_scale(b, e, env, v, w);
-      if (k < 1.f) {
-        v *= k;
-        w *= k;
-        e.p_mon += 1;
-      }
-    }
-    if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) v = 0.f;
-    if (c.sweep_guard) {
-      const float k = sweep_scale(b, e, env, v, 0.f, w);
-      v *= k;
-      w *= k;
-    }
-    e.cmd_v = v;
-    e.cmd_vy = 0.f;
-    e.cmd_w = w;
-    e.last_action = e.p_slot;
-    path_last_act(c, e, v, w);
+    // 계층형: 경로(결정 때 plan 단계가 짬)를 추종기가 따라감 → velocity_smoother(행동 주기) → 안전층. 고른 후보 번호는 결정 때 p_slot 에.
+    // 세 토막(path_step_a·b·c) 사이에 무거운 검사 둘(RPP 충돌 검사 · collision_monitor)이 낀다 — GPU env_act_kernel 은 그 둘을 블록 스레드로 나눠 본다
+    PathStep s;
+    path_step_a(b, e, env, nullptr, s);
+    const bool imm = s.want_imm && path_imminent(b, e, env, s.vc, s.wc, s.cd);
+    path_step_b(b, e, env, imm, nullptr, s);
+    path_step_c(b, e, env, path_monitor_scale(b, e, env, s.v, s.w), s);
   } else {
     set_goal(b, e, (int)a[0]);
   }

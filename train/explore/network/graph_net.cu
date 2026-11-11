@@ -126,23 +126,43 @@ __global__ void k_sum2(const real* a, long lda, const real* b, long ldb, int n, 
   dst[t] = v;
 }
 
-// ---------------- 층 정규화 (행마다 스레드 하나) ----------------
+// ---------------- 층 정규화 (블록 = 행 kLnRows 개, 스레드 = 칸) ----------------
 // xh = (x − 평균)·rs, rs = 1/√(분산 + eps) (분산은 d 로 나눔 — torch), A = g·xh + b
+// 행의 합(평균·분산)은 예전처럼 스레드 하나가 열 차례로 더한다(더하는 순서·식 그대로 → 값이 비트까지 같다). 달라진 것은 메모리 접근뿐:
+// 행을 블록 스레드 모두가 나란히(이웃 스레드 = 이웃 칸) 공유 메모리에 올리고, 합은 공유 메모리에서, 칸마다 값은 스레드마다 하나씩 쓴다.
+// 예전 꼴(행마다 스레드 하나가 d 칸을 전역 메모리에서 차례로)은 워프의 스레드들이 512 바이트씩 떨어진 곳을 읽어 느렸다
+constexpr int kLnRows = 4, kLnThreads = 128;
+inline int ln_blk(long R) { return (int)((R + kLnRows - 1) / kLnRows); }
+inline size_t ln_shm(int d, int planes) { return (size_t)planes * kLnRows * d * sizeof(real); }
 __global__ void k_ln_fwd(const real* X, long R, int d, const real* g, const real* b, real* xh, real* rs, real* A) {
-  long r = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  if (r >= R) return;
-  const real* x = X + r * d;
-  real m = 0;
-  for (int c = 0; c < d; ++c) m += x[c];
-  m /= (real)d;
-  real v = 0;
-  for (int c = 0; c < d; ++c) v += (x[c] - m) * (x[c] - m);
-  const real s = (real)1 / sqrt(v / (real)d + kLnEps);
-  rs[r] = s;
-  for (int c = 0; c < d; ++c) {
-    const real h = (x[c] - m) * s;
-    xh[r * d + c] = h;
-    A[r * d + c] = g[c] * h + b[c];
+  extern __shared__ real ln_sh[];   // [kLnRows][d]
+  __shared__ real sm[kLnRows], ss[kLnRows];
+  const long r0 = (long)blockIdx.x * kLnRows;
+  const int nr = (int)(R - r0 < kLnRows ? R - r0 : kLnRows), n = nr * d, tid = threadIdx.x;
+  for (int t = tid; t < n; t += kLnThreads) ln_sh[t] = X[r0 * d + t];
+  __syncthreads();
+  if (tid < nr) {
+    const real* x = ln_sh + tid * d;
+    real m = 0;
+    for (int c = 0; c < d; ++c) m += x[c];
+    m /= (real)d;
+    real v = 0;
+    for (int c = 0; c < d; ++c) {
+      const real t = x[c] - m;
+      v = fma(t, t, v);
+    }
+    const real s = (real)1 / sqrt(v / (real)d + kLnEps);
+    rs[r0 + tid] = s;
+    sm[tid] = m;
+    ss[tid] = s;
+  }
+  __syncthreads();
+  for (int t = tid; t < n; t += kLnThreads) {
+    const int r = t / d, c = t % d;
+    const real m = sm[r], s = ss[r];
+    const real h = (ln_sh[t] - m) * s;
+    xh[r0 * d + t] = h;
+    A[r0 * d + t] = fma(g[c], h, b[c]);
   }
 }
 __global__ void k_ln_out(const real* xh, long R, int d, const real* g, const real* b, real* A) {
@@ -151,31 +171,55 @@ __global__ void k_ln_out(const real* xh, long R, int d, const real* g, const rea
   const int c = (int)(t % d);
   A[t] = g[c] * xh[t] + b[c];
 }
-// dX (+)= rs·(gy − mean(gy) − xh·mean(gy·xh)), gy = dA·g. T = dA·xh (g 기울기의 열 합 재료)
+// dX (+)= rs·(gy − mean(gy) − xh·mean(gy·xh)), gy = dA·g. T = dA·xh (g 기울기의 열 합 재료). 공유 메모리: dA 행 | xh 행 (각 [kLnRows][d])
 __global__ void k_ln_bwd(const real* dA, const real* xh, const real* rs, const real* g, long R, int d, real* dX, bool acc, real* T,
                          bool broken) {
-  long r = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  if (r >= R) return;
-  real m1 = 0, m2 = 0;
-  for (int c = 0; c < d; ++c) {
-    const real gy = dA[r * d + c] * g[c];
-    m1 += gy;
-    m2 += gy * xh[r * d + c];
+  extern __shared__ real ln_sh[];
+  __shared__ real s1[kLnRows], s2[kLnRows], ss[kLnRows];
+  const long r0 = (long)blockIdx.x * kLnRows;
+  const int nr = (int)(R - r0 < kLnRows ? R - r0 : kLnRows), n = nr * d, tid = threadIdx.x;
+  real* sa = ln_sh;
+  real* sh = ln_sh + kLnRows * d;
+  for (int t = tid; t < n; t += kLnThreads) {
+    sa[t] = dA[r0 * d + t];
+    sh[t] = xh[r0 * d + t];
   }
-  m1 /= (real)d;
-  m2 /= (real)d;
-  if (broken) m2 = 0;
-  const real s = rs[r];
-  for (int c = 0; c < d; ++c) {
-    const real h = xh[r * d + c];
-    const real v = s * (dA[r * d + c] * g[c] - m1 - h * m2);
-    T[r * d + c] = dA[r * d + c] * h;
-    dX[r * d + c] = acc ? dX[r * d + c] + v : v;
+  __syncthreads();
+  if (tid < nr) {
+    const real* a = sa + tid * d;
+    const real* x = sh + tid * d;
+    real m1 = 0, m2 = 0;
+    for (int c = 0; c < d; ++c) {
+      const real gy = a[c] * g[c];
+      m1 += gy;
+      m2 = fma(gy, x[c], m2);
+    }
+    m1 /= (real)d;
+    m2 /= (real)d;
+    if (broken) m2 = 0;
+    s1[tid] = m1;
+    s2[tid] = m2;
+    ss[tid] = rs[r0 + tid];
+  }
+  __syncthreads();
+  for (int t = tid; t < n; t += kLnThreads) {
+    const int r = t / d, c = t % d;
+    const real m1 = s1[r], m2 = s2[r], s = ss[r];
+    const real h = sh[t];
+    const real u = fma(-h, m2, fma(sa[t], g[c], -m1));   // 예전 커널이 컴파일된 꼴 그대로 (곱-더하기 융합 자리를 못박음 — 아래 acc 도)
+    T[r0 * d + t] = sa[t] * h;
+    dX[r0 * d + t] = acc ? fma(s, u, dX[r0 * d + t]) : s * u;
   }
 }
 
-// ---------------- 인코더 어텐션 (행·머리마다 스레드 하나, 키 = 자신 + 간선 이웃) ----------------
+// ---------------- 인코더 어텐션 (키 = 자신 + 간선 이웃. 역방향 둘은 블록 = 행 하나, 스레드 = 칸) ----------------
 // QKV [R][3d]: 질의 | 키 | 값, 머리 h 는 열 h·dk … 안. W [R][H][25] = 주의 가중치(가린 칸 0), O [R][d] = 머리별 Σ w·v
+// 역방향의 식·더하는 순서는 예전(행·머리마다 스레드 하나가 25 칸 × dk 를 차례로)과 같다 — 내적은 열 차례, 소프트맥스·출력 합은 칸(슬롯) 차례 → 값이 비트까지 같다.
+// 달라진 것은 일 나누기: 키·값 행을 블록 스레드 모두가 나란히 읽고(이웃 스레드 = 이웃 칸), 내적 H·25 개 · 출력 d 칸을 스레드마다 하나씩 맡는다.
+// 예전 꼴은 스레드 하나가 전역 메모리 읽기 800 번을 줄줄이 기다려, 행이 수천 개뿐인 미니배치에서 GPU 가 거의 놀았다
+constexpr int kAtT = 128;
+inline size_t attn_shm(int d, int H, int planes) { return ((size_t)(kGSlot + 1) * d + (size_t)planes * H * kGSlot) * sizeof(real); }
+// 정방향은 예전 꼴(행·머리마다 스레드 하나) 그대로 둔다 — 블록 = 행 꼴로 바꿔 재 보니 오히려 ~17 % 느렸다 (값은 같았다)
 __global__ void k_attn_fwd(const real* QKV, const int* gnb, const uint32_t* eb, long R, int d, int H, real* W, real* O) {
   long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
   if (t >= R * H) return;
@@ -221,77 +265,103 @@ __global__ void k_attn_fwd(const real* QKV, const int* gnb, const uint32_t* eb, 
 // 역방향 1 (질의 쪽): du_s = w_s (dw_s − Σ w dw)/√dk, dw_s = dO·v_s → DU [R][H][25], dQ = Σ du_s k_s
 __global__ void k_attn_bwd1(const real* QKV, const int* gnb, const uint32_t* eb, const real* W, const real* dO, long R, int d, int H,
                             real* DU, real* dQKV) {
-  long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  if (t >= R * H) return;
-  const long i = t / H;
-  const int h = (int)(t % H), dk = d / H;
-  const real nrm = (real)1 / sqrt((real)dk);
-  const uint32_t e = eb[i];
-  const real* w = W + t * kGSlot;
-  const real* g = dO + i * d + h * dk;
-  real dw[kGSlot];
-  long js[kGSlot];
-  real mean = 0;
-  for (int s = 0; s < kGSlot; ++s) {
-    const long j = s == 0 ? i : (((e >> (s - 1)) & 1u) ? gnb[i * kGNb + s - 1] : -1);
-    js[s] = j;
-    dw[s] = 0;
-    if (j < 0) continue;
-    const real* v = QKV + j * 3 * d + 2 * d + h * dk;
-    real a = 0;
-    for (int c = 0; c < dk; ++c) a += g[c] * v[c];
-    dw[s] = a;
-    mean += w[s] * a;
+  extern __shared__ real at_sh[];   // dO 행 [d] | 값 [25][d] | dw → du [H][25] | w [H][25]
+  __shared__ long s_js[kGSlot];
+  const long i = blockIdx.x;
+  const int tid = threadIdx.x, dk = d / H, HS = H * kGSlot;
+  real* sg = at_sh;
+  real* sv = at_sh + d;
+  real* sx = sv + (size_t)kGSlot * d;
+  real* sw = sx + HS;
+  if (tid < kGSlot) {
+    const uint32_t e = eb[i];
+    s_js[tid] = tid == 0 ? i : (((e >> (tid - 1)) & 1u) ? gnb[i * kGNb + tid - 1] : -1);
   }
-  real dq[kMaxDk];
-  for (int c = 0; c < dk; ++c) dq[c] = 0;
-  real* du = DU + t * kGSlot;
+  for (int c = tid; c < d; c += kAtT) sg[c] = dO[i * d + c];
+  for (int t = tid; t < HS; t += kAtT) sw[t] = W[i * HS + t];
+  __syncthreads();
   for (int s = 0; s < kGSlot; ++s) {
-    if (js[s] < 0) {
-      du[s] = 0;
+    const long j = s_js[s];
+    if (j < 0) continue;
+    for (int c = tid; c < d; c += kAtT) sv[s * d + c] = QKV[j * 3 * d + 2 * d + c];
+  }
+  __syncthreads();
+  for (int t = tid; t < HS; t += kAtT) {
+    const int h = t / kGSlot, s = t % kGSlot;
+    if (s_js[s] < 0) {
+      sx[t] = 0;
       continue;
     }
-    const real x = w[s] * (dw[s] - mean) * nrm;
-    du[s] = x;
-    const real* k = QKV + js[s] * 3 * d + d + h * dk;
-    for (int c = 0; c < dk; ++c) dq[c] += x * k[c];
+    const real* g = sg + h * dk;
+    const real* v = sv + s * d + h * dk;
+    real a = 0;
+    for (int c = 0; c < dk; ++c) a += g[c] * v[c];
+    sx[t] = a;
   }
-  for (int c = 0; c < dk; ++c) dQKV[i * 3 * d + h * dk + c] = dq[c];
+  __syncthreads();
+  const real nrm = (real)1 / sqrt((real)dk);
+  for (int h = tid; h < H; h += kAtT) {
+    real* dw = sx + h * kGSlot;
+    const real* w = sw + h * kGSlot;
+    real mean = 0;
+    for (int s = 0; s < kGSlot; ++s) {
+      if (s_js[s] < 0) continue;
+      const real a = dw[s];
+      mean += w[s] * a;
+    }
+    for (int s = 0; s < kGSlot; ++s) {
+      if (s_js[s] < 0) {
+        dw[s] = 0;
+        continue;
+      }
+      const real x = w[s] * (dw[s] - mean) * nrm;
+      dw[s] = x;
+    }
+  }
+  __syncthreads();
+  for (int t = tid; t < HS; t += kAtT) DU[i * HS + t] = sx[t];
+  for (int c = tid; c < d; c += kAtT) {
+    const real* du = sx + (c / dk) * kGSlot;
+    real dq = 0;
+    for (int s = 0; s < kGSlot; ++s) {
+      const long j = s_js[s];
+      if (j < 0) continue;
+      const real x = du[s];
+      dq += x * QKV[j * 3 * d + d + c];
+    }
+    dQKV[i * 3 * d + c] = dq;
+  }
 }
 // 역방향 2 (키·값 쪽, 모으기): 행 j 를 키로 본 질의 i = 자신 + 반대 스텐실 이웃(k' 번 이웃 i 가 23 − k' 번으로 j 를 본다) 을 고정 순서로
 __global__ void k_attn_bwd2(const real* QKV, const int* gnb, const uint32_t* eb, const real* W, const real* DU, const real* dO, long R,
                             int d, int H, real* dQKV) {
-  long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  if (t >= R * H) return;
-  const long j = t / H;
-  const int h = (int)(t % H), dk = d / H;
-  real dkk[kMaxDk], dv[kMaxDk];
-  {
-    const real du = DU[t * kGSlot], w = W[t * kGSlot];
-    const real* q = QKV + j * 3 * d + h * dk;
-    const real* g = dO + j * d + h * dk;
-    for (int c = 0; c < dk; ++c) {
-      dkk[c] = du * q[c];
-      dv[c] = w * g[c];
-    }
+  __shared__ long s_i[kGNb];   // j 를 키로 보는 질의 행 (아니면 −1)
+  const long j = blockIdx.x;
+  const int tid = threadIdx.x, dk = d / H;
+  if (tid < kGNb) {
+    const long i = gnb[j * kGNb + tid];
+    s_i[tid] = (i >= 0 && ((eb[i] >> (kGNb - 1 - tid)) & 1u)) ? i : -1;
   }
-  for (int kp = 0; kp < kGNb; ++kp) {
-    const long i = gnb[j * kGNb + kp];
-    if (i < 0) continue;
-    const int k = kGNb - 1 - kp;
-    if (!((eb[i] >> k) & 1u)) continue;
-    const long ti = (i * H + h) * kGSlot + 1 + k;
-    const real du = DU[ti], w = W[ti];
-    const real* q = QKV + i * 3 * d + h * dk;
-    const real* g = dO + i * d + h * dk;
-    for (int c = 0; c < dk; ++c) {
-      dkk[c] += du * q[c];
-      dv[c] += w * g[c];
+  __syncthreads();
+  for (int c = tid; c < d; c += kAtT) {
+    const int h = c / dk;
+    real dkk, dv;
+    {
+      const long t = j * H + h;
+      const real du = DU[t * kGSlot], w = W[t * kGSlot];
+      dkk = du * QKV[j * 3 * d + c];
+      dv = w * dO[j * d + c];
     }
-  }
-  for (int c = 0; c < dk; ++c) {
-    dQKV[j * 3 * d + d + h * dk + c] = dkk[c];
-    dQKV[j * 3 * d + 2 * d + h * dk + c] = dv[c];
+    for (int kp = 0; kp < kGNb; ++kp) {
+      const long i = s_i[kp];
+      if (i < 0) continue;
+      const long ti = (i * H + h) * kGSlot + 1 + (kGNb - 1 - kp);
+      const real du = DU[ti], w = W[ti];
+      dkk += du * QKV[i * 3 * d + c];
+      dv += w * dO[i * d + c];
+    }
+    dQKV[j * 3 * d + d + c] = dkk;
+    dQKV[j * 3 * d + 2 * d + c] = dv;
   }
 }
 
@@ -583,18 +653,18 @@ void GraphBody::forward(cublasHandle_t h, cudaStream_t st, int n, const GraphIn&
   k_bias<<<nblk(M * d), 256, 0, st>>>(X_, M, d, P_ + emb_b_, false);
   // 인코더 (X_ 제자리: 잔차를 GEMM 의 beta = 1 로)
   for (Layer& L : L_) {
-    k_ln_fwd<<<nblk(M), 256, 0, st>>>(X_, M, d, P_ + L.ln1_g, P_ + L.ln1_b, L.xh1, L.rs1, A_);
+    k_ln_fwd<<<ln_blk(M), kLnThreads, ln_shm(d, 1), st>>>(X_, M, d, P_ + L.ln1_g, P_ + L.ln1_b, L.xh1, L.rs1, A_);
     gemm(h, false, false, Mi, 3 * d, d, 1, A_, d, P_ + L.wqkv, 3 * d, 0, L.QKV, 3 * d);
     k_attn_fwd<<<nblk(M * H), 256, 0, st>>>(L.QKV, gnb_, ebits_, M, d, H, L.W, L.O);
     gemm(h, false, false, Mi, d, d, 1, L.O, d, P_ + L.wout, d, 1, X_, d);
-    k_ln_fwd<<<nblk(M), 256, 0, st>>>(X_, M, d, P_ + L.ln2_g, P_ + L.ln2_b, L.xh2, L.rs2, A_);
+    k_ln_fwd<<<ln_blk(M), kLnThreads, ln_shm(d, 1), st>>>(X_, M, d, P_ + L.ln2_g, P_ + L.ln2_b, L.xh2, L.rs2, A_);
     gemm(h, false, false, Mi, ff, d, 1, A_, d, P_ + L.w1, ff, 0, L.HID, ff);
     k_bias<<<nblk(M * ff), 256, 0, st>>>(L.HID, M, ff, P_ + L.b1, true);
     gemm(h, false, false, Mi, d, ff, 1, L.HID, ff, P_ + L.w2, d, 1, X_, d);
     k_bias<<<nblk(M * d), 256, 0, st>>>(X_, M, d, P_ + L.b2, false);
   }
   // 디코더: 정규화 1 은 질의(현재 노드)·기억(모든 노드) 공용 → 질의 = 정규화된 현재 노드 행
-  k_ln_fwd<<<nblk(M), 256, 0, st>>>(X_, M, d, P_ + dln1_g_, P_ + dln1_b_, dxh_, drs_, A_);
+  k_ln_fwd<<<ln_blk(M), kLnThreads, ln_shm(d, 1), st>>>(X_, M, d, P_ + dln1_g_, P_ + dln1_b_, dxh_, drs_, A_);
   gemm(h, false, false, Mi, 2 * d, d, 1, A_, d, P_ + dwkv_, 2 * d, 0, KV_, 2 * d);
   k_gather_rows<<<nblk((long)n * d), 256, 0, st>>>(A_, rowcur_, n, d, Ac_);
   k_gather_rows<<<nblk((long)n * d), 256, 0, st>>>(X_, rowcur_, n, d, Hc_);
@@ -602,7 +672,7 @@ void GraphBody::forward(cublasHandle_t h, cudaStream_t st, int n, const GraphIn&
   k_dec_fwd<<<nblk((long)n * H, 64), 64, 0, st>>>(Qc_, KV_, row_start_, n, d, H, Wd_, Od_);
   CK(cudaMemcpyAsync(h1_, Hc_, (size_t)n * d * sizeof(real), cudaMemcpyDeviceToDevice, st));
   gemm(h, false, false, n, d, d, 1, Od_, d, P_ + dwout_, d, 1, h1_, d);
-  k_ln_fwd<<<nblk(n), 256, 0, st>>>(h1_, n, d, P_ + dln2_g_, P_ + dln2_b_, xh2d_, rs2d_, An_);
+  k_ln_fwd<<<ln_blk(n), kLnThreads, ln_shm(d, 1), st>>>(h1_, n, d, P_ + dln2_g_, P_ + dln2_b_, xh2d_, rs2d_, An_);
   gemm(h, false, false, n, ff, d, 1, An_, d, P_ + dw1_, ff, 0, hidd_, ff);
   k_bias<<<nblk((long)n * ff), 256, 0, st>>>(hidd_, n, ff, P_ + db1_, true);
   CK(cudaMemcpyAsync(E_, h1_, (size_t)n * d * sizeof(real), cudaMemcpyDeviceToDevice, st));
@@ -629,7 +699,7 @@ void GraphBody::backward(cublasHandle_t h, cudaStream_t st, int n, const real* d
   gemm(h, true, false, d, ff, n, 1, An_, d, dhidd_, ff, 1, G_ + dw1_, ff);
   gemm(h, false, true, n, d, ff, 1, dhidd_, ff, P_ + dw1_, ff, 0, dAn_, d);
   CK(cudaMemcpyAsync(dh1_, gE_, (size_t)n * d * sizeof(real), cudaMemcpyDeviceToDevice, st));   // 잔차
-  k_ln_bwd<<<nblk(n), 256, 0, st>>>(dAn_, xh2d_, rs2d_, P_ + dln2_g_, n, d, dh1_, true, Tn_, brk);
+  k_ln_bwd<<<ln_blk(n), kLnThreads, ln_shm(d, 2), st>>>(dAn_, xh2d_, rs2d_, P_ + dln2_g_, n, d, dh1_, true, Tn_, brk);
   col_sum(Tn_, n, d, d, G_ + dln2_g_, true, st);
   col_sum(dAn_, n, d, d, G_ + dln2_b_, true, st);
   gemm(h, true, false, d, d, n, 1, Od_, d, dh1_, d, 1, G_ + dwout_, d);
@@ -641,7 +711,7 @@ void GraphBody::backward(cublasHandle_t h, cudaStream_t st, int n, const real* d
   gemm(h, true, false, d, 2 * d, Mi, 1, A_, d, dQKV_, 2 * d, 1, G_ + dwkv_, 2 * d);
   gemm(h, false, true, Mi, d, 2 * d, 1, dQKV_, 2 * d, P_ + dwkv_, 2 * d, 0, dA_, d);
   k_scatter_rows<<<nblk((long)n * d), 256, 0, st>>>(dA_, rowcur_, n, d, dAc_, d, nullptr, 0);   // 질의 = 정규화된 현재 노드 행
-  k_ln_bwd<<<nblk(M), 256, 0, st>>>(dA_, dxh_, drs_, P_ + dln1_g_, M, d, dX_, false, T_, brk);
+  k_ln_bwd<<<ln_blk(M), kLnThreads, ln_shm(d, 2), st>>>(dA_, dxh_, drs_, P_ + dln1_g_, M, d, dX_, false, T_, brk);
   col_sum(T_, M, d, d, G_ + dln1_g_, true, st);
   col_sum(dA_, M, d, d, G_ + dln1_b_, true, st);
   // 현재 노드 특징: 디코더 잔차(dh1) + 머리가 직접 쓴 Hc, 그리고 이웃 특징
@@ -658,17 +728,17 @@ void GraphBody::backward(cublasHandle_t h, cudaStream_t st, int n, const real* d
     k_ln_out<<<nblk(M * d), 256, 0, st>>>(L.xh2, M, d, P_ + L.ln2_g, P_ + L.ln2_b, A_);
     gemm(h, true, false, d, ff, Mi, 1, A_, d, dHID_, ff, 1, G_ + L.w1, ff);
     gemm(h, false, true, Mi, d, ff, 1, dHID_, ff, P_ + L.w1, ff, 0, dA_, d);
-    k_ln_bwd<<<nblk(M), 256, 0, st>>>(dA_, L.xh2, L.rs2, P_ + L.ln2_g, M, d, dX_, true, T_, brk);
+    k_ln_bwd<<<ln_blk(M), kLnThreads, ln_shm(d, 2), st>>>(dA_, L.xh2, L.rs2, P_ + L.ln2_g, M, d, dX_, true, T_, brk);
     col_sum(T_, M, d, d, G_ + L.ln2_g, true, st);
     col_sum(dA_, M, d, d, G_ + L.ln2_b, true, st);
     gemm(h, true, false, d, d, Mi, 1, L.O, d, dX_, d, 1, G_ + L.wout, d);
     gemm(h, false, true, Mi, d, d, 1, dX_, d, P_ + L.wout, d, 0, dA_, d);   // dA_ = dO
-    k_attn_bwd1<<<nblk(M * H), 256, 0, st>>>(L.QKV, gnb_, ebits_, L.W, dA_, M, d, H, DU_, dQKV_);
-    k_attn_bwd2<<<nblk(M * H), 256, 0, st>>>(L.QKV, gnb_, ebits_, L.W, DU_, dA_, M, d, H, dQKV_);
+    k_attn_bwd1<<<(unsigned)M, kAtT, attn_shm(d, H, 2), st>>>(L.QKV, gnb_, ebits_, L.W, dA_, M, d, H, DU_, dQKV_);
+    k_attn_bwd2<<<(unsigned)M, kAtT, 0, st>>>(L.QKV, gnb_, ebits_, L.W, DU_, dA_, M, d, H, dQKV_);
     k_ln_out<<<nblk(M * d), 256, 0, st>>>(L.xh1, M, d, P_ + L.ln1_g, P_ + L.ln1_b, A_);
     gemm(h, true, false, d, 3 * d, Mi, 1, A_, d, dQKV_, 3 * d, 1, G_ + L.wqkv, 3 * d);
     gemm(h, false, true, Mi, d, 3 * d, 1, dQKV_, 3 * d, P_ + L.wqkv, 3 * d, 0, dA_, d);
-    k_ln_bwd<<<nblk(M), 256, 0, st>>>(dA_, L.xh1, L.rs1, P_ + L.ln1_g, M, d, dX_, true, T_, brk);
+    k_ln_bwd<<<ln_blk(M), kLnThreads, ln_shm(d, 2), st>>>(dA_, L.xh1, L.rs1, P_ + L.ln1_g, M, d, dX_, true, T_, brk);
     col_sum(T_, M, d, d, G_ + L.ln1_g, true, st);
     col_sum(dA_, M, d, d, G_ + L.ln1_b, true, st);
   }
