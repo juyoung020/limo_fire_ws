@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
   bool graph = false;
   int graph_open = -1;    // --graph-open 0/1: 유틸리티가 닫힘을 막는 프론티어 칸만 세는지
   int graph_stand = -1;   // --graph-stand 0/1: 노드·간선 칸 기준을 설정 파일 대신 (0 빈 칸 · 1 설 수 있는 칸)
+  sim::GraphArgs gargs;   // --graph-node 등 (env_cfg.h)
   int people = 0;
   bool spin = false;
   bool slot0 = false;   // --slot0 (계층형): 늘 후보 0 번 — 같은 목표가 이어져 복구(hier_path.h "복구")·목표 허용 길을 GPU == CPU 로 지나가게
@@ -79,6 +80,7 @@ int main(int argc, char** argv) {
     else if (a == "--slot0") slot0 = true;
     else if (a == "--hier") hier = true;
     else if (a == "--graph") hier = graph = true;
+    else if (i + 1 < argc && sim::graph_arg(gargs, a, argv[i + 1])) ++i;
     else if (a == "--graph-stand") graph_stand = std::atoi(argv[++i]);
     else if (a == "--graph-open") graph_open = std::atoi(argv[++i]);
     else if (a == "--env" && i + 1 < argc) env_path = argv[++i];
@@ -191,6 +193,7 @@ int main(int argc, char** argv) {
   if (graph) hc.cfg.graph_on = 1;
   if (graph_stand >= 0) hc.cfg.graph_stand = graph_stand;
   if (graph_open >= 0) hc.cfg.graph_open = graph_open;
+  sim::graph_apply(hc.cfg, gargs);
   if (people > 0) hc.cfg.curriculum = 0;   // 커리큘럼이 켜져 있으면 단계가 사람 수를 정함 — --people 로 정한 수를 쓰려고 끔
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   std::vector<sim::World> worlds;
@@ -238,8 +241,13 @@ int main(int argc, char** argv) {
   std::vector<float> ggg, ggc;
   size_t bad_graph = 0, g_obs = 0, g_valid = 0, g_edges = 0, g_util = 0, g_guide = 0, g_noedge = 0, g_moved = 0;
   int neg_done = 0;
+  std::vector<sim::GraphDec> gdg, gdc;
+  size_t d_n = 0, d_reason[8] = {}, d_steps = 0, d_term[4] = {};
+  double d_dist = 0., d_rew[3] = {};
   const auto graph_cmp = [&](int t) {
     if (!graph) return;
+    gpu.get_gdec(gdg);
+    cpu.get_gdec(gdc);
     gpu.get_graph(gfg, geg, gcg, ggg, gng);
     cpu.get_graph(gfc, gec, gcc, ggc, gnc);
     size_t bg = 0;
@@ -249,6 +257,17 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < gnc.size(); ++i) bg += gng[i] != gnc[i];
     for (size_t i = 0; i < ggc.size(); ++i) bg += std::memcmp(&ggg[i], &ggc[i], 4) != 0;
     for (float v : ggc) n_nan += !std::isfinite(v);
+    if (t >= 0)   // 결정 결과 (걸음 수·사유·거리·보상 조각)도 비트 같아야
+      for (int i = 0; i < n_env; ++i) {
+        bg += std::memcmp(&gdg[i], &gdc[i], sizeof(sim::GraphDec)) != 0;
+        const sim::GraphDec& d = gdc[i];
+        ++d_n;
+        d_reason[d.reason & 7]++;
+        d_steps += d.steps;
+        d_dist += d.dist;
+        d_term[d.term & 3]++;
+        d_rew[0] += d.r_dist; d_rew[1] += d.r_front; d_rew[2] += d.r_done;
+      }
     bad_graph += bg;
     if (bg && first_bad < 0) first_bad = t;
     for (int i = 0; i < n_env; ++i) {
@@ -551,6 +570,12 @@ int main(int argc, char** argv) {
     std::printf("그래프 모드 (노드·간선 칸 기준 %s): 관측 %zu 개(환경 × (판 시작 + 결정)) GPU 와 다른 값 %zu · 관측당 유효 노드 %.1f · 간선 %.1f · 유틸리티 노드 %.2f · 길잡이 노드 %.2f, "
                 "현재 노드에 간선 없는 관측 %zu, 결정 사이 현재 노드가 바뀐 수 %zu\n", hc.cfg.graph_stand ? "설 수 있는 칸" : "빈 칸", g_obs, bad_graph, (double)g_valid / g_obs, (double)g_edges / 2 / g_obs,
                 (double)g_util / g_obs, (double)g_guide / g_obs, g_noedge, g_moved);
+  if (graph && d_n > 0)
+    std::printf("그래프 결정 %zu 개 (간격 %.1f m, 판 끝 %s, 감속 %s, 결정 %s, 방문 유틸리티 유지 %d): 평균 %.2f 걸음 · %.3f m, 사유 닿음 %zu · 막힘 %zu · 시간 초과 %zu · 길 없음 %zu · 경로 끝 어긋남 %zu · 판 끝 %zu · 진행 중 %zu, "
+                "판 끝 유틸리티 0 %zu · 걸음에서 %zu · 결정 상한 %zu, 보상 조각 합 거리 %.3f · 프론티어 %.3f · 끝 %.1f\n",
+                d_n, hc.cfg.graph_step * hc.cfg.res, hc.cfg.graph_term ? "전작" : "계층형", hc.cfg.graph_pass ? "끔" : "켬", hc.cfg.graph_fixed ? "고정 주기" : "한 노드", hc.cfg.graph_view, (double)d_steps / d_n, d_dist / d_n,
+                d_reason[sim::kGdArrive], d_reason[sim::kGdBlocked], d_reason[sim::kGdTimeout], d_reason[sim::kGdNoPath], d_reason[sim::kGdOff], d_reason[sim::kGdEpisode], d_reason[sim::kGdRun],
+                d_term[1], d_term[2], d_term[3], d_rew[0], d_rew[1], d_rew[2]);
   const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_trail == 0 && bad_obs == 0 && bad_cam == 0 && bad_graph == 0;
   const bool range_ok = n_nan == 0 && bad_range == 0;
   std::printf("%s\n", same ? "환경 V0 통과: GPU == CPU (비트 같음)" : "다름");

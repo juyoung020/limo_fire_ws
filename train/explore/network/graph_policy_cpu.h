@@ -3,7 +3,8 @@
 //   GraphPolicyT<float>  실물(젯슨·데스크톱 CPU) 배포용 — ppo/tools/graph_net_check 가 학습기 GPU 정방향과 로짓 차 ≤ 1e-3 인지 확인한다.
 //   GraphPolicyT<double> 학습기 희소 구현의 기준 — 같은 식을 "간선 가림을 씌운 조밀 어텐션"(model.py 방식: 노드 × 노드 가림 행렬)으로 따로 짠 것.
 // 계산 (graph_net.cu 와 같은 식·같은 가중치 배치 — 모든 W 는 [입력][출력], y = x·W):
-//   유효 노드(특징 0 번 칸 ≠ 0)만 자리 순으로 모음 → x = (u8 칸 1 … feat−1) / 255 → 임베딩 Linear
+//   유효 노드(특징 0 번 칸 ≠ 0)만 자리 순으로 모음 → x = 칸 1·2(dx·dy)는 (u8 − 128) / coord_scale(160 — 0 중심, 전작 large-scale agent.py:157-160), 칸 3 … fin 은 u8 / 255
+//   (fin = 5: HEADER v' = (x, y, u, e, b). 그 뒤 예약 칸은 안 읽음) → 임베딩 Linear
 //   인코더 층 × L: a = LN(x) → 여러 머리 어텐션(질의 i 가 키 j 를 봄 ⇔ j = i 또는 i 의 간선 비트가 가리키는 유효 이웃) → x += o·W_out
 //                  → a = LN(x) → x += ReLU(a·W1 + b1)·W2 + b2
 //   디코더: a = LN(x) (질의·기억 공용) → 질의 = a[현재 노드], 키·값 = 모든 유효 노드 → h = x[현재] + o·W_out → E = h + FF(LN(h))
@@ -29,6 +30,9 @@ class GraphPolicyT {
   static constexpr int kNb = 24;   // 5×5 스텐실에서 자신 제외 (mdp::graph::NB)
   std::map<std::string, std::vector<T>> blk;   // 변수 블록 (이름 = 학습기 블록 이름). 바꾼 뒤엔 configure()
   int fin = 0, d = 0, heads = 8, layers = 0, ff = 0, glob = 0;
+  int feat_stride = 0;   // 노드 특징 버퍼의 칸 수 (mdp::graph::FEAT). 0 = fin + 1. 신경망은 1 … fin 번 칸만 읽는다 (fin = 임베딩 가중치 크기 — HEADER 5 칸)
+  int coord = 2;             // 임베딩 입력의 앞 coord 칸(F_DX·F_DY)은 (u8 − 128) / coord_scale (graph_net.cuh GraphSpec — 전작 agent.py:157-160 과 같은 0 중심 좌표)
+  T coord_scale = (T)160;
 
   // 블록 크기에서 구조를 읽는다. prefix = 몸통 이름 ("gactor")
   void configure(int n_heads = 8, const std::string& prefix = "gactor") {
@@ -96,11 +100,12 @@ class GraphPolicyT {
     configure(n_heads);
   }
 
-  // 그래프 하나. feat u8 [gw·gh][fin + 1], edge u32 [gw·gh], cur = 현재 노드 자리(유효해야 함), g = 전역 [glob] (glob 0 이면 안 읽음).
+  // 그래프 하나. feat u8 [gw·gh][feat_stride], edge u32 [gw·gh], cur = 현재 노드 자리(유효해야 함), g = 전역 [glob] (glob 0 이면 안 읽음).
   // logits·mask [24] (mask 1 = 고를 수 있음). E_out·Hc_out [d] 는 검사용(nullptr 가능). 반환 = 결정 행동(이웃 번호)
   int act(int gw, int gh, const uint8_t* feat, const uint32_t* edge, int cur, const T* g, T* logits, T* mask, T* E_out = nullptr,
           T* Hc_out = nullptr) const {
-    const int N = gw * gh, F = fin + 1, dk = d / heads;
+    const int N = gw * gh, F = feat_stride > 0 ? feat_stride : fin + 1, dk = d / heads;
+    if (F < fin + 1) throw std::runtime_error("그래프 정책: 특징 칸 수가 임베딩 입력보다 적음");
     if (cur < 0 || cur >= N || feat[(size_t)cur * F] == 0) throw std::runtime_error("그래프 정책: 현재 노드가 무효");
     std::vector<int> node, row(N, -1);
     for (int j = 0; j < N; ++j)
@@ -128,7 +133,7 @@ class GraphPolicyT {
     {
       std::vector<T> x0((size_t)V * fin);
       for (int i = 0; i < V; ++i)
-        for (int c = 0; c < fin; ++c) x0[(size_t)i * fin + c] = (T)feat[(size_t)node[i] * F + 1 + c] / (T)255;
+        for (int c = 0; c < fin; ++c) x0[(size_t)i * fin + c] = c < coord ? ((T)feat[(size_t)node[i] * F + 1 + c] - (T)128) / coord_scale : (T)feat[(size_t)node[i] * F + 1 + c] / (T)255;
       lin(x0.data(), V, fin, p(".emb.w"), d, p(".emb.b"), X.data(), false);
     }
     for (int l = 0; l < layers; ++l) {

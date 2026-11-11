@@ -771,7 +771,7 @@ ACSpec explore_spec_graph() {
   s.gspec.gw = g::GW;
   s.gspec.gh = g::GH;
   s.gspec.feat = g::FEAT;
-  s.graph_glob = g::GLOB;
+  s.graph_glob = 0;   // 전역 벡터는 논문에 없어 기본 끔 (켜려면 g::GLOB — README "논문·model.py 와 다른 곳")
   NetSpec c;
   c.in1d = mdp::obs::PRIV;
   c.hidden = {128};   // 잠정 (전작의 Q 머리는 선형 한 층 — README "논문과 다른 곳")

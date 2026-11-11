@@ -5,6 +5,10 @@
 //         [--test a.scene,b.scene] [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml]
 //         [--slot-cm-coef 1e-3]  계층형 슬롯 로짓 공통 성분 벌점 (0 = 끔, ppo.h PPOConfig::slot_cm_coef)
 //         [--hier]  계층형: 1 s 마다 프론티어 후보 K 개 중 하나(가린 범주 분포) → 시뮬 경로 계획·추종 (mdp/README "계층형"). 반복 = 결정 24 개
+//         [--graph] 그래프 모드 (HEADER 식, mdp/README "그래프 모드"): 결정마다 현재 노드의 이웃 노드 하나(가린 범주 분포, 최대 24) → 시뮬이 그 노드까지 주행. 결정 길이는 가변(약 2 s).
+//                   신경망 = 어텐션 인코더 6 층 + 디코더 + 포인터 (network/README "그래프 어텐션 정책"). 환경 수·롤아웃 길이·에포크·γ 기본값은 ppo.h graph_ppo_config() 한곳.
+//                   시뮬 쪽 덮어쓰기는 --graph-node·--graph-term·… (sim/include/env_cfg.h GraphArgs). --graph-share 1 = 가치 머리가 정책 몸통을 같이 씀(기본 따로)
+//         [--steps T] [--epochs E] [--minibatches M] [--gamma g] [--lam l]  PPO 값 덮어쓰기 (안 주면 PPOConfig 기본, --graph 면 graph_ppo_config)
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
 //
 // 반복 하나 = 24 걸음 롤아웃(act → env.step → store) → update. done 매핑: mdp::cur::terminal(1·2·4·5) → 1 종료, 3 → 3 끊김.
@@ -49,10 +53,11 @@ volatile std::sig_atomic_t g_stop = 0;
 void on_sig(int) { g_stop = 1; }
 
 struct Args {
-  int envs = 2048, iters = 0, eval_every = 50, ckpt_every = 50, replay_every = 25, eval_eps = 32;
+  int envs = 0, iters = 0, eval_every = 50, ckpt_every = 50, replay_every = 25, eval_eps = 32;
   double minutes = 0;
+  // envs 0 = 기본 (2048, --graph 면 graph_ppo_config 의 num_envs)
   uint64_t seed = 1;
-  float lr_max = 1e-3f;
+  float lr_max = -1;        // < 0 = 기본: 1e-3 (그래프 모드는 graph_ppo_config 값)
   float bound_coef = -1;  // < 0 = PPOConfig 기본. 평균 행동 경계 손실 계수 (0 = 끔, explore_v7 과 같음)
   float entropy = -1, desired_kl = -1, std_min = -1;   // < 0 = PPOConfig 기본 (엔트로피 계수 · KL 적응 목표 · σ 하한)
   float slot_cm_coef = -1;   // < 0 = PPOConfig 기본 (계층형 슬롯 로짓 공통 성분 벌점, ppo.h)
@@ -60,6 +65,11 @@ struct Args {
   int mlp = 2, chunk = 0;  // chunk 0 = PPOConfig 기본 (미니배치 하나)
   bool resume = false;
   bool hier = false;   // --hier: 계층형 행동 (1 s 마다 프론티어 후보 하나 — sim kActPath, PPO 가린 범주 분포)
+  bool graph = false;  // --graph: 그래프 모드 (이웃 노드 하나 — sim kActPath + graph_on, PPO 그래프 어텐션 정책). 결정 하나 = env.step 한 번, 걸음 수는 가변
+  int graph_share = -1;   // --graph-share 0|1 (음수 = ACSpec 기본: 가치 몸통 따로)
+  sim::GraphArgs gargs;   // --graph-node 등 (sim/include/env_cfg.h)
+  int steps = 0, epochs = 0, minibatches = 0;   // 0 = 기본 (PPOConfig, --graph 면 graph_ppo_config)
+  float gamma = -1, lam = -1;                   // < 0 = 기본
   std::string eval_ckpt;
   std::string convert_in, convert_out;   // --convert-shared 입력 출력: 형식 2(공유 인코더) → 형식 3(인코더 나눔) 체크포인트로 바꿔 쓰고 끝  // 비어 있지 않으면 이 체크포인트를 불러 평가만 하고 끝 (학습 안 함)
   std::string name = "explore", root = "train/explore/runs", list = "train/explore/scenes/train/list.tsv";
@@ -89,6 +99,20 @@ __global__ void k_map_done(const int32_t* d, int n, int* out) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) return;
   out[i] = d[i] == mdp::cur::kRunning ? 0 : (mdp::cur::terminal(d[i]) ? 1 : 3);
+}
+
+// 그래프 모드 진단: 정책이 고른 이웃 번호 a[0] 이 가려진 칸(cand < 0)이면 cnt[0]++, 유효 이웃이 하나도 없는 환경이면 cnt[1]++ (그때는 PPO 가 0 번을 내고
+// 정책 손실에서 뺀다 — 가린 선택으로 안 셈). cnt[0] 은 늘 0 이어야 한다
+__global__ void k_graph_pick_check(const float* act, const int32_t* cand, int n, int* cnt) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  const int32_t* cd = cand + (size_t)i * mdp::graph::NB;
+  bool any = false;
+  for (int k = 0; k < mdp::graph::NB; ++k) any |= cd[k] >= 0;
+  if (!any) { atomicAdd(cnt + 1, 1); return; }
+  const float a = act[(size_t)i * mdp::act::DIM];
+  const int k = (int)a;
+  if (!(a >= 0.f) || k >= mdp::graph::NB || (float)k != a || cd[k] < 0) atomicAdd(cnt + 0, 1);
 }
 
 // 평가 장부 (장치): 환경마다 첫 판만 — 아직 안 끝났으면 보상을 더하고(double, 걸음 순서대로), 끝나면 판 정보를 적는다.
@@ -218,6 +242,14 @@ int main(int argc, char** argv) {
       else if (k == "--eval-episodes") a.eval_eps = std::stoi(nx());
       else if (k == "--resume") a.resume = true;
       else if (k == "--hier") a.hier = true;
+      else if (k == "--graph") a.graph = true;
+      else if (k == "--graph-share") a.graph_share = std::stoi(nx());
+      else if (k.rfind("--graph-", 0) == 0) { const std::string v = nx(); if (!sim::graph_arg(a.gargs, k, v.c_str())) throw std::runtime_error("모르는 인자 " + k); }
+      else if (k == "--steps") a.steps = std::stoi(nx());
+      else if (k == "--epochs") a.epochs = std::stoi(nx());
+      else if (k == "--minibatches") a.minibatches = std::stoi(nx());
+      else if (k == "--gamma") a.gamma = std::stof(nx());
+      else if (k == "--lam") a.lam = std::stof(nx());
       else if (k == "--eval-ckpt") a.eval_ckpt = nx();
       else if (k == "--convert-shared") { a.convert_in = nx(); a.convert_out = nx(); }
       else if (k == "--root") a.root = nx();
@@ -237,9 +269,15 @@ int main(int argc, char** argv) {
   try {
     // ---- 시뮬
     sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
-    if (a.hier) {   // 계층형: 결정 하나 = 속도 행동 decide_steps 걸음 (env.step 한 번). 재생 녹화는 아직 속도 행동 열만 있어 끔
+    if (a.hier && a.graph) throw std::runtime_error("--hier 와 --graph 는 같이 못 씀");
+    const bool cat = a.hier || a.graph;   // 범주 행동 (σ 없음, 결정 하나 = env.step 한 번)
+    if (cat) {   // 계층형: 결정 하나 = 속도 행동 decide_steps 걸음 (env.step 한 번). 재생 녹화는 아직 속도 행동 열만 있어 끔
       hc.cfg.action_mode = sim::kActPath;
-      if (a.replay_every > 0) std::fprintf(stderr, "--hier: 재생 녹화는 아직 없음 — --replay-every 무시\n");
+      if (a.graph) {   // 그래프 모드: 계층형 경로 추종 위에 얹음 — 결정 하나 = 이웃 노드 하나 (걸음 수 가변, env.get_gdec)
+        hc.cfg.graph_on = 1;
+        sim::graph_apply(hc.cfg, a.gargs);
+      }
+      if (a.replay_every > 0) std::fprintf(stderr, "%s: 재생 녹화는 아직 없음 — --replay-every 무시\n", a.graph ? "--graph" : "--hier");
       a.replay_every = 0;
     }
     const sim::LidarModel lidar = sim::load_lidar_model(a.model);
@@ -251,7 +289,10 @@ int main(int argc, char** argv) {
     std::vector<sim::World> worlds = sim::load_scene_list(a.list, hc, &skipped);
     if (worlds.empty()) throw std::runtime_error("학습 맵이 없음: " + a.list);
     std::fprintf(stderr, "학습 맵 %zu 개 (안 닫혀 뺀 것 %zu)\n", worlds.size(), skipped.size());
-    const int N = a.envs;
+    // ---- PPO 설정 (그래프 모드는 ppo.h graph_ppo_config 한곳에서 — 환경 수·롤아웃 길이·에포크·γ)
+    xppo::PPOConfig pc = a.graph ? xppo::graph_ppo_config() : xppo::PPOConfig();
+    if (a.envs > 0) pc.num_envs = a.envs;
+    const int N = pc.num_envs;
     sim::Env env(hc, worlds, lidar, N, a.seed, true);
     env.reset();
     env.sync();
@@ -263,9 +304,8 @@ int main(int argc, char** argv) {
     for (auto& t : a.test) tests.push_back(sim::build_world(stem(t), sim::load_scene(t), hc_eval));
 
     // ---- PPO
-    xppo::PPOConfig pc;
-    pc.num_envs = N;
-    pc.lr_max = a.lr_max;
+    if (a.lr_max > 0) pc.lr_max = a.lr_max;
+    else if (!a.graph) pc.lr_max = 1e-3f;
     pc.mlp = a.mlp;
     if (a.std_max > 0) pc.std_max = a.std_max;
     if (a.entropy >= 0) pc.entropy_coef = a.entropy;
@@ -275,7 +315,14 @@ int main(int argc, char** argv) {
     if (a.bound_coef >= 0) pc.bound_coef = a.bound_coef;
     if (a.chunk > 0) pc.chunk = a.chunk;
     if (a.hier) pc.gamma = (float)std::pow((double)pc.gamma, (double)dec);   // γ_결정 = 0.999^10 (같은 100 s 지평)
-    xppo::PPO ppo(pc, a.hier ? xnet::explore_spec_hier() : xnet::explore_spec(), a.seed);
+    if (a.steps > 0) pc.steps_per_env = a.steps;
+    if (a.epochs > 0) pc.epochs = a.epochs;
+    if (a.minibatches > 0) pc.minibatches = a.minibatches;
+    if (a.gamma >= 0) pc.gamma = a.gamma;   // 결정 하나마다 (그래프·계층형), 직접 제어는 걸음마다
+    if (a.lam >= 0) pc.lam = a.lam;
+    xnet::ACSpec spec = a.graph ? xnet::explore_spec_graph() : a.hier ? xnet::explore_spec_hier() : xnet::explore_spec();
+    if (a.graph && a.graph_share >= 0) spec.graph_share = a.graph_share != 0;
+    xppo::PPO ppo(pc, spec, a.seed);
     if (!a.convert_in.empty()) {
       ppo.load_convert_shared(a.convert_in);
       ppo.save(a.convert_out);
@@ -372,7 +419,7 @@ int main(int argc, char** argv) {
     if (!a.eval_ckpt.empty()) {
       ppo.load(a.eval_ckpt);
       std::vector<float> ls(mdp::act::CONT, 0.f);
-      if (!a.hier) cudaMemcpy(ls.data(), ppo.ac().log_std(), sizeof(float) * ls.size(), cudaMemcpyDeviceToHost);
+      if (!cat) cudaMemcpy(ls.data(), ppo.ac().log_std(), sizeof(float) * ls.size(), cudaMemcpyDeviceToHost);
       std::fprintf(stderr, "평가만: %s 반복 %d, σ (v, vy, ω) = %.3f %.3f %.3f\n", a.eval_ckpt.c_str(), ppo.iteration(), std::exp(ls[0]),
                    std::exp(ls[1]), std::exp(ls[2]));
     }
@@ -406,7 +453,7 @@ int main(int argc, char** argv) {
     rf::Json meta = rf::Json::object();
     meta.set("robot", robot);
     meta.set("kind", "explore_ppo").set("group", a.name).set("seed", (unsigned long long)a.seed).set("n_envs", N)
-        .set("ctrl_hz", 1.0 / (dt_act * dec)).set("hier", a.hier).set("decide_steps", dec).set("success_coverage", mdp::cur::kSuccessCov).set("action_limits", limits)
+        .set("ctrl_hz", 1.0 / (dt_act * dec)).set("hier", a.hier).set("graph", a.graph).set("decide_steps", dec).set("success_coverage", mdp::cur::kSuccessCov).set("action_limits", limits)
         .set("reward_terms", terms).set("n_train_maps", (unsigned long long)worlds.size()).set("test_maps", tests_meta)
         .set("sweep_guard", c.sweep_guard).set("cur_top_random", c.cur_top_random).set("success_closed", c.success_closed).set("reward_occ", c.reward_occ).set("scene_list", a.list).set("steps_per_env", pc.steps_per_env).set("lr_max", a.lr_max)
         .set("n_params", (long long)ppo.ac().n_params)
@@ -435,7 +482,11 @@ int main(int argc, char** argv) {
     std::vector<sim::EpInfo> h_ep(N);
     std::vector<double> ep_terms((size_t)N * mdp::rew::kTerms, 0.0), ep_rew(N, 0.0);
     std::vector<int> ep_steps(N, 0);
-    double total_steps = (double)ppo.iteration() * pc.steps_per_env * N * dec;   // 시뮬 걸음 (0.1 s) 단위
+    // 그래프 모드는 결정마다 걸음 수가 달라 이어 학습 때 지난 걸음 수를 모른다 — 결정당 21 걸음(측정 평균 2.0 ~ 2.3 s, mdp/README)으로 어림 (잠정, 가로축 표시용)
+    double total_steps = (double)ppo.iteration() * pc.steps_per_env * N * (a.graph ? 21 : dec);   // 시뮬 걸음 (0.1 s) 단위
+    std::vector<sim::GraphDec> h_gd;   // 그래프 모드: 방금 끝난 결정들
+    int* d_pick = nullptr;             // 그래프 모드 진단 [2]: 가린 선택 수 · 이웃 없는 결정 수 (k_graph_pick_check)
+    if (a.graph) cudaMalloc(&d_pick, sizeof(int) * 2);
 
     // 재생
     std::vector<Rec> rec;   // 녹화 중인 판들
@@ -565,7 +616,8 @@ int main(int argc, char** argv) {
         cudaEventCreateWithFlags(&ev_obs[ti], cudaEventDisableTiming);
         cudaEventRecord(ev_obs[ti], mst[ti]);
       }
-      const int eval_steps = c.max_steps / dec + 10;
+      // 그래프 모드는 결정 길이가 가변(걸음 1 개 이상) — 결정 수 상한은 걸음 상한과 같게 (판이 다 끝나면 아래에서 먼저 나감)
+      const int eval_steps = a.graph ? c.max_steps + 10 : c.max_steps / dec + 10;
       for (int step = 0; step < eval_steps; ++step) {
         bool any_live = false;
         for (size_t ti = 0; ti < NT; ++ti) {
@@ -574,8 +626,14 @@ int main(int argc, char** argv) {
           float* act = d_eact + (size_t)mdp::act::DIM * E * ti;
           const sim::StepOut o = evs[ti]->outputs();
           cudaStreamWaitEvent(pst, ev_obs[ti], 0);   // 이 맵의 지난 걸음 관측이 다 나온 뒤
-          ppo.act_inference(o.obs_img, o.obs_1d, act, E, sample ? (int64_t)step * (int64_t)NT + (int64_t)ti : -1);
-          if (!sample && !a.hier) k_mu_stats<<<(E + 127) / 128, 128, 0, pst>>>(act, d_first + (size_t)E * ti, E, d_mus + (size_t)kMu * ti);
+          const int64_t sc = sample ? (int64_t)step * (int64_t)NT + (int64_t)ti : -1;
+          if (a.graph) {
+            const sim::GraphOut g = evs[ti]->graph();
+            ppo.act_inference(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob, nullptr}, act, E, sc);
+          } else {
+            ppo.act_inference(o.obs_img, o.obs_1d, act, E, sc);
+          }
+          if (!sample && !cat) k_mu_stats<<<(E + 127) / 128, 128, 0, pst>>>(act, d_first + (size_t)E * ti, E, d_mus + (size_t)kMu * ti);
           if (!sample && std::getenv("EVAL_ACT_DUMP") && step < 300) {   // 변환 확인용: 결정적 평가 행동(평균) 걸음마다
             static FILE* fa = std::fopen(std::getenv("EVAL_ACT_DUMP"), "w");
             std::vector<float> ha((size_t)mdp::act::DIM * E);
@@ -621,7 +679,7 @@ int main(int argc, char** argv) {
       std::vector<double> hmu((size_t)kMu * NT);
       cudaMemcpy(hmu.data(), d_mus, sizeof(double) * kMu * NT, cudaMemcpyDeviceToHost);
       cudaFree(d_mus);
-      if (!sample && !a.hier)
+      if (!sample && !cat)
         for (size_t ti = 0; ti < NT; ++ti) {
           const double* q = hmu.data() + (size_t)kMu * ti;
           const double nn = q[0] > 0 ? q[0] : 1;
@@ -726,6 +784,7 @@ int main(int argc, char** argv) {
     if (!a.eval_ckpt.empty()) {
       evaluate(ppo.iteration(), false);
       evaluate(ppo.iteration(), true);
+      cudaFree(d_pick);
       cudaFree(d_act);
       cudaFree(d_done);
       return 0;
@@ -744,6 +803,8 @@ int main(int argc, char** argv) {
       if (a.replay_every > 0 && it % a.replay_every == 0) rec_want = std::min(kReplayEnvs, kReplayMax - (int)rec.size());
       const bool need_state = rec_want > 0 || !rec.empty();
       double t_act = 0, t_sim = 0, t_host = 0;
+      double dec_steps = 0;   // 그래프 모드: 이번 반복 결정들의 시뮬 걸음 합
+      if (a.graph) cudaMemset(d_pick, 0, sizeof(int) * 2);
       // 반복 통계
       double n_ep = 0, n_succ = 0, n_coll = 0, n_pcoll = 0, n_trunc = 0, n_short = 0, n_idle = 0, cov = 0, cad = 0, n_decl = 0, t95 = 0, t95n = 0, stage = 0,
              len = 0, rew_ep = 0, step_rew = 0;
@@ -752,7 +813,13 @@ int main(int argc, char** argv) {
       for (int t = 0; t < pc.steps_per_env; ++t) {
         auto t0 = std::chrono::steady_clock::now();
         const sim::StepOut o = env.outputs();
-        ppo.act(o.obs_img, o.obs_1d, o.priv, d_act);
+        if (a.graph) {
+          const sim::GraphOut g = env.graph();
+          ppo.act(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob, o.priv}, d_act);
+          k_graph_pick_check<<<(N + 255) / 256, 256>>>(d_act, g.cand, N, d_pick);
+        } else {
+          ppo.act(o.obs_img, o.obs_1d, o.priv, d_act);
+        }
         cudaDeviceSynchronize();
         t_act += ms_since(t0);
         if (need_state) {
@@ -779,6 +846,13 @@ int main(int argc, char** argv) {
           any_done |= h_done[i] != 0;
         }
         if (any_done) cudaMemcpy(h_ep.data(), o2.ep, sizeof(sim::EpInfo) * N, cudaMemcpyDeviceToHost);
+        if (a.graph) {   // 결정 길이 (가변) — 시뮬 걸음 수 장부
+          env.get_gdec(h_gd);
+          double s = 0;
+          for (int i = 0; i < N; ++i) s += h_gd[i].steps;
+          dec_steps += s;
+          total_steps += s;
+        }
         if (need_state) env.get_state(st);
         for (auto& R : rec) {
           uint32_t evb = 0;
@@ -812,7 +886,7 @@ int main(int argc, char** argv) {
             const long long id = run.new_episode_id();
             const std::string oc = outcome_of(d);
             const int mi = (f.map >= 0 && f.map < (int)worlds.size()) ? f.map : 0;
-            line.set("iter", it).set("env_steps", total_steps + (double)(t + 1) * N * dec).set("env", i).set("ep", id).set("map", stem(worlds[mi].name))
+            line.set("iter", it).set("env_steps", a.graph ? total_steps : total_steps + (double)(t + 1) * N * dec).set("env", i).set("ep", id).set("map", stem(worlds[mi].name))
                 .set("stage", f.stage).set("area_m2", worlds[mi].n_floor * c.res * c.res).set("outcome", oc)
                 .set("success", d == mdp::cur::kDeclareOk).set("declared", d == mdp::cur::kDeclareOk || d == mdp::cur::kDeclareShort)
                 .set("collided", d == mdp::cur::kCollision || d == mdp::cur::kCollisionPerson).set("person_collision", d == mdp::cur::kCollisionPerson)
@@ -849,10 +923,17 @@ int main(int argc, char** argv) {
         }
         t_host += ms_since(t0);
       }
-      total_steps += (double)pc.steps_per_env * N * dec;
+      const double iter_steps = a.graph ? dec_steps : (double)pc.steps_per_env * N * dec;   // 이번 반복의 시뮬 걸음
+      if (!a.graph) total_steps += iter_steps;
       auto tu = std::chrono::steady_clock::now();
       const sim::StepOut o = env.outputs();
-      const xppo::UpdateStats us = ppo.update(o.obs_img, o.obs_1d, o.priv);
+      xppo::UpdateStats us;
+      if (a.graph) {
+        const sim::GraphOut g = env.graph();
+        us = ppo.update(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob, o.priv});
+      } else {
+        us = ppo.update(o.obs_img, o.obs_1d, o.priv);
+      }
       const double t_upd = ms_since(tu);
       const double t_iter = ms_since(t_it);
       if (!std::isfinite(us.value) || !std::isfinite(us.surrogate) || !std::isfinite(us.kl)) {
@@ -880,13 +961,13 @@ int main(int argc, char** argv) {
         }
       }
       float ls[3] = {0.f, 0.f, 0.f};   // 계층형은 σ 없음
-      if (!a.hier) cudaMemcpy(ls, ppo.ac().log_std(), sizeof(ls), cudaMemcpyDeviceToHost);
+      if (!cat) cudaMemcpy(ls, ppo.ac().log_std(), sizeof(ls), cudaMemcpyDeviceToHost);
       size_t fr, tot;
       cudaMemGetInfo(&fr, &tot);
       auto& r = run.row();
       r.last(rf::key::ITER, it);
       r.last(rf::key::STEPS, total_steps);
-      r.last(rf::key::FPS, pc.steps_per_env * N * dec / (t_iter / 1000));   // 시뮬 걸음/s (계층형은 결정/s × dec)
+      r.last(rf::key::FPS, iter_steps / (t_iter / 1000));   // 시뮬 걸음/s (계층형은 결정/s × dec, 그래프는 결정마다 잰 걸음 수 합)
       r.last(rf::key::ITER_MS, t_iter);
       r.last(rf::key::ROLLOUT_MS, t_act + t_sim + t_host);
       r.last(rf::key::UPDATE_MS, t_upd);
@@ -919,7 +1000,7 @@ int main(int argc, char** argv) {
       r.last(rf::key::APPROX_KL, us.kl);
       r.last(rf::key::GRAD_NORM, us.grad_norm);
       r.last("train/kl0", us.kl0);
-      if (a.hier) {
+      if (cat) {
         r.last("train/logit_cm", us.logit_cm);
         r.last("train/logit_spread", us.logit_spread);
         r.last("train/logit_absmax", us.logit_absmax);
@@ -935,7 +1016,27 @@ int main(int argc, char** argv) {
                    "act %.0f sim %.0f host %.0f update %.0f ms (%.0f 걸음/s)\n",
                    it, n_ep, n_ep ? n_succ / n_ep : 0, n_ep ? n_coll / n_ep : 0, n_ep ? n_trunc / n_ep : 0, n_ep ? cov / n_ep : 0,
                    n_ep ? stage / n_ep : 0, step_rew / ((double)pc.steps_per_env * N), us.value, us.kl, us.lr, std::exp(ls[0]), t_act,
-                   t_sim, t_host, t_upd, pc.steps_per_env * N * dec / (t_iter / 1000));
+                   t_sim, t_host, t_upd, iter_steps / (t_iter / 1000));
+      if (a.graph) {   // 그래프 모드 줄: 결정 속도·길이, 정책 엔트로피, 가린 선택(0 이어야), 유효 노드 수
+        const double nd = (double)pc.steps_per_env * N;
+        int hp[2] = {0, 0};
+        cudaMemcpy(hp, d_pick, sizeof(hp), cudaMemcpyDeviceToHost);
+        r.last("time/decisions_per_s", nd / (t_iter / 1000));
+        r.last("rollout/decision_steps_mean", dec_steps / nd);
+        r.last("rollout/masked_picks", hp[0]);
+        r.last("rollout/no_neighbor", hp[1]);
+        r.last("rollout/graph_nodes_mean", ppo.graph_nodes_mean());
+        std::fprintf(stderr,
+                     "  그래프: 결정 %.0f (%.1f 결정/s, 결정마다 %.1f 걸음) 판 %.0f 판보상 %.3f 엔트로피 %.4f value손실 %.4f 가린 선택 %d 이웃 없음 %d 유효 노드 %.1f, 반복 %.1f s\n",
+                     nd, nd / (t_iter / 1000), dec_steps / nd, n_ep, n_ep ? rew_ep / n_ep : 0.0, us.entropy, us.value, hp[0], hp[1], ppo.graph_nodes_mean(),
+                     t_iter / 1000);
+        if (hp[0] != 0) {
+          run.event("masked action picked at iteration " + std::to_string(it) + " - stop");
+          std::fprintf(stderr, "가린 선택 %d 개: 반복 %d 에서 멈춤 (정책 가림과 시뮬 후보가 어긋남)\n", hp[0], it);
+          run.finish();
+          return 5;
+        }
+      }
       ++it_done;
       if (a.eval_every > 0 && it_now % a.eval_every == 0) { evaluate(it_now, false); evaluate(it_now, true); }
       run.end_update();

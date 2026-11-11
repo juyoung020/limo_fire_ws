@@ -667,7 +667,8 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
     if (d < r_eff) v_cost = vc * c.path_cs_gain * d / c.path_cs_dist;
   }
   vc = dm::maxf(dm::minf(v_curv, v_cost), c.reg_min_speed);
-  if (d_goal < c.approach_dist) vc = dm::minf(vc, dm::maxf(c.path_v * d_goal / c.approach_dist, c.approach_min_v));
+  // 경로 끝 감속 (RPP approach scaling). 그래프 모드 graph_pass: 경로 끝 = 다음 노드일 뿐 서는 곳이 아니라 감속하지 않음 (닿으면 바로 다음 결정 — graph_env.h gdec_step)
+  if (d_goal < c.approach_dist && !(b.gdec && c.graph_pass)) vc = dm::minf(vc, dm::maxf(c.path_v * d_goal / c.approach_dist, c.approach_min_v));
   float wc = vc * curv;
   wc = dm::maxf(-c.w_max, dm::minf(c.w_max, wc));
   *vc_o = vc;

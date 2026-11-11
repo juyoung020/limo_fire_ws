@@ -602,7 +602,7 @@ PPO::~PPO() {
   for (void* p : std::initializer_list<void*>{m_, v_, s_img_, s_obs_, s_act_, s_logp_, s_val_, s_mu_, s_logit_, s_sd_,
                                               s_rew_, s_done_, s_ret_, s_adv_, raw_, last_obs_, last_val_, c_img_,
                                               c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_,
-                                              s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_})
+                                              s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_, c_gred_})
     cudaFree(p);
   delete ac_;
 }
@@ -1025,7 +1025,13 @@ double PPO::minibatch_graph(const int* d_idx, int n_all, int mb, bool backward, 
   CK(cudaStreamSynchronize(st));
   for (int i = 0; i < n_all; ++i) cnt[i] = h_cnt_[hi[i]];
   const std::vector<int> seg = graph_segments(cnt.data(), n_all);
-  real hs[5];
+  const size_t n_seg = seg.size() - 1;
+  if ((long)n_seg * 5 > gred_cap_) {   // 구간 통계 자리 — 모자랄 때만 늘린다 (구간 수는 노드 수에 따라 달라짐)
+    cudaFree(c_gred_);
+    gred_cap_ = (long)n_seg * 5 * 2;
+    CK(cudaMalloc(&c_gred_, gred_cap_ * sizeof(real)));
+  }
+  std::vector<real> hs(n_seg * 5);
   for (size_t s = 0; s + 1 < seg.size(); ++s) {
     const int c0 = seg[s], n = seg[s + 1] - c0;
     const int* ix = d_idx + c0;
@@ -1055,11 +1061,13 @@ double PPO::minibatch_graph(const int* d_idx, int n_all, int mb, bool backward, 
         ac.gbody_c.backward(ac.cublas, st, n, dv, dv + d, ldv, nullptr);
       }
     }
-    col_sum(c_stat_, n, 5, 5, c_red_, false, st);
-    CK(cudaMemcpyAsync(hs, c_red_, sizeof(hs), cudaMemcpyDeviceToHost, st));
-    CK(cudaStreamSynchronize(st));
-    for (int k = 0; k < 5; ++k) stats[k] += hs[k];
+    col_sum(c_stat_, n, 5, 5, c_gred_ + 5 * s, false, st);
   }
+  // 구간 통계는 장치에 모아 두었다가 미니배치 끝에 한 번만 내린다 (구간마다 복사·동기 하던 것 — 값·더하는 순서는 그대로)
+  CK(cudaMemcpyAsync(hs.data(), c_gred_, hs.size() * sizeof(real), cudaMemcpyDeviceToHost, st));
+  CK(cudaStreamSynchronize(st));
+  for (size_t s = 0; s < n_seg; ++s)
+    for (int k = 0; k < 5; ++k) stats[k] += hs[s * 5 + k];
   return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * stats[3] / mb;
 }
 

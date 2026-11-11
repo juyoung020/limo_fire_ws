@@ -88,6 +88,7 @@ class Env {
   void get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d, std::vector<float>& priv) const;
   void get_cand(std::vector<int32_t>& out) const;   // 계층형 후보 목표 칸 [N][mdp::hier::K] (−1 빈 슬롯) — 도구용
   void get_graph(std::vector<uint8_t>& feat, std::vector<uint32_t>& edge, std::vector<int32_t>& cur, std::vector<float>& glob, std::vector<int32_t>& cand) const;
+  void get_gdec(std::vector<GraphDec>& out) const;   // 그래프 모드: 방금 끝난 결정의 결과 [N] (env.h GraphDec — 걸음 수·이동 거리·끝난 사유·전작 방식 보상 조각)
   void get_terms(std::vector<float>& terms) const;
   void get_ep(std::vector<EpInfo>& ep) const;
   void get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const;

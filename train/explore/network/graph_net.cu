@@ -45,14 +45,14 @@ __global__ void k_g_map(const uint8_t* feat, int F, int N, const int* idx, const
   }
 }
 // 행마다: 임베딩 입력 X0 = u8/255 (유효 칸 빼고), 스텐실 이웃 행 gnb (없으면 −1), 간선 비트(이웃이 있는 것만)
-__global__ void k_g_rows(const uint8_t* feat, const uint32_t* edge, const int* idx, int F, int gw, int gh, const int* node2row,
+__global__ void k_g_rows(const uint8_t* feat, const uint32_t* edge, const int* idx, int F, int FIN, int NC, real cs, int gw, int gh, const int* node2row,
                          const int* rsamp, const int* rnode, long M, real* X0, int* gnb, uint32_t* ebits) {
   long row = blockIdx.x * (long)blockDim.x + threadIdx.x;
   if (row >= M) return;
   const int i = rsamp[row], j = rnode[row], N = gw * gh;
   const long r = idx ? idx[i] : i;
   const uint8_t* f = feat + (r * N + j) * F;
-  for (int c = 1; c < F; ++c) X0[row * (F - 1) + c - 1] = (real)f[c] / (real)255;
+  for (int c = 1; c <= FIN; ++c) X0[row * FIN + c - 1] = c <= NC ? ((real)f[c] - (real)128) / cs : (real)f[c] / (real)255;   // 특징 1 … FIN 번만 (예약 칸은 안 읽음)
   uint32_t e = edge[r * N + j] & 0xFFFFFFu;
   const int y = j / gw, x = j % gw;
   for (int k = 0; k < kGNb; ++k) {
@@ -423,9 +423,9 @@ long reg1(std::vector<ParamBlock>& reg, long& cur, long n, PKind kind, const std
 
 // ============================== GraphBody ==============================
 void GraphBody::build(const GraphSpec& s, std::vector<ParamBlock>& reg, long& cur, const std::string& pfx) {
-  if (s.d % s.heads || s.d / s.heads > kMaxDk || s.feat < 2 || s.layers < 1) throw std::runtime_error("GraphSpec: 차원·머리 수");
+  if (s.d % s.heads || s.d / s.heads > kMaxDk || s.feat < 2 || s.in < 1 || s.layers < 1) throw std::runtime_error("GraphSpec: 차원·머리 수");
   s_ = s;
-  fin_ = s.feat - 1;
+  fin_ = s.in < s.feat - 1 ? s.in : s.feat - 1;
   const long d = s.d, ff = s.ff;
   emb_w_ = reg1(reg, cur, fin_ * d, PKind::LinW, pfx + ".emb.w");   // 모든 W 는 [입력][출력] (y = x·W)
   emb_b_ = reg1(reg, cur, d, PKind::LinB, pfx + ".emb.b");
@@ -576,7 +576,7 @@ void GraphBody::forward(cublasHandle_t h, cudaStream_t st, int n, const GraphIn&
   const int d = s_.d, H = s_.heads, ff = s_.ff, N = s_.gw * s_.gh;
   const int Mi = (int)M;
   k_g_map<<<nblk(n, 64), 64, 0, st>>>(in.feat, s_.feat, N, in.idx, row_start_, n, node2row_, rsamp_, rnode_);
-  k_g_rows<<<nblk(M), 256, 0, st>>>(in.feat, in.edge, in.idx, s_.feat, s_.gw, s_.gh, node2row_, rsamp_, rnode_, M, X0_, gnb_, ebits_);
+  k_g_rows<<<nblk(M), 256, 0, st>>>(in.feat, in.edge, in.idx, s_.feat, fin_, s_.coord, (real)s_.coord_scale, s_.gw, s_.gh, node2row_, rsamp_, rnode_, M, X0_, gnb_, ebits_);
   k_g_cur<<<nblk(n, 64), 64, 0, st>>>(in.cur, in.idx, node2row_, gnb_, ebits_, n, N, rowcur_, nbrow_);
   // 초기 임베딩
   gemm(h, false, false, Mi, d, fin_, 1, X0_, fin_, P_ + emb_w_, d, 0, X_, d);

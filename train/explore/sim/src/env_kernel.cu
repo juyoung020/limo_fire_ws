@@ -729,12 +729,13 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
 // 관측 마무리 뒤 (env_finish_kernel·env_reset_kernel 다음): 환경마다 블록 하나가 요약을 내고 그 칸만 관측에 (observations.h obs_reach).
 // 관측 커널과 따로 둔 까닭: 이 단계의 레지스터·공유 메모리가 관측 커널에 붙으면 그 커널 전체의 동시 블록 수가 줄어서
 // gate (계층형 묶음): 0 모든 환경 · 1 판이 끝난(쉬는) 환경은 건너뜀 (묶음 가운데 걸음) · 2 끝난 환경만 (묶음 끝 리셋 뒤)
-__global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate) {
+__global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate, int sub) {
   __shared__ mdp::ReachSummary rs;
   __shared__ mdp::CandSummary cs;
   __shared__ int s_util[mdp::hier::K];
   const int env = blockIdx.x, tid = threadIdx.x;
   if (gate == 1 && b.done[env] != 0) return;   // 블록 전체 같은 값
+  if (gate == 1 && gdec_idle(b, env, sub)) return;   // 그래프 모드: 결정이 앞 걸음에서 끝남 (끝난 걸음의 관측까지는 돈다)
   if (gate == 2 && b.done[env] == 0) return;
   const EnvState& e = b.st[env];
   trail_mark(b, e, env, tid, kRT);   // 닫힘 규칙의 지나간 길에 지금 자세 (CPU write_obs 와 같은 때)
@@ -806,10 +807,12 @@ __global__ void __launch_bounds__(kPhysThreads) env_phys_kernel(EnvBatch b, cons
   const int env = blockIdx.x * kPhysThreads + threadIdx.x;
   if (env >= b.n_env) return;
   if (sub > 0 && b.done[env] != 0) return;   // 계층형 묶음: 판이 이 묶음 앞 걸음에서 끝남 — 묶음 끝까지 쉼
+  if (gdec_idle(b, env, sub)) return;          // 그래프 모드: 결정이 앞 걸음에서 끝남
   EnvState& e = b.st[env];
   Shared& sh = b.scratch[env];
   if (first) {
     e.collided = 0;
+    if (sub == 0) gdec_begin(b, e, env);
     apply_action(b, e, env, actions + mdp::act::DIM * env);
     sh.new_wall = sh.new_floor = sh.d_known = sh.n_new = sh.n_occ = 0;
     mdp::obsgen::far_dirty_clear(sh);
@@ -898,11 +901,29 @@ __device__ void copy_state(EnvState& dst, const EnvState& src, int tid) {
   for (int i = tid; i < (int)(sizeof(EnvState) / 4); i += kThreads) d[i] = s[i];
 }
 
+// 그래프 모드 결정 끝 판정 (graph_env.h gdec_step) — 지나는 칸은 env_graph_kernel 과 같은 비트 판
+__device__ void gdec_step_dev(const EnvBatch& b, const EnvState& e, int env, int sub) {
+  if (!b.gdec) return;
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int ws = fmap_row(c), nfw = c.size * ws;
+  const uint32_t* RB = b.rbits + (size_t)env * kReachBits * nfw;
+  const uint32_t* OCC = RB + kRbOcc * nfw;
+  const uint32_t* KN = RB + kRbKnown * nfw;
+  const uint32_t* ST = RB + kRbStand * nfw;
+  const auto bit = [&](const uint32_t* P, int x, int y) -> uint32_t { return (P[y * ws + (x >> 5)] >> (x & 31)) & 1u; };
+  gdec_step(b, e, env, sub, [&](int x, int y) {
+    if (x < 0 || y < 0 || x >= m.gw || y >= m.gh) return false;
+    return c.graph_stand ? bit(ST, x, y) != 0u : (bit(KN, x, y) && !bit(OCC, x, y));
+  });
+}
+
 // sub < 0: 기본 (행동 하나 = 걸음 하나). sub ≥ 0: 계층형 묶음의 sub 번째 걸음 — 보상·항을 묶음 합에 더하고, 판이 끝나면 리셋·관측을 묶음 끝
 // (env_bundle_end_kernel)으로 미룬다. 앞 걸음에서 끝난 환경은 쉼
 __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int sub) {
   const int env = blockIdx.x, tid = threadIdx.x;
   if (sub > 0 && b.done[env] != 0) return;   // 블록 전체 같은 값 (b.done 은 아래 첫 __syncthreads 뒤에만 씀)
+  if (gdec_idle(b, env, sub)) return;          // 그래프 모드: 결정이 앞 걸음에서 끝남 (b.gdec 은 스레드 0 이 아래 __syncthreads 뒤에만 씀)
   __shared__ EnvState e;
   __shared__ Shared sh;   // 관측용 (프론티어 합)
   Shared& g = b.scratch[env];
@@ -917,6 +938,7 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int su
     }
     map_progress(e, g.n_occ);   // 진행 없음 시계 — finish_step 판 끝이 씀
     finish_step(b, e, env, g.new_wall, g.new_floor, g.d_known, g.n_new);
+    gdec_step_dev(b, e, env, sub);   // 그래프 모드: 결정 끝 판정 (CPU step_env 와 같은 자리)
     mdp::obsgen::far_dirty_robot(b, e, g);   // 지나간 곳 표시도 먼 지도 다시 그릴 곳에
     b.reward[env] = e.reward;
     b.done[env] = e.done;
@@ -1305,14 +1327,21 @@ __global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
 // ---------- 그래프 모드 관측 (mdp/graph.h — CPU 참조 include/obs_ref.h graph_ref 와 비트 같음, env_verify --graph) ----------
 // 환경 하나 = 블록 하나, 결정 관측(묶음 끝·판 시작) 뒤. 지도 비트 판(막힘·앎·설 수 있음)·프론티어 칸 비트(fmap)·지도 자세만 읽는다.
 // 차례는 graph.h 머리말 1 ~ 8. 합치는 곳은 모두 차례 무관(비트 OR · 수 더하기 · 최단 거리 고정점)이라 스레드 차례와 무관하게 같은 값.
-__global__ void __launch_bounds__(kRT) env_graph_kernel(EnvBatch b) {
+// gate: 0 모든 환경 (판 시작·다시 만들기) · 1 묶음 끝, 리셋 앞: 안 끝난 환경은 다음 결정 관측 + 결정 결과·전작 방식 판 끝·보상 (graph_finish),
+//   걸음에서 끝난 환경은 결과만 · 2 묶음 끝 리셋 뒤: 끝난 환경의 새 판 관측만
+__global__ void __launch_bounds__(kRT) env_graph_kernel(EnvBatch b, int gate) {
   using namespace mdp::graph;
   namespace gg = mdp::graphgen;
   __shared__ uint32_t s_valid[N / 32], s_guide[N / 32];
   __shared__ int s_dist[N], s_util[N];
   __shared__ short s_list[N];
-  __shared__ int s_cur, s_forced, s_chg, s_nf, s_nn;
+  __shared__ int s_cur, s_forced, s_chg, s_nf, s_nn, s_gone, s_nu;
   const int env = blockIdx.x, tid = threadIdx.x;
+  if (gate == 1 && b.done[env] != 0) {   // 블록 전체 같은 값 (b.done 은 맨 끝 스레드 0 만 씀)
+    if (tid == 0) graph_finish(b, b.st[env], env, -1, 0);
+    return;
+  }
+  if (gate == 2 && b.done[env] == 0) return;
   const EnvState& e = b.st[env];
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
@@ -1335,6 +1364,8 @@ __global__ void __launch_bounds__(kRT) env_graph_kernel(EnvBatch b) {
   uint32_t* E = b.gedge + (size_t)env * N;
   uint32_t* VIS = b.gvis + (size_t)env * (N / 32);
   int32_t* REP = b.gwork + (size_t)env * gg::kVoxMax;
+  int32_t* PREV = b.gprev + (size_t)env * gg::kVoxMax;   // 지난 관측의 복셀 대표 칸 (사라진 프론티어 세기 — graph.h graph_build prev)
+  const bool first = e.step == 0;
   if (tid < N / 32) {
     s_valid[tid] = 0u;
     s_guide[tid] = 0u;
@@ -1345,7 +1376,7 @@ __global__ void __launch_bounds__(kRT) env_graph_kernel(EnvBatch b) {
     s_dist[i] = gg::kInf;
     s_util[i] = 0;
   }
-  if (tid == 0) s_nf = s_nn = 0;
+  if (tid == 0) s_nf = s_nn = s_gone = s_nu = 0;
   __syncthreads();
   for (int i = tid; i < N; i += kRT)
     if (gg::node_raw(p, i, pass)) atomicOr(&s_valid[i >> 5], 1u << (i & 31));
@@ -1400,19 +1431,40 @@ __global__ void __launch_bounds__(kRT) env_graph_kernel(EnvBatch b) {
   for (int v = tid; v < nv; v += kRT) {   // 프론티어 복셀 대표 칸 목록 (차례는 무관 — 세기만 한다)
     const int cell = gg::vox_rep(p, v, front);
     if (cell >= 0) REP[atomicAdd(&s_nf, 1)] = cell;
+    if (!first && PREV[v] >= 0 && PREV[v] != cell) atomicAdd(&s_gone, 1);
+    PREV[v] = cell;
   }
-  for (int i = tid; i < N; i += kRT)
-    if (valid(i) && !((VIS[i >> 5] >> (i & 31)) & 1u)) s_list[atomicAdd(&s_nn, 1)] = (short)i;
-  __syncthreads();
-  const int nf = s_nf, nn = s_nn;
-  for (int q = tid; q < nn * nf; q += kRT) {   // (노드, 복셀) 쌍마다
-    const int i = s_list[q / nf];
-    if (gg::sees(p, i, REP[q % nf], free)) atomicAdd(&s_util[i], 1);
+  for (int rep = 0;; ++rep) {   // keep_vis 2 면 유틸리티 노드가 없을 때 방문 표시를 지우고 한 번 더 (graph.h graph_build 와 같은 차례)
+    for (int i = tid; i < N; i += kRT)
+      if (valid(i) && (p.keep_vis == 1 ? i != cur : !((VIS[i >> 5] >> (i & 31)) & 1u))) s_list[atomicAdd(&s_nn, 1)] = (short)i;
+    __syncthreads();
+    const int nn = s_nn;
+    for (int q = tid; q < nn * s_nf; q += kRT) {   // (노드, 복셀) 쌍마다
+      const int i = s_list[q / s_nf];
+      if (gg::sees(p, i, REP[q % s_nf], free)) atomicAdd(&s_util[i], 1);
+    }
+    __syncthreads();
+    for (int i = tid; i < N; i += kRT) {
+      if (s_util[i] <= p.min_util) s_util[i] = 0;
+      else atomicAdd(&s_nu, 1);
+    }
+    __syncthreads();
+    if (p.keep_vis != 2 || s_nu > 0 || s_nf == 0 || rep == 1) break;   // 블록 전체 같은 값
+    if (tid < N / 32) VIS[tid] = tid == (cur >> 5) ? 1u << (cur & 31) : 0u;
+    if (tid == 0) s_nn = 0;   // s_util 은 모두 0 (유틸리티 노드가 없었다)
+    __syncthreads();
   }
-  __syncthreads();
-  for (int i = tid; i < N; i += kRT)
-    if (s_util[i] <= p.min_util) s_util[i] = 0;
-  __syncthreads();
+  if (p.cover && s_nu == 0 && s_nf > 0) {   // 남은 프론티어 맡기기 (graph.h graph_build 6b — 우리 수정). 블록 전체 같은 값
+    const int nf = s_nf;
+    for (int f = tid; f < nf; f += kRT) {
+      const int j = gg::cover_pick(p, cur, REP[f], valid, [&](int i) { return ((VIS[i >> 5] >> (i & 31)) & 1u) != 0u; }, free);
+      if (j >= 0) atomicAdd(&s_util[j], 1);
+    }
+    __syncthreads();
+    for (int i = tid; i < N; i += kRT)
+      if (s_util[i] > 0) atomicAdd(&s_nu, 1);
+    __syncthreads();
+  }
   for (int i = tid; i < N; i += kRT) {   // 지역 길잡이: 유틸리티 노드에서 앞 노드를 따라 cur 까지 (이미 표시된 노드에서 멈춤 — 그 뒤는 표시한 쪽이 잇는다)
     if (s_util[i] <= 0) continue;
     for (int v = i; v >= 0 && v != cur && !((s_guide[v >> 5] >> (v & 31)) & 1u); v = gg::pred_of(s_dist, E[v], v)) atomicOr(&s_guide[v >> 5], 1u << (v & 31));
@@ -1424,12 +1476,21 @@ __global__ void __launch_bounds__(kRT) env_graph_kernel(EnvBatch b) {
     const int j = ((E[cur] >> tid) & 1u) ? gg::node_nb(cur, tid) : -1;
     b.gcand[(size_t)env * NB + tid] = j >= 0 ? gg::node_y(p, j) * p.gw + gg::node_x(p, j) : -1;
   }
-  if (tid == 0) graph_glob(b, e, env, p, cur);
+  if (tid == 0) {
+    graph_glob(b, e, env, p, cur);
+    if (gate == 1 && graph_finish(b, b.st[env], env, s_nu, s_gone)) b.done[env] = b.st[env].done;   // s_nu·s_gone 은 위 __syncthreads 앞에서 다 셈
+  }
+}
+
+// 결정이 아직 안 끝난 환경 수 → counters[kCntGraphRun] (env_step_gpu 가 걸음 루프를 일찍 끝내는 데만 씀 — 결과는 안 바뀜)
+__global__ void env_graph_active_kernel(EnvBatch b, int* out) {
+  const int env = blockIdx.x * blockDim.x + threadIdx.x;
+  if (env < b.n_env && b.done[env] == 0 && b.gdec[env].reason == kGdRun) atomicAdd(out, 1);
 }
 
 constexpr int kRayThreads = 128;
 constexpr int kRayChunk = 64, kRayRefill = 16, kRaySteps = 4;   // 워프가 한 번에 받는 광선 수, 이만큼 놀면 채움
-enum : int { kCntDepNext = 0, kCntDepSide = 1, kCntDepSideNext = 2, kCntBeamNext = 3, kCntBeamSide = 4, kCntBeamSideNext = 5, kCounters = 16 };
+enum : int { kCntDepNext = 0, kCntDepSide = 1, kCntDepSideNext = 2, kCntBeamNext = 3, kCntBeamSide = 4, kCntBeamSideNext = 5, kCntGraphRun = 6, kCounters = 16 };
 
 template <class G>
 __global__ void __launch_bounds__(kRayThreads) ray_kernel(EnvBatch b, G g, int n_static, const int* n_dev, int* next) {
@@ -1698,7 +1759,7 @@ void reach_and_depth(const EnvBatch& b, cudaStream_t st, int gate = 0) {
   ReachStream& r = reach_stream();
   cudaEventRecord(r.go, st);
   cudaStreamWaitEvent(r.s, r.go, 0);
-  env_reach_kernel<<<b.n_env, kRT, 0, r.s>>>(b, gate);
+  env_reach_kernel<<<b.n_env, kRT, 0, r.s>>>(b, gate, -1);
   cudaEventRecord(r.done, r.s);
   depth_gpu(b, st);
   cudaStreamWaitEvent(st, r.done, 0);
@@ -1719,7 +1780,7 @@ void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub
   }
   env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b, sub);
   if (sub < 0) reach_and_depth(b, st);
-  else env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1);   // 덩어리 칸 관측의 지연 차례(vec_prev)를 걸음마다 맞춤 — 끝난 환경은 묶음 끝에
+  else env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1, sub);   // 덩어리 칸 관측의 지연 차례(vec_prev)를 걸음마다 맞춤 — 끝난 환경은 묶음 끝에
 }
 }  // namespace
 
@@ -1731,20 +1792,40 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
   // 계층형: 결정 하나 = 경로 계획 → 속도 행동 decide_steps 걸음 → 묶음 끝 (보상 합·끝난 판 리셋·관측)
   if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b);   // 깊이 카메라 장애물 층 (cam_on) — 계획 앞
   env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions);
+  if (b.gdec) {
+    // 그래프 모드: 결정 하나 = 노드 하나 이동. 환경마다 닿거나 실패·시간 초과까지 걷고 끝난 환경은 쉰다 (graph_env.h gdec_step).
+    // 결정 주기(decide_steps) 뒤부터 5 걸음마다 남은 환경 수를 읽어 모두 끝났으면 그만 돈다 (쉬는 걸음은 아무것도 안 바꿔 결과는 같음)
+    const EnvCfg& c = b.cfg;
+    for (int s = 0; s < c.graph_max_steps; ++s) {
+      step_once(b, actions, st, s);
+      if (s + 1 < c.graph_max_steps && (s + 1) % 5 == 0) {
+        int n_run = 0;
+        cudaMemsetAsync(b.counters + kCntGraphRun, 0, sizeof(int), st);
+        env_graph_active_kernel<<<(b.n_env + 255) / 256, 256, 0, st>>>(b, b.counters + kCntGraphRun);
+        cudaMemcpyAsync(&n_run, b.counters + kCntGraphRun, sizeof(int), cudaMemcpyDeviceToHost, st);
+        cudaStreamSynchronize(st);
+        if (n_run == 0) break;
+      }
+    }
+    env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 1);   // 다음 결정 관측 + 결정 결과·전작 방식 판 끝·보상 (리셋 앞)
+    env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
+    reach_and_depth(b, st, 2);
+    env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 2);   // 끝난 환경의 새 판 관측
+    return;
+  }
   for (int s = 0; s < b.cfg.decide_steps; ++s) step_once(b, actions, st, s);
   env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
   reach_and_depth(b, st, 2);
-  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b);   // 그래프 모드 관측
 }
 
 void env_graph_gpu(const EnvBatch& b, cudaStream_t st) {
-  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b);
+  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 0);
 }
 
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st) {
   env_reset_kernel<<<b.n_env, kThreads, 0, st>>>(b);
   reach_and_depth(b, st);
-  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b);
+  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 0);
 }
 
 }  // namespace sim

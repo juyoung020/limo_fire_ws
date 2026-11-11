@@ -32,11 +32,14 @@ constexpr int kGSlot = 25;   // 인코더 어텐션 키 자리: 0 = 자신, 1 + 
 
 struct GraphSpec {
   int gw = 32, gh = 32;   // 노드 격자 (가중치와 무관 — 같은 체크포인트를 다른 격자에 쓸 수 있다)
-  int feat = 8;           // 노드마다 u8 칸 수. 0 번 = 유효, 나머지 feat − 1 칸이 임베딩 입력 (/255)
+  int feat = 8;           // 노드마다 u8 칸 수 (버퍼 모양). 0 번 = 유효
   int d = 128;            // 특징 차원 (HEADER df = 128)
   int heads = 8;          // model.py n_head = 8
   int layers = 6;         // 인코더 층 수 (HEADER: 6)
   int ff = 512;           // model.py feedForward 은닉
+  int in = 5;             // 임베딩 입력 칸 수: 특징 1 … in 번 (/255) — HEADER v' = (x, y, u, e, b) 5 칸 (III-A). 그 뒤 칸(예약)은 안 읽는다. feat − 1 보다 크면 feat − 1
+  int coord = 2;          // 임베딩 입력의 앞 coord 칸(특징 1·2 번 = F_DX·F_DY)은 좌표: (u8 − 128) / coord_scale — 0 중심 부호 있는 값 (전작 agent.py:157-160)
+  float coord_scale = 160.f;   // u8 − 128 = 4 × 노드 칸 차(mdp/graph.h write_feat) → / 160 = 노드 칸 차 / 40. 전작: (노드 − 현재) / UPDATING_MAP_SIZE / 2 = 차 / 160 m = 노드 칸(4 m) 차 / 40
 };
 
 // 관측 한 묶음 (모두 GPU). idx 를 주면 샘플 i = 버퍼의 idx[i] 번째 행 (롤아웃에서 바로 읽기)

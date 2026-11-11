@@ -1,6 +1,6 @@
 // 옛 빌드 == 새 빌드 비교용: 같은 장면·씨앗·행동열로 GPU 환경을 돌려 걸음마다 모든 출력(상태·보상·항·끝·판 정보·관측 2D·1D·가치 전용)과
 // 끝에 지도·덮음 표시의 해시(FNV-1a 64)를 한 줄씩 찍는다. 커널을 고친 뒤 두 빌드의 출력을 diff 하면 시뮬 결과가 비트까지 같은지 안다.
-// env_dump <장면.scene> [장면 …] [--list 목록] [--envs 256] [--steps 60] [--people 0] [--declare 0.01] [--seed 7]
+// env_dump <장면.scene> [장면 …] [--list 목록] [--envs 256] [--steps 60] [--people 0] [--declare 0.01] [--seed 7] [--hier]
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -23,6 +23,7 @@ int main(int argc, char** argv) {
   std::vector<std::string> scenes;
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", list;
   int n_env = 256, n_steps = 60, people = 0;
+  bool hier = false;
   float p_declare = 0.01f;
   uint64_t seed = 7;
   int img_step = -1;
@@ -35,10 +36,12 @@ int main(int argc, char** argv) {
     else if (a == "--declare" && i + 1 < argc) p_declare = std::stof(argv[++i]);
     else if (a == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
     else if (a == "--list" && i + 1 < argc) list = argv[++i];
+    else if (a == "--hier") hier = true;   // 계층형 (action.mode path) — 옛 빌드와 비교
     else if (a == "--img" && i + 2 < argc) { img_step = std::stoi(argv[++i]); img_file = argv[++i]; }   // 그 걸음 관측 영상을 파일로 (다른 칸 세기)
     else scenes.push_back(a);
   }
   sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
+  if (hier) hc.cfg.action_mode = sim::kActPath;
   if (people > 0) hc.cfg.curriculum = 0;
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   std::vector<sim::World> worlds;

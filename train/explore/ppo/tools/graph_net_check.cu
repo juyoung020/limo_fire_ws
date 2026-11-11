@@ -61,6 +61,7 @@ xnet_cpu::GraphPolicyT<T> make_cpu(const GkOut& o, int heads) {
   xnet_cpu::GraphPolicyT<T> p;
   for (auto& b : o.blocks) p.blk[b.name].assign(o.params.begin() + b.off, o.params.begin() + b.off + b.n);
   p.configure(heads);
+  p.feat_stride = F;   // 버퍼는 8 칸, 신경망은 1 … 5 번만 읽는다
   return p;
 }
 
@@ -214,6 +215,20 @@ int main(int argc, char** argv) {
                 bigA.n, oA.rows, bigA.n * 1024, n_inv_diff, b2, oA.bits.size(), max_diff(oA.mask, oC.mask),
                 b2 == 0 && max_diff(oA.mask, oC.mask) == 0 && n_inv_diff > 0 ? "통과 (비트 같음)" : "실패");
     ok = ok && b2 == 0 && max_diff(oA.mask, oC.mask) == 0 && n_inv_diff > 0;
+    // 예약 칸(6·7 번 — HEADER v' 5 칸 밖): 유효 노드의 예약 칸을 뒤집어도 출력이 비트까지 같아야 하고, 5 번 칸(전역 길잡이)을 뒤집으면 달라야 한다
+    GkCase bigD = bigA, bigE = bigA;
+    size_t n_res = 0;
+    for (size_t j = 0; j < bigD.edge.size(); ++j)
+      if (bigD.feat[j * F]) {
+        for (int k = 6; k < F; ++k) bigD.feat[j * F + k] ^= 0xA5;
+        bigE.feat[j * F + 5] ^= 0xA5;
+        ++n_res;
+      }
+    const GkOut oD = xppo::gk_run(s, bigD, {}, true), oE = xppo::gk_run(s, bigE, {}, true);
+    const long b4 = bit_diff(oA.bits, oD.bits), b5 = bit_diff(oA.bits, oE.bits);
+    std::printf("    예약 칸(6·7 번)을 뒤집은 유효 노드 %zu 개: 다른 바이트 %ld (0 이어야 함) · 5 번 칸을 뒤집으면 %ld (> 0 이어야 함)  → %s\n", n_res, b4, b5,
+                b4 == 0 && b5 > 0 && n_res > 0 ? "통과 (입력 5 칸)" : "실패");
+    ok = ok && b4 == 0 && b5 > 0 && n_res > 0;
     const long b3 = bit_diff(o16.bits, oA.bits);
     std::printf("[3] 격자 16×16 ↔ 32×32 (같은 그래프를 (9, 5) 에 옮김, 같은 가중치): 다른 바이트 %ld / %zu, 최대 차 로짓 %.3e E %.3e, 가림 차 %.0f  → %s\n", b3,
                 o16.bits.size(), max_diff(o16.logits, oA.logits), max_diff(o16.E, oA.E), max_diff(o16.mask, oA.mask),

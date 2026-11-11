@@ -19,16 +19,18 @@ cmake --build <빌드> -j8 --target train
 
 | 옵션 | 기본 | 뜻 |
 |---|---|---|
-| `--envs` | 2048 | 학습 환경 수 (2048 에서 GPU 5.6 GB) |
+| `--envs` | 2048 (`--graph` 는 512) | 학습 환경 수 (2048 에서 GPU 5.6 GB) |
 | `--iters` · `--minutes` | 0 · 0 | 반복 수·시간 한계 (둘 다 0 이면 1000 반복). 끝·SIGINT·SIGTERM 이면 체크포인트 저장 후 끝 |
 | `--name` · `--root` | explore · train/explore/runs | 실행 폴더 `<root>/<name>` |
 | `--seed` | 1 | 시뮬·정책 씨앗 |
-| `--lr-max` | 1e-3 | KL 적응 학습률 상한 (ppo/README "검증 2": rsl_rl 기본 1e-2 는 장난감에서 critic 이 터짐) |
+| `--lr-max` | 1e-3 (`--graph` 는 1e-4) | KL 적응 학습률 상한 (ppo/README "검증 2": rsl_rl 기본 1e-2 는 장난감에서 critic 이 터짐) |
 | `--eval-every` · `--eval-episodes` | 50 · 32 | 시험 맵(`--test`, 기본 scenes/test 의 bookstore·small-house)마다 별도 Env, 결정적 정책, 환경마다 첫 판 |
 | `--ckpt-every` | 50 | `ckpt/model_<반복>.bin`, 그리고 10 반복마다 `ckpt/model_latest.bin` |
 | `--replay-every` | 25 | 이 반복마다 표본 환경(0~63)에서 새로 시작하는 판 2 개를 재생 파일로 (동시 녹화 최대 8 판 — 끊김 판(12 000 걸음)이 녹화 칸을 오래 잡아도 새 녹화가 계속 붙음) |
 | `--list` · `--env` · `--model` | scenes/train/list.tsv · sim/config/env.yaml · sensor_model.yaml | 학습 맵 목록·시뮬 설정 |
 | `--hier` | 끔 | 계층형(mdp/README "계층형"): 1 s 마다 프론티어 후보 8 개 중 하나(가린 범주 분포, `xnet::explore_spec_hier`) → 시뮬이 경로 계획·추종. 반복 = 결정 24 개(= 시뮬 240 걸음), γ = 0.999¹⁰, 걸음/s 는 시뮬 걸음 단위. 재생 녹화는 아직 없음(`--replay-every` 무시) · 체크포인트는 기본 구조와 안 섞임(층 이름이 다름) |
+| `--graph` | 끔 | 그래프 모드(network/README "그래프 어텐션 정책", HEADER 식): 관측 = 노드 그래프(32×32 격자·특징 5·간선 비트), 행동 = 이웃 노드 하나(최대 24, 가린 범주 분포, `xnet::explore_spec_graph`). 반복 = 환경마다 결정 16 개, 결정 하나의 시뮬 걸음 수는 가변(실측 평균 33 걸음)이라 걸음/s 는 `get_gdec` 의 실제 걸음 합으로 센다. PPO 값은 `xppo::graph_ppo_config()` 한곳(γ 0.95 결정당·환경 512·에포크 3·학습률 1e-5 시작, 범위 1e-6~1e-4 — ppo/README "그래프 모드 학습 속도"). `--graph-<이름> <값>` 은 시뮬 그래프 설정(`sim::graph_arg`), `--graph-share 1` 은 가치 몸통 공유(갱신 약 2 배 빠름, 구조가 바뀌므로 기본 끔). 재생 녹화는 아직 없음. `--hier` 와 같이 못 씀 |
+| `--steps` · `--epochs` · `--minibatches` · `--gamma` · `--lam` | 모드 기본 | 롤아웃 길이(환경마다 결정/걸음 수)·에포크·미니배치·할인율·GAE λ 덮어쓰기 (`--envs × --steps` 가 `--minibatches` 로 나눠져야 함) |
 
 - done 매핑: `mdp::cur::terminal` (1 선언 성공·2 벽 충돌·4 선언 실패·5 사람 충돌) → PPO 1 종료, 3 → 끊김(가치로 메움).
 - progress.jsonl (반복마다): `reward/<항>`(끝난 판의 항별 합 평균), `rollout/success_rate`·`collision_rate`(벽+사람)·`person_collision_rate`·`declare_short_rate`(선언 실패)·`truncation_rate`·`coverage_mean`·`coverage_at_declare_mean`·`t95_mean`·`t95_reached_rate`·`ep_len_mean`(걸음)·`ep_rew_mean`, `curriculum/stage`(끝난 판 단계 평균), `train/*`(learning_rate·approx_kl·value_loss·policy_gradient_loss·entropy_loss·grad_norm·std), `time/*`(fps·iter_ms·rollout_ms·update_ms + sim_ms·act_ms·host_ms), `gpu/mem_used_mb`, 평가 반복에는 `eval/*`(success_rate·collision_rate·t95_mean·coverage_mean … — frontier 실행의 `eval/frontier_t95_mean` 과 나란히).

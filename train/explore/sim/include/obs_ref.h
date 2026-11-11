@@ -96,9 +96,10 @@ inline void camlayer_ref(const EnvBatch& b, const EnvState& e, int env) {
 }
 
 // 그래프 모드 관측 (mdp/graph.h graph_build) — graph_on 일 때만. 지도(lmap)와 지도 자세만 쓴다: 시뮬 CPU 참조와 실물 노드가 같은 함수.
-// 부르는 때 = 결정 관측(묶음 끝·판 시작) 뒤. 판 첫 관측(e.step == 0)이 방문 표시를 비운다
-inline void graph_ref(const EnvBatch& b, const EnvState& e, int env) {
-  if (!b.gfeat) return;
+// 부르는 때 = 결정 관측(묶음 끝·판 시작) 뒤. 판 첫 관측(e.step == 0)이 방문 표시를 비운다.
+// finish = true: 묶음 끝의 안 끝난 환경 — 결정 결과·전작 방식 판 끝·보상 (graph_env.h graph_finish), 판을 끝냈으면 true (GPU env_graph_kernel gate 1 과 같음)
+inline bool graph_ref(const EnvBatch& b, EnvState& e, int env, bool finish = false) {
+  if (!b.gfeat) return false;
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
@@ -118,10 +119,29 @@ inline void graph_ref(const EnvBatch& b, const EnvState& e, int env) {
     for (int i = 0; i < mdp::graph::N / 32; ++i) vis[i] = 0u;
   int rx, ry;
   cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
+  int n_gone = 0, n_util = 0;
   const int cur = mdp::graphgen::graph_build(p, rx, ry, pass, free, front, vis, b.gfeat + (size_t)env * mdp::graph::N * mdp::graph::FEAT,
-                                             b.gedge + (size_t)env * mdp::graph::N, b.gcand + (size_t)env * mdp::graph::NB);
+                                             b.gedge + (size_t)env * mdp::graph::N, b.gcand + (size_t)env * mdp::graph::NB, nullptr,
+                                             b.gprev + (size_t)env * mdp::graphgen::kVoxMax, e.step == 0, &n_gone, &n_util);
   b.gcur[env] = cur;
   graph_glob(b, e, env, p, cur);
+  if (!finish) return false;
+  const bool end = graph_finish(b, e, env, n_util, n_gone);
+  if (end) b.done[env] = e.done;
+  return end;
+}
+
+// 걸음 끝의 결정 끝 판정 (graph_env.h gdec_step) — 지나는 칸은 graph_ref 와 같은 함수
+inline void gdec_step_ref(const EnvBatch& b, const EnvState& e, int env, int sub) {
+  if (!b.gdec) return;
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
+  const mdp::Robot rb = mdp::obsgen::reach_robot(c);
+  const auto in_map = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh; };
+  gdec_step(b, e, env, sub, [&](int x, int y) {
+    return in_map(x, y) && (c.graph_stand ? mdp::standable(mv, x, y, rb) : mdp::cls_at(mv, x, y) == mdp::kFree);
+  });
 }
 
 }  // namespace sim

@@ -7,9 +7,13 @@
 //   6 특징 값: 유효 0/255, 길잡이 0/255, 전역 길잡이·남는 칸 0, dx·dy = 128 + 4 × (열·행 차)
 //   7 이웃 칸(cand) ≥ 0 ⇔ 현재 노드의 간선 비트, 이웃 칸끼리 간격 = 스텐실 × 노드 간격
 //   8 전역 숫자 유한, 8 ~ 15 = 0
+//   9 결정(= 노드 하나 이동, env.h GraphDec)마다 끝난 사유가 있고 걸음 수 ≤ 상한·이동 거리 ≤ 걸음 × 최고 속도, 판 결정 수가 맞음
+//   10 닿음으로 끝난 결정 뒤 관측의 현재 노드 = 고른 노드, 판이 걸음에서 끝남 ⇔ 사유 판 끝 ⇔ term 2
+//   11 결정 끝 유틸리티 노드 수 = 관측의 유틸리티 노드 수
+//   12 전작 방식 판 끝·보상: 유틸리티 노드 0 (맡기기 graph_cover 를 켰으면 + 지도 닫힘) ⇔ 성공으로 끝 · 진행 없음 끝 없음 · 보상 = −거리/사거리 + 사라진 프론티어/정규화 + 끝 20 (비트 같음)
 // --twice: 같은 씨앗으로 두 번 돌려 관측·상태 해시가 같은지 (결정성). --png: 환경 하나의 한 결정 관측을 그림으로 (지도 + 프론티어 + 노드·간선·유틸리티·길잡이 + 지나온 길).
 // 행동: --policy guide(가장 가까운 유틸리티 노드 쪽 첫 이웃) · random(무작위 유효 이웃) · mix(환경 번호 짝·홀로 둘 다, 기본)
-// graph_check <장면.scene> [장면 …] [--envs 64] [--steps 300] [--people 2] [--seed 7] [--policy mix] [--graph-stand 0|1] [--graph-open 0|1] [--twice] [--png 파일 --png-env 0 --png-at 120]
+// graph_check <장면.scene> [장면 …] [--envs 64] [--steps 300] [--people 2] [--seed 7] [--policy mix] [--graph-stand 0|1] [--graph-open 0|1] [--graph-node m] [--graph-term 0|1] [--graph-view 0|1] [--twice] [--png 파일 --png-env 0 --png-at 120]
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -103,8 +107,9 @@ struct Canvas {
 };
 
 struct Stats {
-  size_t obs = 0, viol[9] = {}, valid = 0, edges = 0, util = 0, guide = 0, no_nb = 0, util_obs0 = 0;
+  size_t obs = 0, viol[13] = {}, dec = 0, dec_steps = 0, reason[8] = {}, term[4] = {}, term1_closed = 0, valid = 0, edges = 0, util = 0, guide = 0, no_nb = 0, util_obs0 = 0;
   uint64_t hash = 1469598103934665603ull;
+  double dec_dist = 0.;
   int ends[mdp::cur::kNumDone] = {};
 };
 }  // namespace
@@ -114,6 +119,7 @@ int main(int argc, char** argv) {
   std::vector<std::string> scenes;
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", policy = "mix", png;
   int n_env = 64, n_steps = 300, people = 2, graph_stand = -1, graph_open = -1, png_env = 0, png_at = 120;
+  sim::GraphArgs gargs;
   uint64_t seed = 7;
   bool twice = false;
   for (int i = 1; i < argc; ++i) {
@@ -123,6 +129,7 @@ int main(int argc, char** argv) {
     else if (a == "--people" && i + 1 < argc) people = std::stoi(argv[++i]);
     else if (a == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
     else if (a == "--policy" && i + 1 < argc) policy = argv[++i];
+    else if (i + 1 < argc && sim::graph_arg(gargs, a, argv[i + 1])) ++i;
     else if (a == "--graph-stand" && i + 1 < argc) graph_stand = std::stoi(argv[++i]);
     else if (a == "--graph-open" && i + 1 < argc) graph_open = std::stoi(argv[++i]);
     else if (a == "--twice") twice = true;
@@ -143,6 +150,7 @@ int main(int argc, char** argv) {
   hc.cfg.curriculum = 0;
   if (graph_stand >= 0) hc.cfg.graph_stand = graph_stand;
   if (graph_open >= 0) hc.cfg.graph_open = graph_open;
+  sim::graph_apply(hc.cfg, gargs);
   const sim::EnvCfg& c = hc.cfg;
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   std::vector<sim::World> worlds;
@@ -155,7 +163,7 @@ int main(int argc, char** argv) {
   using namespace mdp::graph;
   namespace gg = mdp::graphgen;
   constexpr int NN = mdp::graph::N, A = mdp::act::DIM;
-  const int step_cells = (int)(NODE_RES * c.inv_res + 0.5f);
+  const int step_cells = c.graph_step;
 
   const auto run = [&](Stats& S, bool draw) {
     sim::Env env(hc, worlds, lidar, n_env, seed, true);
@@ -169,6 +177,8 @@ int main(int argc, char** argv) {
     std::vector<uint32_t> edge;
     std::vector<int32_t> cur, cand, done;
     std::vector<sim::EnvState> st;
+    std::vector<sim::GraphDec> gdec;
+    std::vector<int> n_dec(n_env, 0);
     std::vector<int> dist(NN), expect(NN), queue(NN);
     std::vector<float> trail;   // 그릴 환경이 이 판에 지나온 자리 (지도 자세)
     uint64_t rng = seed * 77ull + 5;
@@ -187,6 +197,54 @@ int main(int argc, char** argv) {
       for (const auto& s : st) S.hash = fnv(&s.x, 3 * sizeof(float), S.hash);
       trail.push_back(st[png_env].x + st[png_env].ex);
       trail.push_back(st[png_env].y + st[png_env].ey);
+      // 9 ~ 12: 결정 하나 = 노드 하나 이동 · 전작 방식 판 끝·보상 (env.h GraphDec, graph_env.h)
+      if (t >= 0) {
+        env.get_gdec(gdec);
+        S.hash = fnv(gdec.data(), gdec.size() * sizeof(sim::GraphDec), S.hash);
+        const float dt_act = (float)c.substeps * c.dt;
+        for (int i = 0; i < n_env; ++i) {
+          const sim::GraphDec& d = gdec[i];
+          const uint8_t* F = &feat[(size_t)i * NN * FEAT];
+          size_t v9 = 0, v10 = 0, v11 = 0, v12 = 0;
+          n_dec[i] += 1;
+          // 9 결정마다 끝난 사유가 있고 걸음 수·거리가 범위 안, 판 결정 수가 맞음
+          const int smax = c.graph_fixed ? c.decide_steps : c.graph_max_steps;   // 고정 주기면 결정 = 묶음 하나 (판 끝만 더 짧음)
+          v9 += d.reason < sim::kGdArrive || d.reason > sim::kGdEpisode || d.steps < 1 || d.steps > smax;
+          v9 += c.graph_fixed && d.reason != sim::kGdEpisode && d.steps != smax;
+          v9 += !std::isfinite(d.dist) || d.dist < 0.f || d.dist > (float)d.steps * dt_act * mdp::act::V_FWD * 1.2f + 0.05f;
+          v9 += d.n_dec != n_dec[i];
+          v9 += d.reason == sim::kGdTimeout && d.steps != smax;
+          v9 += d.reason == sim::kGdNoPath && d.steps < c.decide_steps;
+          // 10 닿음으로 끝났으면 다음 관측의 현재 노드 = 고른 노드 (판이 안 끝났을 때), 판이 걸음에서 끝났으면 사유 = 판 끝 ⇔ term 2
+          v10 += d.reason == sim::kGdArrive && done[i] == 0 && cur[i] != d.target;
+          v10 += (d.reason == sim::kGdEpisode) != (d.term == 2) || (d.term != 0) != (done[i] != 0);
+          v10 += d.target >= NN || (d.reason == sim::kGdArrive && d.target < 0);
+          // 11 유틸리티 노드 수 = 관측의 유틸리티 노드 수 (판이 안 끝났을 때), 걸음에서 끝났으면 −1
+          int nu = 0;
+          for (int j = 0; j < NN; ++j) nu += F[j * FEAT + F_UTIL] != 0;
+          v11 += done[i] == 0 ? d.n_util != nu : (d.term == 2 ? d.n_util != -1 : false);
+          v11 += d.n_gone < 0 || (d.term == 2 && d.n_gone != 0);
+          // 12 전작 방식 판 끝·보상: 유틸리티 0 (맡기기를 켰으면 + 지도 닫힘) ⇔ 성공으로 끝, 진행 없음·닫힘 성공 없음, 보상 = 조각 합 (비트 같음), 조각 값
+          if (c.graph_term) {
+            v12 += (d.term == 1) != (d.n_util == 0 && (!c.graph_cover || d.closed)) || (d.term == 1 && done[i] != mdp::cur::kDeclareOk) || (done[i] == mdp::cur::kDeclareOk && d.term != 1);
+            v12 += done[i] == mdp::cur::kNoProgress;
+            v12 += (d.term == 3) != (c.graph_max_dec > 0 && d.term != 1 && d.term != 2 && d.n_dec >= c.graph_max_dec);
+            const float r = (d.r_dist + d.r_front) + d.r_done, rf = (float)d.n_gone / (float)c.graph_util_norm, rd = -d.dist * c.graph_rew_dist;
+            v12 += std::memcmp(&r, &rew[i], 4) != 0 || std::memcmp(&rf, &d.r_front, 4) != 0 || std::memcmp(&rd, &d.r_dist, 4) != 0;
+            v12 += d.r_done != (d.term == 1 ? c.graph_rew_done : 0.f);
+          } else {
+            v12 += d.term == 1 || d.term == 3;
+          }
+          S.viol[9] += v9 != 0; S.viol[10] += v10 != 0; S.viol[11] += v11 != 0; S.viol[12] += v12 != 0;
+          S.dec += 1;
+          S.dec_steps += d.steps;
+          S.dec_dist += d.dist;
+          S.reason[d.reason & 7] += 1;
+          S.term[d.term & 3] += 1;
+          S.term1_closed += d.term == 1 && d.closed;
+          if (done[i] != 0) n_dec[i] = 0;
+        }
+      }
       for (int i = 0; i < n_env; ++i) {
         const uint8_t* F = &feat[(size_t)i * NN * FEAT];
         const uint32_t* E = &edge[(size_t)i * NN];
@@ -323,7 +381,7 @@ int main(int argc, char** argv) {
   Stats S1;
   run(S1, true);
   size_t bad = 0;
-  for (int q = 1; q < 9; ++q) bad += S1.viol[q];
+  for (int q = 1; q < 13; ++q) bad += S1.viol[q];
   std::printf("그래프 불변식 (칸 기준 %s · 프론티어 %s, 정책 %s, 환경 %d × 결정 %d, 사람 %d): 관측 %zu 개 중 위반 — 1 간선 대칭 %zu · 2 무효 노드 0 %zu · 3 현재 노드 %zu · 4 유효 노드가 현재 노드에서 닿음 %zu · "
               "5 길잡이 = 최단 경로 %zu · 6 특징 값 %zu · 7 이웃 칸 %zu · 8 전역 숫자 %zu\n", c.graph_stand ? "설 수 있는 칸" : "빈 칸", c.graph_open ? "막는 칸만" : "모두", policy.c_str(), n_env, n_steps, people, S1.obs,
               S1.viol[1], S1.viol[2], S1.viol[3], S1.viol[4], S1.viol[5], S1.viol[6], S1.viol[7], S1.viol[8]);
@@ -331,6 +389,11 @@ int main(int argc, char** argv) {
               (double)S1.valid / S1.obs, (double)S1.edges / 2 / S1.obs, (double)S1.util / S1.obs, (double)S1.guide / S1.obs, S1.no_nb, S1.util_obs0,
               S1.ends[1] + S1.ends[2] + S1.ends[3] + S1.ends[4] + S1.ends[5] + S1.ends[6], S1.ends[mdp::cur::kDeclareOk], S1.ends[mdp::cur::kCollision] + S1.ends[mdp::cur::kCollisionPerson],
               S1.ends[mdp::cur::kNoProgress]);
+  std::printf("결정 (간격 %.1f m · 판 끝 %s · 경로 끝 감속 %s · 결정 %s · 결정 상한 %.1f s · 방문 유틸리티 유지 %d): %zu 개 중 위반 — 9 사유·걸음·거리·결정 수 %zu · 10 닿음 = 현재 노드 %zu · 11 유틸리티 노드 수 %zu · 12 판 끝·보상 %zu\n",
+              c.graph_step * c.res, c.graph_term ? "전작" : "계층형", c.graph_pass ? "끔" : "켬", c.graph_fixed ? "고정 주기" : "한 노드", c.graph_max_steps * c.substeps * c.dt, c.graph_view, S1.dec, S1.viol[9], S1.viol[10], S1.viol[11], S1.viol[12]);
+  std::printf("결정당 평균 %.2f s · %.3f m, 사유 닿음 %zu · 막힘 %zu · 시간 초과 %zu · 길 없음 %zu · 경로 끝 어긋남 %zu · 판 끝 %zu, 판 끝: 유틸리티 0 %zu (그때 지도 닫힘 %zu) · 걸음에서 %zu · 결정 상한 %zu\n",
+              S1.dec ? (double)S1.dec_steps / S1.dec * c.substeps * c.dt : 0., S1.dec ? S1.dec_dist / S1.dec : 0., S1.reason[sim::kGdArrive], S1.reason[sim::kGdBlocked], S1.reason[sim::kGdTimeout],
+              S1.reason[sim::kGdNoPath], S1.reason[sim::kGdOff], S1.reason[sim::kGdEpisode], S1.term[1], S1.term1_closed, S1.term[2], S1.term[3]);
   bool same = true;
   if (twice) {
     Stats S2;

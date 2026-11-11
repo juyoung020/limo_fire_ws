@@ -10,13 +10,16 @@
 // sim/include/obs_ref.h graph_ref)가 같은 작은 함수를 불러 비트까지 같다 (env_verify --graph).
 //
 // 차례 (graph_build):
-//   1 노드 격자: 지도 칸 격자에 고정, 간격 NODE_RES(칸 step), 위상 = 판 시작 칸 (로봇이 노드 위에서 시작 — 전작과 같음). 날 유효 = 맵 안 · pass
+//   1 노드 격자: 지도 칸 격자에 고정, 간격 step 칸(env.yaml action.graph.node_resolution), 위상 = 판 시작 칸 (로봇이 노드 위에서 시작 — 전작과 같음). 날 유효 = 맵 안 · pass
 //   2 현재 노드 cur: 로봇 칸 둘레 5×5 노드 중 날 유효이고 로봇 칸에서 pass 직선이 닿는 것의 (거리², 번호) 최소 → 없으면 직선 없이 → 그래도 없으면
 //     가장 가까운 격자점을 억지로 유효 (간선 없음 → 제자리 회전). cur 는 방문 표시(vis)에 더함
 //   3 간선: 5×5 이웃과 pass 직선 (사이 칸 전부, 번호 작은 노드에서 큰 노드로 걸어 대칭)
 //   4 cur 에서 간선으로 최단 거리 (간선 길이 = 유클리드 × 1000 정수). 안 이어진 노드는 버림 (전작: 로봇과 이어진 빈 칸만 노드)
 //   5 프론티어 복셀: fvox 칸 네모마다 프론티어 칸 하나 (네모 최소 모서리에 가장 가까운 칸 — 전작 get_frontier_in_map 의 줄이기)
 //   6 유틸리티: 노드에서 util_r 칸 안(거리 <)이고 free 직선이 닿는 복셀 수, min_util 이하면 0 (전작 MIN_UTILITY), 방문한 노드는 0
+//     (우리 수정, 기본 끔 — keep_vis 1: 현재 노드만 0 · 2: 유틸리티 노드가 하나도 없고 복셀이 남았으면 방문 표시를 지우고(현재 노드만 남김) 한 번 더 셈)
+//   6b 남은 프론티어 맡기기 (cover — **논문·전작에 없는 우리 수정**, 기본 켬): 유틸리티 노드가 하나도 없는데 복셀이 남았으면(= 지도가 안 닫힘) 복셀마다
+//     노드 하나(cover_pick)에 유틸리티 1 씩 — "유틸리티 합 0" 이 "막는 프론티어 없음 = 지도 닫힘" 과 같은 뜻이 되게 (까닭·측정은 mdp/README)
 //   7 지역 길잡이: cur → 유틸리티 노드마다 최단 경로 위 노드 (cur 자신은 뺌 — 전작 경로 path[1:]), 앞 노드 = 거리가 맞는 가장 작은 스텐실 번호
 //   8 특징 uint8 [N][FEAT], 간선 비트 [N], cur 의 이웃 칸 [NB] (행동 목표)
 #pragma once
@@ -38,6 +41,8 @@ struct Params {
   int min_util;    // 이 수 이하 유틸리티는 0
   int fvox;        // 프론티어 복셀 변 (칸)
   int util_norm;   // 유틸리티 정규화 분모
+  int keep_vis;    // 방문 노드 유틸리티: 0 = 전작(방문 노드 0) · 1 = 현재 노드만 0 · 2 = 다 0 이고 복셀이 남으면 방문 표시 지움 (1·2 는 우리 수정, 기본 0)
+  int cover;       // 남은 프론티어 맡기기: 0 = 끔(전작 그대로) · 1 = 켬 · 2 = 켬 + 안 가 본 노드 먼저 (우리 수정 — graph_build 6b)
   int bx0, by0, bx1, by1;   // 지도에서 건드린 칸 범위 (프론티어는 이 안에만), bx1 < 0 이면 없음
 };
 
@@ -56,6 +61,12 @@ DEV int edge_len(int k) {
 DEV int node_x(const Params& p, int i) { return p.ox + (i % mdp::graph::GW) * p.step; }
 DEV int node_y(const Params& p, int i) { return p.oy + (i / mdp::graph::GW) * p.step; }
 DEV bool node_in_map(const Params& p, int i) { return node_x(p, i) < p.gw && node_y(p, i) < p.gh; }
+// 칸 (x, y) 에 놓인 노드 번호 (노드 칸이 아니면 −1)
+DEV int node_at(const Params& p, int x, int y) {
+  const int dx = x - p.ox, dy = y - p.oy;
+  if (dx < 0 || dy < 0 || dx % p.step != 0 || dy % p.step != 0 || dx / p.step >= mdp::graph::GW || dy / p.step >= mdp::graph::GH) return -1;
+  return (dy / p.step) * mdp::graph::GW + dx / p.step;
+}
 // 스텐실 k 번 이웃 번호 (격자 밖 −1)
 DEV int node_nb(int i, int k) {
   int dy, dx;
@@ -133,6 +144,21 @@ DEV bool sees(const Params& p, int i, int cell, F free) {
   if (dx * dx + dy * dy >= p.util_r2) return false;
   return line_ok(x, y, fx, fy, free);
 }
+// 남은 복셀(대표 칸 cell)을 맡을 노드: 현재 노드 말고 유효한 노드 중 (복셀을 봄(sees) 먼저 · cover 2 면 안 가 본 노드 먼저 · 복셀까지 거리² · 번호) 최소. 없으면 −1.
+// 현재 노드를 빼는 까닭: 거기 서 있는데도 안 풀린 복셀이다(전방 220° 시야) — 옆 노드로 갔다 오면 다른 방향을 보게 된다
+template <class V, class W, class F>
+DEV int cover_pick(const Params& p, int cur, int cell, V valid, W visited, F free) {
+  const int fx = cell % p.gw, fy = cell / p.gw;
+  long long best = -1;
+  for (int i = 0; i < mdp::graph::N; ++i) {
+    if (i == cur || !valid(i)) continue;
+    const long long dx = node_x(p, i) - fx, dy = node_y(p, i) - fy;
+    const long long cls = (sees(p, i, cell, free) ? 0 : 2) + (p.cover == 2 && visited(i) ? 1 : 0);
+    const long long key = (cls << 40) | ((dx * dx + dy * dy) << 10) | i;
+    if (best < 0 || key < best) best = key;
+  }
+  return best < 0 ? -1 : (int)(best & 1023);
+}
 // 최단 거리 한 번 풀기: 노드 i 의 새 거리 (이웃 거리 + 간선 길이의 최솟값과 지금 값 중 작은 것)
 DEV int relax(const int* dist, uint32_t edge, int i) {
   int best = dist[i];
@@ -163,17 +189,19 @@ DEV void write_feat(uint8_t* F, int i, int cur, bool valid, int util, bool guide
   for (int k = 0; k < FEAT; ++k) F[k] = 0;
   if (!valid) return;
   F[F_VALID] = 255;
-  F[F_DX] = (uint8_t)(128 + 4 * (i % GW - cur % GW));   // 현재 노드 기준 지도 좌표 (돌리지 않음 — 전작), ±25.6 m → 0 ~ 255
+  F[F_DX] = (uint8_t)(128 + 4 * (i % GW - cur % GW));   // 현재 노드 기준 지도 좌표 (돌리지 않음 — 전작), 노드 칸 차 × 4 (간격과 무관, ±31 칸 → 4 ~ 252)
   F[F_DY] = (uint8_t)(128 + 4 * (i / GW - cur / GW));
   F[F_UTIL] = util_u8(p, util);
   F[F_LGUIDE] = guide ? 255 : 0;
 }
 
 // CPU 참조·실물 노드: 한 환경 그래프 전부. vis: 방문 노드 비트 [N / 32] (호출자가 판 시작 때 비움, 여기서 cur 를 더함).
-// feat [N · FEAT], edge [N], cand [NB] (cur 의 스텐실 k 번 이웃 칸 y · gw + x, 간선 없으면 −1), util [N] (날 수 — 도구·시험용, nullptr 가능)
+// feat [N · FEAT], edge [N], cand [NB] (cur 의 스텐실 k 번 이웃 칸 y · gw + x, 간선 없으면 −1), util [N] (날 수 — 도구·시험용, nullptr 가능).
+// prev [kVoxMax] (nullptr 가능): 지난 관측의 복셀 대표 칸 — 사라진 수(대표 칸이 있었는데 지금 다름 — 전작 env.py 의 집합 차)를 *n_gone 에 주고 지금 값으로 덮어씀
+// (first = 판 첫 관측이면 지난 것 없음). *n_util = 유틸리티 > 0 노드 수
 template <class P, class Fr, class Fn>
 inline int graph_build(const Params& p, int rx, int ry, P pass, Fr free, Fn front, uint32_t* vis, uint8_t* feat, uint32_t* edge, int32_t* cand,
-                       int* util_out = nullptr) {
+                       int* util_out = nullptr, int32_t* prev = nullptr, bool first = true, int* n_gone = nullptr, int* n_util = nullptr) {
   using namespace mdp::graph;
   static thread_local int dist[N], util[N], reps[kVoxMax];
   static thread_local uint8_t valid[N], guide[N];
@@ -208,18 +236,36 @@ inline int graph_build(const Params& p, int rx, int ry, P pass, Fr free, Fn fron
   }
   for (int i = 0; i < N; ++i)
     if (valid[i] && dist[i] >= kInf) { valid[i] = 0; edge[i] = 0u; }
-  int nf = 0;
+  int nf = 0, gone = 0, nu = 0;
   const int nv = vox_count(p);
   for (int v = 0; v < nv; ++v) {
     const int c = vox_rep(p, v, front);
     if (c >= 0) reps[nf++] = c;
+    if (prev) {
+      gone += !first && prev[v] >= 0 && prev[v] != c;
+      prev[v] = c;
+    }
   }
-  for (int i = 0; i < N; ++i) {
-    if (!valid[i] || ((vis[i >> 5] >> (i & 31)) & 1u)) continue;
-    int n = 0;
-    for (int f = 0; f < nf; ++f) n += sees(p, i, reps[f], free) ? 1 : 0;
-    util[i] = n > p.min_util ? n : 0;
+  for (int rep = 0;; ++rep) {
+    for (int i = 0; i < N; ++i) {
+      if (!valid[i] || (p.keep_vis == 1 ? i == cur : ((vis[i >> 5] >> (i & 31)) & 1u) != 0u)) continue;
+      int n = 0;
+      for (int f = 0; f < nf; ++f) n += sees(p, i, reps[f], free) ? 1 : 0;
+      util[i] = n > p.min_util ? n : 0;
+      nu += util[i] > 0;
+    }
+    if (p.keep_vis != 2 || nu > 0 || nf == 0 || rep == 1) break;
+    for (int w = 0; w < N / 32; ++w) vis[w] = w == (cur >> 5) ? 1u << (cur & 31) : 0u;   // keep_vis 2: 방문 표시를 지우고(현재 노드만) 한 번 더 셈
   }
+  if (p.cover && nu == 0 && nf > 0) {   // 6b 남은 프론티어 맡기기 (우리 수정)
+    for (int f = 0; f < nf; ++f) {
+      const int j = cover_pick(p, cur, reps[f], [&](int i) { return valid[i] != 0; }, [&](int i) { return ((vis[i >> 5] >> (i & 31)) & 1u) != 0u; }, free);
+      if (j >= 0) util[j] += 1;
+    }
+    for (int i = 0; i < N; ++i) nu += util[i] > 0;
+  }
+  if (n_gone) *n_gone = gone;
+  if (n_util) *n_util = nu;
   for (int i = 0; i < N; ++i) {
     if (util[i] <= 0) continue;
     for (int v = i; v >= 0 && v != cur && !guide[v]; v = pred_of(dist, edge[v], v)) guide[v] = 1;

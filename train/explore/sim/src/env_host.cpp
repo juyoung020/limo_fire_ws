@@ -300,6 +300,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.gvis = alloc<uint32_t>((size_t)(mdp::graph::N / 32) * n_env);
       b_.gfront = alloc<uint32_t>((size_t)hc.cfg.size * fmap_row(hc.cfg) * n_env);
       if (gpu) b_.gwork = alloc<int32_t>((size_t)mdp::graphgen::kVoxMax * n_env);
+      b_.gdec = alloc<GraphDec>(n_env);
+      b_.gprev = alloc<int32_t>((size_t)mdp::graphgen::kVoxMax * n_env);
     }
   }
   b_.priv = alloc<float>((size_t)mdp::obs::PRIV * n_env);
@@ -421,6 +423,10 @@ void Env::get_graph(std::vector<uint8_t>& feat, std::vector<uint32_t>& edge, std
   fetch(gpu_, b_.gcur, n, cur);
   fetch(gpu_, b_.gglob, n * mdp::graph::GLOB, glob);
   fetch(gpu_, b_.gcand, n * mdp::graph::NB, cand);
+}
+void Env::get_gdec(std::vector<GraphDec>& out) const {
+  if (!b_.gdec) { out.clear(); return; }
+  fetch(gpu_, b_.gdec, (size_t)b_.n_env, out);
 }
 void Env::get_seen(std::vector<uint8_t>& out) const {
   std::vector<uint32_t> m;

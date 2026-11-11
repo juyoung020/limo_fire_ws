@@ -66,6 +66,35 @@ struct PPOConfig {
   int mlp = 2;                  // MLP 계산: 0 cuBLAS(옛 길), 1 융합 GEMM fp32(정확, 기울기 검사), 2 융합 GEMM bf16 텐서 코어·fp32 누산 (ppo/README "속도")
 };
 
+// 그래프 모드(train --graph, 그래프 어텐션 정책) PPO 설정 — 한곳. 위 기본값(직접 제어·계층형)과 다른 것만 바꾼다.
+// 결정 하나 = 이웃 노드 하나로 이동(실측 평균 3.3 s = 시뮬 33 걸음, 길이 가변). γ·λ 는 결정 하나마다 적용한다(걸린 시간과 무관 — 전작·논문과 같은 방식).
+inline PPOConfig graph_ppo_config() {
+  PPOConfig c;
+  // γ = 0.95 (결정당): HEADER (Cao et al. arXiv 2510.15679) IV-D 학습 설정값. 전작 ARiADNE 공개 코드는 γ = 1 (parameter.py:36)인데 그쪽은 판이 128 결정에서
+  // 끊기는 SAC 라 할인 없이도 수익이 유계다. 우리는 판 길이 상한이 사실상 없고(안전 시간 1200 s) PPO·GAE 라 논문 값을 쓴다 — 지평 1/(1−γ) = 20 결정 ≈ 40 s · 16 m.
+  // 끝 보상 20 은 결정 100 개 앞에서 20·0.95^100 ≈ 0.12 로만 보인다(가까운 프론티어 보상이 주 신호) — 논문과 같은 조건. refs/papers/header_fare_diff.md 표 "할인율"
+  c.gamma = 0.95f;
+  c.lam = 0.95f;            // GAE λ — 기존 값 그대로 (논문은 SAC 라 해당 값 없음)
+  // 환경 수·롤아웃 길이·에포크·미니배치: 어텐션 몸통(6 층 · d 128 · 머리 8, 줄이지 않음)의 갱신 처리량이 한 반복의 시간을 정한다 — 반복 ≤ 60 s 가 되게 고른 값 (잠정, 실측은 ppo/README "그래프 모드 학습 속도").
+  // 논문은 SAC 환경 16 개 · 배치 128 (표본을 재생 버퍼에서 여러 번 씀). PPO 는 표본을 한 반복에서만 쓰므로 환경을 더 두되 CNN 판(2048 × 24)보다 훨씬 작게.
+  // 실측(2026-11-11, RTX 3060): 갱신은 유효 노드 행 수에 비례(약 9만 행·에포크/s — 노드 15 개면 6500, 136 개면 600 샘플·에포크/s), 시뮬은 결정 걸음마다
+  // 고정 비용이 커서 환경이 많을수록 결정/s 가 높다(8192 결정: 256×32 11.0 s, 512×16 6.6 s, 1024×8 4.5 s). 그래서 표본 8192 는 유지하고
+  // 환경 512 × 결정 16(GAE 지평 1/(1−γλ) ≈ 10 결정보다 김), 에포크 3 — 큰 맵(노드 ≈ 140)에서 갱신 8192·3/600 ≈ 41 s.
+  c.num_envs = 512;
+  c.steps_per_env = 16;
+  c.epochs = 3;             // 기존 5 → 3: 반복 시간 때문 (잠정)
+  c.minibatches = 4;        // 미니배치 = 2048 결정 (논문 배치 128 보다 큼 — PPO 는 미니배치마다 KL 적응 학습률을 고치므로 기존 4 유지)
+  c.entropy_coef = 0.01f;   // 기존 값 그대로 (범주 분포 엔트로피, 최대 ln 24 ≈ 3.2) — 잠정
+  // 학습률: 시작 1e-5 = 전작 ARiADNE 공개 코드 값(parameter.py:35 LR = 1e-5, SAC·Adam). HEADER 값은 refs/papers/header_fare_diff.md 에 없어 확인 못 함. KL 적응(desired_kl 0.003)은 그대로 두되 범위를 [1e-6, 1e-4] 로 낮춘다 — 잠정.
+  // 실측(2026-11-11, train --graph 반복 2): 기본값(시작 1e-3)이면 첫 반복 KL 0.18 로 포인터 로짓 10·tanh(u) 가 포화해 다음 반복부터 KL 이 정확히 0,
+  // 적응 규칙의 "0 < KL" 조건 때문에 학습률이 바닥 1e-5 에 붙어 돌아오지 못했다. 상한 1e-4 는 논문 값의 10 배(근거 없는 여유).
+  // 하한 1e-6: 시작값 1e-5 에서도 첫 반복들의 KL 이 0.005~0.008 로 목표의 2 배 언저리였다(같은 날 실측) — 하한이 1e-5 면 러너의 "학습률 하한 갇힘" 감시가 멈출 수 있어 한 자리 낮춤.
+  c.lr = 1e-5f;
+  c.lr_min = 1e-6f;
+  c.lr_max = 1e-4f;
+  return c;
+}
+
 struct UpdateStats {
   float surrogate = 0, value = 0, entropy = 0, kl = 0, lr = 0, grad_norm = 0;
   float mean_value = 0, mean_return = 0;
@@ -131,6 +160,12 @@ class PPO {
   XNET_NS::ActorCritic& ac() { return *ac_; }
   int rollout_step() const { return step_; }
   size_t storage_bytes() const { return storage_bytes_; }
+  // 그래프 판: 지난(또는 모으는 중인) 롤아웃의 샘플마다 유효 노드 수 평균 — 갱신 시간이 이 값에 비례한다 (러너 로그용)
+  double graph_nodes_mean() const {
+    double s = 0;
+    for (int v : h_cnt_) s += v;
+    return h_cnt_.empty() ? 0.0 : s / (double)h_cnt_.size();
+  }
 
   // 손실 하나(미니배치 하나 분량)의 기울기를 d_grads 에 쓴다 — 유한 차분 검사용. 저장된 롤아웃의 idx 앞 n 개.
   double loss_and_grad(const int* d_idx, int n, bool backward);
@@ -167,6 +202,8 @@ class PPO {
   uint8_t* s_gfeat_ = nullptr;    // [S][GN_][GF_]
   uint32_t* s_gedge_ = nullptr;   // [S][GN_]
   int *s_gcur_ = nullptr, *d_cnt_ = nullptr;   // [S], 유효 노드 세기 작업 버퍼 [N]
+  real* c_gred_ = nullptr;        // 그래프 미니배치: 구간마다의 통계 합 [구간][5] (장치) — 미니배치 끝에 한 번 내림
+  long gred_cap_ = 0;
   std::vector<int> h_cnt_;        // 롤아웃 샘플마다 유효 노드 수 (host — 미니배치를 행 상한에 맞춰 나누는 데)
   int step_ = 0, iter_ = 0;
   uint64_t act_calls_ = 0;

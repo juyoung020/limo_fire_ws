@@ -135,6 +135,16 @@ struct EnvCfg {
   // graph_fvox: 프론티어 복셀 변(칸), graph_util_norm: 유틸리티 정규화 분모 (호스트가 셈)
   // graph_open: 1 = 유틸리티가 닫힘을 막는 프론티어 칸만 셈 (EnvBatch::gfront — 설 수 있는 칸으로 닿고, close_min 칸 이상 덩어리이고, 본 칸이 아님), 0 = 모든 프론티어 칸
   int graph_on, graph_stand, graph_util_r, graph_min_util, graph_fvox, graph_util_norm, graph_open;
+  // 2026-11-11 전작 방식 (mdp/README "그래프 모드 — 전작 방식"). graph_step: 노드 간격(칸, action.graph.node_resolution).
+  // graph_term 1 = 판 끝·보상을 전작(ARiADNE worker.py·env.py) 식으로: 끝 = 유틸리티 합 0(성공) · 충돌 · 최대 길이, 닫힘 성공·진행 없음 규칙은 끔,
+  //   보상 = −이동 거리 · graph_rew_dist + 사라진 프론티어 복셀 / graph_util_norm + 끝 graph_rew_done. 0 = 계층형 규칙·보상 그대로 (규칙 정책을 slot0 과 같은 성공 정의로 잴 때)
+  // graph_max_steps: 결정 하나(= 노드 하나 이동)의 걸음 상한 (decision_timeout), graph_max_dec: 판의 결정 수 상한 (0 = 안전 시간만),
+  // graph_pass 1 = 추종기가 경로 끝 감속(RPP approach scaling)을 안 함 — 노드를 지나쳐 감, graph_arrive: 도착 반경 (m),
+  // graph_view: 방문 노드 유틸리티 0 = 전작 · 1 = 현재 노드만 0 · 2 = 다 0 이면 방문 표시 지움 (1·2 는 우리 수정, 기본 0 — 220° 시야, mdp/README)
+  // graph_cover: 남은 프론티어 맡기기 (mdp/graph.h 6b — 우리 수정, 기본 1): 유틸리티 노드가 없는데 막는 프론티어가 남았으면 복셀마다 노드 하나에 유틸리티 → 유틸리티 합 0 ⇔ 지도 닫힘
+  int graph_step, graph_term, graph_max_steps, graph_max_dec, graph_pass, graph_view, graph_cover;
+  float graph_rew_dist, graph_rew_done, graph_arrive;
+  int graph_fixed;   // 결정 길이: 0 = 한 결정 한 노드(닿을 때까지 — 논문 학습 방식) · 1 = 고정 주기 decide_steps(1 Hz 재계획 — 논문 실물 방식 V-C)
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -250,6 +260,30 @@ struct ClassLog {
   int* n;
 };
 
+// 그래프 모드 결정 하나(= 이웃 노드 하나로 이동)의 결과 — EnvBatch::gdec [env]. EnvState·EpInfo 밖에 둬 계층형·직접 제어 상태와 무관 (graph_env.h 가 채움)
+enum : int {
+  kGdRun = 0,      // 진행 중
+  kGdArrive = 1,   // 고른 노드에 닿음 (지도 자세가 그 노드 graph_arrive 안이거나 경로 끝이고, 현재 노드 규칙 find_cur 가 그 노드)
+  kGdBlocked = 2,  // 추종기 충돌 검사로 결정 주기(decide_steps)의 절반 넘게 멈춤·물러남 (hier_path.h 복구 (a) — 다음 결정이 복구 단계를 밟음)
+  kGdTimeout = 3,  // graph_max_steps 걸음
+  kGdNoPath = 4,   // 고른 칸이 없거나(간선 없는 번호·포기한 목표) 경로를 못 짬 — 결정 주기 하나 동안 제자리 회전 뒤 끝
+  kGdOff = 5,      // 경로 끝에 섰는데 현재 노드가 고른 노드가 아님 (목표 허용으로 경로 끝이 노드에서 떨어짐)
+  kGdEpisode = 6,  // 판이 걸음에서 끝남 (충돌·끊김, graph_term 0 이면 닫힘·진행 없음도)
+};
+struct GraphDec {
+  int32_t steps;     // 이번 결정의 걸음 수 (걸린 시간 = steps × 속도 행동 주기)
+  int32_t reason;    // kGd*
+  int32_t target;    // 고른 노드 번호 (없으면 −1)
+  int32_t n_dec;     // 이 판의 결정 수 (이번 것 포함)
+  int32_t n_util;    // 결정 끝 관측에서 유틸리티 > 0 인 노드 수 (판이 걸음에서 끝났으면 −1)
+  int32_t n_gone;    // 지난 결정 관측의 프론티어 복셀 중 사라진 수 (전작 env.py delta_num)
+  int32_t closed;    // 결정 끝 지도 닫힘 (EnvState::map_closed — slot0 성공 판정이 보는 값)
+  int32_t term;      // 판 끝: 0 안 끝남 · 1 유틸리티 합 0 · 2 걸음에서 끝남 · 3 결정 수 상한
+  float dist;        // 이번 결정 동안 참 자세 이동 거리 (m, 걸음 끝 자세 사이 직선의 합)
+  float px, py;      // 지난 걸음 끝 참 자세
+  float r_dist, r_front, r_done;   // 보상 조각 (graph_term 1 일 때 보상 = 셋의 합, 이 차례로 더함)
+};
+
 // 장치·호스트 공용 묶음 (포인터는 GPU 면 장치, CPU 면 호스트)
 struct EnvBatch {
   EnvCfg cfg;
@@ -331,6 +365,9 @@ struct EnvBatch {
   uint32_t* gvis;
   int32_t* gwork;
   uint32_t* gfront;   // 닫힘을 막는 프론티어 칸 비트 판 [env · size · fmap_row] (mdp::frontier_search n_block 이 세는 칸 — reach_block·obs_ref reach_obs 가 관측마다 건드린 범위 안을 씀)
+  // 전작 방식 (2026-11-11): 결정 하나의 결과 [env] (graph_env.h GraphDec — 도구·학습기가 읽음), 지난 결정 관측의 프론티어 복셀 대표 칸 [env · kVoxMax] (보상의 사라진 프론티어)
+  GraphDec* gdec;
+  int32_t* gprev;
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)
@@ -1198,6 +1235,31 @@ DEV void trail_mark(const EnvBatch& b, const EnvState& e, int env, int tid, int 
 
 // ---------- 3. 보상·끝·관측 ----------
 
+// 스레드 0. 판 끝 기록(EpInfo)·커리큘럼 — e.done 을 정한 바로 뒤 (finish_step, 그래프 모드 전작 방식 종료는 graph_env.h graph_finish)
+DEV void episode_end(const EnvBatch& b, EnvState& e, int env, float cov, float dt_act) {
+  const EnvCfg& c = b.cfg;
+  EpInfo& I = b.ep[env];
+  I.coverage = cov;
+  I.t95 = e.t95_step < 0 ? -1.f : (float)e.t95_step * dt_act;
+  I.t = (float)e.step * dt_act;
+  I.done = e.done;
+  I.collided = e.collided;
+  I.stage = e.stage;
+  I.map = e.map;
+  I.coll_kind = !e.collided ? 0
+                : (e.cmd_v > 0.01f ? 1 : (e.cmd_v < -0.01f ? 3 : (dm::absf(e.cmd_w) > 0.01f ? 2 : 4)));
+  I.pad_ = 0;
+  if (c.curriculum) {
+    // 맨 위 단계 무작위 (실험, 켤 때만 난수를 뽑아 끈 쪽은 난수 흐름이 그대로)
+    const uint32_t rnd = c.cur_top_random ? (uint32_t)(dm::splitmix64(e.rng) >> 32) : 0u;
+    if (c.cur_rule == mdp::cur::kCurSuccess)
+      mdp::cur::on_episode_end_success(&e.stage, &e.cur_hist, &e.cur_n, e.done == mdp::cur::kDeclareOk, b.max_stage, c.cur_top_random != 0, rnd,
+                                       c.cur_window, c.cur_up, c.cur_down);
+    else
+      mdp::cur::on_episode_end(&e.stage, &e.cur_hist, &e.cur_n, cov, b.max_stage, c.cur_top_random != 0, rnd, c.cur_window, c.cur_up, c.cur_down);
+  }
+}
+
 // 스레드 0. 이번 행동 동안 새로 본 벽 면 칸·새로 지나간 바닥 칸·갈 수 있음 칸 변화·새로 안 칸. 보상 항 → terms[kTerms]
 DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int new_floor, int d_known, int n_new) {
   const EnvCfg& c = b.cfg;
@@ -1222,6 +1284,8 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   // 시계 조건을 먼저 보므로 탐사 중(시계가 자주 0 으로 돌아감)에는 격자를 만들지 않는다
   // 닫힘 값(map_closed)은 지난 관측의 프론티어 요약(GPU env_reach_kernel · CPU env_ref.cpp write_obs)이 이번 걸음 앞 지도로 낸 것 — 관측 CLOSED 와 같음
   in.closed = c.success_closed && !e.collided && (float)e.since_occ * dt_act >= c.close_idle_s && (e.step + 1) % c.close_every == 0 && e.map_closed ? 1 : 0;
+  const bool gterm = c.graph_on && c.graph_term;   // 그래프 모드 전작 방식: 닫힘 성공·진행 없음 규칙 없음 (끝 = 유틸리티 합 0 — graph_env.h graph_finish)
+  if (gterm) in.closed = 0;
   // 덮음 보상 자리: 로봇 지도에서 이번 행동 동안 판 처음 막힘이 된 칸 수 (map_progress 가 이 걸음 칸에 막 넣은 값 — 진행 없음 시계와 같은 셈)
   // 진행 없음 시계와 같은 문턱: 한 행동에 kIdleOccMin 개 미만이면 0 — 멈춰 있어도 자세 오차·빔 잡음으로 드문드문 생기는 막힘 칸을 보상하지 않는다
   {
@@ -1255,6 +1319,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   // since_wall(정답 벽 면 칸 첫 관측 뒤 걸음)은 가치 전용 참값(PRIV_IDLE)으로만.
   e.since_wall = new_wall > 0 ? 0 : e.since_wall + 1;
   in.idle = !e.collided && !in.declared && !in.closed && (float)e.since_occ * dt_act >= mdp::cur::kIdleTime;
+  if (gterm) in.idle = false;
   float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
   e.reward = mdp::rew::terms(in, T);
   e.slip_acc = 0.f;
@@ -1287,28 +1352,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   else if (in.declared) e.done = cov >= mdp::cur::kSuccessCov ? mdp::cur::kDeclareOk : mdp::cur::kDeclareShort;
   else if (in.idle) e.done = mdp::cur::kNoProgress;
   else if (e.step >= c.max_steps) e.done = mdp::cur::kTruncated;
-  if (e.done) {
-    EpInfo& I = b.ep[env];
-    I.coverage = cov;
-    I.t95 = e.t95_step < 0 ? -1.f : (float)e.t95_step * dt_act;
-    I.t = (float)e.step * dt_act;
-    I.done = e.done;
-    I.collided = e.collided;
-    I.stage = e.stage;
-    I.map = e.map;
-    I.coll_kind = !e.collided ? 0
-                  : (e.cmd_v > 0.01f ? 1 : (e.cmd_v < -0.01f ? 3 : (dm::absf(e.cmd_w) > 0.01f ? 2 : 4)));
-    I.pad_ = 0;
-    if (c.curriculum) {
-      // 맨 위 단계 무작위 (실험, 켤 때만 난수를 뽑아 끈 쪽은 난수 흐름이 그대로)
-      const uint32_t rnd = c.cur_top_random ? (uint32_t)(dm::splitmix64(e.rng) >> 32) : 0u;
-      if (c.cur_rule == mdp::cur::kCurSuccess)
-        mdp::cur::on_episode_end_success(&e.stage, &e.cur_hist, &e.cur_n, e.done == mdp::cur::kDeclareOk, b.max_stage, c.cur_top_random != 0, rnd,
-                                         c.cur_window, c.cur_up, c.cur_down);
-      else
-        mdp::cur::on_episode_end(&e.stage, &e.cur_hist, &e.cur_n, cov, b.max_stage, c.cur_top_random != 0, rnd, c.cur_window, c.cur_up, c.cur_down);
-    }
-  }
+  if (e.done) episode_end(b, e, env, cov, dt_act);
 }
 
 // 스레드 0, 관측의 프론티어 요약이 나온 바로 뒤 (GPU env_reach_kernel · CPU env_ref.cpp — write_obs 다음): approach·front_cells 항 (rewards.h).

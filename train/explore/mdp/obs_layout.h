@@ -96,20 +96,21 @@ constexpr int kPathMax = 64;         // 웨이포인트 상한 (EnvState)
 // 정책 입력은 로봇 둘레 격자 그래프(노드 특징·간선·현재 노드)와 전역 벡터뿐이고 원시 센서는 없다. 행동 = 현재 노드의 이웃 하나.
 // 버퍼 모양(환경 n 개): 노드 특징 uint8 [n][N][FEAT], 간선 uint32 [n][N], 현재 노드 int [n], 전역 float [n][GLOB], 참값 float [n][obs::PRIV]
 namespace mdp::graph {
-constexpr int GW = 32, GH = 32;       // 노드 격자 열·행 수 — 25.6 m 창 (obs::kFrontNorm 과 같은 범위)
-constexpr float NODE_RES = 0.8f;      // m, 노드 간격 — 잠정 (먼 지도 칸과 같은 격자. HEADER 는 시뮬 4 m, 실기 1.2 ~ 2.8 m)
+constexpr int GW = 32, GH = 32;       // 노드 격자 열·행 수 — 간격 0.8 m 면 25.6 m 창 (지도 전체, obs::kFrontNorm 과 같은 범위)
+constexpr float NODE_RES = 0.8f;      // m, 노드 간격의 기본값 — 실제 값은 env.yaml action.graph.node_resolution (EnvCfg graph_step). HEADER(arXiv 2510.15679): 학습 시뮬 4 m(센서 20 m, IV-D),
+                                      // Gazebo 1.2 ~ 2.8 m(V-B), 실물 0.8 m(건물·정원, 센서 8 m) · 2 m(캠퍼스)(V-C). 0.8 · 1.2 · 2.0 m 측정은 mdp/README "그래프 모드 — 전작 방식"
 constexpr int N = GW * GH;            // 1024 노드 자리. 자리 i = 행 × GW + 열, 실제 있는 노드만 유효(F_VALID)
 // 이웃: 5×5 스텐실에서 자신 제외 (HEADER 의 이웃 문턱 dn = 2√2·Δnode → 노드마다 자신 포함 최대 25).
 // 순서는 행 우선: dy −2 … +2, 그 안에서 dx −2 … +2, 가운데(0, 0)는 건너뜀 → 번호 k = (dy + 2)·5 + (dx + 2), 가운데(12) 뒤는 1 을 뺀다
 constexpr int NB_R = 2;               // 스텐실 반경 (노드 칸)
 constexpr int NB = (2 * NB_R + 1) * (2 * NB_R + 1) - 1;  // 24
-constexpr int FEAT = 8;               // 노드마다 uint8 칸 수 (신경망에서 / 255)
+constexpr int FEAT = 8;               // 노드마다 uint8 칸 수 (신경망은 1 ~ 5 번 칸만 읽음: 좌표는 (값 − 128) / 160, 나머지는 / 255 — network/graph_net.cuh)
 enum : int {
   F_VALID = 0,   // 노드 있음 255 / 없음 0 (없는 노드의 나머지 칸·간선은 신경망이 읽지 않는다)
-  F_DX = 1,      // 현재(로봇) 노드 기준 상대 위치, 지도 좌표(돌리지 않음 — 전작 ARiADNE 와 같게): ±25.6 m → 0 ~ 255, 128 이 0 (HEADER 의 xi, yi)
+  F_DX = 1,      // 현재(로봇) 노드 기준 상대 위치, 지도 좌표(돌리지 않음 — 전작 ARiADNE 와 같게): 128 + 4 × 노드 칸 차(±31 칸 → 4 ~ 252), 128 이 0 (HEADER 의 xi, yi)
   F_DY = 2,
   F_UTIL = 3,    // 유틸리티 (HEADER ui: 그 노드에서 볼 수 있는 프론티어 양, 0 ~ 255 로 정규화 — 눈금은 시뮬 쪽)
-  F_LGUIDE = 4,  // 지역 길잡이 0 / 255 (HEADER ei: 유틸리티 노드로 가는 길 위)
+  F_LGUIDE = 4,  // 지역 길잡이 0 / 255 (HEADER ei, IV-A-4: 현재 노드 → 모든 유틸리티 노드 최단 경로 위. 전작 공개 코드의 guidepost 는 방문 표시 node.visited 라 뜻이 다름 — agent.py:134)
   F_GGUIDE = 5,  // 전역 길잡이 0 / 255 (HEADER bi) — 전역 그래프가 아직 없어 지금은 늘 0
   F_RSV0 = 6,    // 예약 (0)
   F_RSV1 = 7,    // 예약 (0)
