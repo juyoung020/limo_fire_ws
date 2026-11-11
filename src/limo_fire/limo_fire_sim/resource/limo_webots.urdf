@@ -45,15 +45,21 @@
         <hardware>
             <plugin>webots_ros2_control::Ros2ControlSystem</plugin>
         </hardware>
-        <joint name="front_left_wheel">
-            <state_interface name="position"/>
-            <state_interface name="velocity"/>
-            <command_interface name="velocity"/>
+        <joint name="front_left_steering_joint">
+            <state_interface name="position"/><state_interface name="velocity"/>
+            <command_interface name="position"/>
         </joint>
-        <joint name="front_right_wheel">
-            <state_interface name="position"/>
-            <state_interface name="velocity"/>
-            <command_interface name="velocity"/>
+        <joint name="front_right_steering_joint">
+            <state_interface name="position"/><state_interface name="velocity"/>
+            <command_interface name="position"/>
+        </joint>
+        <joint name="launcher_yaw_joint">
+            <state_interface name="position"/><state_interface name="velocity"/>
+            <command_interface name="position"/>
+        </joint>
+        <joint name="launcher_pitch_joint">
+            <state_interface name="position"/><state_interface name="velocity"/>
+            <command_interface name="position"/>
         </joint>
         <joint name="rear_left_wheel">
             <state_interface name="position"/>

@@ -10,6 +10,7 @@
 <launch>
   <arg name="world" default="limo_fire_world" description="sim/webots/worlds/ 안 월드 이름 (확장자 없이)"/>
   <arg name="world_dir" default="$(env HOME)/limo_fire_ws/sim/webots/worlds"/>
+  <arg name="port" default="1234" description="Webots supervisor IPC port"/>
   <arg name="slam" default="false" description="true: 저장 지도·AMCL 대신 Cartographer 로 지도를 만들며 주행"/>
   <arg name="nav" default="true" description="Nav2 를 띄운다"/>
   <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/sim/$(var world).yaml" description="slam:=false 일 때 쓰는 지도"/>
@@ -25,16 +26,27 @@
   <arg name="nav_params_file" default="$(find-pkg-share limo_fire_navigation)/config/nav2_params.yaml"/>
   <arg name="sim_velocity_topic" default="/cmd_vel"/>
   <arg name="nav_velocity_output" default="/cmd_vel"/>
+  <arg name="control_params_file" default="$(find-pkg-share webots_ros2_limo)/resource/diff/ros2control.yaml"/>
+  <arg name="drive_controller" default="diffdrive_controller"/>
+  <arg name="controller_unstamped_topic" default="/diffdrive_controller/cmd_vel_unstamped"/>
+  <arg name="controller_stamped_topic" default="/diffdrive_controller/cmd_vel"/>
+  <arg name="launch_launcher_controller" default="false"/>
   <arg name="navigate_action" default="navigate_to_pose"/>
   <arg name="through_action" default="navigate_through_poses"/>
 
   <!-- include 에 준 인자는 Humble 에서 바깥으로 새어 나와 다음 include 의 값을 바꾸므로 하나씩 group 으로 가둔다 -->
   <group>
     <include file="$(find-pkg-share limo_fire_bringup)/launch/sim_robot.launch.xml">
+      <arg name="port" value="$(var port)"/>
       <arg name="world_file" value="$(var world_dir)/$(var world).wbt"/>
       <arg name="mode" value="$(var mode)"/>
       <arg name="gui" value="$(var gui)"/>
       <arg name="velocity_topic" value="$(var sim_velocity_topic)"/>
+      <arg name="control_params_file" value="$(var control_params_file)"/>
+      <arg name="drive_controller" value="$(var drive_controller)"/>
+      <arg name="controller_unstamped_topic" value="$(var controller_unstamped_topic)"/>
+      <arg name="controller_stamped_topic" value="$(var controller_stamped_topic)"/>
+      <arg name="launch_launcher_controller" value="$(var launch_launcher_controller)"/>
     </include>
   </group>
 

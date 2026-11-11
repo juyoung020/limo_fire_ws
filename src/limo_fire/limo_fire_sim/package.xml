@@ -25,4 +25,7 @@
   <export>
     <build_type>ament_cmake</build_type>
   </export>
+  <exec_depend>ackermann_steering_controller</exec_depend>
+  <exec_depend>forward_command_controller</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
 </package>

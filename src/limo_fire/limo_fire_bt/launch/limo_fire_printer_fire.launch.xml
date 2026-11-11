@@ -1,0 +1,44 @@
+<launch>
+  <arg name="world" default="limo_fire_printer_obstacles"/>
+  <arg name="world_dir" default="$(env HOME)/limo_fire_ws/sim/webots/worlds"/>
+  <arg name="port" default="1236"/>
+  <arg name="map" default="$(env HOME)/limo_fire_ws/src/limo_fire/limo_fire_navigation/maps/sim/limo_fire_printer_obstacles.yaml"/>
+  <arg name="yolo_engine_path" default="$(env HOME)/limo_fire_ws/src/limo_fire/limo_fire_perception/models/yolo26s_seg_fire_u8_480.engine"/>
+  <arg name="mujoco_root" default="$(env HOME)/robot-programming/simulation/mujoco_ball_mvp"/>
+  <arg name="rviz" default="false"/>
+  <group>
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/sim.launch.xml">
+      <arg name="world" value="$(var world)"/>
+      <arg name="world_dir" value="$(var world_dir)"/>
+      <arg name="port" value="$(var port)"/>
+      <arg name="map" value="$(var map)"/>
+      <arg name="control_params_file" value="$(find-pkg-share limo_fire_sim)/config/webots_ackermann.yaml"/>
+      <arg name="drive_controller" value="ackermann_steering_controller"/>
+      <arg name="controller_unstamped_topic" value="/ackermann_steering_controller/reference_unstamped"/>
+      <arg name="controller_stamped_topic" value="/ackermann_steering_controller/reference"/>
+      <arg name="launch_launcher_controller" value="true"/>
+      <arg name="perception" value="true"/>
+      <arg name="yolo_engine_path" value="$(var yolo_engine_path)"/>
+      <arg name="rviz" value="$(var rviz)"/>
+      <arg name="fire_params" value="$(find-pkg-share limo_fire_bt)/config/nav2_fire.yaml"/>
+      <arg name="sim_velocity_topic" value="/fire/cmd_vel_safe"/>
+      <arg name="nav_velocity_output" value="/fire/cmd_vel_input"/>
+      <arg name="navigate_action" value="/fire/nav2_navigate_to_pose"/>
+      <arg name="through_action" value="/fire/disabled_navigate_through_poses"/>
+    </include>
+  </group>
+  <node pkg="limo_fire_bt" exec="fire_manager" name="fire_manager" output="screen">
+    <param from="$(find-pkg-share limo_fire_bt)/config/fire_manager.yaml"/>
+    <param name="mission_action" value="/fire/mission_navigate_to_pose"/>
+    <param name="backend_action" value="/navigate_to_pose"/>
+    <param name="extinguish_action" value="/fire/mujoco_extinguish"/>
+    <param name="use_sim_time" value="true"/>
+  </node>
+  <node pkg="limo_fire_bridge" exec="mujoco_extinguisher" name="mujoco_extinguisher" output="screen">
+    <param name="action" value="/fire/mujoco_extinguish"/>
+    <param name="mujoco_root" value="$(var mujoco_root)"/>
+    <param name="show_gui" value="true"/>
+    <param name="gui_playback_speed" value="0.35"/>
+    <param name="use_sim_time" value="true"/>
+  </node>
+</launch>

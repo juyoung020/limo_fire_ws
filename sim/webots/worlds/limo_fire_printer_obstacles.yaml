@@ -1,0 +1,5 @@
+# Webots world truth for YOLO recognition benchmarking (coordinates in metres).
+robot_start: {x: -4.8, y: 0.0, yaw: 0.0}
+patrol: [[-4.2, 0.0], [-3.0, 2.4], [-0.5, 2.4], [1.7, 2.4], [3.0, 1.4], [3.2, -1.8], [0.0, -2.4], [-3.5, -2.4], [-4.8, 0.0]]
+objects:
+  - {name: fire_printed_target, cls: 0, center: [4.003, 0.5497, 0.1630], size: [0.006, 0.0827, 0.1691], yaw: 0.0, note: "3D-printed flame_red.stl + flame_white.stl; 82.7 x 169.1 x 6 mm panel"}

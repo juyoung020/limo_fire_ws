@@ -14,6 +14,7 @@ from limo_fire_msgs.action import Extinguish
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import Float64MultiArray
 from rclpy.time import Time
 from tf2_geometry_msgs import do_transform_point
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -29,7 +30,7 @@ class MujocoExtinguisher(Node):
         self.declare_parameter('python', '')
         self.declare_parameter('aim', 'surface')
         self.declare_parameter('speed', 5.5)
-        self.declare_parameter('aim_height', 0.40)
+        self.declare_parameter('aim_height', 0.18)
         self.declare_parameter('target_pivot_offset', 0.15)
         self.declare_parameter('show_gui', False)
         self.declare_parameter('gui_playback_speed', 0.35)
@@ -45,6 +46,7 @@ class MujocoExtinguisher(Node):
         self._active = None
         self._viewers = []
         self._lock = threading.Lock()
+        self._launcher_pub = self.create_publisher(Float64MultiArray, '/launcher_position_controller/commands', 10)
         self._server = ActionServer(
             self, Extinguish, str(self.get_parameter('action').value),
             execute_callback=self._execute,
@@ -83,20 +85,47 @@ class MujocoExtinguisher(Node):
             raise ValueError(f'target forward distance {pivot_x:.3f} m is outside MuJoCo range [{lo:.2f}, {hi:.2f}] m')
         return x, y, distance
 
+
+    def _pitch_command(self, x: float, y: float) -> float:
+        # Match the MuJoCo launch geometry and low-angle ballistic solver.
+        distance = x + float(self.get_parameter('target_pivot_offset').value) - 0.075 - 0.05
+        lateral = y
+        dz = float(self.get_parameter('aim_height').value) - 0.30
+        speed = float(self.get_parameter('speed').value)
+        horizontal = math.hypot(distance, lateral)
+        v2 = speed * speed
+        gravity = 9.81
+        discriminant = v2 * v2 - gravity * (gravity * horizontal * horizontal + 2.0 * dz * v2)
+        if distance <= 0.0 or horizontal <= 1e-9 or discriminant < 0.0:
+            raise ValueError('target is outside the printed launcher ballistic envelope')
+        tangent = (gravity * horizontal * horizontal + 2.0 * dz * v2) / (horizontal * (v2 + math.sqrt(discriminant)))
+        pitch = math.atan(tangent)
+        if not -0.1 <= pitch <= 0.85:
+            raise ValueError(f'pitch {math.degrees(pitch):.2f} deg exceeds Webots launcher limits')
+        return pitch
+
     def _execute(self, goal_handle):
         # Keep at most one inspection window so repeated fires do not pile up.
         self._reap_viewers(close_all=True)
         result = Extinguish.Result()
         try:
             x, y, distance = self._to_base(goal_handle.request.target)
+            pitch = self._pitch_command(x, y)
         except (ValueError, TransformException) as exc:
             result.success = False
-            result.reason = f'MuJoCo target rejected: {exc}'
+            result.reason = f'aiming target rejected: {exc}'
             goal_handle.abort()
             self.get_logger().warning(result.reason)
             return result
 
         root = Path(str(self.get_parameter('mujoco_root').value)).expanduser().resolve()
+        launcher_command = Float64MultiArray()
+        # The chassis/nav controller handles horizontal yaw; this joint only elevates the printed launcher.
+        launcher_command.data = [0.0, pitch]
+        for _ in range(3):
+            self._launcher_pub.publish(launcher_command)
+            time.sleep(0.05)
+        self.get_logger().info(f'Printed launcher pitch set to {math.degrees(pitch):.2f} deg; chassis heading controls yaw')
         python = str(self.get_parameter('python').value) or str(root / '.venv/bin/python')
         pivot_x = x + float(self.get_parameter('target_pivot_offset').value)
         show_gui = bool(self.get_parameter('show_gui').value)

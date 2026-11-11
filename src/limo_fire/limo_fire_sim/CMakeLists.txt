@@ -66,5 +66,6 @@ install(TARGETS scan_stats_bag bag_export motion_export depth_stats_bag intensit
 endif()
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY resource DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
 ament_package()

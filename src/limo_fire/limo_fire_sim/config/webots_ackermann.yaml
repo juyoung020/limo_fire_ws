@@ -1,0 +1,35 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 25
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    ackermann_steering_controller:
+      type: ackermann_steering_controller/AckermannSteeringController
+    launcher_position_controller:
+      type: forward_command_controller/ForwardCommandController
+
+joint_state_broadcaster:
+  ros__parameters:
+    joints: [front_left_steering_joint, front_right_steering_joint, rear_left_wheel, rear_right_wheel, launcher_yaw_joint, launcher_pitch_joint]
+
+ackermann_steering_controller:
+  ros__parameters:
+    front_wheels_names: [front_left_steering_joint, front_right_steering_joint]
+    rear_wheels_names: [rear_left_wheel, rear_right_wheel]
+    front_wheel_track: 0.13
+    rear_wheel_track: 0.13
+    wheelbase: 0.20
+    front_wheels_radius: 0.045
+    rear_wheels_radius: 0.045
+    base_frame_id: base_link
+    odom_frame_id: odom
+    enable_odom_tf: false
+    use_stamped_vel: false
+    position_feedback: false
+    reference_timeout: 0.5
+    reduce_wheel_speed_until_steering_reached: true
+
+launcher_position_controller:
+  ros__parameters:
+    joints: [launcher_yaw_joint, launcher_pitch_joint]
+    interface_name: position

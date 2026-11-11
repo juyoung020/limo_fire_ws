@@ -1,0 +1,74 @@
+#VRML_SIM R2025a utf8
+EXTERNPROTO "../protos/LimoAckermannFire.proto"
+WorldInfo {
+  title "LIMO printed flame target obstacle course"
+  info [ "Actual 3D-printed flame target STL with four navigation obstacles." ]
+  basicTimeStep 10
+  contactProperties [
+    ContactProperties { material1 "wheel" material2 "default" coulombFriction 1 forceDependentSlip 0.01 bounce 0 }
+  ]
+}
+Viewpoint { orientation -0.57735 0.57735 0.57735 2.094395 position 0 0 15.7 fieldOfView 0.85 }
+Background { skyColor [ 0.72 0.82 0.92 ] }
+DirectionalLight { direction -0.3 -0.4 -1 intensity 1 }
+LimoAckermannFire { translation -4.8 0 0.145 name "LIMO" controller "<extern>" supervisor TRUE }
+Solid {
+  translation 0 0 -0.05 name "floor"
+  children [ Shape { appearance PBRAppearance { baseColor 0.72 0.74 0.76 roughness 1 metalness 0 } geometry Box { size 12 8 0.1 } } ]
+  boundingObject Box { size 12 8 0.1 }
+}
+# Room perimeter; map limits are x=[-6,6], y=[-4,4].
+Solid { translation 0 3.9 1.2 name "north_wall" children [ Shape { appearance PBRAppearance { baseColor 0.78 0.80 0.83 roughness 1 metalness 0 } geometry Box { size 12 0.2 2.4 } } ] boundingObject Box { size 12 0.2 2.4 } }
+Solid { translation 0 -3.9 1.2 name "south_wall" children [ Shape { appearance PBRAppearance { baseColor 0.78 0.80 0.83 roughness 1 metalness 0 } geometry Box { size 12 0.2 2.4 } } ] boundingObject Box { size 12 0.2 2.4 } }
+Solid { translation -5.9 0 1.2 name "west_wall" children [ Shape { appearance PBRAppearance { baseColor 0.78 0.80 0.83 roughness 1 metalness 0 } geometry Box { size 0.2 8 2.4 } } ] boundingObject Box { size 0.2 8 2.4 } }
+Solid { translation 5.9 0 1.2 name "east_wall" children [ Shape { appearance PBRAppearance { baseColor 0.78 0.80 0.83 roughness 1 metalness 0 } geometry Box { size 0.2 8 2.4 } } ] boundingObject Box { size 0.2 8 2.4 } }
+# Four solid crates; dimensions and centers match the companion Nav2 occupancy map.
+Solid { translation -2.1 1.2 0.45 name "obstacle_crate_1" children [ Shape { appearance PBRAppearance { baseColor 0.70 0.43 0.22 roughness 0.9 metalness 0 } geometry Box { size 1.0 1.0 0.9 } } ] boundingObject Box { size 1.0 1.0 0.9 } }
+Solid { translation -0.3 -1.35 0.35 name "obstacle_crate_2" children [ Shape { appearance PBRAppearance { baseColor 0.34 0.48 0.62 roughness 0.9 metalness 0 } geometry Box { size 1.0 0.9 0.7 } } ] boundingObject Box { size 1.0 0.9 0.7 } }
+Solid { translation 0.4 0.15 0.35 name "obstacle_crate_3" children [ Shape { appearance PBRAppearance { baseColor 0.72 0.62 0.27 roughness 0.9 metalness 0 } geometry Box { size 0.9 0.9 0.7 } } ] boundingObject Box { size 0.9 0.9 0.7 } }
+Solid { translation 1.35 1.5 0.55 name "obstacle_crate_4" children [ Shape { appearance PBRAppearance { baseColor 0.43 0.59 0.43 roughness 0.9 metalness 0 } geometry Box { size 0.9 1.1 1.1 } } ] boundingObject Box { size 0.9 1.1 1.1 } }
+Solid { translation 2.25 -0.85 0.4 name "obstacle_crate_5" children [ Shape { appearance PBRAppearance { baseColor 0.62 0.43 0.51 roughness 0.9 metalness 0 } geometry Box { size 0.8 1.4 0.8 } } ] boundingObject Box { size 0.8 1.4 0.8 } }
+# Printed stand and the two-color 3D-printed flame STL, millimetres -> metres.
+Solid {
+  translation 4.0 0.55 0
+  name "printed_target_stand"
+  children [
+    Transform {
+      translation 0 0 0.035
+      scale 0.001 0.001 0.001
+      children [ Shape {
+        appearance PBRAppearance { baseColor 0.32 0.35 0.39 roughness 0.8 metalness 0 }
+        geometry Mesh { url [ "../meshes/printed_fire_target/base.stl" ] }
+      } ]
+    }
+  ]
+  boundingObject Transform { translation 0 0 0.035 children [ Box { size 0.126 0.10 0.07 } ] }
+}
+Solid {
+  translation 4.0 0.55 0
+  name "fire_printed_target"
+  recognitionColors [ 0.003922 0.003922 1.0 ]
+  children [
+    Transform {
+      translation 0 0 0.1545
+      rotation 0.57735 0.57735 0.57735 2.094395
+      scale 0.001 0.001 0.001
+      children [ Shape {
+        appearance PBRAppearance { baseColor 0.86 0.10 0.10 roughness 0.55 metalness 0 }
+        geometry Mesh { url [ "../meshes/printed_fire_target/flame_red.stl" ] }
+      } ]
+    }
+    Transform {
+      translation -0.004 0 0.1545
+      rotation 0.57735 0.57735 0.57735 2.094395
+      scale 0.001 0.001 0.001
+      children [ Shape {
+        appearance PBRAppearance { baseColor 0.93 0.94 0.96 roughness 0.55 metalness 0 }
+        geometry Mesh { url [ "../meshes/printed_fire_target/flame_white.stl" ] }
+      } ]
+    }
+  ]
+  boundingObject Transform { translation 0.003 0 0.163 children [ Box { size 0.006 0.0827 0.1691 } ] }
+}
+# Required by sim_robot.launch.xml to publish /clock.
+Robot { name "Ros2Supervisor" controller "<extern>" supervisor TRUE }

@@ -13,6 +13,11 @@
   <arg name="gui" default="true" description="true: Webots GUI 표시, false: 화면 없는 batch 실행"/>
   <arg name="port" default="1234"/>
   <arg name="velocity_topic" default="/cmd_vel"/>
+  <arg name="control_params_file" default="$(var limo_share)/resource/diff/ros2control.yaml"/>
+  <arg name="drive_controller" default="diffdrive_controller"/>
+  <arg name="controller_unstamped_topic" default="/diffdrive_controller/cmd_vel_unstamped"/>
+  <arg name="controller_stamped_topic" default="/diffdrive_controller/cmd_vel"/>
+  <arg name="launch_launcher_controller" default="false"/>
   <arg name="limo_share" default="$(find-pkg-share webots_ros2_limo)" description="교수님 Webots LIMO 패키지 (ros2_control 설정)"/>
   <arg name="driver_urdf" default="$(find-pkg-share limo_fire_sim)/resource/limo_webots.urdf"
        description="드라이버 설정: 교수님 limo.urdf 에 인식 벤치마크 정답 카메라(/gt/*)를 더한 우리 판"/>
@@ -34,13 +39,15 @@
   <executable name="webots_controller_LIMO" output="screen" respawn="true"
               cmd="$(find-pkg-share webots_ros2_driver)/scripts/webots-controller --robot-name=LIMO --protocol=ipc --port=$(var port) ros2 --ros-args
                    -p robot_description:=$(var driver_urdf) -p use_sim_time:=true -p set_robot_state_publisher:=false
-                   -r /diffdrive_controller/cmd_vel_unstamped:=$(var velocity_topic) -r /diffdrive_controller/cmd_vel:=$(var velocity_topic) --params-file $(var limo_share)/resource/diff/ros2control.yaml">
+                   -r $(var controller_unstamped_topic):=$(var velocity_topic) -r $(var controller_stamped_topic):=$(var velocity_topic) --params-file $(var control_params_file)">
     <env name="WEBOTS_HOME" value="$(find-pkg-prefix webots_ros2_driver)"/>
   </executable>
 
   <!-- 컨트롤러 매니저가 뜰 때까지 기다렸다가 바퀴 제어·관절 상태를 켠다 -->
-  <node pkg="controller_manager" exec="spawner" args="diffdrive_controller --controller-manager-timeout 120" output="screen"/>
+  <node pkg="controller_manager" exec="spawner" args="$(var drive_controller) --controller-manager-timeout 120" output="screen"/>
   <node pkg="controller_manager" exec="spawner" args="joint_state_broadcaster --controller-manager-timeout 120" output="screen"/>
+  <node pkg="controller_manager" exec="spawner" args="launcher_position_controller --controller-manager-timeout 120"
+        output="screen" if="$(var launch_launcher_controller)"/>
 
   <!-- 로봇 모델 TF (바퀴 관절 상태는 joint_state_broadcaster 가 낸다) -->
   <include file="$(find-pkg-share limo_fire_description)/launch/description.launch.xml">
