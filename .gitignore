@@ -62,3 +62,4 @@ train/explore/viewer/build/
 
 # OptiX 헤더 (train/explore/third_party/README.md 대로 받음, NVIDIA 라이선스 — 저장소에 안 넣음)
 train/explore/third_party/optix-dev/
+refs/papers/*.pdf

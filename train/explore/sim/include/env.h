@@ -185,6 +185,9 @@ struct EnvState {
   // occ 링·합 = 걸음마다 새 막힘 칸 수 최근 kProgRing 걸음 (map_progress). since_new 자리를 써서 구조체 크기는 8 의 배수 그대로
   // map_closed: 지난 관측 때 지도 닫힘(mdp/frontier.h 닫힘 규칙, 관측 CLOSED 와 같은 값) — finish_step 성공 판정이 씀 (옛 pad_occ 자리)
   int32_t since_occ, occ[kProgRing], occ_sum, map_closed;
+  // 지난 관측의 프론티어 요약 두 값 — approach·front_cells 보상(rewards.h, shape_obs)이 다음 관측 값과의 차이를 씀:
+  // 가장 가까운 덩어리까지 BFS 길 거리 (칸, −1 없음 = 관측 FRONTIER 첫 칸), 번진 곳 안 프론티어 칸 수 (= 관측 FRONT_CELLS)
+  int32_t fr_dist, fr_cells;
   int32_t kb_x0, kb_y0, kb_x1, kb_y1;   // 지도에서 건드린 칸 범위 (프론티어 요약을 이 안에서만)
   int32_t lid_head, delay;     // 라이다 링 최신 칸, 이 판 관측 지연 (걸음)
   float lid_pose[3 * kLidarRing];   // 링 칸마다 그 장을 넣을 때 지도 자세 (x, y, θ) — 계층형 제자리 회전 검사가 지난 장 점을 지금 로봇 기준으로 옮김 (hier_path.h (c))
@@ -357,6 +360,30 @@ DEV bool body_hits(const EnvCfg& c, const MapDev& m, float x, float y, float th)
   return false;
 }
 
+// 몸통~가장 가까운 막힌 칸 간격 (m, 정답 격자): body_hits 와 같은 13 점마다 그 칸의 "막힌 칸까지 거리"(MapDev::clear, cm — 칸 가운데끼리,
+// 0.6 m 창 밖은 창 거리 + 1 칸)를 읽어 가장 작은 값 − 반 칸(칸 가운데 ↔ 막힌 칸 변). 바닥 칸이 아니거나 맵 밖이면 0. 보상 proximity 가 씀 (사람은 안 봄 — person_near)
+DEV float body_clearance(const EnvCfg& c, const MapDev& m, float x, float y, float th) {
+  float s, co;
+  dm::sincosf_d(th, &s, &co);
+  int best = 255;
+  for (int i = 0; i < 13; ++i) {
+    float u, v;
+    if (i == 12) { u = 0.f; v = 0.f; }
+    else {
+      const int side = i / 3, k = i % 3;
+      const float t = (float)(k - 1);   // −1, 0, 1
+      u = side < 2 ? (side == 0 ? c.half_len : -c.half_len) : t * c.half_len;
+      v = side < 2 ? t * c.half_wid : (side == 2 ? c.half_wid : -c.half_wid);
+    }
+    const float px = (x + co * u) - s * v, py = (y + s * u) + co * v;
+    int cx, cy;
+    const int d = cell_of(c, m, px, py, &cx, &cy) < 0 ? 0 : (int)m.clear[cy * m.gw + cx];
+    if (d < best) best = d;
+  }
+  const float cl = (float)best * 0.01f - 0.5f * c.res;
+  return cl > 0.f ? cl : 0.f;
+}
+
 // ---------- 0. 리셋 ----------
 
 // 스레드 0: 상태
@@ -426,6 +453,8 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   for (int i = 0; i < kProgRing; ++i) e.occ[i] = 0;
   e.occ_sum = 0;
   e.map_closed = 0;
+  e.fr_dist = -1;
+  e.fr_cells = 0;
   e.kb_x0 = e.kb_y0 = 1 << 30;
   e.kb_x1 = e.kb_y1 = -1;
   e.lid_head = 0;
@@ -1187,6 +1216,22 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   in.slip = e.slip_acc;
   in.turn = dm::absf(e.w) * dt_act;   // 행동 끝 몸통 ω 로 (rewards.h kTurn)
   in.hier = c.action_mode == kActPath ? 1 : 0;   // 계층형: 헛돎·회전 항 0 (rewards.h 근거 "계층형")
+  // 직접 제어 촘촘한 항 (rewards.h proximity·smooth — 계층형이면 0 이라 안 잼). 실물 노드(정답 격자 없음, clear = nullptr)는 간격을 모름 → 0
+  in.move = 0.f;
+  in.clearance = mdp::rew::kProxDist;
+  in.act_d2 = 0.f;
+  if (!in.hier) {
+    in.move = sqrtf(e.v * e.v + e.vy * e.vy) * dt_act;   // 행동 끝 속도로 (near_person 과 같은 셈)
+    if (m.clear) in.clearance = body_clearance(c, m, e.x, e.y, e.th);
+    if (e.step > 0) {   // last_act: 이번 행동이 [0 … DIM), 직전 행동이 [DIM … 2·DIM) (apply_action 이 이 걸음 처음에 밀어 넣음)
+      float s2 = 0.f;
+      for (int k = 0; k < mdp::act::CONT; ++k) {
+        const float d = e.last_act[k] - e.last_act[mdp::act::DIM + k];
+        s2 += d * d;
+      }
+      in.act_d2 = s2;
+    }
+  }
   // 진행 없음 (curriculums.h kIdleTime·kIdleOccMin): 지도 시계 since_occ(map_progress, 이 함수 앞에서 갱신) — 충돌·선언이 먼저.
   // 막힘 칸 아무 하나가 아니라 한 행동에 kIdleOccMin 개 이상일 때만 되돌림: 멈춰 있어도 자세 오차·빔 잡음으로 막힘 칸이 드문드문 생기므로.
   // since_wall(정답 벽 면 칸 첫 관측 뒤 걸음)은 가치 전용 참값(PRIV_IDLE)으로만.
@@ -1246,6 +1291,27 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
         mdp::cur::on_episode_end(&e.stage, &e.cur_hist, &e.cur_n, cov, b.max_stage, c.cur_top_random != 0, rnd, c.cur_window, c.cur_up, c.cur_down);
     }
   }
+}
+
+// 스레드 0, 관측의 프론티어 요약이 나온 바로 뒤 (GPU env_reach_kernel · CPU env_ref.cpp — write_obs 다음): approach·front_cells 항 (rewards.h).
+// 걸음 끝(finish_step)이 아니라 여기인 까닭: 두 항은 이번 행동 뒤 지도의 프론티어 요약이 있어야 하는데 요약은 관측 때 나온다 — 그래서 방금 한
+// 행동의 보상에 지금 더한다(항 둘을 채우고 보상에 번호 순으로 더함 → 보상 = 항 합 그대로). 판이 막 리셋됐으면(step 0) 값만 적는다 —
+// 판 첫 관측엔 직전이 없고, 판을 끝낸 걸음엔 다음 관측이 새 판 것이라 0. 계층형은 아무것도 안 함(두 항 0, 상태도 그대로)
+DEV void shape_obs(const EnvBatch& b, EnvState& e, int env, const mdp::ReachSummary& R) {
+  const EnvCfg& c = b.cfg;
+  if (c.action_mode == kActPath) return;
+  const int d = R.top[0].n > 0 ? R.top[0].dist : -1;
+  if (e.step > 0) {
+    float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
+    const float a = mdp::rew::approach_reward(e.fr_dist, d, c.res, (float)c.substeps * c.dt);
+    const float f = mdp::rew::front_cells_reward(e.fr_cells, R.n_cells);
+    T[mdp::rew::kTermApproach] = a;
+    T[mdp::rew::kTermFrontCells] = f;
+    e.reward = (e.reward + a) + f;
+    b.reward[env] = e.reward;
+  }
+  e.fr_dist = d;
+  e.fr_cells = R.n_cells;
 }
 
 // 스레드 0: 링 다음 칸으로 (이번 장이 있을 때) — 그 칸의 지도 자세도 적음 (걸음 끝 자세, 장은 걸음 동안 쏨)

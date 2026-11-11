@@ -9,6 +9,7 @@
 #pragma once
 #include "curriculums.h"
 #include "detmath.h"
+#include "obs_layout.h"   // mdp::act::V_FWD — approach 자름 폭
 
 namespace mdp::rew {
 
@@ -32,6 +33,11 @@ constexpr float kDeclareFail = -3.f;      // declare           끝 선언 때 �
 constexpr float kSlip = -0.05f;           // slip              바퀴가 몸통보다 더 돈 각도 rad 당
 constexpr float kTurn = -0.001f;          // turn              몸통이 돈 각도 rad 당 (|ω|·걸음 길이) — 작게: 사각(라이다 220°)을 메우는 회전은 남기고 늘 최대로 도는 것만 줄이게
 constexpr float kIdlePenalty = -4.f;      // no_progress       지도 진척(새 막힘 칸 ≥ kIdleOccMin / 행동)이 kIdleTime 동안 없어 판 끝
+// 아래 넷은 속도 행동(직접 제어) 모드에만 — 계층형(StepIn::hier)에서는 늘 0. 2026-11-11, 모두 잠정 (맨 아래 근거 "직접 제어 촘촘한 항")
+constexpr float kApproach = 0.1f;         // approach          가장 가까운 프론티어 덩어리까지 BFS 길 거리가 줄어든 m 당 (늘면 −, 걸음마다 ±kApproachClip 걸음 폭에서 자름)
+constexpr float kFrontCells = 1.f / 4000.f;  // front_cells    번진 곳 안 프론티어 칸 수가 한 칸 줄 때마다 (늘면 −): −kFrontCells × (지금 − 직전)
+constexpr float kProx = -0.5f;            // proximity         벽·물체 가까이(몸통 간격 < kProxDist)에서 움직인 거리 m 당, 간격 0 에서 온 값·kProxDist 에서 0 (곧게)
+constexpr float kSmooth = 1.5e-4f;        // smooth            −kSmooth × 이번·직전 행동 (v, vy, ω 정규 단위) 차이 제곱 합
 
 // ============================================================================================================
 // 2. 항 모양 (점수 아님)
@@ -41,15 +47,23 @@ constexpr float kTRefMin = cur::kSafeTime / 10.f;   // time: T_ref 하한 (s) �
 constexpr float kNearDist = 0.5f;         // person_near: 몸통~사람 간격 이 안이면 감점 (m)
 constexpr float kDeclareNear = 0.f;       // declare: 덮음이 성공 기준 바로 아래일 때 다가가는 값
 constexpr float kDeclareRampFrom = 0.5f;  // declare: 덮음 이것부터 성공 기준까지 kDeclareFail → kDeclareNear 로 곧게 오름 (11-05, 전엔 기준 아래 0.02 폭 지수)
+constexpr float kApproachClip = 1.5f;     // approach: 한 걸음 거리 변화를 ±(앞 최고 속도 act::V_FWD × 걸음 길이) × 이 값에서 자름 (0.1 s 걸음이면 ±0.15 m) — 잠정
+constexpr float kProxDist = 0.2f;         // proximity: 몸통~막힌 칸 간격 이 안이면 감점 (m) — 잠정
 
 // ============================================================================================================
 // 아래는 식 — 값을 바꿀 때는 건드릴 필요 없음
 // ============================================================================================================
 
 // ---- 항 번호 (reward_terms [N][kTerms]) ----
-enum Term : int { kTermCov = 0, kTermTime, kTermCollWall, kTermCollPerson, kTermPersonNear, kTermDeclare, kTermSlip, kTermIdle, kTermTurn, kTerms };
+// 새 항은 끝에 붙인다: approach·front_cells 는 걸음 끝이 아니라 그 뒤 관측 때(프론티어 요약이 나온 뒤) 채워 보상에 더하므로(env.h shape_obs)
+// 맨 끝 둘이어야 보상 = 항을 번호 순으로 더한 값 그대로다
+enum Term : int {
+  kTermCov = 0, kTermTime, kTermCollWall, kTermCollPerson, kTermPersonNear, kTermDeclare, kTermSlip, kTermIdle, kTermTurn,
+  kTermProx, kTermSmooth, kTermApproach, kTermFrontCells, kTerms
+};
 inline const char* term_name(int k) {
-  static const char* n[kTerms] = {"coverage", "time", "collision_wall", "collision_person", "person_near", "declare", "slip", "no_progress", "turn"};
+  static const char* n[kTerms] = {"coverage", "time", "collision_wall", "collision_person", "person_near", "declare", "slip", "no_progress", "turn",
+                                  "proximity", "smooth", "approach", "front_cells"};
   return n[k];
 }
 
@@ -90,7 +104,29 @@ struct StepIn {
   float turn;           // 이번 걸음 몸통이 돈 각도 (rad, ≥ 0)
   float t;              // 판 시작부터 이번 걸음 끝까지 시간 (s) — 성공 빠르기 보너스 kFast
   int hier;             // 1: 계층형 행동(sim kActPath) — 헛돎·회전 항 0 (아래 근거 "계층형", 상위 정책이 못 고르는 하위 걸음 항)
+  float move;           // 이번 걸음 이동 거리 (m) — 속도 × 시간 (near_person 과 같은 셈). proximity
+  float clearance;      // 몸통~가장 가까운 막힌 칸 간격 (m, env.h body_clearance — 정답 격자). 모르면 kProxDist 이상을 넣어 0. proximity
+  float act_d2;         // 이번·직전 행동 (v, vy, ω 정규 단위, 자른 값) 차이 제곱 합 (판 첫 걸음 0). smooth
 };
+
+// 벽 근접 몫: 간격 0 에서 1, kProxDist 에서 0 (곧게)
+DEV float prox_ramp(float clearance) {
+  const float f = (kProxDist - clearance) / kProxDist;
+  return f > 0.f ? f : 0.f;
+}
+
+// approach 항 (관측 때, env.h shape_obs): d = 로봇 칸 → 가장 가까운(BFS) 프론티어 덩어리까지 길 거리 (칸, −1 = 덩어리 없음 — 관측 FRONTIER 첫 칸과 같은 값).
+// 직전·지금 둘 중 하나라도 덩어리가 없으면 0. 거리 변화는 ±kApproachClip 걸음 폭에서 자름 (덩어리가 풀려 다음 덩어리로 건너뛸 때의 큰 값을 막음)
+DEV float approach_reward(int d_prev, int d_now, float res, float dt) {
+  if (d_prev < 0 || d_now < 0) return 0.f;
+  const float c = (act::V_FWD * dt) * kApproachClip;
+  float dd = (float)(d_prev - d_now) * res;
+  dd = dd > c ? c : (dd < -c ? -c : dd);
+  return kApproach * dd;
+}
+
+// front_cells 항 (관측 때): 번진 곳 안 프론티어 칸 수 (관측 FRONT_CELLS 의 정규화 전 값) 가 줄면 +
+DEV float front_cells_reward(int f_prev, int f_now) { return -kFrontCells * (float)(f_now - f_prev); }
 
 // 항마다 값 → out[kTerms], 합을 돌려줌 (더하는 순서 고정 — 결정적)
 DEV float terms(const StepIn& in, float* out) {
@@ -107,6 +143,10 @@ DEV float terms(const StepIn& in, float* out) {
   out[kTermSlip] = in.hier ? 0.f : kSlip * in.slip;
   out[kTermIdle] = in.idle ? kIdlePenalty : 0.f;
   out[kTermTurn] = in.hier ? 0.f : kTurn * in.turn;
+  out[kTermProx] = in.hier ? 0.f : kProx * prox_ramp(in.clearance) * in.move;
+  out[kTermSmooth] = in.hier ? 0.f : -kSmooth * in.act_d2;
+  out[kTermApproach] = 0.f;     // 관측 때 채움 (env.h shape_obs — 계층형이면 0 그대로)
+  out[kTermFrontCells] = 0.f;
   float r = 0.f;
   for (int k = 0; k < kTerms; ++k) r += out[k];
   return r;
@@ -161,3 +201,29 @@ DEV float terms(const StepIn& in, float* out) {
 //     곱셈형 길이 보정 arXiv 2603.10535: 덧셈 길이 감점은 과제 성능을 깎으며 악용될 수 있다). 실패·충돌 판엔 0 이라 위 부등식은 그대로.
 //     크기: bookstore(T_ref 321 s) 180 s 성공 → +4.4, 120 s → +6.3 (10 s 당 +0.31, 할인 전). 10 = kDeclareSuccess 와 같은 크기로 둠.
 //     닫힘 성공(로봇 지도로만 판정)에도 준다 — 가짜 닫힘(정답 덮음 < 0.95)이 늘면 평가의 참 성공을 보고 정답 덮음 조건을 붙인다.
+//   직접 제어 촘촘한 항 (2026-11-11, 넷 모두 잠정): 속도 행동 모드의 explore_v10 이 반복 8 만에서 성공 ~0.5 로 멈췄다 — 덮음 보상은 새 벽을 볼 때만
+//     나와 "어디로 가야 하나" 의 걸음마다 신호가 없다. 그래서 속도 행동 모드에만 넷을 더한다(계층형 StepIn::hier 은 넷 다 0 — 추종기가 모는 걸음 몫이라).
+//     측정은 explore_v10 정책(반복 80235, 결정적)을 시험 맵 둘에서 64 판씩 돌린 판 합 평균 (bookstore / small-house):
+//       덮음 +21.3 / +22.2, 선언(성공 + 빠르기) +8.2 / +5.5, approach +3.4 / +2.9, proximity −1.4 / −0.3, smooth −0.55 / −0.39, front_cells −0.02 / −0.02
+//       (smooth·front_cells 는 아래에서 정한 값으로 다시 잰 것. 넷의 절댓값 합 ≈ 5.4 / 3.6 < 덮음 + 성공 ≈ 30.)
+//   approach +0.1 / m: 가장 가까운 프론티어 덩어리(관측 FRONTIER 칸과 같은 값 — frontier.h reach_summary 의 1 번째 덩어리)까지 BFS 길 거리 d 가
+//     줄어든 만큼. 퍼텐셜 Φ = −kApproach·d 의 차이 꼴(Ng, Harada, Russell, "Policy invariance under reward transformations", ICML 1999)이지만
+//     엄밀한 퍼텐셜 기반은 아니다: (1) 할인 γ 를 안 곱한 Φ' − Φ 이고, (2) 한 걸음 변화를 ±kApproachClip × 걸음 폭(0.15 m)에서 자르며,
+//     (3) 덩어리가 없는 걸음·판 첫 걸음·판 끝 걸음은 0 이다. 자르는 까닭: 덩어리를 풀면(다 봄) 가장 가까운 덩어리가 다음 것으로 바뀌어 d 가
+//     몇 m 뛴다 — 그대로 두면 프론티어를 푼 걸음이 큰 감점을 받는다. 자른 탓에 "다가감(+) → 풀림(−0.015 에서 잘림)" 이 남아 판 합이 양수가 된다
+//     (측정 +3 안팎 = 다가간 길 30 m 몫) — 정책 불변은 보장하지 않고, 앞뒤 왕복·제자리 회전으로는 못 번다(reward_probe osc·spin 이 검사).
+//   front_cells −(1/4000) × (프론티어 칸 수 F 의 증가): Jonnarth, Zhao, Felsberg, "Learning Coverage Paths in Unknown Environments with Deep
+//     Reinforcement Learning"(ICML 2024, arXiv 2306.16978) 식 (4) 의 증분 총변동 보상 R = −λ · (V(C_t) − V(C_{t−1})) / (2 · v_max · Δt)
+//     (V = 덮은 지도의 총변동 식 (2), 탐사 과제 λ = 0.2, 면적 보상 λ = 1 보다 작게)에 맞댄 것 — 같은 식은 아니다: 우리 F 는 덮은 지도의
+//     총변동이 아니라 "갈 수 있는 칸 중 모름과 맞닿은 칸 수"(관측 FRONT_CELLS 와 같은 값)이고, 걸음 폭(2 · v_max · Δt)으로 나누지 않고 판 전체
+//     크기로 맞췄다. 크기: v10 측정에서 판 최대 F 평균 3718 / 3849 (중앙 3661 / 3859, 최대 5931 / 5063), 판 처음 F = 0 → 1/4000 이면 F 가 꼭대기까지
+//     늘 때 합 −1, 다 줄 때 +1. 판 합은 망원 합이라 −kFrontCells × (끝 F): 닫히면 ≈ 0, 프론티어를 남기고 끝나면 음수(측정 끝 F 88 / 73 → −0.02).
+//   proximity −0.5 / m: 몸통~막힌 칸 간격이 kProxDist 0.2 m 안일 때 움직인 거리에 (person_near 와 같은 꼴). 간격은 라이다가 아니라 정답 격자의
+//     간격 지도(MapDev::clear, 사람 충돌 판정에 이미 쓰던 것)를 몸통 점 13 개(충돌 판정 body_hits 와 같은 점)에서 읽은 최소 − 반 칸 —
+//     라이다(±110°)가 못 보는 뒤·옆도 잡힌다. 사람은 안 넣는다(person_near 몫). 간격 지도가 없는 곳(실물 노드)은 0.
+//   smooth −1.5e-4 × ‖a_t − a_{t−1}‖²: a = 정책이 낸 (v, vy, ω) 를 [−1, 1] 로 자른 값(관측 LAST_ACT 와 같은 값, 바퀴 한도·안전층이 줄이기 전), 판 첫 걸음 0.
+//     크기: v10 의 판 합 Σ‖Δa‖² 측정 3698 / 2625 → 판 합 ≈ −0.5 가 되게.
+//   때: approach·front_cells 는 행동 뒤 관측의 프론티어 요약이 있어야 해서 걸음 끝이 아니라 관측 때 더한다(env.h shape_obs). 판을 끝낸 걸음은 0.
+//   충돌 부등식: 판을 끝내는 걸음엔 approach·front_cells 가 0 이고 proximity·smooth ≤ 0 이라 박는 걸음이 더 받는 것은 없다. 박는 대신 선언하는 쪽이
+//     더 잃을 수 있는 것은 smooth 한 걸음 최대 kSmooth × 3 × 2² = 0.0018 뿐 → kCollWall −6 < kDeclareFail − kTime · 10 − 0.0018 = −5.0018 그대로.
+//     박으러 가는 길에 버는 approach 는 박지 않고 가도 똑같이 번다(프론티어로 가는 길이면). 벽으로 다가가는 길은 proximity 감점.

@@ -739,6 +739,7 @@ __global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate)
   if (tid == 0) {
     mdp::obsgen::obs_reach(b, e, env, rs);
     b.st[env].map_closed = rs.closed;   // 다음 걸음 finish_step 성공 판정 (CPU env_ref.cpp write_obs 와 같음)
+    shape_obs(b, b.st[env], env, rs);     // approach·front_cells 보상 (env.h — CPU env_ref.cpp 도 write_obs 바로 뒤)
   }
   if (!b.cand) return;
   // 계층형 후보: 주변 프론티어 칸 수 = 프론티어 칸 비트 지도(fmap)의 ±R 네모 안 비트 수 (mdp::cand_util 과 같은 값) — (후보, 줄)마다 스레드

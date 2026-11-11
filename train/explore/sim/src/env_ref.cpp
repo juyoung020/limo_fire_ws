@@ -317,6 +317,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   }
   if (was_done) reset_env(b, e, env);
   write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, was_done), sub < 0 || sub == c.decide_steps - 1);
+  shape_obs(b, e, env, sh.reach);   // approach·front_cells 보상 (GPU env_reach_kernel 과 같은 때)
   b.st[env] = e;
 }
 
@@ -360,6 +361,7 @@ void env_reset_cpu(const EnvBatch& b) {
     EnvState e = b.st[env];
     reset_env(b, e, env);
     write_obs(b, e, env, sh, mdp::obsgen::FarDirty{1, 0.f, 0.f, 0.f, 0.f});
+    shape_obs(b, e, env, sh.reach);   // 판 첫 관측: 값만 적음
     b.scratch[env].far_ok = 0;   // GPU 리셋 커널과 같게: 다음 걸음은 다시 전부
     b.st[env] = e;
     b.reward[env] = 0.f;

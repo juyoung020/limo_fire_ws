@@ -7,6 +7,11 @@
 //   frontier   : 프론티어 기준선(baselines/frontier, --mode)이 모는 대로(물리 → 정규 단위), 기준선이 끝나면 그 걸음에 선언. 기대: 판 합 > 0
 // 닫힘 성공 규칙(sim EnvCfg::success_closed)에서는 덧붙여: 지도 닫힘으로 성공한 판의 정답 덮음(이 도구 안에서만 쓰는 확인값)이 0.8 아래인 판 = 0
 // (거짓 닫힘), 제자리·제자리 돌기의 덮음 항(로봇 지도 처음 막힘 칸 보상) < 기준선 따라가기의 1/4 (잡음·자세 흐름으로 칸을 키우지 못함)
+// 속도 행동 모드의 촘촘한 항(rewards.h "직접 제어 촘촘한 항": approach·front_cells·proximity·smooth)을 노리는 행동 — 기대: 넷 다 판 합 평균 < frontier
+//   osc        : 앞뒤 왕복 (앞 0.3 m/s 1 s ↔ 뒤 0.3 m/s 1 s) — approach 를 왕복으로 못 범
+//   hug        : 벽 붙어 다니기 (안전층 끔. 근접 항이 0 이면 앞으로 0.2 m/s, 근접 항이 나오면 벽 곁에서 옆으로 0.3 m/s 1 s 씩 왕복)
+//   dither     : 걸음마다 (v, vy, ω) 를 +1 ↔ −1 로 뒤집기 (가장 큰 행동 변화)
+//   spin 도 같은 검사에 넣는다
 // --hier: 계층형 행동(결정 1 s = 속도 행동 10 걸음, 보상 = 결정 동안 합)에서 결정 단위로 — 정책은 있는 후보만 고를 수 있으므로:
 //   h_spin   : 빈 후보 번호(−1) → 환경이 제자리 회전만 (계층형의 "제자리"). 기대: 모든 판 진행 없음·판 합 < 0
 //   h_slot0  : 늘 0 번(가장 가까운) 후보. 기대: 판 합 평균 > 0, > h_spin
@@ -65,7 +70,7 @@ int main(int argc, char** argv) {
   const fb::Params P = fb::load_params(FRONTIER_CONFIG, SIM_CONFIG_DIR "/env.yaml", mode);
   if (hier) hc0.cfg.action_mode = sim::kActPath;
   const std::vector<std::string> names = hier ? std::vector<std::string>{"h_spin", "h_slot0", "h_far", "h_toggle", "h_random"}
-                                              : std::vector<std::string>{"still", "spin", "declare0", "crash", "crash_safe", "frontier"};
+                                              : std::vector<std::string>{"still", "spin", "osc", "hug", "dither", "declare0", "crash", "crash_safe", "frontier"};
   const int dec = hier ? hc0.cfg.decide_steps : 1;   // 행동 하나 = 시뮬 걸음 dec 개
   constexpr int A = mdp::act::DIM, K = mdp::rew::kTerms;
   bool all_ok = true;
@@ -79,7 +84,7 @@ int main(int argc, char** argv) {
     for (const auto& nm : names) {
       if (!only.empty() && ("," + only + ",").find("," + nm + ",") == std::string::npos) continue;
       sim::EnvHostCfg hc = hc0;
-      if (nm == "crash" || nm == "frontier") hc.cfg.safety = 0;   // 기준선은 Nav2 감속을 스스로 함
+      if (nm == "crash" || nm == "frontier" || nm == "hug") hc.cfg.safety = 0;   // 기준선은 Nav2 감속을 스스로 함
       const std::vector<sim::World> one{W};
       sim::Env env(hc, one, lidar, n_env, 11, true);
       env.reset();
@@ -128,6 +133,12 @@ int main(int argc, char** argv) {
             else if (nm == "h_random" && nv > 0) s = valid[dm::splitmix64(hrng) % (uint64_t)nv];
             a[0] = (float)s;
           } else if (nm == "spin") a[2] = 0.5f;
+          else if (nm == "osc") a[0] = (t / 10) % 2 == 0 ? 0.3f : -1.f;   // 앞 0.3 m/s (정규 0.3) ↔ 뒤 한도 0.3 m/s (정규 −1), 1 s 씩
+          else if (nm == "hug") {   // 직전 걸음 근접 항으로 벽 곁인지 봄
+            const bool near = !terms.empty() && terms[(size_t)K * i + mdp::rew::kTermProx] < 0.f;
+            if (near) a[1] = (t / 10) % 2 == 0 ? 0.3f : -0.3f;
+            else a[0] = 0.2f;
+          } else if (nm == "dither") a[0] = a[1] = a[2] = (t & 1) ? -1.f : 1.f;
           else if (nm == "declare0") a[3] = 1.f;
           else if (nm == "crash" || nm == "crash_safe") a[0] = 1.f;
           else if (nm == "frontier") {
@@ -242,6 +253,17 @@ int main(int argc, char** argv) {
     }
     if (has("crash") && has("frontier")) check(mean(res["crash"].ret) < mean(res["frontier"].ret), "일부러 박기 판 합 평균 < 기준선 따라 선언 판 합 평균");
     if (has("frontier")) check(mean(res["frontier"].ret) > 0, "기준선 따라가기 → 판 합 평균 > 0");
+    if (has("frontier"))   // 촘촘한 항을 노리는 행동은 탐사(기준선 따라가기)보다 못 받아야 함
+      for (const char* k : {"spin", "osc", "hug", "dither"}) {
+        if (!has(k)) continue;
+        const Result& r = res[k];
+        const double sh = (r.terms[mdp::rew::kTermApproach] + r.terms[mdp::rew::kTermFrontCells] + r.terms[mdp::rew::kTermProx] + r.terms[mdp::rew::kTermSmooth]) / n_env;
+        std::printf("  [참고] %s 촘촘한 항 넷 합 평균 %+.3f (기준선 %+.3f)\n", k, sh,
+                    (res["frontier"].terms[mdp::rew::kTermApproach] + res["frontier"].terms[mdp::rew::kTermFrontCells] + res["frontier"].terms[mdp::rew::kTermProx] +
+                     res["frontier"].terms[mdp::rew::kTermSmooth]) / n_env);
+        const std::string what = std::string(k) + " 판 합 평균 < 기준선 따라 선언 판 합 평균";
+        check(mean(r.ret) < mean(res["frontier"].ret), what.c_str());
+      }
     if (has("h_spin")) {
       double mx = -1e9;
       bool all6 = true;
