@@ -92,7 +92,14 @@ int main(int argc, char ** argv)
     return 1;
   }
 
-  BT::Groot2Publisher groot(tree, static_cast<unsigned>(node->get_parameter("groot_port").as_int()));
+  // Groot2 는 보기용: 포트가 이미 쓰이고 있어도(다른 mission·시뮬) 임무는 계속한다
+  std::unique_ptr<BT::Groot2Publisher> groot;
+  const auto groot_port = static_cast<unsigned>(node->get_parameter("groot_port").as_int());
+  try {
+    groot = std::make_unique<BT::Groot2Publisher>(tree, groot_port);
+  } catch (const std::exception & e) {
+    RCLCPP_WARN(log, "Groot2 포트 %u 를 못 엶 (%s) — Groot2 없이 계속. groot_port 를 바꾸면 됨", groot_port, e.what());
+  }
   std::unique_ptr<BT::FileLogger2> file_log;
   if (const auto dir = node->get_parameter("btlog_dir").as_string(); !dir.empty()) {
     std::filesystem::create_directories(dir);
@@ -110,9 +117,16 @@ int main(int argc, char ** argv)
   RCLCPP_INFO(log, "임무 시작: %s", tree_file.c_str());
 
   BT::NodeStatus status = BT::NodeStatus::RUNNING;
+  const bool sim_time = node->get_parameter("use_sim_time").as_bool();
+  auto clock_warn_at = std::chrono::steady_clock::now() + std::chrono::seconds(3);
   while (!g_stop && rclcpp::ok() && status == BT::NodeStatus::RUNNING) {
     const auto next = std::chrono::steady_clock::now() + period;
     exec.spin_some();
+    // 시뮬 시계(/clock)가 안 들어오면 시간이 0 에 멈춰 기다리는 노드가 끝나지 않는다: 말없이 멈추지 않게 알린다
+    if (sim_time && node->now().nanoseconds() == 0 && std::chrono::steady_clock::now() > clock_warn_at) {
+      RCLCPP_WARN(log, "use_sim_time 인데 /clock 이 안 들어옴 — 시뮬(Webots)을 먼저 띄우거나 sim:=false 로 실행");
+      clock_warn_at = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    }
     try {
       status = tree.tickOnce();
     } catch (const std::exception & e) {
