@@ -2,12 +2,26 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>limo_fire_bt</name>
-  <version>0.1.0</version>
-  <description>임무 행동 트리: 순찰 → 화재·연기 발견 → 신고 → 고급 모드(물·연기·탐사) → 실패 시 순찰 복귀. 트리 XML (노드 플러그인은 아직)</description>
+  <version>0.2.0</version>
+  <description>임무 행동 트리: 순찰 → 화재·연기 발견 → 신고 → 고급 모드(물·연기·탐사) → 실패 시 순찰 복귀. 트리 XML + 노드(C++) + 임무 실행 파일</description>
   <maintainer email="ohwoojoo1116@gmail.com">우주</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>behaviortree_cpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>vision_msgs</depend>
+  <depend>yaml_cpp_vendor</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -1,0 +1,57 @@
+# 임무 노드(mission) 설정 — 실물 기준. 시뮬은 limo_fire_bt_sim.yaml 을 위에 덮는다.
+# 토픽 이름·주기 문턱은 트리 XML(behavior_trees/limo_fire_bt.xml)에 있고, 여기서는 덮어쓰기만 한다.
+mission:
+  ros__parameters:
+    tick_hz: 10.0
+    groot_port: 1667            # Groot2 Monitor 가 붙는 포트 (다른 사람 시뮬과 겹치면 바꿈)
+    btlog_dir: ""               # 비어 있지 않으면 판마다 .btlog (Groot2 로 다시 보기)
+    patrol_file: ""             # 순찰점 yaml (patrol: [[x, y], ...], 지도 좌표). 실물 순찰점은 아직 없음
+    record_dir: /tmp/limo_fire_incidents   # 사건 위치·사진
+    event_topic: /mission/events           # 관리자 알림 (std_msgs/String, JSON 한 줄)
+
+    # 트리 이름 → 실제 이름 ("트리:=실제"). 실물은 트리 그대로
+    topic_remap: [""]
+    # 트리의 IsTopicAlive min_hz 덮어쓰기 ("토픽:=Hz")
+    min_hz_override: [""]
+
+    map_frame: map
+    robot_frame: base_link
+    server_timeout_s: 5.0       # Nav2 액션·서비스가 이 안에 안 뜨면 실패
+
+    # 리모컨 오토 모드: /rc_state buttons[1](SWB) == 2(위) (limo_fire_base limo_driver.cpp publishRcState)
+    rc:
+      required: true
+      timeout_s: 0.5            # 40 Hz 실측(sensor_topics.md)의 20 장
+      switch_index: 1
+      auto_value: 2
+
+    # 탐지 클래스 이름 (yolo_detector class_names 와 같게)
+    classes:
+      fire: fire
+      smoke: smoke
+      person: person
+    hit_window_s: 1.0           # IsFireDetected min_hits 를 세는 시간 (탐지 30 Hz 면 1 s 에 30 장)
+    detection_history_s: 15.0   # IsFireGone hold_s 보다 길게
+    # 깊이를 못 믿을 때 대략 위치: 컬러 카메라 방향으로 이만큼 앞 (잠정, 탐지 거리 실측 전)
+    approx_distance_m: 2.0
+    camera_info_topic: /camera/color/camera_info
+
+    frontier:
+      free_max: 25              # /map 값 이 이하 = 빈 칸 (Nav2 map_server free_thresh 0.25 와 같게)
+
+    # 119 신고: false 면 보내지 않고 로그만 (시험 중 오신고 방지). 실제 신고 중계 노드는 아직 없음
+    call119:
+      enabled: false
+      topic: /mission/call119
+
+    # 노즐·스피커·레이더 — 부품 대기, 이름·타입 잠정
+    nozzle:
+      command_topic: /nozzle/command    # sensor_msgs/JointState (잠정)
+      pan_joint: nozzle_pan_joint
+      tilt_joint: nozzle_tilt_joint
+      tolerance_rad: 0.05
+      timeout_s: 3.0
+    speaker:
+      service: /speaker/evacuation      # std_srvs/SetBool (잠정)
+    people:
+      timeout_s: 1.0                    # 레이더 사람 토픽이 이만큼 끊기면 카메라로

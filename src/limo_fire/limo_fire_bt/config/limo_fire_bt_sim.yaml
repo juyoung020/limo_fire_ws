@@ -1,0 +1,12 @@
+# Webots 시뮬 덮어쓰기 (docs/bt_sim_plan.md 3 절). limo_fire_bt.yaml 다음에 읽는다
+mission:
+  ros__parameters:
+    topic_remap:
+      - "/odometry/filtered:=/odom"                 # 시뮬은 EKF 없이 /odom (nav2_sim.yaml)
+      - "/yolo_detector/detections:=/gt/detections" # 시뮬 불·연기는 YOLO 가 거의 못 봄 → 정답 카메라 (D3)
+    min_hz_override:
+      - "/camera/color/image_raw:=12"               # Webots 약 20 장/초 (실물 30)
+      - "/camera/depth/image_raw:=12"
+      - "/yolo_detector/detections:=10"
+    rc:
+      required: false                               # 시뮬에는 리모컨이 없다

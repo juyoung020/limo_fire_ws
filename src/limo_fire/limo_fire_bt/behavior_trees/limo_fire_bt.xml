@@ -2,7 +2,7 @@
 <!--
   LIMO Pro 소방 순찰 로봇 - 상위 Behavior Tree (BehaviorTree.CPP v4)
   노드가 읽고 쓰는 토픽은 docs/sensor_topics.md 의 실제 토픽에 맞췄다.
-  상태: 초안. 노드 플러그인은 아직 없고, 시뮬에서 눈으로 확인하는 순서는 docs/bt_sim_plan.md.
+  상태: 노드는 limo_fire_bt 의 C++ (mission 실행 파일). 시뮬에서 눈으로 확인하는 순서는 docs/bt_sim_plan.md.
   BehaviorTree.CPP v4 형식(Script·_onFailure·_autoremap)이다. Nav2 bt_navigator(Humble, v3) 안이 아니라
   따로 도는 임무 노드가 실행하고, 주행은 Nav2 navigate_to_pose 액션을 부른다.
 
@@ -22,7 +22,7 @@
     /camera/color/image_raw    sensor_msgs/Image (640x480)  30 Hz   Orbbec           -> yolo_detector
     /camera/depth/image_raw    sensor_msgs/Image (16UC1)    30 Hz   Orbbec           -> object_mapper
     /yolo_detector/detections  vision_msgs/Detection2DArray 매 장  yolo_detector    (fire, smoke, fire_extinguisher, exit_sign, person, door, stairs)
-    /object_mapper/markers     visualization_msgs/MarkerArray        object_mapper   (지도 frame 의 물체 위치, min_hits 5)
+    /object_mapper/objects     vision_msgs/Detection3DArray          object_mapper   (지도 frame 의 물체 위치·크기, min_hits 넘은 것만)
     /cmd_vel                   geometry_msgs/Twist                  limo_fire_base 가 구독
 
   월드·실물 구성에 따라 있는 토픽
@@ -43,7 +43,8 @@
     <Sequence name="Boot">
       <Script name="InitBlackboard"
               code="incident_id:=0; active_mode:='BASIC'; failed_mode:='NONE'; fail_reason:=''; fail_history:=''; reported_119:=false; water_failed:=false; smoke_failed:=false; frontier_failed:=false; depth_aligned:=false"/>
-      <LoadPatrolRoute map="saved_map.yaml" route="{patrol_route}"/>
+      <!-- 순찰점 파일은 mission 노드 설정 patrol_file (블랙보드 patrol_file) -->
+      <LoadPatrolRoute file="{patrol_file}" route="{patrol_route}"/>
       <SubTree ID="CheckDepthAlignment" _autoremap="true"/>
       <Repeat num_cycles="-1">
         <!-- 한 사이클이 어떻게 끝나든 다음 순찰로 돌아간다 (트리 자체는 절대 종료되지 않음) -->
@@ -147,10 +148,10 @@
   <BehaviorTree ID="DetectHazard">
     <Fallback name="IsHazardDetected">
       <IsFireDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
-                      markers_topic="/object_mapper/markers" use_depth="{depth_aligned}"
+                      objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
                       location="{fire_location}" size="{fire_size}"/>
       <IsSmokeDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
-                       markers_topic="/object_mapper/markers" use_depth="{depth_aligned}"
+                       objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
                        location="{fire_location}"/>
     </Fallback>
   </BehaviorTree>
@@ -224,7 +225,7 @@
       <!-- 우선순위 1: 연기 (인명 대피가 최우선). 연기 속에서는 초음파로 장애물을 본다 -->
       <Sequence name="SmokeEntry">
         <IsSmokeDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
-                         markers_topic="/object_mapper/markers" use_depth="{depth_aligned}"
+                         objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
                          location="{fire_location}"/>
         <ScriptCondition code="smoke_failed == false"/>
         <IsTopicAlive topic="/ultrasonic/front" min_hz="5" window_s="1.0"/>
@@ -233,7 +234,7 @@
       <!-- 우선순위 2: 작은 불 진압. 펌프 서비스와 노즐 서보 상태가 있어야 한다 -->
       <Sequence name="WaterEntry">
         <IsFireDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
-                        markers_topic="/object_mapper/markers" use_depth="{depth_aligned}"
+                        objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
                         location="{fire_location}" size="{fire_size}"/>
         <IsSmallFire size="{fire_size}" max_size="0.3"/>
         <!-- 깊이가 정렬돼야 불 위치(조준점)를 믿을 수 있다 -->
@@ -312,10 +313,11 @@
                 <IsTopicAlive topic="/radar/people" min_hz="5" window_s="1.0"/>
                 <TrackPeopleRadar radar_topic="/radar/people" people="{detected_people}"/>
               </Sequence>
-              <TrackPeopleCamera detections_topic="/yolo_detector/detections" markers_topic="/object_mapper/markers"
+              <TrackPeopleCamera detections_topic="/yolo_detector/detections" objects_topic="/object_mapper/objects"
                                  min_score="0.5" people="{detected_people}"/>
             </Fallback>
-            <SweepSmokeZone zone="{fire_location}" scan_topic="/scan" ultrasonic_topic="/ultrasonic/front"
+            <SweepSmokeZone zone="{fire_location}" ultrasonic_topic="/ultrasonic/front" radius_m="1.5" points="4"
+                            smoke_service="/smoke_mode/set"
                             min_range_m="0.25" action_name="/navigate_to_pose"
                             _onFailure="fail_reason:='NAVIGATION_FAILED'"/>
           </Parallel>
@@ -346,8 +348,8 @@
           <IsTopicAlive topic="/scan" min_hz="7" window_s="2.0" _onFailure="fail_reason:='LIDAR_TOPIC_LOST'"/>
           <IsWithinTimeLimit start_time="{frontier_start}" limit_sec="300"
                              _onFailure="fail_reason:='EXPLORATION_TIMEOUT'"/>
-          <ExploreFrontiers map_topic="/map" action_name="/navigate_to_pose"
-                            detections_topic="/yolo_detector/detections" markers_topic="/object_mapper/markers"
+          <ExploreFrontiers explorer="/explore_frontier"
+                            objects_topic="/object_mapper/objects"
                             survivors="{survivors}" _onFailure="fail_reason:='EXPLORATION_FAILED'"/>
         </ReactiveSequence>
         <ForceSuccess>
@@ -393,160 +395,166 @@
   <!-- ================================================================ -->
   <TreeNodesModel>
     <Action ID="AimNozzle">
-      <input_port name="target">불 위치 (map frame)</input_port>
-      <input_port name="joint_states_topic" default="/joint_states">노즐 서보 상태 (잠정)</input_port>
-      <input_port name="nozzle_frame" default="nozzle_link">URDF 의 노즐 링크</input_port>
+      <input_port name="nozzle_frame" type="std::string" default="nozzle_link">URDF 의 노즐 링크</input_port>
+      <input_port name="joint_states_topic" type="std::string" default="/joint_states">노즐 서보 상태 (잠정)</input_port>
+      <input_port name="target" type="limo_fire_bt::MapPoint">불 위치 (map frame)</input_port>
     </Action>
     <Action ID="Call119">
-      <input_port name="incident"/>
-      <input_port name="location"/>
+      <input_port name="location" type="limo_fire_bt::MapPoint"/>
+      <input_port name="incident" type="int"/>
     </Action>
     <Action ID="CreateIncident">
-      <output_port name="incident"/>
-      <input_port name="location"/>
+      <input_port name="location" type="limo_fire_bt::MapPoint"/>
+      <output_port name="incident" type="int"/>
     </Action>
     <Action ID="ExploreFrontiers">
-      <input_port name="map_topic" default="/map"/>
-      <input_port name="action_name" default="/navigate_to_pose"/>
-      <input_port name="detections_topic" default="/yolo_detector/detections"/>
-      <input_port name="markers_topic" default="/object_mapper/markers"/>
-      <output_port name="survivors"/>
+      <output_port name="survivors" type="int"/>
+      <input_port name="objects_topic" type="std::string" default="/object_mapper/objects"/>
+      <input_port name="explorer" type="std::string" default="/explore_frontier">탐사 노드 이름 (~/enable, ~/state)</input_port>
     </Action>
     <Action ID="GetNextWaypoint">
-      <output_port name="goal"/>
-      <input_port name="route"/>
+      <output_port name="goal" type="limo_fire_bt::Pose2"/>
+      <input_port name="route" type="std::vector&lt;limo_fire_bt::Pose2, std::allocator&lt;limo_fire_bt::Pose2&gt; &gt;"/>
     </Action>
     <Condition ID="HasUnexploredFrontier">
-      <input_port name="near"/>
-      <input_port name="map_topic" default="/map"/>
+      <input_port name="min_cells" type="int" default="10"/>
+      <input_port name="radius_m" type="double" default="5.000000"/>
+      <input_port name="map_topic" type="std::string" default="/map"/>
+      <input_port name="near" type="limo_fire_bt::MapPoint"/>
     </Condition>
     <Condition ID="IsAutoMode">
-      <input_port name="rc_topic" default="/rc_state">sensor_msgs/Joy, SWB 위 = 오토</input_port>
+      <input_port name="rc_topic" type="std::string" default="/rc_state">sensor_msgs/Joy, SWB 위 = 오토</input_port>
     </Condition>
-    <Condition ID="IsDepthAlignedToColor">
-      <input_port name="depth_topic" default="/camera/depth/image_raw"/>
-      <input_port name="expected_frame" default="camera_color_optical_frame"/>
-      <input_port name="expected_width" default="640"/>
-      <input_port name="expected_height" default="480"/>
-    </Condition>
+    <Action ID="IsDepthAlignedToColor">
+      <input_port name="expected_height" type="int" default="480"/>
+      <input_port name="expected_width" type="int" default="640"/>
+      <input_port name="expected_frame" type="std::string" default="camera_color_optical_frame"/>
+      <input_port name="wait_s" type="double" default="10.000000">첫 깊이 영상을 기다리는 시간</input_port>
+      <input_port name="depth_topic" type="std::string" default="/camera/depth/image_raw"/>
+    </Action>
     <Condition ID="IsFireDetected">
-      <input_port name="detections_topic" default="/yolo_detector/detections">vision_msgs/Detection2DArray, class fire</input_port>
-      <input_port name="markers_topic" default="/object_mapper/markers">지도 위 위치</input_port>
-      <input_port name="min_score" default="0.5"/>
-      <input_port name="min_hits" default="5"/>
-      <input_port name="use_depth">false 면 로봇 위치 + 방향으로 대략 위치</input_port>
-      <output_port name="location"/>
-      <output_port name="size"/>
+      <input_port name="use_depth" type="bool" default="false">false 면 로봇 위치 + 방향으로 대략 위치</input_port>
+      <output_port name="size" type="double">불 폭 (m)</output_port>
+      <output_port name="location" type="limo_fire_bt::MapPoint"/>
+      <input_port name="min_hits" type="int" default="5"/>
+      <input_port name="min_score" type="double" default="0.500000"/>
+      <input_port name="objects_topic" type="std::string" default="/object_mapper/objects">vision_msgs/Detection3DArray, 지도 위 물체</input_port>
+      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections">vision_msgs/Detection2DArray</input_port>
     </Condition>
     <Condition ID="IsFireGone">
-      <input_port name="detections_topic" default="/yolo_detector/detections"/>
-      <input_port name="target"/>
-      <input_port name="min_score" default="0.35"/>
-      <input_port name="hold_s" default="5.0"/>
+      <input_port name="hold_s" type="double" default="5.000000"/>
+      <input_port name="min_score" type="double" default="0.350000"/>
+      <input_port name="target" type="limo_fire_bt::MapPoint"/>
+      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections"/>
     </Condition>
     <Condition ID="IsLocalizationStable">
-      <input_port name="pose_topic" default="/amcl_pose">geometry_msgs/PoseWithCovarianceStamped</input_port>
-      <input_port name="max_xy_std_m" default="0.3"/>
-      <input_port name="max_yaw_std_rad" default="0.2"/>
+      <input_port name="max_yaw_std_rad" type="double" default="0.200000"/>
+      <input_port name="max_xy_std_m" type="double" default="0.300000"/>
+      <input_port name="pose_topic" type="std::string" default="/amcl_pose">geometry_msgs/PoseWithCovarianceStamped</input_port>
     </Condition>
     <Condition ID="IsSameIncident">
-      <input_port name="incident"/>
-      <input_port name="location"/>
-      <input_port name="radius_m"/>
+      <input_port name="radius_m" type="double"/>
+      <input_port name="location" type="limo_fire_bt::MapPoint"/>
+      <input_port name="incident" type="int"/>
     </Condition>
     <Condition ID="IsServiceAvailable">
-      <input_port name="service"/>
+      <input_port name="service" type="std::string"/>
     </Condition>
     <Condition ID="IsSmallFire">
-      <input_port name="max_size"/>
-      <input_port name="size"/>
+      <input_port name="size" type="double"/>
+      <input_port name="max_size" type="double"/>
     </Condition>
     <Condition ID="IsSmokeDetected">
-      <input_port name="detections_topic" default="/yolo_detector/detections">class smoke</input_port>
-      <input_port name="markers_topic" default="/object_mapper/markers"/>
-      <input_port name="min_score" default="0.5"/>
-      <input_port name="min_hits" default="5"/>
-      <input_port name="use_depth"/>
-      <output_port name="location"/>
+      <input_port name="use_depth" type="bool" default="false">false 면 로봇 위치 + 방향으로 대략 위치</input_port>
+      <output_port name="location" type="limo_fire_bt::MapPoint"/>
+      <input_port name="min_hits" type="int" default="5"/>
+      <input_port name="min_score" type="double" default="0.500000"/>
+      <input_port name="objects_topic" type="std::string" default="/object_mapper/objects">vision_msgs/Detection3DArray, 지도 위 물체</input_port>
+      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections">vision_msgs/Detection2DArray</input_port>
     </Condition>
     <Condition ID="IsSurvivorSearchRequested"/>
     <Condition ID="IsTemperatureDropped">
-      <input_port name="target"/>
-      <input_port name="thermal_topic" default="/thermal/image_raw">잠정</input_port>
-      <input_port name="min_drop_c"/>
+      <input_port name="thermal_topic" type="std::string" default="/thermal/image_raw">잠정</input_port>
+      <input_port name="min_drop_c" type="double"/>
+      <input_port name="target" type="limo_fire_bt::MapPoint"/>
     </Condition>
     <Condition ID="IsTopicAlive">
-      <input_port name="topic"/>
-      <input_port name="min_hz">window_s 동안 평균 주기가 이 이상</input_port>
-      <input_port name="window_s" default="1.0"/>
+      <input_port name="window_s" type="double" default="1.000000"/>
+      <input_port name="min_hz" type="double">window_s 동안 평균 주기가 이 이상</input_port>
+      <input_port name="topic" type="std::string"/>
     </Condition>
     <Condition ID="IsWithinTimeLimit">
-      <input_port name="limit_sec"/>
-      <input_port name="start_time"/>
+      <input_port name="start_time" type="double"/>
+      <input_port name="limit_sec" type="double"/>
     </Condition>
     <Action ID="LoadPatrolRoute">
-      <input_port name="map"/>
-      <output_port name="route"/>
+      <output_port name="route" type="std::vector&lt;limo_fire_bt::Pose2, std::allocator&lt;limo_fire_bt::Pose2&gt; &gt;"/>
+      <input_port name="file" type="std::string">순찰점 yaml</input_port>
     </Action>
     <Action ID="LogPatrolIssue">
-      <input_port name="goal"/>
+      <input_port name="goal" type="limo_fire_bt::Pose2"/>
     </Action>
     <Action ID="MonitorFromSafeDistance">
-      <input_port name="location"/>
-      <input_port name="safe_distance_m" default="2.0"/>
-      <input_port name="action_name" default="/navigate_to_pose"/>
-      <input_port name="detections_topic" default="/yolo_detector/detections"/>
+      <input_port name="min_score" type="double" default="0.500000"/>
+      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections"/>
+      <input_port name="action_name" type="std::string" default="/navigate_to_pose"/>
+      <input_port name="safe_distance_m" type="double" default="2.000000"/>
+      <input_port name="location" type="limo_fire_bt::MapPoint"/>
     </Action>
     <Action ID="NavigateToWaypoint">
-      <input_port name="goal"/>
-      <input_port name="action_name" default="/navigate_to_pose">nav2_msgs/action/NavigateToPose</input_port>
+      <input_port name="action_name" type="std::string" default="/navigate_to_pose">nav2_msgs/action/NavigateToPose</input_port>
+      <input_port name="goal" type="limo_fire_bt::Pose2"/>
     </Action>
     <Action ID="NotifyAdmin">
-      <input_port name="event"/>
-      <input_port name="history"/>
-      <input_port name="incident"/>
-      <input_port name="location"/>
-      <input_port name="mode"/>
-      <input_port name="people"/>
-      <input_port name="reason"/>
+      <input_port name="reason" type="std::string"/>
+      <input_port name="people" type="int"/>
+      <input_port name="mode" type="std::string"/>
+      <input_port name="location" type="limo_fire_bt::MapPoint"/>
+      <input_port name="incident" type="int"/>
+      <input_port name="history" type="std::string"/>
+      <input_port name="event" type="std::string"/>
     </Action>
     <Action ID="PlayEvacuationGuidance"/>
     <Action ID="RecordFireLocation">
-      <input_port name="incident"/>
-      <input_port name="location"/>
-      <input_port name="map_frame" default="map"/>
-      <input_port name="image_topic" default="/yolo_detector/image"/>
+      <input_port name="image_topic" type="std::string" default="/yolo_detector/image"/>
+      <input_port name="map_frame" type="std::string" default="map"/>
+      <input_port name="location" type="limo_fire_bt::MapPoint"/>
+      <input_port name="incident" type="int"/>
     </Action>
     <Action ID="SprayWater">
-      <input_port name="pump_service" default="/pump/set">std_srvs/SetBool (잠정)</input_port>
-      <input_port name="duration_ms"/>
+      <input_port name="duration_ms" type="int"/>
+      <input_port name="pump_service" type="std::string" default="/pump/set">std_srvs/SetBool (잠정)</input_port>
     </Action>
     <Action ID="StartMissionTimer">
-      <output_port name="start_time"/>
+      <output_port name="start_time" type="double"/>
     </Action>
     <Action ID="StopPump">
-      <input_port name="pump_service" default="/pump/set"/>
+      <input_port name="pump_service" type="std::string" default="/pump/set"/>
     </Action>
     <Action ID="StopRobot">
-      <input_port name="cmd_vel_topic" default="/cmd_vel">geometry_msgs/Twist 0 발행 + Nav2 목표 취소</input_port>
+      <input_port name="action_name" type="std::string" default="/navigate_to_pose">목표를 취소할 Nav2 액션</input_port>
+      <input_port name="cmd_vel_topic" type="std::string" default="/cmd_vel">geometry_msgs/Twist 0 발행</input_port>
     </Action>
     <Action ID="SweepSmokeZone">
-      <input_port name="zone"/>
-      <input_port name="scan_topic" default="/scan"/>
-      <input_port name="ultrasonic_topic" default="/ultrasonic/front">sensor_msgs/Range (잠정)</input_port>
-      <input_port name="min_range_m" default="0.25"/>
-      <input_port name="action_name" default="/navigate_to_pose"/>
+      <input_port name="action_name" type="std::string" default="/navigate_to_pose"/>
+      <input_port name="smoke_service" type="std::string" default="/smoke_mode/set">std_srvs/SetBool</input_port>
+      <input_port name="points" type="int" default="4">훑는 점 수</input_port>
+      <input_port name="radius_m" type="double" default="1.500000">zone 에서 훑는 반지름</input_port>
+      <input_port name="min_range_m" type="double" default="0.250000"/>
+      <input_port name="ultrasonic_topic" type="std::string" default="/ultrasonic/front">sensor_msgs/Range</input_port>
+      <input_port name="zone" type="limo_fire_bt::MapPoint"/>
     </Action>
     <Action ID="TrackPeopleCamera">
-      <input_port name="detections_topic" default="/yolo_detector/detections">class person</input_port>
-      <input_port name="markers_topic" default="/object_mapper/markers"/>
-      <input_port name="min_score" default="0.5"/>
-      <output_port name="people"/>
+      <output_port name="people" type="int"/>
+      <input_port name="min_score" type="double" default="0.500000"/>
+      <input_port name="objects_topic" type="std::string" default="/object_mapper/objects"/>
+      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections">class person</input_port>
     </Action>
     <Action ID="TrackPeopleRadar">
-      <input_port name="radar_topic" default="/radar/people">잠정</input_port>
-      <output_port name="people"/>
+      <output_port name="people" type="int"/>
+      <input_port name="radar_topic" type="std::string" default="/radar/people">잠정</input_port>
     </Action>
   </TreeNodesModel>
+
 
 </root>

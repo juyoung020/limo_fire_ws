@@ -132,6 +132,7 @@ PY
 분할 모델이면 같은 시각의 `/yolo_detector/mask` 에서 그 물체 픽셀만 골라, 픽셀 무게중심 방향 + 그 픽셀 깊이의 가운데 값으로 위치를 잰다(배경·뒤 벽이 안 섞임). 불은 마스크 픽셀 수로 앞면 넓이(m²)도 재서 현황판에 보인다.
 마스크가 없으면(탐지 전용 엔진) 상자 가운데 50 % 깊이의 하위 30 % 값을 거리로 쓴다(얇은 소화기 뒤 벽 무시). 같은 클래스가 0.8 m 안이면 같은 물체로 합치며, 5 번 이상 본 것만 올린다. 값은 `config/yolo_fire.yaml`.
 `map` 프레임이 있어야 하므로 SLAM(Cartographer) 또는 AMCL 과 같이 돌린다.
+다른 노드가 읽는 물체 목록은 `/object_mapper/objects` (`vision_msgs/Detection3DArray`, map frame, 지도에 올라간 것만): `id` 는 `fire-1` 꼴, 결과 클래스·최고 점수, 위치, `bbox.size.y` = 앞면 넓이의 제곱근(m, 모르면 0). 임무 BT([limo_fire_bt](../limo_fire_bt/README.md))가 불 위치·크기·사람 수를 여기서 읽는다. 마커는 표시용이라 읽지 않는다.
 
 운용 화면 (`limo_fire_description` 의 `viewer.launch.xml` · `rviz/limo_fire.rviz`, 지도 만들기·Nav2 와 같은 화면):
 - 왼쪽: YOLO 탐지 영상. 오른쪽: 지도 + 물체 + 로봇(축) + Nav2 경로(전역·지역), costmap 은 Displays 에서 켠다

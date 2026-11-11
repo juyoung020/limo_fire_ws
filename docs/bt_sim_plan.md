@@ -7,9 +7,9 @@
 
 | 항목 | 상태 |
 |---|---|
-| 트리 XML | 초안. BehaviorTree.CPP 4.x(Jazzy)에 가짜 노드를 붙여 모든 서브트리가 만들어지는 것만 확인 |
-| BT 노드 구현 | 없음. 그래서 아직 ROS 위에서 돌릴 수 없다 |
-| 실행 파일·launch | 없음. 패키지는 XML 설치만 한다 |
+| 트리 XML | 노드 포트를 코드에 맞춤 (`<TreeNodesModel>` 은 `mission --model` 로 뽑음) |
+| BT 노드 구현 | 2026-11-11 전부 C++ 로 (limo_fire_bt README). Jazzy 에서 가짜 센서로 S2·S3·S4 분기 확인 |
+| 실행 파일·launch | `mission`, `bt.launch.xml [sim:=true]`, `limo_fire_bt.yaml` + `limo_fire_bt_sim.yaml` |
 | 시뮬 실행 | 안 해 봄 |
 
 ## 2. 먼저 정할 것
@@ -17,8 +17,8 @@
 | # | 질문 | 제안 | 까닭 |
 |---|---|---|---|
 | D1 | spec.md 는 "Nav2 BT(BehaviorTree.CPP v3) 플러그인"인데 트리는 v4 형식이다 | 따로 도는 임무 노드 + v4, 주행은 `navigate_to_pose` 호출. 정해지면 spec.md 를 고친다 | 임무 트리와 주행 트리가 나뉘고, Script·`_onFailure` 와 Groot2 모니터를 쓴다. 로봇 Jetson(Humble)에 4.x 가 있는지는 **아직 확인 안 함**. 안 되면 v3 형식으로 옮긴다 |
-| D2 | 불 위치를 어떻게 받나 | object_mapper 에 위치 토픽(또는 서비스)을 더하는 안과 `/object_mapper/markers` 를 읽는 안을 비교 | 마커는 표시용이라 형식이 바뀌면 BT 가 깨진다 |
-| D3 | 시뮬에서 불을 어떻게 "보게" 하나 | `/gt/detections` 를 탐지 입력으로 | 시뮬 불·연기는 YOLO 가 거의 못 잡는다(simulation.md). 정답 카메라가 같은 타입 `vision_msgs/Detection2DArray` 를 낸다. 점수·클래스 값이 BT 문턱과 맞는지는 확인 필요 |
+| D2 | 불 위치를 어떻게 받나 | **정함**: object_mapper `~/objects` (`vision_msgs/Detection3DArray`) 를 더해 BT 가 읽는다 | 마커는 표시용이라 형식이 바뀌면 BT 가 깨진다 |
+| D3 | 시뮬에서 불을 어떻게 "보게" 하나 | **정함**: `limo_fire_bt_sim.yaml` 이 `/yolo_detector/detections` 를 `/gt/detections` 로 바꿔 읽음 | 시뮬 불·연기는 YOLO 가 거의 못 잡는다(simulation.md). 정답 카메라가 같은 타입 `vision_msgs/Detection2DArray` 를 낸다. 점수·클래스 값이 BT 문턱과 맞는지는 확인 필요 |
 
 ## 3. 시뮬에서 그대로는 안 되는 것
 

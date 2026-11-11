@@ -26,6 +26,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <vision_msgs/msg/detection2_d_array.hpp>
+#include <vision_msgs/msg/detection3_d_array.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 namespace limo_fire_perception
@@ -116,6 +117,9 @@ public:
       "~/markers", rclcpp::QoS(1).transient_local(), latched);
     overlay_pub_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>(
       "~/summary", rclcpp::QoS(1).transient_local(), latched);
+    // 다른 노드(임무 BT)가 읽는 물체 목록: 지도에 올라간 것만, map frame. 마커는 표시용이라 형식이 바뀔 수 있다
+    objects_pub_ = create_publisher<vision_msgs::msg::Detection3DArray>(
+      "~/objects", rclcpp::QoS(1).transient_local(), latched);
     info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
       declare_parameter<std::string>("camera_info_topic", "/camera/depth/camera_info"), rclcpp::SensorDataQoS(),
       [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {info_ = msg;});
@@ -507,7 +511,31 @@ private:
       if (landmarks_[i].number > 0) {append_markers(landmarks_[i], i, t, arr);}
     }
     if (!arr.markers.empty()) {marker_pub_->publish(arr);}
+    publish_objects();
     if (++tick_ % 5 == 0) {publish_summary();}
+  }
+
+  // ~/objects: 물체 하나 = Detection3D (id "fire-1", 클래스·최고 점수, 위치, 크기 y = 앞면 넓이의 제곱근, 모르면 0)
+  void publish_objects()
+  {
+    vision_msgs::msg::Detection3DArray out;
+    out.header.stamp = now();
+    out.header.frame_id = map_frame_;
+    for (const auto & l : landmarks_) {
+      if (l.number == 0) {continue;}
+      auto & d = out.detections.emplace_back();
+      d.header = out.header;
+      d.id = class_names_[l.cls] + "-" + std::to_string(l.number);
+      auto & h = d.results.emplace_back();
+      h.hypothesis.class_id = class_names_[l.cls];
+      h.hypothesis.score = l.best_score;
+      d.bbox.center.position.x = l.x;
+      d.bbox.center.position.y = l.y;
+      d.bbox.center.position.z = l.z;
+      d.bbox.center.orientation.w = 1.0;
+      d.bbox.size.y = l.area > 0 ? std::sqrt(l.area) : 0.0;
+    }
+    objects_pub_->publish(out);
   }
 
   // RViz 왼쪽 위 현황판: 화재 경고 + 종류별 개수 + 로봇에서 가장 가까운 것까지 거리
@@ -622,6 +650,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr selected_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr overlay_pub_;
+  rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr objects_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr clear_srv_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
