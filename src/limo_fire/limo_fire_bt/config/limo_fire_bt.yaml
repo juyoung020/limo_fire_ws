@@ -55,3 +55,11 @@ mission:
       service: /speaker/evacuation      # std_srvs/SetBool (잠정)
     people:
       timeout_s: 1.0                    # 레이더 사람 토픽이 이만큼 끊기면 카메라로
+
+    # RViz 운용 화면 임무 현황판 (rviz_2d_overlay_plugins TextOverlay, 왼쪽 아래)
+    overlay:
+      topic: /mission/overlay
+      period_s: 0.5
+      events: 3                 # 최근 알림 몇 줄
+      width: 420
+      height: 260

@@ -87,17 +87,21 @@ private:
 class GetNextWaypoint : public BT::SyncActionNode
 {
 public:
-  using BT::SyncActionNode::SyncActionNode;
+  GetNextWaypoint(const std::string & name, const BT::NodeConfig & cfg, std::shared_ptr<RosContext> ctx)
+  : BT::SyncActionNode(name, cfg), ctx_(std::move(ctx)) {}
   static PortsList providedPorts() {return {InputPort<Route>("route"), OutputPort<Pose2>("goal")};}
   NodeStatus tick() override
   {
     const auto route = need<Route>(*this, "route");
     if (route.empty()) {return NodeStatus::FAILURE;}
-    setOutput("goal", route[next_++ % route.size()]);
+    const size_t i = next_++ % route.size();
+    setOutput("goal", route[i]);
+    ctx_->set_status("patrol", std::to_string(i + 1) + "/" + std::to_string(route.size()) + " (" + to_text(route[i]) + ")");
     return NodeStatus::SUCCESS;
   }
 
 private:
+  std::shared_ptr<RosContext> ctx_;
   size_t next_ = 0;
 };
 
@@ -387,7 +391,7 @@ private:
 void register_motion_nodes(BT::BehaviorTreeFactory & f, const std::shared_ptr<RosContext> & ctx)
 {
   f.registerNodeType<LoadPatrolRoute>("LoadPatrolRoute", ctx);
-  f.registerNodeType<GetNextWaypoint>("GetNextWaypoint");
+  f.registerNodeType<GetNextWaypoint>("GetNextWaypoint", ctx);
   f.registerNodeType<NavigateToWaypoint>("NavigateToWaypoint", ctx);
   f.registerNodeType<LogPatrolIssue>("LogPatrolIssue", ctx);
   f.registerNodeType<StopRobot>("StopRobot", ctx);

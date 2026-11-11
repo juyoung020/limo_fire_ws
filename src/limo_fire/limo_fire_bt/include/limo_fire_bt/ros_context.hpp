@@ -98,6 +98,15 @@ public:
 
   // 관리자 알림: /mission/events 에 한 줄 JSON + 로그
   void event(const std::string & json);
+  // 최근 알림 (현황판용): (ROS 시각 s, JSON)
+  const std::deque<std::pair<double, std::string>> & recent_events() const {return events_;}
+  // 노드가 현황판에 띄울 한 줄 (예: "patrol" → "4/13")
+  void set_status(const std::string & key, const std::string & value) {status_[key] = value;}
+  std::string status(const std::string & key) const
+  {
+    const auto it = status_.find(key);
+    return it == status_.end() ? std::string() : it->second;
+  }
 
   // 설정 값 읽기 (선언은 생성자에서)
   template<class T>
@@ -132,6 +141,8 @@ private:
   std::map<std::string, std::shared_ptr<void>> latest_;
   std::map<int, MapPoint> incidents_;
   int next_incident_ = 1;
+  std::deque<std::pair<double, std::string>> events_;
+  std::map<std::string, std::string> status_;
   bool survivor_search_ = false;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr event_pub_;
   rclcpp::ServiceBase::SharedPtr survivor_srv_;

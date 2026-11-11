@@ -259,6 +259,8 @@ void RosContext::event(const std::string & json)
   std_msgs::msg::String m;
   m.data = json;
   event_pub_->publish(m);
+  events_.emplace_back(now().seconds(), json);
+  while (events_.size() > 10) {events_.pop_front();}
   RCLCPP_INFO(logger(), "[알림] %s", json.c_str());
 }
 

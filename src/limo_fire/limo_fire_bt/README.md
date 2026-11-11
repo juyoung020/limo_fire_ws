@@ -15,12 +15,15 @@ ros2 service call /mission/request_survivor_search std_srvs/srv/SetBool "{data: 
 
 Groot2 Monitor 는 `localhost:1667`(설정 `groot_port`). `btlog_dir:=<폴더>` 면 판마다 `.btlog` 를 남겨 Groot2 로 다시 본다.
 
+RViz 운용 화면(`limo_fire_description` `viewer.launch.xml`) 왼쪽 아래 **Mission** 현황판(`/mission/overlay`)에 지금 모드·단계(실행 중인 서브트리)·실행 중인 노드·순찰점·사건·실패 사유·최근 알림 3 개가 뜬다. 0.5 초마다 갱신하고, 크기·줄 수는 설정 `overlay.*`.
+
 ## 구조
 
 | 파일 | 무엇 |
 |---|---|
 | `src/mission_node.cpp` | 설정 읽기 → 트리 만들기 → `tick_hz` 로 틱. 멈출 때 진행 중 노드를 멈춰 Nav2 목표·펌프·연기 모드·탐사를 끈다. `mission --model` 은 `<TreeNodesModel>` 을 코드에서 뽑아 낸다 |
 | `src/ros_context.cpp` | 노드끼리 나눠 쓰는 ROS 연결: 토픽 구독(처음 쓸 때 만들어 공유), 토픽 주기, 탐지 기록, 물체 목록, 로봇 위치(TF), 사건 기록, 알림 |
+| `src/status_overlay.cpp` | RViz 임무 현황판: 트리에서 실행 중인 서브트리·노드와 블랙보드 값을 읽어 `OverlayText` 로 냄 (트리는 바꾸지 않음) |
 | `src/ros_helpers.cpp` | Nav2 목표·`SetBool` 서비스 호출을 틱마다 상태만 보게 감싼 것. 서버가 `server_timeout_s` 안에 없으면 실패 |
 | `src/condition_nodes.cpp` | `IsTopicAlive` `IsAutoMode` `IsFireDetected` `IsSmokeDetected` `IsFireGone` `IsLocalizationStable` `IsSameIncident` `IsServiceAvailable` `IsSmallFire` `IsSurvivorSearchRequested` `IsTemperatureDropped` `IsWithinTimeLimit` `HasUnexploredFrontier` `IsDepthAlignedToColor` |
 | `src/motion_nodes.cpp` | `LoadPatrolRoute` `GetNextWaypoint` `NavigateToWaypoint` `LogPatrolIssue` `StopRobot` `MonitorFromSafeDistance` `SweepSmokeZone` `ExploreFrontiers` |

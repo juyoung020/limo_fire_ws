@@ -17,6 +17,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "limo_fire_bt/nodes.hpp"
+#include "limo_fire_bt/status_overlay.hpp"
 
 namespace
 {
@@ -48,6 +49,11 @@ void declare_params(rclcpp::Node & n)
   n.declare_parameter<double>("nozzle.timeout_s", 3.0);
   n.declare_parameter<std::string>("speaker.service", "/speaker/evacuation");
   n.declare_parameter<double>("people.timeout_s", 1.0);
+  n.declare_parameter<std::string>("overlay.topic", "/mission/overlay");
+  n.declare_parameter<double>("overlay.period_s", 0.5);
+  n.declare_parameter<int>("overlay.events", 3);
+  n.declare_parameter<int>("overlay.width", 420);
+  n.declare_parameter<int>("overlay.height", 260);
 }
 
 volatile std::sig_atomic_t g_stop = 0;
@@ -111,6 +117,8 @@ int main(int argc, char ** argv)
     RCLCPP_INFO(log, "BT 기록: %s", path.c_str());
   }
 
+  limo_fire_bt::StatusOverlay overlay(ctx, tree);
+
   rclcpp::executors::SingleThreadedExecutor exec;
   exec.add_node(node);
   const auto period = std::chrono::duration<double>(1.0 / node->get_parameter("tick_hz").as_double());
@@ -129,6 +137,7 @@ int main(int argc, char ** argv)
     }
     try {
       status = tree.tickOnce();
+      overlay.update();
     } catch (const std::exception & e) {
       RCLCPP_FATAL(log, "트리 오류: %s", e.what());
       status = BT::NodeStatus::FAILURE;
