@@ -110,7 +110,7 @@
 
 ### 열화상·레이더 단독 연결 시험 (2026-11-11)
 
-시험 코드와 배선은 [firmware/sensor_check](../firmware/sensor_check/README.md). 로봇에 달거나 ROS 로 잇기 전, 모듈 하나씩 ESP32 에 꽂아 데이터가 맞게 나오는지만 봤다.
+시험 코드와 배선은 [firmware/sensor_check](../firmware/sensor_check/README.md), 화면은 [tools/sensor_view](../tools/sensor_view/README.md). 로봇에 달거나 ROS 로 잇기 전, 모듈 하나씩 ESP32 에 꽂아 데이터가 맞게 나오는지만 봤다.
 
 | 모듈 | 보드 · 핀 | 결과 |
 |---|---|---|

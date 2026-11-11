@@ -58,4 +58,4 @@ arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200
 - 레이더: HLK-LD2450 Instruction manual V1.00 6 장 — 256000 8N1, 10 프레임/s, `AA FF 03 00` + 표적 3 × 8 바이트 + `55 CC`.
   x·y·속도는 "맨 윗비트 1 = 양수, 나머지 15 비트 = 크기" (매뉴얼 예 x = −782 mm, y = 1713 mm 와 같게 풂).
 
-시험 때 화면(위 hardware.md 의 GIF)은 저장소 밖 임시 뷰어로 봤다. 로봇에서는 이 줄들을 `limo_fire_esp32_bridge` 가 ROS 토픽으로 바꿀 예정이다.
+화면으로 보려면 [tools/sensor_view](../../tools/sensor_view/README.md) (열화상 색 지도·레이더 부채꼴). 로봇에서는 이 줄들을 `limo_fire_esp32_bridge` 가 ROS 토픽으로 바꿀 예정이다.
