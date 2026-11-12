@@ -32,6 +32,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 │   └── detect/                YOLO 탐지: trainer/ tools/ data/(git 제외)
 ├── firmware/                  ESP32 코드
 ├── hardware/wiring/           추가 장치 회로도(KiCad)·배선(WireViz)·배선판 납땜 그림 [COLCON_IGNORE]
+├── hardware/mounts/           센서·전장 고정대 출력 파일(STL)·그림 [COLCON_IGNORE]
 ├── tools/repo_check/          커밋·푸시 전 규칙 검사(Rust) — Claude Code 훅이 씀 [COLCON_IGNORE]
 ├── tools/sensor_view/         ESP32 시험 코드(firmware/sensor_check) 화면: 열화상·레이더 (C++/Qt5) [COLCON_IGNORE]
 ├── docs/                      문서
