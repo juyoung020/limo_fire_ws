@@ -33,6 +33,7 @@
 #include "people.h"
 #include "sensor_model.h"
 #include "sensors.h"
+#include "low_task.h"      // 아래층 계측·단독 과제 기록 꼴 (걸음 함수는 아래 low_step.h)
 
 namespace sim {
 
@@ -146,6 +147,10 @@ struct EnvCfg {
   int graph_step, graph_term, graph_max_steps, graph_max_dec, graph_pass, graph_view, graph_cover;
   float graph_rew_dist, graph_rew_done, graph_arrive;
   int graph_fixed;   // 결정 길이: 0 = 한 결정 한 노드(닿을 때까지 — 논문 학습 방식) · 1 = 고정 주기 decide_steps(1 Hz 재계획 — 논문 실물 방식 V-C)
+  // 아래층 계측·단독 과제 (include/low_task.h · env.yaml action.path.follow — 스위치 둘은 도구가 켠다, 기본 0)
+  int low_stat, low_task;          // 1 = 걸음 분류 누적(EnvBatch::low) · 1 = 호스트가 목표 칸을 넣는 단독 과제(EnvBatch::lowcmd, low_stat 도 켜짐)
+  int low_goals, low_idle_steps, low_time_steps;   // 판 끝: 목표 수 · 정체 걸음 수 · 과제 시간 걸음 수
+  float low_pass_r, low_idle_d, low_front;         // 통과 반경 (m) · 정체 거리 (m) · 사람 충돌 방위의 앞 반각 (rad)
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -369,6 +374,9 @@ struct EnvBatch {
   // 전작 방식 (2026-11-11): 결정 하나의 결과 [env] (graph_env.h GraphDec — 도구·학습기가 읽음), 지난 결정 관측의 프론티어 복셀 대표 칸 [env · kVoxMax] (보상의 사라진 프론티어)
   GraphDec* gdec;
   int32_t* gprev;
+  // 아래층 계측·단독 과제 (low_stat·low_task 일 때만, 아니면 nullptr — include/low_task.h): 판 누적 [env] · 호스트가 넣는 목표 [env]
+  LowEp* low;
+  LowCmd* lowcmd;
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)
@@ -636,6 +644,7 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
 
 #include "hier_path.h"   // 계층형 경로 추종 (apply_action 이 부름)
 #include "graph_env.h"   // 그래프 모드 풀 (hier_path.h 뒤)
+#include "low_step.h"    // 아래층 계측·단독 과제 걸음 함수
 
 // 계층형 관측 "직전 행동": 이번 걸음 명령 (v, ω) — 추종기·smoother·안전층 뒤 /cmd_vel — 을 정규 단위로 밀어 넣음 (vy·선언 0).
 // 실물 노드(limo_fire_rl)는 Nav2 가 낸 /cmd_vel 로 같은 함수를 부른다
@@ -653,10 +662,13 @@ struct PathStep {
   float vc, wc, cd;   // 추종기 명령 · 당근 거리
   float v, w;         // velocity_smoother 뒤 명령
   int want_imm;       // RPP 충돌 검사를 볼 차례인가 (복구 물러나기 중이 아니고 명령이 0 이 아님)
+  PathWhy why;        // 아래층 계측 (low_task.h — EnvBatch::low 가 있을 때만 채움)
+  int bkind;          // path_step_b 가지: 0 없음 · 1 복구 물러나기 · 2 충돌 검사 멈춤·물러남 · 3 제자리 회전 막힘
 };
 // a: 추종기
 DEV void path_step_a(const EnvBatch& b, EnvState& e, int env, const PathPre* pre, PathStep& s) {
-  path_follow(b, e, env, &s.vc, &s.wc, &s.cd, pre);
+  path_follow(b, e, env, &s.vc, &s.wc, &s.cd, pre, b.low ? &s.why : nullptr);
+  s.bkind = 0;
   s.want_imm = e.p_rec <= 0 && (s.vc != 0.f || s.wc != 0.f) ? 1 : 0;
   s.v = s.w = 0.f;
 }
@@ -667,16 +679,19 @@ DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const Pa
   // RPP 충돌 검사 (hier_path.h path_imminent): 걸리면 Nav2 BT 복구의 BackUp 처럼 물러남 (뒤도 막히면 섬)
   if (e.p_rec > 0) {   // 복구 물러나기 (hier_path.h "복구" — Nav2 BT BackUp): 추종기 대신. 뒤가 막히면 그만
     e.p_rec -= 1;
+    s.bkind = 1;
     vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;
     wc = 0.f;
     if (vc == 0.f) e.p_rec = 0;
   } else if (imm) {
     vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;   // 0.1 m = 결정 둘(2 s) 동안 물러나는 거리
+    s.bkind = 2;
     wc = 0.f;
     e.p_stops += 1;
     e.p_blk_now += 1;
   } else if (c.mon_on && vc == 0.f && wc != 0.f && (pre ? pre->rot_cnt > c.mon_max_points : path_rotate_blocked(b, e, env))) {
     wc = 0.f;   // 제자리 회전: 못 보는 뒤에 직전 장에서 본 점이 몸통 회전 원 안 (hier_path.h (c)) — 이번 걸음은 돌지 않음
+    s.bkind = 3;
     e.p_mon += 1;
   }
   const float dt_act = (float)c.substeps * c.dt;
@@ -692,21 +707,24 @@ DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const Pa
 DEV void path_step_c(const EnvBatch& b, EnvState& e, int env, float k, const PathStep& s) {
   const EnvCfg& c = b.cfg;
   float v = s.v, w = s.w;
+  bool low_safe = false;
   if (k < 1.f) {
     v *= k;
     w *= k;
     e.p_mon += 1;
   }
-  if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) v = 0.f;
+  if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) { v = 0.f; low_safe = true; }
   if (c.sweep_guard) {
     const float k2 = sweep_scale(b, e, env, v, 0.f, w);
     v *= k2;
     w *= k2;
+    if (k2 < 1.f) low_safe = true;
   }
   e.cmd_v = v;
   e.cmd_vy = 0.f;
   e.cmd_w = w;
   e.last_action = e.p_slot;
+  low_begin(b, e, env, s.why, s.bkind, k < 1.f, low_safe, v);   // 아래층 계측 (끄면 아무것도 안 함)
   path_last_act(c, e, v, w);
 }
 
@@ -1318,6 +1336,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   in.closed = c.success_closed && !e.collided && (float)e.since_occ * dt_act >= c.close_idle_s && (e.step + 1) % c.close_every == 0 && e.map_closed ? 1 : 0;
   const bool gterm = c.graph_on && c.graph_term;   // 그래프 모드 전작 방식: 닫힘 성공·진행 없음 규칙 없음 (끝 = 유틸리티 합 0 — graph_env.h graph_finish)
   if (gterm) in.closed = 0;
+  if (b.lowcmd) in.closed = 0;   // 아래층 단독 과제: 탐사 판 끝 규칙(닫힘 성공·진행 없음) 없음 (low_task.h)
   // 덮음 보상 자리: 로봇 지도에서 이번 행동 동안 판 처음 막힘이 된 칸 수 (map_progress 가 이 걸음 칸에 막 넣은 값 — 진행 없음 시계와 같은 셈)
   // 진행 없음 시계와 같은 문턱: 한 행동에 kIdleOccMin 개 미만이면 0 — 멈춰 있어도 자세 오차·빔 잡음으로 드문드문 생기는 막힘 칸을 보상하지 않는다
   {
@@ -1352,6 +1371,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   e.since_wall = new_wall > 0 ? 0 : e.since_wall + 1;
   in.idle = !e.collided && !in.declared && !in.closed && (float)e.since_occ * dt_act >= mdp::cur::kIdleTime;
   if (gterm) in.idle = false;
+  if (b.lowcmd) in.idle = false;
   float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
   e.reward = mdp::rew::terms(in, T);
   e.slip_acc = 0.f;
@@ -1378,12 +1398,14 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
         if (dx * dx + dy * dy <= 5 && u >= 0 && v >= 0 && u < m.gw && v < m.gh) mark(M, c.size, u, v, 32u);
       }
   }
+  const bool low_end = low_finish(b, e, env);   // 아래층 계측: 걸음 거리 · 단독 과제 판 끝 (끄면 false)
   // 판 끝: 충돌 > 닫힘(성공) > 선언 > 진행 없음 > 끊김
   if (e.collided) e.done = e.people.hit_person ? mdp::cur::kCollisionPerson : mdp::cur::kCollision;
   else if (in.closed) e.done = mdp::cur::kDeclareOk;   // 성공 코드 1 = 지도 닫힘 (닫힘 성공 규칙)
   else if (in.declared) e.done = cov >= mdp::cur::kSuccessCov ? mdp::cur::kDeclareOk : mdp::cur::kDeclareShort;
   else if (in.idle) e.done = mdp::cur::kNoProgress;
   else if (e.step >= c.max_steps) e.done = mdp::cur::kTruncated;
+  else if (low_end) e.done = mdp::cur::kTruncated;   // 단독 과제 끝 (까닭은 LowEp::end)
   if (e.done) episode_end(b, e, env, cov, dt_act);
 }
 

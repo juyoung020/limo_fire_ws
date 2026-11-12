@@ -36,3 +36,8 @@ target_link_libraries(frontier_check frontier_explorer)
 # 보상 해킹 시험 (mdp/tools/reward_probe): 정해진 행동·프론티어 기준선을 따라 판 합 보상을 잼
 add_executable(reward_probe ${EXPLORE}/mdp/tools/reward_probe.cu)
 target_link_libraries(reward_probe frontier_explorer)
+
+# 아래층(경로 추종기) 기준선: 탐사 판 안 시간 손실 분해 · 단독 과제 (scripts/low_run.cpp, sim/include/low_task.h)
+add_executable(low_run ${EXPLORE}/scripts/low_run.cpp)
+target_link_libraries(low_run frontier_explorer)
+target_compile_options(low_run PRIVATE -Wall -Wextra)

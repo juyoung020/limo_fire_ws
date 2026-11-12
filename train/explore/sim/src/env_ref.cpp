@@ -319,7 +319,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   }
   if (was_done) reset_env(b, e, env);
   write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, was_done),
-            sub < 0 || (b.gdec ? b.gdec[env].reason != kGdRun : sub == c.decide_steps - 1));   // 깊이는 묶음의 마지막 걸음에만
+            sub < 0 || (b.gdec ? b.gdec[env].reason != kGdRun : sub == c.decide_steps - 1) || (b.lowcmd && b.low[env].hold));   // 깊이는 묶음의 마지막 걸음에만 (아래층 단독 과제: 결정이 끝난 걸음)
   shape_obs(b, e, env, sh.reach);   // approach·front_cells 보상 (GPU env_reach_kernel 과 같은 때)
   b.st[env] = e;
 }

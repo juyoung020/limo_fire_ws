@@ -468,10 +468,16 @@ DEV bool path_clear(const EnvState& e, const S& stand) {
 // 포기한 목표 둘레 후보를 고르면 포기 안 한 후보 중 번호가 가장 작은 것으로 바꿈 (explore_lite 가 실패한 목표를 goal_blacklist 에 넣고 다음 프론티어로 가는 꼴)
 // 행동 칸: 계층형은 후보 K 칸(b.cand), 그래프 모드는 현재 노드의 이웃 NB 칸(b.gcand) — 계획·복구는 이 셋으로만 고른 칸을 본다
 DEV int act_slots(const EnvBatch& b) { return b.gcand ? mdp::graph::NB : mdp::hier::K; }
-DEV const int32_t* act_cells(const EnvBatch& b, int env) { return b.gcand ? b.gcand + (size_t)env * mdp::graph::NB : b.cand + (size_t)env * mdp::hier::K; }
+// 아래층 단독 과제 (low_task.h): 그 환경이 follow 면 행동 칸은 호스트가 넣은 목표 칸 하나
+DEV bool low_follow(const EnvBatch& b, int env) { return b.lowcmd && b.lowcmd[env].follow != 0; }
+DEV const int32_t* act_cells(const EnvBatch& b, int env) {
+  if (low_follow(b, env)) return &b.lowcmd[env].target;
+  return b.gcand ? b.gcand + (size_t)env * mdp::graph::NB : b.cand + (size_t)env * mdp::hier::K;
+}
 DEV int slot_of(const EnvBatch& b, float a) { return (a >= 0.f && a < (float)act_slots(b)) ? (int)a : -1; }   // 범위 밖·NaN 은 −1 (빈 칸과 같음 — 제자리 회전)
 // 고른 칸이 지금 목표와 같은가: 계층형은 그 덩어리가 지금 목표 칸을 품음(cand_cur 비트), 그래프 모드는 같은 노드 칸
 DEV bool act_same(const EnvBatch& b, const EnvState& e, int env, int k) {
+  if (low_follow(b, env)) return k == 0 && b.lowcmd[env].target == e.goal_cell;
   if (b.gcand) return k >= 0 && b.gcand[(size_t)env * mdp::graph::NB + k] == e.goal_cell;
   return ((b.cand_cur[env] >> k) & 1) != 0;
 }
@@ -489,6 +495,11 @@ DEV int path_recovery(const EnvBatch& b, EnvState& e, int env, int k, int* force
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   *force = 0;
+  if (b.lowcmd) {   // 아래층 단독 과제: 새 결정 — 쉼 표시를 지우고, follow 면 행동 칸은 0 번 하나
+    b.low[env].hold = 0;
+    b.low[env].d_step = e.step;
+    if (b.lowcmd[env].follow != 0) k = k >= 0 ? 0 : -1;
+  }
   if (!c.rec_on) return k;
   const int32_t* C = act_cells(b, env);
   // 지난 결정이 목표로 못 나아갔나
@@ -519,7 +530,7 @@ DEV int path_recovery(const EnvBatch& b, EnvState& e, int env, int k, int* force
     *force = 1;
   }
   if (tgt < 0 || !path_blacklisted(c, m, e, tgt)) return k;
-  for (int j = 0; j < act_slots(b); ++j)   // 포기한 목표 둘레: 포기 안 한 후보 중 번호가 가장 작은 것
+  for (int j = 0; j < (low_follow(b, env) ? 1 : act_slots(b)); ++j)   // 포기한 목표 둘레: 포기 안 한 후보 중 번호가 가장 작은 것
     if (C[j] >= 0 && !path_blacklisted(c, m, e, C[j])) return j;
   return -1;
 }
@@ -656,7 +667,8 @@ struct PathPre {
 };
 DEV float path_cs_r(const EnvCfg& c) { return dm::minf(c.path_cs_dist, c.path_r_out); }
 // 추종기 한 번 (행동 주기 0.1 s, 스레드 하나): 웨이포인트 따라 (vc, ωc) — velocity_smoother 앞 명령. p_i(지금 구간)를 앞으로만 옮긴다
-DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* wc_o, float* carrot_o = nullptr, const PathPre* pre = nullptr) {
+DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* wc_o, float* carrot_o = nullptr, const PathPre* pre = nullptr,
+                     PathWhy* why = nullptr) {   // why: 아래층 계측 (low_task.h) — 값만 적고 계산은 안 바꿈
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   *vc_o = 0.f;
@@ -664,6 +676,7 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
   if (carrot_o) *carrot_o = 1e9f;   // 제자리 회전이면 당근 거리 무한 (기준선과 같음)
   if (e.p_n <= 0) {   // 목표 없음: 후보가 없을 때(판 시작·모두 닫힘)는 제자리 회전, 목표는 있는데 경로를 못 짰으면 섬
     if (e.goal_cell < 0) *wc_o = c.rot_w;
+    if (why) { why->kind = e.goal_cell < 0 ? kWhyNoGoal : kWhyNoPath; why->bind = kLowFull; why->vc = 0.f; why->err = 0.f; why->d_goal = 0.f; }
     return;
   }
   const float px = e.x + e.ex, py = e.y + e.ey, pth = e.th + e.eth;
@@ -717,11 +730,13 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
   // (2026-11-08 규칙 정책 시험: 서 있기만 하면 0 번 후보가 거리 0 인 채로 안 풀려 128 판 모두 진행 없음 실패)
   if (d_goal <= c.goal_tol) {   // (모름 칸까지 막힘으로 보면 판 시작의 뒤쪽 모름 때문에 영영 안 돌아 128 판 모두 정체 — 지도 막힘만 봄)
     if (!(pre ? pre->arr_hit != 0 : path_imminent(b, e, env, 0.f, c.rot_w, 1e9f))) *wc_o = c.rot_w;
+    if (why) { why->kind = *wc_o != 0.f ? kWhyArrive : kWhyArriveStop; why->bind = kLowFull; why->vc = 0.f; why->err = 0.f; why->d_goal = d_goal; }
     return;
   }
   const float err = dm::wrap_pi(dm::atan2f_d(cy - py, cx - px) - pth);
   if (dm::absf(err) > c.rot_min_angle) {
     *wc_o = err > 0.f ? c.rot_w : -c.rot_w;
+    if (why) { why->kind = kWhyRot; why->bind = kLowFull; why->vc = 0.f; why->err = err; why->d_goal = d_goal; }
     return;
   }
   float vc = c.path_v;
@@ -741,12 +756,18 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
     if (d < r_eff) v_cost = vc * c.path_cs_gain * d / c.path_cs_dist;
   }
   vc = dm::maxf(dm::minf(v_curv, v_cost), c.reg_min_speed);
+  int why_bind = vc >= c.path_v ? kLowFull : (v_cost < v_curv ? kLowCost : kLowCurv);   // 아래층 계측: 목표 속도를 묶은 항
   // 경로 끝 감속 (RPP approach scaling). 그래프 모드 graph_pass: 경로 끝 = 다음 노드일 뿐 서는 곳이 아니라 감속하지 않음 (닿으면 바로 다음 결정 — graph_env.h gdec_step)
-  if (d_goal < c.approach_dist && !(b.gdec && c.graph_pass)) vc = dm::minf(vc, dm::maxf(c.path_v * d_goal / c.approach_dist, c.approach_min_v));
+  if (d_goal < c.approach_dist && !(b.gdec && c.graph_pass)) {
+    const float va = dm::maxf(c.path_v * d_goal / c.approach_dist, c.approach_min_v);
+    if (va < vc) why_bind = kLowApproach;
+    vc = dm::minf(vc, va);
+  }
   float wc = vc * curv;
   wc = dm::maxf(-c.w_max, dm::minf(c.w_max, wc));
   *vc_o = vc;
   *wc_o = wc;
+  if (why) { why->kind = kWhyGo; why->bind = why_bind; why->vc = vc; why->err = err; why->d_goal = d_goal; }
 }
 
 

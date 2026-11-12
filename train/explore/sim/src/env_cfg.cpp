@@ -143,6 +143,17 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     c.path_v = ap["v"].as<float>();
     c.cand_v2 = ap["candidates_v2"] && ap["candidates_v2"].as<bool>() ? 1 : 0;
     if (const char* g = std::getenv("SIM_CAND_V2")) c.cand_v2 = g[0] == '1' ? 1 : 0;   // 앞뒤 비교
+    {   // 아래층 계측·단독 과제 (include/low_task.h). 스위치는 도구가 켠다 — 여기선 값만
+      const YAML::Node fo = ap["follow"];
+      const auto num = [&](const char* k, float d) { return fo && fo[k] ? fo[k].as<float>() : d; };
+      c.low_stat = c.low_task = 0;
+      c.low_pass_r = num("pass_radius", 0.5f);
+      c.low_idle_d = num("stall_dist", 0.3f);
+      c.low_idle_steps = (int)std::lround(num("stall_time", 10.f) / pv);
+      c.low_time_steps = (int)std::lround(num("time_limit", 60.f) / pv);
+      c.low_goals = (int)num("max_goals", 5.f);
+      c.low_front = 0.5f * num("front_fov_deg", 220.f) * 3.14159265f / 180.f;
+    }
     c.path_cost_reg = ap["use_cost_regulated_linear_velocity_scaling"].as<bool>() ? 1 : 0;
     c.path_cs_dist = ap["cost_scaling_dist"].as<float>();
     c.path_cs_gain = ap["cost_scaling_gain"].as<float>();

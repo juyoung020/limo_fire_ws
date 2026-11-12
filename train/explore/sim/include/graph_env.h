@@ -68,6 +68,7 @@ DEV void gdec_begin(const EnvBatch& b, const EnvState& e, int env) {
 }
 // 이 걸음(sub)을 쉬나 — 앞 걸음에서 결정이 끝남 (끝난 그 걸음은 끝까지 돈다: steps = 끝난 걸음 + 1)
 DEV bool gdec_idle(const EnvBatch& b, int env, int sub) {
+  if (b.lowcmd && b.low[env].hold > 0 && b.low[env].hold <= sub) return true;   // 아래층 단독 과제: 목표 통과 반경에 들어 결정이 앞 걸음에서 끝남 (low_task.h)
   return b.gdec && sub > 0 && b.gdec[env].reason != kGdRun && b.gdec[env].steps <= sub;
 }
 // 스레드 0 · 걸음 끝(finish_step 뒤, 판 끝 리셋 앞). pass(x, y) = 그래프가 지나는 칸 (env_graph_kernel·graph_ref 와 같은 함수)

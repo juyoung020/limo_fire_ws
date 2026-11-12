@@ -303,6 +303,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.gdec = alloc<GraphDec>(n_env);
       b_.gprev = alloc<int32_t>((size_t)mdp::graphgen::kVoxMax * n_env);
     }
+    if (hc.cfg.low_stat || hc.cfg.low_task) b_.low = alloc<LowEp>(n_env);   // 아래층 계측·단독 과제 (include/low_task.h)
+    if (hc.cfg.low_task) b_.lowcmd = alloc<LowCmd>(n_env);
   }
   b_.priv = alloc<float>((size_t)mdp::obs::PRIV * n_env);
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
@@ -427,6 +429,19 @@ void Env::get_graph(std::vector<uint8_t>& feat, std::vector<uint32_t>& edge, std
 void Env::get_gdec(std::vector<GraphDec>& out) const {
   if (!b_.gdec) { out.clear(); return; }
   fetch(gpu_, b_.gdec, (size_t)b_.n_env, out);
+}
+void Env::get_low(std::vector<LowEp>& out) const {
+  if (!b_.low) { out.clear(); return; }
+  fetch(gpu_, b_.low, (size_t)b_.n_env, out);
+}
+void Env::set_low_cmd(const std::vector<LowCmd>& cmd) {
+  if (!b_.lowcmd || (int)cmd.size() != b_.n_env) throw std::runtime_error("set_low_cmd: 단독 과제 모드가 아니거나 길이가 다름");
+  if (gpu_) cudaMemcpy(b_.lowcmd, cmd.data(), cmd.size() * sizeof(LowCmd), cudaMemcpyHostToDevice);
+  else std::copy(cmd.begin(), cmd.end(), b_.lowcmd);
+}
+void Env::get_map_env(int env, std::vector<int16_t>& out) const {
+  const size_t cells = (size_t)b_.cfg.size * b_.cfg.size;
+  fetch(gpu_, b_.lmap + cells * env, cells, out);
 }
 void Env::get_seen(std::vector<uint8_t>& out) const {
   std::vector<uint32_t> m;
