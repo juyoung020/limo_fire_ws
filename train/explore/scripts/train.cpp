@@ -9,6 +9,8 @@
 //                   신경망 = 어텐션 인코더 6 층 + 디코더 + 포인터 (network/README "그래프 어텐션 정책"). 환경 수·롤아웃 길이·에포크·γ 기본값은 ppo.h graph_ppo_config() 한곳.
 //                   시뮬 쪽 덮어쓰기는 --graph-node·--graph-term·… (sim/include/env_cfg.h GraphArgs). --graph-share 1 = 가치 머리가 정책 몸통을 같이 씀(기본 따로)
 //         [--steps T] [--epochs E] [--minibatches M] [--gamma g] [--lam l]  PPO 값 덮어쓰기 (안 주면 PPOConfig 기본, --graph 면 graph_ppo_config)
+//         [--low]   아래층 RL: 판 = 아래층 단독 과제(목표 하나씩 → 규칙 경로 계획 → 통과), 정책이 걸음(0.1 s)마다 (v, ω). 신경망 = 가까운 지도·라이다·깊이 CNN + MLP
+//                   (network/README "아래층"), 환경 기본 1024 · γ 기본 0.99 · [--people 2] 판마다 사람 0 ~ 이 수. 진행 로그 low/*·reward/*, 평가 = 시험 맵 60 s (mdp/README "아래층 RL")
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
 //
 // 반복 하나 = 24 걸음 롤아웃(act → env.step → store) → update. done 매핑: mdp::cur::terminal(1·2·4·5) → 1 종료, 3 → 3 끊김.
@@ -65,6 +67,8 @@ struct Args {
   int mlp = 2, chunk = 0;  // chunk 0 = PPOConfig 기본 (미니배치 하나)
   bool resume = false;
   bool hier = false;   // --hier: 계층형 행동 (1 s 마다 프론티어 후보 하나 — sim kActPath, PPO 가린 범주 분포)
+  bool low = false;    // --low: 아래층 RL (단독 과제를 정책이 10 Hz 로 — run_low)
+  int low_people = 2;  // --people: 아래층 RL 판마다 사람 0 ~ 이 수
   bool graph = false;  // --graph: 그래프 모드 (이웃 노드 하나 — sim kActPath + graph_on, PPO 그래프 어텐션 정책). 결정 하나 = env.step 한 번, 걸음 수는 가변
   int graph_share = -1;   // --graph-share 0|1 (음수 = ACSpec 기본: 가치 몸통 따로)
   sim::GraphArgs gargs;   // --graph-node 등 (sim/include/env_cfg.h)
@@ -211,6 +215,286 @@ double ms_since(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
+// ================= 아래층 RL (--low) =================
+// 판 = 아래층 단독 과제(sim/include/low_task.h: 목표 → 규칙 경로 계획 → 통과 반경 · 시간 제한 · 정체)를 정책이 10 Hz 로 몬다 (sim/include/low_rl.h).
+// 목표는 시뮬이 뽑는다(low_auto). 걸음 하나 = 행동 하나 (v, ω) — 신경망 = explore_spec_low (가까운 지도·라이다 그림·깊이 CNN + MLP, 연속 가우시안).
+// done 매핑: 충돌(벽·사람) → 1 종료, 그 밖의 끝(시간 제한·정체·목표 수 채움) → 3 끊김(가치 이어 붙임).
+__global__ void k_map_done_low(const int32_t* d, int n, int* out) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  out[i] = d[i] == mdp::cur::kRunning ? 0 : ((d[i] == mdp::cur::kCollision || d[i] == mdp::cur::kCollisionPerson) ? 1 : 3);
+}
+
+const char* const kLowTermName[sim::kLrTerms] = {"progress", "time", "reach", "collision", "proximity", "smooth", "backward", "safety"};
+
+struct LowSum {   // LowRlStat 여러 환경 합
+  double term[sim::kLrTerms] = {}, steps = 0, episodes = 0, goals = 0, reached = 0, hit_wall = 0, hit_person = 0, stall = 0, timeout = 0, giveup = 0,
+         safe = 0, back = 0, reach_steps = 0, dist = 0, reach_len = 0;
+  void add(const sim::LowRlStat& s) {
+    for (int k = 0; k < sim::kLrTerms; ++k) term[k] += s.term[k];
+    steps += s.steps; episodes += s.episodes; goals += s.goals; reached += s.reached; hit_wall += s.hit_wall; hit_person += s.hit_person;
+    stall += s.stall; timeout += s.timeout; giveup += s.giveup; safe += s.safe_steps; back += s.back_steps; reach_steps += s.reach_steps;
+    dist += s.dist; reach_len += s.reach_len;
+  }
+  // 도달률 = 통과 ÷ 경로가 짜인 목표 (아직 가는 중인 목표도 분모 — 긴 구간에서는 시작·끝 수가 같아져 치우침이 사라진다)
+  double reach_rate() const { return goals > 0 ? reached / goals : 0; }
+  // 과제 구간 평균 속도 = 통과한 목표들의 처음 계획 길이 합 ÷ 걸린 시간 합 (기준선 low_run 의 "속도" 와 같은 정의)
+  double speed(double dt) const { return reach_steps > 0 ? reach_len / (reach_steps * dt) : 0; }
+  double wall100() const { return dist > 0 ? hit_wall / dist * 100 : 0; }
+  double person100() const { return dist > 0 ? hit_person / dist * 100 : 0; }
+};
+
+int run_low(Args a) {
+  sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
+  hc.cfg.action_mode = sim::kActPath;
+  hc.cfg.curriculum = 0;   // 모든 맵 고르게 (단계 커리큘럼은 탐사 판의 것 — 아래층은 목표 거리 등급이 그 자리, low_rl.h lowrl_goal_probe)
+  hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = hc.cfg.low_auto = 1;
+  hc.cfg.low_act_w = mdp::low::ACT;
+  const sim::LidarModel lidar = sim::load_lidar_model(a.model);
+  const sim::EnvCfg& c = hc.cfg;
+  const double dt_act = c.substeps * c.dt;
+  std::vector<std::string> skipped;
+  std::vector<sim::World> worlds = sim::load_scene_list(a.list, hc, &skipped);
+  if (worlds.empty()) throw std::runtime_error("학습 맵이 없음: " + a.list);
+  std::fprintf(stderr, "학습 맵 %zu 개 (안 닫혀 뺀 것 %zu)\n", worlds.size(), skipped.size());
+  xppo::PPOConfig pc;
+  pc.num_envs = a.envs > 0 ? a.envs : 1024;   // 잠정: RTX 3060 에서 위층 학습(약 5 GB)과 같이 돌 크기 (scripts/README "아래층 RL")
+  pc.gamma = 0.99f;                            // 잠정: 걸음 0.1 s × 100 = 10 s 지평 (과제 하나 3 ~ 15 m ≈ 4 ~ 20 s). rsl_rl PPO 기본값과 같음
+  pc.lr_max = a.lr_max > 0 ? a.lr_max : 1e-3f;
+  pc.desired_kl = 0.01f;                      // 잠정: rsl_rl 기본값. PPOConfig 기본 0.003 은 30 반복 시운전에서 학습률이 하한(1e-5)과 4e-4 사이를 오갔고 0.01 은 1e-3 에 머묾 (곡선은 비슷)
+  pc.mlp = a.mlp;
+  if (a.std_max > 0) pc.std_max = a.std_max;
+  if (a.entropy >= 0) pc.entropy_coef = a.entropy;
+  if (a.desired_kl >= 0) pc.desired_kl = a.desired_kl;
+  if (a.std_min > 0) pc.std_min = a.std_min;
+  if (a.bound_coef >= 0) pc.bound_coef = a.bound_coef;
+  if (a.chunk > 0) pc.chunk = a.chunk;
+  if (a.steps > 0) pc.steps_per_env = a.steps;
+  if (a.epochs > 0) pc.epochs = a.epochs;
+  if (a.minibatches > 0) pc.minibatches = a.minibatches;
+  if (a.gamma >= 0) pc.gamma = a.gamma;
+  if (a.lam >= 0) pc.lam = a.lam;
+  const int N = pc.num_envs, AW = mdp::low::ACT;
+  sim::Env env(hc, worlds, lidar, N, a.seed, true);
+  env.set_people_max(std::vector<int>(N, a.low_people));   // 판마다 사람 0 ~ 이 수 (people.h)
+  env.reset();
+  env.sync();
+  std::vector<sim::World> tests;
+  for (auto& t : a.test) tests.push_back(sim::build_world(stem(t), sim::load_scene(t), hc));
+  const xnet::ACSpec spec = xnet::explore_spec_low();
+  xppo::PPO ppo(pc, spec, a.seed);
+  const std::string dir = a.root + "/" + a.name, ckdir = dir + "/ckpt";
+  if (a.resume) {
+    const std::string p = ckdir + "/model_latest.bin";
+    if (!file_exists(p)) throw std::runtime_error("--resume: 체크포인트 없음 " + p);
+    ppo.load(p);
+    std::fprintf(stderr, "이어 학습: %s 반복 %d, 학습률 %.2e\n", p.c_str(), ppo.iteration(), ppo.learning_rate());
+  }
+  rf::Json terms = rf::Json::array();
+  for (int k = 0; k < sim::kLrTerms; ++k) terms.push(kLowTermName[k]);
+  rf::Json tests_meta = rf::Json::array();
+  for (auto& w : tests) tests_meta.push(w.name);
+  rf::Json limits = rf::Json::object();
+  limits.set("v", c.act_v_fwd).set("v_back", c.act_v_back).set("w", c.act_w_max);
+  rf::Json meta = rf::Json::object();
+  meta.set("kind", "explore_ppo").set("group", a.name).set("seed", (unsigned long long)a.seed).set("n_envs", N).set("ctrl_hz", 1.0 / dt_act).set("low", true)
+      .set("action_limits", limits).set("reward_terms", terms).set("n_train_maps", (unsigned long long)worlds.size()).set("test_maps", tests_meta)
+      .set("scene_list", a.list).set("steps_per_env", pc.steps_per_env).set("people_max", a.low_people).set("n_params", (long long)ppo.ac().n_params)
+      .set("ppo", rf::Json::object().set("epochs", pc.epochs).set("minibatches", pc.minibatches).set("clip", pc.clip).set("gamma", pc.gamma).set("lam", pc.lam)
+                      .set("entropy_coef", pc.entropy_coef).set("lr_max", pc.lr_max).set("desired_kl", pc.desired_kl).set("std_min", pc.std_min)
+                      .set("std_max", pc.std_max).set("bound_coef", pc.bound_coef));
+  rf::RunFolder::Options opt;
+  opt.every_s = 0;
+  if (a.resume) { opt.resume = true; opt.resume_iter = ppo.iteration(); }
+  rf::RunFolder run(dir, meta, opt);
+  rf::mkdirs(ckdir);
+  std::fprintf(stderr, "아래층 RL: 실행 폴더 %s, 환경 %d, 변수 %ld, 롤아웃 %d 걸음, γ %.4f, 사람 0 ~ %d\n", dir.c_str(), N, ppo.ac().n_params, pc.steps_per_env,
+               pc.gamma, a.low_people);
+
+  float* d_act;
+  int* d_done;
+  cudaMalloc(&d_act, sizeof(float) * AW * N);
+  cudaMalloc(&d_done, sizeof(int) * N);
+  std::vector<sim::LowRlStat> h_stat;
+  double total_steps = (double)ppo.iteration() * pc.steps_per_env * N;
+
+  // 주기 평가: 시험 맵마다 환경 E 개(앞 절반 사람 0 · 뒤 절반 사람 0 ~ 2), 자동 목표로 kEvalSteps 걸음. sample = 정책 분포 샘플(학습 롤아웃과 같은 행동 방식).
+  // 기준선과 같은 조건의 측정(경로 길이 구간별 목표)은 따로 low_policy_run — 이 평가는 학습 곡선용
+  constexpr int kEvalSteps = 600;   // 60 s
+  auto put_low = [&](rf::Json& j, const LowSum& s) {
+    j.set("goals", s.goals).set("reach_rate", s.reach_rate()).set("speed", s.speed(dt_act)).set("wall_per_100m", s.wall100()).set("person_per_100m", s.person100())
+        .set("stall", s.stall).set("timeout", s.timeout).set("giveup", s.giveup).set("safety_frac", s.steps > 0 ? s.safe / s.steps : 0.0)
+        .set("back_frac", s.steps > 0 ? s.back / s.steps : 0.0).set("dist", s.dist);
+  };
+  auto evaluate = [&](int it, bool sample) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const int E = std::max(2, std::min(a.eval_eps, N));
+    float* d_eact;
+    cudaMalloc(&d_eact, sizeof(float) * AW * E);
+    rf::Json rows = rf::Json::array();
+    LowSum all;
+    for (size_t ti = 0; ti < tests.size(); ++ti) {
+      std::vector<sim::World> one{tests[ti]};
+      sim::Env ev(hc, one, lidar, E, a.seed * 7919ull + 17 + ti, true);
+      std::vector<int> pm(E);
+      for (int i = 0; i < E; ++i) pm[i] = i < E / 2 ? 0 : 2;
+      ev.set_people_max(pm);
+      ev.reset();
+      ev.sync();
+      for (int step = 0; step < kEvalSteps; ++step) {
+        const sim::StepOut o = ev.outputs();
+        ppo.act_inference(o.low_img, o.low_1d, d_eact, E, sample ? (int64_t)step * (int64_t)tests.size() + (int64_t)ti : -1);
+        cudaDeviceSynchronize();
+        ev.step(d_eact);
+        ev.sync();
+      }
+      ev.take_low_stat(h_stat);
+      LowSum s[2];
+      for (int i = 0; i < E; ++i) s[i < E / 2 ? 0 : 1].add(h_stat[i]);
+      for (int p = 0; p < 2; ++p) {
+        rf::Json row = rf::Json::object();
+        row.set("eval", tests[ti].name).set("split", sample ? "test_sample" : "test").set("people", p ? 2 : 0).set("n", (double)(p ? E - E / 2 : E / 2));
+        put_low(row, s[p]);
+        rows.push(row);
+        std::fprintf(stderr, "  평가%s %s 사람 %d: 목표 %.0f 도달률 %.3f 속도 %.3f m/s 벽 %.3f·사람 %.3f /100 m 정체 %.0f 시간끝 %.0f 안전층 %.3f\n", sample ? "(샘플)" : "",
+                     tests[ti].name.c_str(), p ? 2 : 0, s[p].goals, s[p].reach_rate(), s[p].speed(dt_act), s[p].wall100(), s[p].person100(), s[p].stall,
+                     s[p].timeout, s[p].steps > 0 ? s[p].safe / s[p].steps : 0.0);
+      }
+      for (int i = 0; i < E; ++i) all.add(h_stat[i]);
+    }
+    cudaFree(d_eact);
+    rf::Json evj = rf::Json::object();
+    evj.set("iter", it).set("ckpt", "model_" + std::to_string(it)).set("rows", rows);
+    run.eval((sample ? "test_sample_it" : "test_it") + std::to_string(it), evj);
+    auto& r = run.row();
+    const std::string pre = sample ? "eval_sample/" : "eval/";
+    r.last(pre + "reach_rate", all.reach_rate());
+    r.last(pre + "speed", all.speed(dt_act));
+    r.last(pre + "wall_per_100m", all.wall100());
+    r.last(pre + "person_per_100m", all.person100());
+    r.last(pre + "goals", all.goals);
+    std::fprintf(stderr, "  평가%s 반복 %d: 도달률 %.3f 속도 %.3f m/s (%.1f s)\n", sample ? "(샘플)" : "", it, all.reach_rate(), all.speed(dt_act), ms_since(t0) / 1000);
+  };
+  auto save = [&](bool numbered) {
+    ppo.save(ckdir + "/model_latest.bin");
+    if (numbered) ppo.save(ckdir + "/model_" + std::to_string(ppo.iteration()) + ".bin");
+  };
+  if (!a.eval_ckpt.empty()) {
+    ppo.load(a.eval_ckpt);
+    evaluate(ppo.iteration(), false);
+    evaluate(ppo.iteration(), true);
+    run.end_update();
+    run.finish();
+    return 0;
+  }
+
+  const auto t_start = std::chrono::steady_clock::now();
+  const int it0 = ppo.iteration();
+  while (!g_stop) {
+    const int it = ppo.iteration();
+    if (a.iters > 0 && it - it0 >= a.iters) break;
+    if (a.minutes > 0 && ms_since(t_start) / 60000.0 >= a.minutes) break;
+    const auto t_it = std::chrono::steady_clock::now();
+    if (a.eval_every > 0 && it == 0) { evaluate(0, false); evaluate(0, true); }   // 배우기 전 정책 (비교 기준)
+    double t_act = 0, t_sim = 0, step_rew = 0;
+    for (int t = 0; t < pc.steps_per_env; ++t) {
+      auto t0 = std::chrono::steady_clock::now();
+      const sim::StepOut o = env.outputs();
+      ppo.act(o.low_img, o.low_1d, o.priv, d_act);
+      cudaDeviceSynchronize();
+      t_act += ms_since(t0);
+      t0 = std::chrono::steady_clock::now();
+      env.step(d_act);
+      env.sync();
+      const sim::StepOut o2 = env.outputs();
+      k_map_done_low<<<(N + 255) / 256, 256>>>(o2.done, N, d_done);
+      ppo.store(o2.reward, d_done);
+      cudaDeviceSynchronize();
+      t_sim += ms_since(t0);
+    }
+    const double iter_steps = (double)pc.steps_per_env * N;
+    total_steps += iter_steps;
+    const auto tu = std::chrono::steady_clock::now();
+    const sim::StepOut o = env.outputs();
+    const xppo::UpdateStats us = ppo.update(o.low_img, o.low_1d, o.priv);
+    const double t_upd = ms_since(tu), t_iter = ms_since(t_it);
+    if (!std::isfinite(us.value) || !std::isfinite(us.surrogate) || !std::isfinite(us.kl)) {
+      run.event("NaN at iteration " + std::to_string(it) + " — stop");
+      std::fprintf(stderr, "NaN: 반복 %d 에서 멈춤\n", it);
+      run.finish();
+      return 3;
+    }
+    env.take_low_stat(h_stat);
+    LowSum s;
+    for (int i = 0; i < N; ++i) s.add(h_stat[i]);
+    for (int k = 0; k < sim::kLrTerms; ++k) step_rew += s.term[k];
+    float ls[2] = {0.f, 0.f};
+    cudaMemcpy(ls, ppo.ac().log_std(), sizeof(ls), cudaMemcpyDeviceToHost);
+    size_t fr, tot;
+    cudaMemGetInfo(&fr, &tot);
+    const double ns = s.steps > 0 ? s.steps : 1;
+    auto& r = run.row();
+    r.last(rf::key::ITER, it);
+    r.last(rf::key::STEPS, total_steps);
+    r.last(rf::key::FPS, iter_steps / (t_iter / 1000));
+    r.last(rf::key::ITER_MS, t_iter);
+    r.last(rf::key::ROLLOUT_MS, t_act + t_sim);
+    r.last(rf::key::UPDATE_MS, t_upd);
+    r.last("time/act_ms", t_act);
+    r.last("time/sim_ms", t_sim);
+    r.sum(rf::key::N_EPISODES, s.episodes);
+    r.last(rf::key::STEP_REWARD_MEAN, step_rew / ns);
+    if (s.episodes > 0) {
+      r.mean_w(rf::key::COLLISION_RATE, (s.hit_wall + s.hit_person) / s.episodes, s.episodes);
+      r.mean_w(rf::key::PERSON_COLLISION_RATE, s.hit_person / s.episodes, s.episodes);
+    }
+    for (int k = 0; k < sim::kLrTerms; ++k) r.last(rf::reward_key(kLowTermName[k]), s.term[k] / ns);   // 걸음당 평균
+    r.last("low/goals", s.goals);
+    r.last("low/reach_rate", s.reach_rate());
+    r.last("low/speed", s.speed(dt_act));
+    r.last("low/reach_len_mean", s.reached > 0 ? s.reach_len / s.reached : 0.0);
+    r.last("low/wall_per_100m", s.wall100());
+    r.last("low/person_per_100m", s.person100());
+    r.last("low/stall_per_goal", s.goals > 0 ? s.stall / s.goals : 0.0);
+    r.last("low/timeout_per_goal", s.goals > 0 ? s.timeout / s.goals : 0.0);
+    r.last("low/giveup_per_goal", s.goals > 0 ? s.giveup / s.goals : 0.0);
+    r.last("low/safety_frac", s.safe / ns);
+    r.last("low/back_frac", s.back / ns);
+    r.last("low/policy_frac", s.steps / iter_steps);
+    r.last("low/mean_speed_all", s.dist / (ns * dt_act));
+    r.last(rf::key::PG_LOSS, us.surrogate);
+    r.last(rf::key::VALUE_LOSS, us.value);
+    r.last(rf::key::ENTROPY_LOSS, -us.entropy);
+    r.last(rf::key::APPROX_KL, us.kl);
+    r.last("train/kl0", us.kl0);
+    r.last(rf::key::GRAD_NORM, us.grad_norm);
+    r.last(rf::key::LEARNING_RATE, us.lr);
+    r.last(rf::key::VALUE_MEAN, us.mean_value);
+    r.last(rf::key::STD, (std::exp(ls[0]) + std::exp(ls[1])) / 2.0);
+    r.last(rf::key::LOG_STD, (ls[0] + ls[1]) / 2.0);
+    r.last("train/std_v", std::exp(ls[0]));
+    r.last("train/std_w", std::exp(ls[1]));
+    r.last(rf::key::GPU_MEM_MB, (tot - fr) / 1048576.0);
+    const int it_now = ppo.iteration();
+    std::fprintf(stderr,
+                 "반복 %d: 목표 %.0f 도달률 %.3f 속도 %.3f m/s 벽 %.3f·사람 %.3f /100 m 정체 %.0f 시간끝 %.0f 안전층 %.3f 후진 %.3f 걸음보상 %.4f | value %.4f kl %.4f lr %.2e "
+                 "σ %.3f %.3f | act %.0f sim %.0f update %.0f ms (%.0f 걸음/s)\n",
+                 it, s.goals, s.reach_rate(), s.speed(dt_act), s.wall100(), s.person100(), s.stall, s.timeout, s.safe / ns, s.back / ns, step_rew / ns, us.value,
+                 us.kl, us.lr, std::exp(ls[0]), std::exp(ls[1]), t_act, t_sim, t_upd, iter_steps / (t_iter / 1000));
+    if (a.eval_every > 0 && it_now % a.eval_every == 0) { evaluate(it_now, false); evaluate(it_now, true); }
+    run.end_update();
+    if (a.ckpt_every > 0 && it_now % a.ckpt_every == 0) save(true);
+    else if (it_now % 10 == 0) save(false);
+  }
+  save(a.ckpt_every > 0);
+  run.event("stop at iteration " + std::to_string(ppo.iteration()) + (g_stop ? " (signal)" : ""));
+  run.finish();
+  std::fprintf(stderr, "끝: 반복 %d, 체크포인트 %s\n", ppo.iteration(), (ckdir + "/model_latest.bin").c_str());
+  cudaFree(d_act);
+  cudaFree(d_done);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -243,6 +527,8 @@ int main(int argc, char** argv) {
       else if (k == "--resume") a.resume = true;
       else if (k == "--hier") a.hier = true;
       else if (k == "--graph") a.graph = true;
+      else if (k == "--low") a.low = true;
+      else if (k == "--people") a.low_people = std::stoi(nx());
       else if (k == "--graph-share") a.graph_share = std::stoi(nx());
       else if (k.rfind("--graph-", 0) == 0) { const std::string v = nx(); if (!sim::graph_arg(a.gargs, k, v.c_str())) throw std::runtime_error("모르는 인자 " + k); }
       else if (k == "--steps") a.steps = std::stoi(nx());
@@ -267,6 +553,10 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_sig);
   std::signal(SIGTERM, on_sig);
   try {
+    if (a.low) {
+      if (a.hier || a.graph) throw std::runtime_error("--low 는 --hier·--graph 와 같이 못 씀");
+      return run_low(a);
+    }
     // ---- 시뮬
     sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
     if (a.hier && a.graph) throw std::runtime_error("--hier 와 --graph 는 같이 못 씀");

@@ -259,7 +259,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   EnvState e = b.st[env];
   e.collided = 0;
   if (sub == 0) gdec_begin(b, e, env);
-  apply_action(b, e, env, actions + mdp::act::DIM * env);
+  apply_action(b, e, env, actions + (size_t)lowrl_act_w(b) * env);
   int new_wall = 0, new_floor = 0, d_known = 0, n_new = 0, n_occ = 0;
   sh.scanned = 0;
   const int tick0 = e.tick;
@@ -319,7 +319,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   }
   if (was_done) reset_env(b, e, env);
   write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, was_done),
-            sub < 0 || (b.gdec ? b.gdec[env].reason != kGdRun : sub == c.decide_steps - 1) || (b.lowcmd && b.low[env].hold));   // 깊이는 묶음의 마지막 걸음에만 (아래층 단독 과제: 결정이 끝난 걸음)
+            sub < 0 || (b.gdec ? b.gdec[env].reason != kGdRun : sub == c.decide_steps - 1) || (b.lowcmd && b.low[env].hold) || b.lowrl);   // 깊이는 묶음의 마지막 걸음에만 (아래층 단독 과제: 결정이 끝난 걸음)
   shape_obs(b, e, env, sh.reach);   // approach·front_cells 보상 (GPU env_reach_kernel 과 같은 때)
   b.st[env] = e;
 }
@@ -333,10 +333,55 @@ void hier_plan_cpu(const EnvBatch& b, EnvState& e, int env, int slot) { plan_cpu
 // 깊이 카메라 장애물 층 갱신 — include/obs_ref.h camlayer_ref (실물 노드 limo_fire_rl 도 같은 함수)
 void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env) { camlayer_ref(b, e, env); }
 
+static_assert(kLrNearCell == mdp::obsgen::kNearCell, "low_rl.h 가까운 지도 픽셀 크기");
+// 아래층 RL 준비 단계 (include/low_rl.h 머리말 — GPU env_low_prepare_gpu 와 같은 차례): [새 목표] → 깊이 카메라 층·경로 계획(차례일 때만) → 정책 관측
+static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
+  const EnvCfg& c = b.cfg;
+  EnvState e = b.st[env];
+  if (c.low_auto && b.lowrl[env].need_goal) {
+    const mdp::Robot rb = path_rb_plan(c, mdp::obsgen::reach_robot(c));
+    uint64_t key = ~0ull;
+    for (int j = 0; j < kLrProbes; ++j) {
+      const uint64_t k = lowrl_goal_probe(b, e, env, j, rb);
+      key = k < key ? k : key;
+    }
+    lowrl_goal_set(b, e, env, key);
+  }
+  if (lowrl_due(b, e, env)) {
+    hier_camlayer_cpu(b, e, env);
+    plan_cpu(b, e, env, lowrl_policy(b, env) ? 0 : (actions ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1));
+    lowrl_planned(b, e, env);
+  }
+  lowrl_pack(b, e, env);
+  for (int i = 0; i < kLowImg; ++i) b.low_img[(size_t)env * kLowImg + i] = lowrl_img(b, e, env, i);
+  b.st[env] = e;
+}
+void env_low_prepare_cpu(const EnvBatch& b, const float* actions) {
+  if (!b.lowrl) return;
+  for_envs(b.n_env, [&](int env) { low_prepare_env(b, actions, env); });
+}
+
 void env_step_cpu(const EnvBatch& b, const float* actions) {
   const EnvCfg& c = b.cfg;
   if (c.action_mode != kActPath) {
     for_envs(b.n_env, [&](int env) { step_env(b, actions, env, -1); });
+    return;
+  }
+  if (b.lowrl) {   // 아래층 RL: 한 번 = 걸음 하나 (계획은 준비 단계가 — 걸음 끝, 관측 앞)
+    for_envs(b.n_env, [&](int env) {
+      step_env(b, actions, env, 0);
+      b.reward[env] = b.racc[env];
+      for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = b.tacc[(size_t)env * mdp::rew::kTerms + k];
+      if (b.done[env] != 0) {
+        Shared sh;
+        Shared& g = b.scratch[env];
+        EnvState e = b.st[env];
+        reset_env(b, e, env);
+        write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, true));
+        b.st[env] = e;
+      }
+      if (c.low_auto) low_prepare_env(b, actions, env);
+    });
     return;
   }
   // 계층형: GPU env_step_gpu 와 같은 차례 — 결정(경로 계획) → decide_steps 걸음 → 묶음 끝
@@ -379,6 +424,10 @@ void env_reset_cpu(const EnvBatch& b) {
     b.reward[env] = 0.f;
     b.done[env] = 0;
     for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = 0.f;
+    if (b.lowrl) {
+      lowrl_clear(b.lowrl[env]);
+      if (b.cfg.low_auto) low_prepare_env(b, nullptr, env);
+    }
   });
 }
 

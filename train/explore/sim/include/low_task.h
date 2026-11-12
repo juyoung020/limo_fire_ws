@@ -55,7 +55,7 @@ struct PathWhy {
 // 호스트 → 환경 (단독 과제). 결정마다 호스트가 씀
 struct LowCmd {
   int32_t target;    // 목표 칸 (cy · gw + cx, −1 없음) — follow 1 일 때만 봄
-  int32_t follow;    // 0 보통 계층형(예열 탐사) · 1 단독 과제
+  int32_t follow;    // 0 보통 계층형(예열 탐사) · 1 단독 과제 · 2 단독 과제를 정책이 몲 (아래층 RL — cfg.low_rl 일 때만)
 };
 
 // 판 누적 (환경마다 하나)
@@ -98,6 +98,68 @@ struct LowEp {
   float x0, y0;                    // 이번 걸음 처음 참 자세
   int32_t a_step;                  // 정체 닻: 이 자리에서 low_idle_d 를 벗어나면 닻을 옮김
   float ax, ay;
+};
+
+// ---------- 아래층 RL (2026-11-12, EnvCfg::low_rl — 걸음 함수·보상 상수는 low_rl.h, 설명은 mdp/README "아래층 RL") ----------
+// 단독 과제(low_task) 위에 얹는 스위치. 켜면 env.step 한 번 = 속도 행동 걸음 하나(0.1 s — 묶음 없음)이고, LowCmd::follow == 2 인 환경은
+// 규칙 추종기 대신 행동 줄의 (v, ω) 가 로봇을 몬다 (경로 계획·안전층·단독 과제 판 끝 규칙은 그대로). follow 0·1 은 규칙 추종 그대로(예열 탐사).
+// 끄면(EnvBatch::lowrl = nullptr) 관련 함수는 첫 줄에서 돌아가고 환경은 한 비트도 안 바뀐다.
+
+// 환경마다 걸음 사이에 들고 가는 값
+struct LowRl {
+  uint64_t rng;        // 자동 목표(low_auto) 난수 — 환경 난수(EnvState::rng)와 따로 (판 흐름을 안 바꿈)
+  int32_t p_step;      // 마지막으로 계획 단계를 돈 걸음 번호 (low_period 걸음마다 · 목표가 바뀌면 바로)
+  int32_t tgt_seen, fol_seen;   // 그때 본 LowCmd
+  int32_t need_goal;   // 자동 목표: 새 목표를 뽑을 차례
+  int32_t rem_ok;      // rem_prev 가 지금 경로의 값인가
+  float rem_prev;      // 지난 관측 때 남은 경로 길이 (m — 경로까지 거리 + 경로 위 남은 길이)
+  int32_t pol, safe;   // 이번 걸음: 정책이 몰았나 · 안전층(앞 틈·몸통 쓸림)이 명령을 고쳤나
+  int32_t g_step;      // 지금 목표를 받은 걸음 번호
+  float g_len;         // 지금 목표의 처음 계획 길이 (m, < 0 = 아직 계획 전)
+  // 위층에 알리는 막힘 신호: 이번 결정 구간(계획 단계 ~ 다음 계획 단계)에 단독 과제의 정체 판정(low_idle_steps 동안 low_idle_d 를 못 벗어남 —
+  // LowEp::end == kLowEndStall)이 났나 · 그때 가던 목적지 칸(−1 없음). 정체가 판을 끝내도 남는다 — 다음 계획 단계 뒤 첫 걸음이 지움.
+  // 위층(같은 판에서 1 Hz 로 목적지를 넣는 쪽)이 그 후보를 빼고 다시 고르는 데 쓸 자리 (호스트: Env::get_low_rl, 장치: EnvBatch::lowrl)
+  int32_t stall;
+  int32_t stall_tgt;
+};
+
+// 보상 항 (차례 = LowRlStat::term 칸 번호 — 도구·학습기가 이름표를 같은 차례로 가짐)
+enum : int32_t { kLrProgress = 0, kLrTime, kLrReach, kLrCollision, kLrProximity, kLrSmooth, kLrBack, kLrSafety, kLrTerms };
+
+// 환경마다 누적 (정책이 몬 걸음만). 호스트가 가져가며 0 으로 (Env::take_low_stat) — 학습기가 반복마다 한 번
+struct LowRlStat {
+  float term[kLrTerms];     // 보상 항 합
+  int32_t steps;            // 정책이 몬 걸음
+  int32_t episodes;         // 끝난 판
+  int32_t goals;            // 경로가 짜인 목표 (과제 구간 분모)
+  int32_t reached;          // 통과 반경에 든 목표
+  int32_t hit_wall, hit_person, stall, timeout;   // 판 끝 까닭 (나머지 = 목표 수를 채움)
+  int32_t giveup;           // 경로를 못 짰거나 경로 끝이 통과 반경 밖 (새 목표를 받음)
+  int32_t safe_steps;       // 안전층이 명령을 고친 걸음
+  int32_t back_steps;       // 후진 명령 걸음
+  int32_t reach_steps;      // 통과한 목표들의 걸린 걸음 합
+  float dist;               // 이동 거리 (m)
+  float reach_len;          // 통과한 목표들의 처음 계획 길이 합 (m) — ÷ (reach_steps × 걸음 시간) = 과제 구간 평균 속도
+};
+
+// 아래층 관측 (정책 입력 — 위층과 같은 원본 버퍼(obs_img·obs_1d·지도·깊이 카메라 층·경로)에서 잘라 만든다, low_rl.h lowrl_img·lowrl_pack):
+//  그림 u8 [kLowImg]: 가까운 지도 6 × 64 × 64 (obs_img 그대로, 예약 물체 채널 kLowCamCh 에 깊이 카메라 장애물 층) | 라이다 1 × 32 × 32 | 깊이 1 × 40 × 64 (obs_img 그대로)
+//  숫자 float [kLow1d]
+constexpr int kLowLidarHW = mdp::low::LIDAR_HW;                       // 라이다 그림 한 변: 각도 칸 248 × 프레임 4 를 Z 차례로 (픽셀 Morton 번호 4·j + f = 칸 j·프레임 f)
+constexpr int kLowLidarOff = mdp::obs::NEAR_SIZE;
+constexpr int kLowDepthOff = kLowLidarOff + kLowLidarHW * kLowLidarHW;
+constexpr int kLowImg = kLowDepthOff + mdp::obs::DEPTH_SIZE;
+static_assert(kLowImg == mdp::low::IMG && kLowLidarOff == mdp::low::LIDAR_OFF && kLowDepthOff == mdp::low::DEPTH_OFF, "아래층 그림 배치 = mdp/obs_layout.h");
+constexpr int kLowCamCh = 2;                          // 가까운 지도의 예약 물체 채널 (위층 관측에서는 늘 0)
+enum : int32_t {
+  kLoWheelV = 0, kLoGyro, kLoSlip, kLoEkfV, kLoEkfW,   // 자기 상태 (obs_1d 의 같은 칸 그대로)
+  kLoSub = 5,          // 부목표 2 개 × (거리 / kLrSubNorm, sin, cos) — 경로 위 kLrLook[0]·[1] m 앞
+  kLoGoal = 11,        // 목적지 (거리 / kLrGoalNorm, sin, cos)
+  kLoAct = 14,         // 직전 행동 4 개 × (v, ω) — obs_1d 직전 행동 칸의 v·ω
+  kLoHasPath = 22,     // 경로 있음 0·1
+  kLoRem = 23,         // 남은 경로 길이 / kLrGoalNorm
+  kLoHasGoal = 24,     // 목적지 있음 0·1
+  kLow1d = mdp::low::N1D          // 뒤는 예약 (0)
 };
 
 }  // namespace sim

@@ -6,6 +6,7 @@
 | `play.cpp` | 학습한 정책 돌려 보기 |
 | `frontier_run.cpp` | 프론티어 탐사 기준선을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) · `--modes slot0`(·`slot0_nosafe`) 는 계층형 규칙 정책(늘 0 번 후보)을 같은 판으로 |
 | `oracle_run.cpp` | **측정 도구 — 정답을 씀.** 학습 맵 단계마다 정답 격자 경로·참 자세·정답 사람 위치로 모는 oracle(`--policy oracle`, 목표는 로봇 지도 굵은 프론티어, 성공 정의 그대로)과 slot0 규칙 정책을 같은 판으로 돌려 성공 상한을 잰다(`--stage 0..3 --people on\|off --out 판.tsv`). 시뮬은 env_api 로만 몰고 정답은 러너 안에서만 — 학습 환경·관측과 무관. 빌드는 baselines/frontier, 결과는 [mdp/README](../mdp/README.md) "커리큘럼" |
+| `low_run.cpp` | 아래층 기준선(mdp/README "아래층 계측·단독 과제") — 빌드는 baselines/frontier 의 `low_run`. 여기 `CMakeLists.txt` 의 `low_policy_run` 은 같은 파일에 정책 걸음 루프를 넣은 것: `low_policy_run --mode follow --policy <체크포인트> --scenes …` 가 `train --low` 정책을 기준선과 같은 단독 과제(예열 탐사 → 경로 3~15 m 목표, 사람 0·2 차례로)로 재고 ROADMAP "2 단계 통과 조건" 줄마다 통과·불통과를 낸다. `--policy` 대신 `--step` 이면 같은 걸음 루프에서 규칙 추종기(대조) |
 
 ## train (`train.cpp`, 빌드 `CMakeLists.txt`)
 
@@ -30,6 +31,7 @@ cmake --build <빌드> -j8 --target train
 | `--list` · `--env` · `--model` | scenes/train/list.tsv · sim/config/env.yaml · sensor_model.yaml | 학습 맵 목록·시뮬 설정 |
 | `--hier` | 끔 | 계층형(mdp/README "계층형"): 1 s 마다 프론티어 후보 8 개 중 하나(가린 범주 분포, `xnet::explore_spec_hier`) → 시뮬이 경로 계획·추종. 반복 = 결정 24 개(= 시뮬 240 걸음), γ = 0.999¹⁰, 걸음/s 는 시뮬 걸음 단위. 재생 녹화는 아직 없음(`--replay-every` 무시) · 체크포인트는 기본 구조와 안 섞임(층 이름이 다름) |
 | `--graph` | 끔 | 그래프 모드(network/README "그래프 어텐션 정책", HEADER 식): 관측 = 노드 그래프(32×32 격자·특징 5·간선 비트), 행동 = 이웃 노드 하나(최대 24, 가린 범주 분포, `xnet::explore_spec_graph`). 반복 = 환경마다 결정 16 개, 결정 하나의 시뮬 걸음 수는 가변(실측 평균 33 걸음)이라 걸음/s 는 `get_gdec` 의 실제 걸음 합으로 센다. PPO 값은 `xppo::graph_ppo_config()` 한곳(γ 0.95 결정당·환경 512·에포크 3·학습률 1e-5 시작, 범위 1e-6~1e-4 — ppo/README "그래프 모드 학습 속도"). `--graph-<이름> <값>` 은 시뮬 그래프 설정(`sim::graph_arg`), `--graph-share 1` 은 가치 몸통 공유(갱신 약 2 배 빠름, 구조가 바뀌므로 기본 끔). 재생 녹화는 아직 없음. `--hier` 와 같이 못 씀 |
+| `--low` | 끔 | 아래층 RL(mdp/README "아래층 RL", `xnet::explore_spec_low`): 단독 과제를 정책이 10 Hz 로 — 행동 (v, ω), 환경이 목표를 스스로 뽑음. 환경 기본 1024(학습 중 GPU 메모리 약 4.4 GB, 반복 하나 24 걸음 약 2.2 s) · γ 0.99 · 목표 KL 0.01(둘 다 rsl_rl 기본값, 잠정) · `--people 2`(판마다 사람 0 ~ 이 수) · 커리큘럼 없음(모든 맵 고르게). progress.jsonl 은 `low/reach_rate`·`low/speed`(통과한 목표의 계획 길이 ÷ 걸린 시간)·100 m 당 충돌·안전층 걸음 비율과 `reward/<항>`(걸음당). 평가는 시험 맵마다 60 s(앞 절반 사람 0 · 뒤 절반 0~2, 결정적 + 샘플) — 학습 곡선용이고 기준선과 견주는 값은 `low_policy_run` |
 | `--steps` · `--epochs` · `--minibatches` · `--gamma` · `--lam` | 모드 기본 | 롤아웃 길이(환경마다 결정/걸음 수)·에포크·미니배치·할인율·GAE λ 덮어쓰기 (`--envs × --steps` 가 `--minibatches` 로 나눠져야 함) |
 
 - done 매핑: `mdp::cur::terminal` (1 선언 성공·2 벽 충돌·4 선언 실패·5 사람 충돌) → PPO 1 종료, 3 → 끊김(가치로 메움).

@@ -151,6 +151,11 @@ struct EnvCfg {
   int low_stat, low_task;          // 1 = 걸음 분류 누적(EnvBatch::low) · 1 = 호스트가 목표 칸을 넣는 단독 과제(EnvBatch::lowcmd, low_stat 도 켜짐)
   int low_goals, low_idle_steps, low_time_steps;   // 판 끝: 목표 수 · 정체 걸음 수 · 과제 시간 걸음 수
   float low_pass_r, low_idle_d, low_front;         // 통과 반경 (m) · 정체 거리 (m) · 사람 충돌 방위의 앞 반각 (rad)
+  // 아래층 RL (include/low_task.h "아래층 RL" · low_rl.h — 스위치는 도구·학습기가 켠다, 기본 0. low_task 도 켜야 함)
+  int low_rl;                      // 1 = env.step 한 번이 걸음 하나, follow 2 인 환경은 행동 줄 (v, ω) 로 (EnvBatch::lowrl)
+  int low_auto;                    // 1 = 환경이 목표를 스스로 뽑고 모든 환경이 follow 2 (학습) · 0 = 호스트가 LowCmd 를 넣고 Env::low_prepare (평가·두 층 같이)
+  int low_period;                  // 경로를 다시 살피는 주기 (걸음 — 목표가 바뀌면 바로). 0 이면 decide_steps
+  int low_act_w;                   // 행동 줄 한 환경 칸 수 (정책 환경은 a[0] = v, a[1] = ω 만 읽음). 0 이면 mdp::act::DIM
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -377,6 +382,11 @@ struct EnvBatch {
   // 아래층 계측·단독 과제 (low_stat·low_task 일 때만, 아니면 nullptr — include/low_task.h): 판 누적 [env] · 호스트가 넣는 목표 [env]
   LowEp* low;
   LowCmd* lowcmd;
+  // 아래층 RL (low_rl 일 때만, 아니면 nullptr — include/low_task.h): 걸음 사이 값 [env] · 누적 [env] · 정책 관측 그림 [env · kLowImg] · 숫자 [env · kLow1d]
+  LowRl* lowrl;
+  LowRlStat* lowstat;
+  uint8_t* low_img;
+  float* low_1d;
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)
@@ -645,6 +655,7 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
 #include "hier_path.h"   // 계층형 경로 추종 (apply_action 이 부름)
 #include "graph_env.h"   // 그래프 모드 풀 (hier_path.h 뒤)
 #include "low_step.h"    // 아래층 계측·단독 과제 걸음 함수
+#include "low_rl.h"      // 아래층 RL 걸음 함수 (low_step.h 뒤)
 
 // 계층형 관측 "직전 행동": 이번 걸음 명령 (v, ω) — 추종기·smoother·안전층 뒤 /cmd_vel — 을 정규 단위로 밀어 넣음 (vy·선언 0).
 // 실물 노드(limo_fire_rl)는 Nav2 가 낸 /cmd_vel 로 같은 함수를 부른다
@@ -737,7 +748,8 @@ DEV void action_begin(const EnvCfg& c, EnvState& e, const float* a) {
 }
 DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
   const EnvCfg& c = b.cfg;
-  action_begin(c, e, a);
+  if (b.lowrl) lowrl_begin(b, e, env);   // 아래층 RL: 행동 줄이 좁을 수 있어(low_act_w) 선언 칸을 안 읽음
+  else action_begin(c, e, a);
   if (c.action_mode == kActVelocity) {
     float v, vy, w;
     float n0, n1, n2;
@@ -783,6 +795,7 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
   } else if (c.action_mode == kActPath) {
     // 계층형: 경로(결정 때 plan 단계가 짬)를 추종기가 따라감 → velocity_smoother(행동 주기) → 안전층. 고른 후보 번호는 결정 때 p_slot 에.
     // 세 토막(path_step_a·b·c) 사이에 무거운 검사 둘(RPP 충돌 검사 · collision_monitor)이 낀다 — GPU env_act_kernel 은 그 둘을 블록 스레드로 나눠 본다
+    if (lowrl_act(b, e, env, a)) return;   // 아래층 RL: 정책이 모는 환경 (low_rl.h — 아니면 false)
     PathStep s;
     path_step_a(b, e, env, nullptr, s);
     const bool imm = s.want_imm && path_imminent(b, e, env, s.vc, s.wc, s.cd);
@@ -1407,6 +1420,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   else if (e.step >= c.max_steps) e.done = mdp::cur::kTruncated;
   else if (low_end) e.done = mdp::cur::kTruncated;   // 단독 과제 끝 (까닭은 LowEp::end)
   if (e.done) episode_end(b, e, env, cov, dt_act);
+  lowrl_finish(b, e, env);   // 아래층 RL: 보상·누적 (끄면 아무것도 안 함)
 }
 
 // 스레드 0, 관측의 프론티어 요약이 나온 바로 뒤 (GPU env_reach_kernel · CPU env_ref.cpp — write_obs 다음): approach·front_cells 항 (rewards.h).

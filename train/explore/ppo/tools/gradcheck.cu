@@ -15,6 +15,7 @@
 //   gradcheck --full     obs_layout.h 실제 크기 구조
 //   gradcheck --negative ELU 역방향을 일부러 틀리게 → 검사가 잡아야(실패를 찾아야) 종료 0
 //   gradcheck --hier     계층형 구조(슬롯 머리 + 가린 범주 분포 — log π·엔트로피·KL, 빈 칸·고를 것 없는 샘플 섞음)
+//   gradcheck --low      아래층 RL 구조(연속 행동 2 개 — --full 과 같이 쓰면 explore_spec_low: 가까운 지도·라이다 그림·깊이 가지)
 //   gradcheck --graph    그래프 어텐션 정책(임베딩·층 정규화·희소 어텐션·FF·디코더·포인터·가치 머리, 작은 구조). --share 면 가치가 정책 몸통을 같이 씀.
 //                        --negative 와 같이 쓰면 층 정규화 역방향을 틀리게
 #include <algorithm>
@@ -40,6 +41,7 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[i], "--graph")) graph = true;
     if (!std::strcmp(argv[i], "--share")) share = true;
     if (!std::strcmp(argv[i], "--hier")) setenv("GC_HIER", "1", 1);   // 계층형: 슬롯 머리 + 가린 범주 분포 (gc_impl.cuh)
+    if (!std::strcmp(argv[i], "--low")) setenv("GC_LOW", "1", 1);     // 아래층 RL: 연속 행동 2 개, --full 이면 explore_spec_low (gc_impl.cuh)
     if (!std::strcmp(argv[i], "--mlp") && i + 1 < argc) mlp = std::atoi(argv[++i]);
   }
   const int K = full ? 8 : 16;

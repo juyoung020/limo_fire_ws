@@ -8,6 +8,9 @@
 //       경로 길이 구간이 고르게 뽑아 추종기에 준다(통과하면 다음 목표). 환경 --episodes 개 × 환경당 판 --per-env 개.
 //   low_run --mode verify --scenes a.scene [--people K] [--episodes 8] [--per-env 2] [--warm 3,8]
 //       단독 과제를 GPU 판·CPU 참조판에 같은 명령으로 나란히 돌려 결정마다 상태·지도·관측·보상·끝·계측 누적을 비트 비교
+//   low_policy_run --mode follow --policy <체크포인트> --scenes a.scene [...] [--people 0,2] (그 밖은 follow 와 같음)   ← scripts/CMakeLists.txt 의 다른 타깃
+//       같은 단독 과제를 아래층 RL 정책(train --low 의 체크포인트)으로: 걸음(0.1 s)마다 정책이 (v, ω) 를 낸다. 같은 표 + ROADMAP "2 단계 통과 조건" 판정.
+//       --policy 대신 --step 이면 같은 걸음 루프에서 규칙 추종기 (기준선이 다시 나오는지 보는 대조)
 //   공통: [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml] [--frontier baselines/frontier/config/frontier.yaml] [--cpu]
 //         [--time-limit S] [--max-goals G] (단독 과제 판 끝 규칙을 설정 파일 대신)
 //
@@ -25,6 +28,12 @@
 #include "env_api.h"
 #include "frontier.h"
 #include "frontier_explorer.h"
+#ifdef LOW_RUN_POLICY   // low_policy_run (scripts/CMakeLists.txt) — 정책 측정
+#include <memory>
+
+#include "actor_critic.h"
+#include "ppo.h"
+#endif
 
 namespace {
 
@@ -49,6 +58,9 @@ struct Args {
   float len[4] = {3.f, 6.f, 10.f, 15.f};         // 경로 길이 구간 경계 (m) — 설계 문서 3~15 m 를 셋으로 (잠정)
   float time_limit = -1.f;
   int max_goals = -1;
+  std::string policy;             // low_policy_run: 아래층 정책 체크포인트
+  bool step = false;              // low_policy_run: 정책 없이 걸음 루프(규칙 추종기)
+  std::vector<int> people_list;   // --people 에 쉼표로 여럿 (low_policy_run 이 차례로 돈다)
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
 };
 
@@ -606,6 +618,283 @@ int run_follow(const Args& a, bool verify) {
   return bad ? 1 : 0;
 }
 
+#ifdef LOW_RUN_POLICY
+// -------------------------------------------------------------------------------------------------------------- 정책 (low_policy_run)
+// 단독 과제를 아래층 RL 걸음(cfg.low_rl — env.step 한 번 = 0.1 s 걸음 하나)으로 돌린다. 예열·목표 뽑기·유효 판정·기록·표는 run_follow 와 같고,
+// 과제 구간을 모는 것만 정책(LowCmd::follow 2, --policy) 또는 규칙 추종기(follow 1, --step — 같은 루프에서 기준선이 다시 나오는지 보는 대조)다.
+// 다른 점: 호스트가 결정(1 s)이 아니라 걸음마다 보므로 통과한 바로 다음 걸음에 새 목표가 들어간다 (기준선은 결정 끝까지 쉼 — 쉰 걸음은 어느 쪽도 과제 시간에 안 셈)
+struct PolRes {
+  std::string scene;
+  int people;
+  double speed, wall100, front100, reach, reach_x, goals;
+};
+
+int run_policy(const Args& a) {
+  sim::EnvHostCfg hc = base_cfg(a);
+  hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
+  hc.cfg.low_auto = 0;    // 목표는 호스트가 (Env::low_prepare)
+  hc.cfg.low_act_w = 0;   // 행동 줄 폭 mdp::act::DIM — 예열 환경이 후보 번호를 읽음
+  if (a.time_limit > 0) hc.cfg.low_time_steps = (int)std::lround(a.time_limit / (hc.cfg.substeps * hc.cfg.dt));
+  if (a.max_goals > 0) hc.cfg.low_goals = a.max_goals;
+  const int DS = hc.cfg.decide_steps;
+  const double dt = (double)hc.cfg.substeps * hc.cfg.dt, dec_s = dt * DS;
+  const int warm_max = (int)std::ceil(a.warm_hi / dec_s) + 1;
+  hc.cfg.max_steps = (warm_max + 200) * DS + hc.cfg.low_time_steps;
+  const sim::LidarModel lidar = sim::load_lidar_model(a.model);
+  const sim::EnvCfg& c = hc.cfg;
+  const int N = a.episodes, M = a.per_env, AW = mdp::act::DIM, PW = mdp::low::ACT;
+  const bool use_pol = !a.policy.empty();
+  const int fol = use_pol ? 2 : 1;
+  std::unique_ptr<xppo::PPO> ppo;
+  if (use_pol) {
+    xppo::PPOConfig pc;
+    pc.num_envs = N;
+    ppo.reset(new xppo::PPO(pc, xnet::explore_spec_low(), 1));
+    ppo->load(a.policy);
+    std::printf("정책: %s (반복 %d, 변수 %ld) — 결정적(평균 행동)\n", a.policy.c_str(), ppo->iteration(), (long)ppo->ac().n_params);
+  } else {
+    std::printf("정책 없음(--step): 같은 걸음 루프에서 규칙 추종기\n");
+  }
+  std::printf("단독 과제 설정: 통과 반경 %.2f m · 정체 %d 걸음 동안 %.2f m · 시간 %d 걸음 · 목표 %d 개 · 앞 시야 ±%.1f 도 · 예열 %.0f~%.0f s · 경로 길이 구간 %.0f/%.0f/%.0f/%.0f m\n",
+              c.low_pass_r, c.low_idle_steps, c.low_idle_d, c.low_time_steps, c.low_goals, c.low_front * 57.29578f, a.warm_lo, a.warm_hi, a.len[0], a.len[1], a.len[2], a.len[3]);
+  const std::vector<int> people_set = a.people_list.empty() ? std::vector<int>{0, 2} : a.people_list;
+  std::vector<PolRes> res;
+  int bad = 0;
+  uint64_t h_all = 1469598103934665603ull;
+  float *d_act, *d_zero, *d_pol;
+  cudaMalloc(&d_act, sizeof(float) * AW * N);
+  cudaMalloc(&d_zero, sizeof(float) * AW * N);
+  cudaMalloc(&d_pol, sizeof(float) * PW * N);
+  cudaMemset(d_zero, 0, sizeof(float) * AW * N);
+  cudaMemset(d_act, 0, sizeof(float) * AW * N);
+  for (int people : people_set)
+  for (size_t wi = 0; wi < a.scenes.size(); ++wi) {
+    std::vector<sim::World> one{sim::build_world(stem(a.scenes[wi]), sim::load_scene(a.scenes[wi]), hc)};
+    const sim::World& W = one[0];
+    const uint64_t seed = a.seeds[0] * 1000003ull + wi * 7919ull;
+    sim::Env env(hc, one, lidar, N, seed, true);
+    env.reset();
+    env.sync();
+    if (people > 0) {
+      env.set_people_max(std::vector<int>(N, people));
+      env.reset();
+      env.sync();
+    }
+    std::vector<float> act((size_t)AW * N, 0.f), pol((size_t)PW * N, 0.f);
+    uint64_t rng = a.seeds[0] * 0x9E3779B97F4A7C15ull + wi * 104729ull + 31;
+    const auto warm_draw = [&]() { return DS * std::max(1, (int)std::lround((a.warm_lo + urand(rng) * (a.warm_hi - a.warm_lo)) / dec_s)); };
+    std::vector<int> phase(N, 0), warm(N), eps(N, 0), gstate(N, 0), bin(N, 0), step0(N, 0), reached0(N, 0), off0(N, 0);
+    std::vector<float> plen(N, 0.f), est(N, 0.f), dist0(N, 0.f);
+    std::vector<sim::LowCmd> cmd(N, sim::LowCmd{-1, 0});
+    for (int i = 0; i < N; ++i) warm[i] = warm_draw();
+    std::vector<sim::EnvState> st;
+    std::vector<float> rew;
+    std::vector<int32_t> done;
+    std::vector<LowEp> low;
+    std::vector<int16_t> lm;
+    std::vector<sim::LowRlStat> rs;
+    env.take_low_stat(rs);
+    BinAgg B[3];
+    Agg agg;
+    double end_n[6] = {}, n_ep = 0, warm_fail = 0, no_sample = 0, redraw_nopath = 0, redraw_len = 0, n_trunc = 0, hit_front = 0, hit_back = 0, n_assign = 0, quick = 0;
+    double est_sum = 0, plen_sum = 0, n_valid = 0;
+    uint64_t h = 1469598103934665603ull;
+    int active = N;
+    const auto assign = [&](int i) {
+      env.get_map_env(i, lm);
+      const int cell = sample_goal(c, W, lm, st[i], a.len, rng, &est[i]);
+      cmd[i].target = cell;
+      cmd[i].follow = fol;
+      gstate[i] = cell >= 0 ? 0 : -1;
+      if (cell < 0) no_sample += 1;
+      else n_assign += 1;
+      step0[i] = st[i].step;
+    };
+    const auto record = [&](int i, int out, float t, float d) {
+      BinAgg& b = B[bin[i]];
+      b.out[out] += 1;
+      if (out == kOutReach) {
+        b.t += t;
+        b.plen += plen[i];
+        b.dist += d;
+        b.ratio.push_back(t / (plen[i] / c.path_v));
+      }
+      const float rec[4] = {(float)(bin[i] * 16 + out), plen[i], t, d};
+      fnv(h, rec, sizeof(rec));
+    };
+    const long max_t = (long)M * ((long)(warm_max + 200) * DS + c.low_time_steps + 2 * DS) + 50 * DS;
+    for (long t = 0; active > 0 && t < max_t; ++t) {
+      env.set_low_cmd(cmd);
+      env.low_prepare(d_zero);
+      env.sync();
+      if (use_pol) {
+        const sim::StepOut o = env.outputs();
+        ppo->act_inference(o.low_img, o.low_1d, d_pol, N, -1);
+        cudaMemcpy(pol.data(), d_pol, sizeof(float) * pol.size(), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < N; ++i) {   // 정책 환경만 (v, ω) — 예열 환경은 0 번 후보
+          const bool p = cmd[i].follow == 2;
+          act[(size_t)AW * i] = p ? pol[(size_t)PW * i] : 0.f;
+          act[(size_t)AW * i + 1] = p ? pol[(size_t)PW * i + 1] : 0.f;
+        }
+        cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
+      }
+      env.step(d_act);
+      env.sync();
+      env.get_reward(rew, done);
+      env.get_state(st);
+      env.get_low(low);
+      for (int i = 0; i < N; ++i) {
+        if (phase[i] == 2) continue;
+        const LowEp& L = low[i];
+        if (phase[i] == 0) {   // 예열 탐사
+          if (done[i]) { warm_fail += 1; warm[i] = warm_draw(); continue; }
+          if (--warm[i] > 0) continue;
+          assign(i);
+          if (cmd[i].target < 0) { cmd[i].follow = 0; warm[i] = 5 * DS; continue; }
+          phase[i] = 1;
+          reached0[i] = off0[i] = 0;
+          dist0[i] = 0.f;
+          continue;
+        }
+        bool next = false;
+        if (L.reached > reached0[i]) {
+          if (gstate[i] == 0 && !done[i] && st[i].goal_cell == cmd[i].target && st[i].p_n > 0) {
+            plen[i] = plan_len(c, st[i]);
+            gstate[i] = plen[i] >= a.len[0] && plen[i] < a.len[3] ? 1 : 0;
+            for (int k = 0; k < 3; ++k) if (plen[i] >= a.len[k]) bin[i] = k;
+          }
+          if (gstate[i] == 1) record(i, kOutReach, (float)((L.reach_step - step0[i]) * dt), L.dist_all - dist0[i]);
+          else quick += 1;
+          reached0[i] = L.reached;
+          next = true;
+        }
+        if (done[i]) {
+          int e = L.end;
+          if (e == sim::kLowEndNone) e = sim::kLowEndTime;
+          end_n[e] += 1;
+          hit_front += e == sim::kLowEndPerson && L.hit_dir == 1;
+          hit_back += e == sim::kLowEndPerson && L.hit_dir == 2;
+          if (e != sim::kLowEndGoals && gstate[i] == 1) {
+            const int out = e == sim::kLowEndWall ? kOutWall : e == sim::kLowEndPerson ? (L.hit_dir == 1 ? kOutPersonFront : kOutPersonBack) : e == sim::kLowEndStall ? kOutStall : kOutTime;
+            record(i, out, 0.f, 0.f);
+          }
+          bad += check_ep(L, -1, W.name.c_str(), i);
+          agg.add(L);
+          fnv(h, &L, sizeof(LowEp));
+          n_ep += 1;
+          eps[i] += 1;
+          cmd[i] = sim::LowCmd{-1, 0};
+          if (eps[i] >= M) { phase[i] = 2; --active; }
+          else { phase[i] = 0; warm[i] = warm_draw(); }
+          continue;
+        }
+        if (!next) {
+          if (gstate[i] < 0) next = true;
+          else if (gstate[i] == 0) {   // 목표를 넣은 뒤 첫 걸음: 계획기가 그 칸까지 길을 짰나, 길이가 구간 안인가
+            if (st[i].goal_cell != cmd[i].target || st[i].p_n <= 0) { redraw_nopath += 1; next = true; }
+            else {
+              plen[i] = st[i].p_trunc ? est[i] : plan_len(c, st[i]);
+              n_trunc += st[i].p_trunc != 0;
+              if (plen[i] < a.len[0] || plen[i] >= a.len[3]) { redraw_len += 1; next = true; }
+              else {
+                gstate[i] = 1;
+                for (int k = 0; k < 3; ++k) if (plen[i] >= a.len[k]) bin[i] = k;
+                est_sum += est[i];
+                plen_sum += plen[i];
+                n_valid += 1;
+              }
+            }
+          } else if (L.off > off0[i] || st[i].goal_cell != cmd[i].target) {
+            record(i, kOutGiveUp, 0.f, 0.f);
+            next = true;
+          }
+        }
+        off0[i] = L.off;
+        if (next) {
+          assign(i);
+          dist0[i] = L.dist_all;
+        }
+      }
+    }
+    if (active > 0) { std::fprintf(stderr, "%s: 환경 %d 개가 판 수를 못 채움\n", W.name.c_str(), active); bad += active; }
+    fnv(h_all, &h, 8);
+    env.take_low_stat(rs);
+    double ps = 0, safe = 0, back = 0;
+    for (const sim::LowRlStat& s : rs) { ps += s.steps; safe += s.safe_steps; back += s.back_steps; }
+    const double T = agg.steps * dt, D = agg.dist_all;
+    std::printf("\n#### 단독 과제(%s) %s · 사람 상한 %d · 환경 %d × 판 %d = %.0f 판 (지문 %016llx)\n", use_pol ? "정책" : "규칙 추종기·걸음 루프", W.name.c_str(), people, N, M, n_ep,
+                (unsigned long long)h);
+    std::printf("판 끝: 목표 %d 개 %.3f · 시간 %.3f · 정체 %.3f · 벽 충돌 %.3f · 사람 충돌 %.3f\n", c.low_goals, end_n[sim::kLowEndGoals] / n_ep, end_n[sim::kLowEndTime] / n_ep,
+                end_n[sim::kLowEndStall] / n_ep, end_n[sim::kLowEndWall] / n_ep, end_n[sim::kLowEndPerson] / n_ep);
+    std::printf("과제 구간 전체: 시간 %.0f s · 거리 %.0f m · 평균 속도 %.3f m/s | 100 m 당: 벽 충돌 %.3f · 사람 충돌 앞 %.3f · 밖 %.3f · 정체 %.3f\n", T, D, T > 0 ? D / T : 0.0,
+                D > 0 ? 100.0 * end_n[sim::kLowEndWall] / D : 0.0, D > 0 ? 100.0 * hit_front / D : 0.0, D > 0 ? 100.0 * hit_back / D : 0.0,
+                D > 0 ? 100.0 * end_n[sim::kLowEndStall] / D : 0.0);
+    if (use_pol) std::printf("정책 걸음 %.0f: 안전층이 고친 걸음 %.4f · 후진 명령 걸음 %.4f\n", ps, ps > 0 ? safe / ps : 0.0, ps > 0 ? back / ps : 0.0);
+    std::printf("목표 뽑기: 넣은 목표 %.0f · 유효(계획 경로 %.0f~%.0f m) %.0f · 다시 뽑음: 경로 없음·포기 %.0f, 길이 구간 밖 %.0f · 못 뽑음 %.0f · 예열 중 판 끝 %.0f · "
+                "웨이포인트 잘림 %.0f · 첫 걸음 안 통과(뺌) %.0f · 호스트 최단 거리 평균 %.2f m 대 계획 경로 %.2f m\n",
+                n_assign, a.len[0], a.len[3], n_valid, redraw_nopath, redraw_len, no_sample, warm_fail, n_trunc, quick, n_valid > 0 ? est_sum / n_valid : 0.0,
+                n_valid > 0 ? plen_sum / n_valid : 0.0);
+    std::printf("%-10s %7s %7s %9s %9s %9s %9s | %6s %6s %6s %6s %6s %6s\n", "경로 길이", "목표", "도달률", "도달률*", "속도m/s", "시간비", "시간비중앙", "벽", "사람앞", "사람밖", "정체", "시간끝", "포기");
+    BinAgg all;
+    PolRes R{W.name, people, T > 0 ? D / T : 0.0, D > 0 ? 100.0 * end_n[sim::kLowEndWall] / D : 0.0, D > 0 ? 100.0 * hit_front / D : 0.0, 0, 0, 0};
+    for (int k = 0; k < 4; ++k) {
+      BinAgg& b = k < 3 ? B[k] : all;
+      if (k < 3) {
+        for (int o = 0; o < kOuts; ++o) all.out[o] += b.out[o];
+        all.t += b.t; all.plen += b.plen; all.dist += b.dist;
+        all.ratio.insert(all.ratio.end(), b.ratio.begin(), b.ratio.end());
+      }
+      double n = 0;
+      for (int o = 0; o < kOuts; ++o) n += b.out[o];
+      std::sort(b.ratio.begin(), b.ratio.end());
+      const double med = b.ratio.empty() ? 0.0 : b.ratio[b.ratio.size() / 2];
+      char name[32];
+      if (k < 3) std::snprintf(name, sizeof(name), "%.0f-%.0f m", a.len[k], a.len[k + 1]);
+      else std::snprintf(name, sizeof(name), "모두");
+      const double decided = n - b.out[kOutTime];
+      std::printf("%-10s %7.0f %7.3f %9.3f %9.3f %9.3f %9.3f | %6.0f %6.0f %6.0f %6.0f %6.0f %6.0f\n", name, n, n > 0 ? b.out[kOutReach] / n : 0.0,
+                  decided > 0 ? b.out[kOutReach] / decided : 0.0, b.t > 0 ? b.dist / b.t : 0.0, b.plen > 0 ? b.t / (b.plen / c.path_v) : 0.0, med, b.out[kOutWall],
+                  b.out[kOutPersonFront], b.out[kOutPersonBack], b.out[kOutStall], b.out[kOutTime], b.out[kOutGiveUp]);
+      if (k == 3) { R.goals = n; R.reach = n > 0 ? b.out[kOutReach] / n : 0.0; R.reach_x = decided > 0 ? b.out[kOutReach] / decided : 0.0; }
+    }
+    res.push_back(R);
+    std::fflush(stdout);
+  }
+  cudaFree(d_act);
+  cudaFree(d_zero);
+  cudaFree(d_pol);
+  // ROADMAP "2 단계 통과 조건" (2026-11-12 고정) — 값은 과제 구간 전체 평균. 한도는 시험 맵 둘에만 있다
+  struct Lim { const char* scene; double v0, wall0, front2, v2, reach; };
+  const Lim lims[2] = {{"bookstore", 0.775, 0.014, 0.061, 0.676, 0.921}, {"small-house", 0.880, 0.008, 0.083, 0.768, 0.968}};
+  std::printf("\n#### 2 단계 통과 조건 (ROADMAP — 사람 0·2, 맵마다)\n");
+  int n_row = 0, n_ok = 0;
+  for (const PolRes& r : res) {
+    const Lim* l = nullptr;
+    for (const Lim& x : lims) if (r.scene == x.scene) l = &x;
+    if (!l) { std::printf("%s 사람 %d: 속도 %.3f · 벽 %.3f · 사람 앞 %.3f · 도달률* %.3f (한도 없는 맵)\n", r.scene.c_str(), r.people, r.speed, r.wall100, r.front100, r.reach_x); continue; }
+    const auto row = [&](const char* name, double v, double lim, bool ge) {
+      const bool ok = ge ? v >= lim : v <= lim;
+      std::printf("  %-12s 사람 %d | %-34s %.3f (%s %.3f) %s\n", r.scene.c_str(), r.people, name, v, ge ? "≥" : "≤", lim, ok ? "통과" : "불통과");
+      ++n_row;
+      n_ok += ok;
+    };
+    if (r.people == 0) {
+      row("평균 속도 m/s", r.speed, l->v0, true);
+      row("벽 충돌 /100 m", r.wall100, l->wall0, false);
+      row("도달률*(시간 끝 뺌) ≥ 기준선 − 0.02", r.reach_x, l->reach - 0.02, true);
+    } else if (r.people == 2) {
+      row("앞 220° 사람 충돌 /100 m", r.front100, l->front2, false);
+      row("평균 속도 m/s", r.speed, l->v2, true);
+      std::printf("  %-12s 사람 %d | 도달률* %.3f (참고 — 한도는 사람 0 줄에)\n", r.scene.c_str(), r.people, r.reach_x);
+    }
+  }
+  std::printf("통과 조건 %d 줄 가운데 %d 줄 통과 (시험 맵 둘 × 사람 0·2 를 모두 돌렸을 때 10 줄 = 표 네 줄 × 맵 둘 + 도달률 둘)\n", n_row, n_ok);
+  std::printf("\n전체 지문 %016llx\n", (unsigned long long)h_all);
+  std::printf(bad ? "자기 일관성 실패 %d 건\n" : "자기 일관성 통과\n", bad);
+  return bad ? 1 : 0;
+}
+#endif   // LOW_RUN_POLICY
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -618,7 +907,9 @@ int main(int argc, char** argv) {
     else if (k == "--seeds" || k == "--seed") { a.seeds.clear(); for (const std::string& s : split(val(), ',')) a.seeds.push_back(std::stoull(s)); }
     else if (k == "--episodes") a.episodes = std::stoi(val());
     else if (k == "--per-env") a.per_env = std::stoi(val());
-    else if (k == "--people") a.people = std::stoi(val());
+    else if (k == "--people") { a.people_list.clear(); for (const std::string& s : split(val(), ',')) a.people_list.push_back(std::stoi(s)); if (!a.people_list.empty()) a.people = a.people_list[0]; }
+    else if (k == "--policy") a.policy = val();
+    else if (k == "--step") a.step = true;
     else if (k == "--warm") { const auto v = split(val(), ','); if (v.size() == 2) { a.warm_lo = std::stof(v[0]); a.warm_hi = std::stof(v[1]); } }
     else if (k == "--len") { const auto v = split(val(), ','); if (v.size() == 4) for (int j = 0; j < 4; ++j) a.len[j] = std::stof(v[j]); }
     else if (k == "--time-limit") a.time_limit = std::stof(val());
@@ -633,6 +924,11 @@ int main(int argc, char** argv) {
   if (a.scenes.empty() || a.seeds.empty()) { std::fprintf(stderr, "쓰는 법은 파일 머리말 (scripts/low_run.cpp)\n"); return 2; }
   try {
     if (a.mode == "stat") return run_stat(a);
+#ifdef LOW_RUN_POLICY
+    if (a.mode == "follow" && (!a.policy.empty() || a.step)) return run_policy(a);
+#else
+    if (!a.policy.empty() || a.step) { std::fprintf(stderr, "--policy · --step 은 low_policy_run 에만 있음 (scripts/CMakeLists.txt)\n"); return 2; }
+#endif
     if (a.mode == "follow") return run_follow(a, false);
     if (a.mode == "verify") return run_follow(a, true);
     std::fprintf(stderr, "모르는 모드 %s\n", a.mode.c_str());

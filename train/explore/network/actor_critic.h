@@ -184,6 +184,8 @@ struct ACSpec {
 ACSpec explore_spec();
 // 계층형 구조 (obs_layout.h mdp::hier): 같은 인코더·MLP, actor 출력 = 임베딩 64, 슬롯 머리 (은닉 64)
 ACSpec explore_spec_hier();
+// 아래층 RL 구조 (obs_layout.h mdp::low): 가까운 지도·라이다 그림·깊이 CNN 가지 3 개(위층과 같은 꼴) + MLP [256, 128, 64], 연속 행동 2 (v, ω)
+ACSpec explore_spec_low();
 // 그래프 어텐션 구조 (obs_layout.h mdp::graph): HEADER 크기 (d 128, 인코더 6 층, 머리 8), 전역 벡터 GLOB, 가치 머리 MLP [128] (잠정)
 ACSpec explore_spec_graph();
 

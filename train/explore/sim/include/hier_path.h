@@ -500,6 +500,11 @@ DEV int path_recovery(const EnvBatch& b, EnvState& e, int env, int k, int* force
     b.low[env].d_step = e.step;
     if (b.lowcmd[env].follow != 0) k = k >= 0 ? 0 : -1;
   }
+  if (b.lowrl && b.lowcmd[env].follow == 2) {   // 아래층 RL: 정책이 모는 환경은 복구(물러나기·포기) 없음 — 경로를 못 짜면 새 목표 (low_rl.h)
+    e.p_blk = 0;
+    e.p_blk_now = 0;
+    return k;
+  }
   if (!c.rec_on) return k;
   const int32_t* C = act_cells(b, env);
   // 지난 결정이 목표로 못 나아갔나

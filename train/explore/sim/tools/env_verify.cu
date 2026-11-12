@@ -13,6 +13,8 @@
 //   설계상 통계로만 같아(include/optix_rt.h, tools/rt_fastcheck) "다름" 이 나와도 통과·실패로 세지 않고 종료 코드 2
 //   --graph: 그래프 모드(--hier 위에, mdp/graph.h — 행동 = 현재 노드의 이웃 번호, 열에 여덟은 유효 이웃 중 무작위). 노드 특징·간선·현재 노드·전역 숫자·이웃 칸이
 //            판 시작·결정마다 GPU == CPU 인지, 정답 격자를 바꾼 묶음에서 그래프 관측이 같은지 (--negative 는 유효 이웃 번호 하나를 다른 유효 이웃으로)
+//   --low: 아래층 RL 모드(include/low_rl.h — 걸음 하나 = 행동 하나, 정책 자리에 무작위·경로 쫓기 행동). 상태·보상·관측에 더해 아래층 관측(그림·숫자)·
+//          걸음 사이 값·목표·누적이 걸음마다 GPU == CPU 인지. --low-host: 목표를 호스트가 넣는 길(Env::low_prepare — 정책·규칙 추종·예열 탐사 환경을 섞음)
 //   --hier: 계층형 행동 모드(kActPath — 결정 하나 = 속도 행동 10 걸음 묶음, 후보 번호 무작위). 덧붙여 정답 격자를 쓰지 않는지:
 //           CPU 묶음의 정답 격자(MapDev::grid)를 모두 막힘·모두 빈 칸으로 바꾼 사본에서 경로 계획·추종기 명령이 같은지 (--negative 는 후보 번호 하나를 바꿈)
 #include <algorithm>
@@ -57,6 +59,227 @@ void range_1d(int i, float* lo, float* hi) {
 }
 }  // namespace
 
+// ---- 아래층 RL (--low) ----
+int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const sim::LidarModel& lidar, int n_env, int n_steps, int people, bool negative, bool host) {
+  using sim::LowRl; using sim::LowCmd; using sim::LowRlStat; using sim::LowEp;
+  hc.cfg.action_mode = sim::kActPath;
+  hc.cfg.curriculum = 0;
+  hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
+  hc.cfg.low_auto = host ? 0 : 1;
+  hc.cfg.low_act_w = host ? 0 : 3;   // 자동: 학습기와 같은 폭 (v, ω, 선언 자리). 호스트: 규칙 추종 환경이 후보 번호를 읽게 mdp::act::DIM
+  const sim::EnvCfg& c = hc.cfg;
+  const int A = c.low_act_w > 0 ? c.low_act_w : mdp::act::DIM, K = mdp::rew::kTerms;
+  sim::Env gpu(hc, worlds, lidar, n_env, 7, true), cpu(hc, worlds, lidar, n_env, 7, false);
+  gpu.set_people_max(std::vector<int>(n_env, people));
+  cpu.set_people_max(std::vector<int>(n_env, people));
+  gpu.reset();
+  cpu.reset();
+  gpu.sync();
+  float* d_act;
+  cudaMalloc(&d_act, sizeof(float) * A * n_env);
+  uint64_t rng = 99;
+  size_t bad_state = 0, bad_reward = 0, bad_obs = 0, bad_low = 0, bad_rl = 0, bad_cmd = 0, bad_ep = 0, bad_stat = 0, n_nan = 0, bad_range = 0;
+  int first_bad = -1, ends[mdp::cur::kNumDone] = {};
+  std::vector<sim::EnvState> sg, sc;
+  std::vector<float> rg, rc, tg, tc, og1, oc1, pg, pc, lg1, lc1;
+  std::vector<int32_t> dg, dc;
+  std::vector<sim::EpInfo> eg, ec;
+  std::vector<uint8_t> ig, ic, lgi, lci;
+  std::vector<LowRl> Rg, Rc;
+  std::vector<LowCmd> Cg, Cc, cmd(n_env, LowCmd{-1, 0});
+  std::vector<LowEp> Lg, Lc;
+  std::vector<LowRlStat> Sg, Sc;
+  std::vector<int16_t> lm;
+  std::vector<int> since(n_env, 1 << 20);
+  LowRlStat tot{};
+  double rew_sum = 0;
+  size_t nz_cam = 0, nz_lidar = 0, nz_depth = 0, n_path = 0, n_goal = 0, n_obs = 0, n_pol = 0;
+  const auto mark = [&](size_t n, size_t& acc, int t) { acc += n; if (n && first_bad < 0) first_bad = t; };
+  const auto cmp_low = [&](int t) {   // 아래층 관측·걸음 사이 값·목표
+    gpu.get_low_obs(lgi, lg1);
+    cpu.get_low_obs(lci, lc1);
+    gpu.get_low_rl(Rg);
+    cpu.get_low_rl(Rc);
+    gpu.get_low_cmd(Cg);
+    cpu.get_low_cmd(Cc);
+    size_t bo = 0;
+    for (size_t i = 0; i < lci.size(); ++i) bo += lgi[i] != lci[i];
+    for (size_t i = 0; i < lc1.size(); ++i) bo += std::memcmp(&lg1[i], &lc1[i], 4) != 0;
+    mark(bo, bad_low, t);
+    size_t br = 0, bc = 0;
+    for (int i = 0; i < n_env; ++i) {
+      br += std::memcmp(&Rg[i], &Rc[i], sizeof(LowRl)) != 0;
+      bc += std::memcmp(&Cg[i], &Cc[i], sizeof(LowCmd)) != 0;
+    }
+    mark(br, bad_rl, t);
+    mark(bc, bad_cmd, t);
+    for (int i = 0; i < n_env; ++i) {
+      const float* O = &lc1[(size_t)i * sim::kLow1d];
+      for (int k = 0; k < sim::kLow1d; ++k) {
+        const float v = O[k];
+        if (!std::isfinite(v)) { ++n_nan; continue; }
+        float lo = -1.f, hi = 1.f;   // sin·cos·직전 행동
+        if (k < sim::kLoSub) { lo = -4.f; hi = 4.f; }   // 자기 상태 (obs_1d 칸 그대로)
+        else if (k < sim::kLoAct) { if ((k - sim::kLoSub) % 3 == 0) lo = 0.f; }
+        else if (k >= sim::kLoHasPath && k <= sim::kLoHasGoal) lo = 0.f;
+        else if (k > sim::kLoHasGoal) lo = hi = 0.f;
+        if (v < lo || v > hi) {
+          if (!bad_range) std::printf("범위 밖: 걸음 %d 환경 %d 숫자 칸 %d 값 %g (허용 %g~%g)\n", t, i, k, v, lo, hi);
+          ++bad_range;
+        }
+      }
+      ++n_obs;
+      n_path += O[sim::kLoHasPath] > 0.5f;
+      n_goal += O[sim::kLoHasGoal] > 0.5f;
+      const uint8_t* I = &lci[(size_t)i * sim::kLowImg];
+      const int hw = mdp::obs::NEAR_H * mdp::obs::NEAR_W;
+      for (int k = 0; k < hw; ++k) nz_cam += I[sim::kLowCamCh * hw + k] != 0;
+      for (int k = sim::kLowLidarOff; k < sim::kLowDepthOff; ++k) nz_lidar += I[k] != 0;
+      for (int k = sim::kLowDepthOff; k < sim::kLowImg; ++k) nz_depth += I[k] != 0;
+    }
+  };
+  cmp_low(-1);
+  std::vector<float> act((size_t)A * n_env);
+  for (int t = 0; t < n_steps; ++t) {
+    cpu.get_state(sc);
+    if (host) {   // 목표를 호스트가: 환경 번호 % 3 = 0 정책 · 1 규칙 추종(단독 과제) · 2 예열 탐사. 목표 = 로봇 둘레 ±4 m 안 아는 빈 칸
+      for (int i = 0; i < n_env; ++i) {
+        const int kind = i % 3;
+        const bool fresh = sc[i].step == 0;
+        if (fresh) since[i] = 1 << 20;
+        if (kind == 2) { cmd[i] = LowCmd{-1, 0}; continue; }
+        if (!(Rc[i].need_goal && kind == 0) && since[i] < 60 && !fresh) { ++since[i]; continue; }
+        cpu.get_map_env(i, lm);
+        const sim::World& W = worlds[sc[i].map];
+        const int rx = (int)std::floor((sc[i].x + sc[i].ex - W.ox) / c.res), ry = (int)std::floor((sc[i].y + sc[i].ey - W.oy) / c.res);
+        int cell = -1;
+        for (int k = 0; k < 64 && cell < 0; ++k) {
+          const int x = rx + (int)(dm::splitmix64(rng) % 161) - 80, y = ry + (int)(dm::splitmix64(rng) % 161) - 80;
+          if (x < 0 || y < 0 || x >= W.gw || y >= W.gh) continue;
+          if (mdp::cell_class(lm[(size_t)y * c.size + x]) == mdp::kFree) cell = y * W.gw + x;
+        }
+        cmd[i] = LowCmd{cell, kind == 0 ? 2 : 1};
+        since[i] = 0;
+      }
+    }
+    // 행동: 짝수 환경은 경로 쫓기(첫 부목표 쪽으로 + 잡음 — 통과·새 목표 길을 지나게), 홀수는 무작위. 호스트 길의 규칙 환경은 후보 번호
+    for (int i = 0; i < n_env; ++i) {
+      float* q = &act[(size_t)A * i];
+      for (int k = 0; k < A; ++k) q[k] = 0.f;
+      const float* O = &lc1[(size_t)i * sim::kLow1d];
+      if (host && i % 3 != 0) { q[0] = i % 3 == 1 ? 0.f : (float)(dm::splitmix64(rng) % (uint64_t)mdp::hier::K); continue; }
+      if ((i / (host ? 3 : 1)) % 2 == 0 && O[sim::kLoHasPath] > 0.5f) {
+        const float ang = std::atan2(O[sim::kLoSub + 1], O[sim::kLoSub + 2]);
+        q[0] = std::max(0.f, O[sim::kLoSub + 2]) * 0.8f + dm::rand_range(rng, -0.2f, 0.3f);
+        q[1] = std::max(-1.f, std::min(1.f, ang * 0.6f)) + dm::rand_range(rng, -0.2f, 0.2f);
+      } else {
+        q[0] = dm::rand_range(rng, -1.2f, 1.2f);
+        q[1] = dm::rand_range(rng, -1.2f, 1.2f);
+      }
+    }
+    std::vector<float> gact = act;
+    if (negative && t == n_steps / 2) {
+      int i0 = 0;
+      for (int i = 0; i < n_env; ++i) if (Cc[i].follow == 2) { i0 = i; break; }
+      gact[(size_t)A * i0] = gact[(size_t)A * i0] > 0.f ? -1.f : 1.f;
+      std::printf("일부러 어긋나게: 걸음 %d 환경 %d 의 GPU 쪽 v 행동을 바꿈\n", t, i0);
+    }
+    cudaMemcpy(d_act, gact.data(), sizeof(float) * A * n_env, cudaMemcpyHostToDevice);
+    if (host) {
+      gpu.set_low_cmd(cmd);
+      cpu.set_low_cmd(cmd);
+      gpu.low_prepare(d_act);
+      cpu.low_prepare(act.data());
+      gpu.sync();
+      cmp_low(t);   // 준비 뒤 관측 (정책이 볼 값)
+    }
+    gpu.step(d_act);
+    cpu.step(act.data());
+    gpu.sync();
+    gpu.get_state(sg);
+    cpu.get_state(sc);
+    gpu.get_reward(rg, dg);
+    cpu.get_reward(rc, dc);
+    gpu.get_terms(tg);
+    cpu.get_terms(tc);
+    gpu.get_ep(eg);
+    cpu.get_ep(ec);
+    gpu.get_obs(ig, og1, pg);
+    cpu.get_obs(ic, oc1, pc);
+    gpu.get_low(Lg);
+    cpu.get_low(Lc);
+    size_t bs = 0, brw = 0, bep = 0;
+    for (int i = 0; i < n_env; ++i) {
+      bs += std::memcmp(&sg[i], &sc[i], sizeof(sim::EnvState)) != 0;
+      bool r_ok = std::memcmp(&rg[i], &rc[i], 4) == 0 && dg[i] == dc[i] && std::memcmp(&tg[(size_t)K * i], &tc[(size_t)K * i], 4 * K) == 0;
+      if (dc[i] != 0) r_ok = r_ok && std::memcmp(&eg[i], &ec[i], sizeof(sim::EpInfo)) == 0;
+      brw += !r_ok;
+      bep += std::memcmp(&Lg[i], &Lc[i], sizeof(LowEp)) != 0;
+      ends[dc[i]]++;
+      rew_sum += rc[i];
+      n_nan += !std::isfinite(rc[i]);
+    }
+    mark(bs, bad_state, t);
+    mark(brw, bad_reward, t);
+    mark(bep, bad_ep, t);
+    size_t bo = 0;
+    for (size_t i = 0; i < ig.size(); ++i) bo += ig[i] != ic[i];
+    for (size_t i = 0; i < og1.size(); ++i) bo += std::memcmp(&og1[i], &oc1[i], 4) != 0;
+    for (size_t i = 0; i < pg.size(); ++i) bo += std::memcmp(&pg[i], &pc[i], 4) != 0;
+    mark(bo, bad_obs, t);
+    cmp_low(t);
+    for (int i = 0; i < n_env; ++i) n_pol += Rc[i].pol != 0;
+    if (t % 50 == 49 || t == n_steps - 1) {   // 누적 (가져가며 0 으로 — 학습기와 같은 쓰임)
+      gpu.take_low_stat(Sg);
+      cpu.take_low_stat(Sc);
+      size_t b2 = 0;
+      for (int i = 0; i < n_env; ++i) {
+        b2 += std::memcmp(&Sg[i], &Sc[i], sizeof(LowRlStat)) != 0;
+        const LowRlStat& S = Sc[i];
+        for (int k = 0; k < sim::kLrTerms; ++k) { tot.term[k] += S.term[k]; n_nan += !std::isfinite(S.term[k]); }
+        tot.steps += S.steps; tot.episodes += S.episodes; tot.goals += S.goals; tot.reached += S.reached; tot.hit_wall += S.hit_wall;
+        tot.hit_person += S.hit_person; tot.stall += S.stall; tot.timeout += S.timeout; tot.giveup += S.giveup; tot.safe_steps += S.safe_steps;
+        tot.back_steps += S.back_steps; tot.reach_steps += S.reach_steps; tot.dist += S.dist; tot.reach_len += S.reach_len;
+      }
+      mark(b2, bad_stat, t);
+    }
+  }
+  std::vector<int16_t> mg, mc;
+  gpu.get_map(mg);
+  cpu.get_map(mc);
+  size_t bad_map = 0, bad_cam = 0;
+  for (size_t i = 0; i < mg.size(); ++i) bad_map += mg[i] != mc[i];
+  {
+    std::vector<uint8_t> vg, vc;
+    std::vector<float> p1, p2;
+    gpu.get_camlayer(vg, p1);
+    cpu.get_camlayer(vc, p2);
+    bad_cam += vg != vc;
+    bad_cam += p1.size() != p2.size() || std::memcmp(p1.data(), p2.data(), 4 * p1.size()) != 0;
+  }
+  static const char* tn[sim::kLrTerms] = {"진행", "시간", "통과", "충돌", "근접", "매끄러움", "후진", "안전층"};
+  std::printf("아래층 RL (%s, 행동 폭 %d, 계획 주기 %d 걸음, 사람 상한 %d): 환경 %d × 걸음 %d%s\n", host ? "호스트가 목표" : "자동 목표", A, sim::lowrl_period(c), people, n_env,
+              n_steps, negative ? " (일부러 어긋나게)" : "");
+  std::printf("판 끝: 벽 충돌 %d · 사람 충돌 %d · 끊김(시간·정체·목표 수) %d | 정책 걸음 %d (전체 %zu 중 %zu) · 끝난 판 %d (벽 %d · 사람 %d · 정체 %d · 시간 %d)\n", ends[2], ends[5], ends[3],
+              tot.steps, (size_t)n_env * n_steps, n_pol, tot.episodes, tot.hit_wall, tot.hit_person, tot.stall, tot.timeout);
+  std::printf("목표: 경로 짜인 것 %d · 통과 %d · 포기(경로 없음·끝이 밖) %d · 통과한 목표 평균 경로 %.2f m · 과제 구간 속도 %.3f m/s | 안전층 걸음 %d · 후진 걸음 %d · 이동 %.1f m\n",
+              tot.goals, tot.reached, tot.giveup, tot.reached ? tot.reach_len / tot.reached : 0.f,
+              tot.reach_steps ? tot.reach_len / (tot.reach_steps * c.substeps * c.dt) : 0.f, tot.safe_steps, tot.back_steps, tot.dist);
+  std::printf("보상 항 합:");
+  for (int k = 0; k < sim::kLrTerms; ++k) std::printf(" %s %.3f", tn[k], tot.term[k]);
+  std::printf(" (걸음 보상 합 %.3f)\n", rew_sum);
+  std::printf("아래층 관측 %zu 개: 경로 있음 %.3f · 목적지 있음 %.3f · 0 아닌 칸 평균 — 깊이 카메라 층 채널 %.1f · 라이다 그림 %.1f / 992 · 깊이 %.1f / %d\n", n_obs,
+              (double)n_path / n_obs, (double)n_goal / n_obs, (double)nz_cam / n_obs, (double)nz_lidar / n_obs, (double)nz_depth / n_obs, mdp::obs::DEPTH_SIZE);
+  std::printf("관측 범위: NaN·inf %zu, 범위 밖 %zu\n", n_nan, bad_range);
+  std::printf("상태 다름 %zu, 보상·항·끝·판 정보 다름 %zu, 위층 관측 다름 %zu, 아래층 관측 다름 %zu, 걸음 사이 값 다름 %zu, 목표 다름 %zu, 계측 누적 다름 %zu, RL 누적 다름 %zu, "
+              "지도 칸 다름 %zu, 카메라 층 다름 %zu (처음 걸음 %d)\n", bad_state, bad_reward, bad_obs, bad_low, bad_rl, bad_cmd, bad_ep, bad_stat, bad_map, bad_cam, first_bad);
+  const bool same = !(bad_state || bad_reward || bad_obs || bad_low || bad_rl || bad_cmd || bad_ep || bad_stat || bad_map || bad_cam);
+  const bool range_ok = n_nan == 0 && bad_range == 0;
+  std::printf("%s\n", same ? "아래층 RL 통과: GPU == CPU (비트 같음)" : "다름");
+  std::printf("%s\n", range_ok ? "관측 범위 통과" : "관측 범위 실패");
+  return negative ? (same ? 1 : 0) : (same && range_ok ? 0 : 1);
+}
+
 int main(int argc, char** argv) {
   setenv("SIM_EXACT", "1", 0);   // GPU == CPU·옛 빌드 비교는 정확한 길로 (RT 코어 빠른 길은 tools/rt_fastcheck 로 통계 확인)
   std::vector<std::string> scenes;
@@ -74,6 +297,7 @@ int main(int argc, char** argv) {
   bool eval = false;    // --eval: 평가 도구와 같은 조건 (머리 주석)
   uint64_t seed = 7;
   bool slot0 = false;   // --slot0 (계층형): 늘 후보 0 번 — 같은 목표가 이어져 복구(hier_path.h "복구")·목표 허용 길을 GPU == CPU 로 지나가게
+  bool low = false, low_host = false;   // --low · --low-host (아래층 RL)
   bool hier = false;   // --spin: 행동을 제자리 돌기(ω 0.5 정규)로 — 작은 방에서 지도 닫힘 성공(판 끝 1) 길을 GPU == CPU 로 지나가게
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -88,6 +312,8 @@ int main(int argc, char** argv) {
     else if (a == "--eval") { hier = slot0 = eval = true; n_env = 32; n_steps = 120; sim::set_cpu_threads(8); }
     else if (a == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
     else if (a == "--hier") hier = true;
+    else if (a == "--low") low = true;
+    else if (a == "--low-host") low = low_host = true;
     else if (a == "--graph") hier = graph = true;
     else if (i + 1 < argc && sim::graph_arg(gargs, a, argv[i + 1])) ++i;
     else if (a == "--graph-stand") graph_stand = std::atoi(argv[++i]);
@@ -224,6 +450,7 @@ int main(int argc, char** argv) {
                 (w.stage >= 0 ? w.stage : mdp::cur::stage_of_area(w.n_floor * hc.cfg.res * hc.cfg.res)), mdp::rew::t_ref(w.n_wall), w.spawn.size(), w.closed ? "닫힘" : w.leak.c_str());
   std::printf("안전층 %s: 문턱 %.3f m (앞 범퍼에서, 제동 거리 %.3f m + 판단 지연 0.2 s × %.1f m/s)\n", hc.cfg.safety ? "켬" : "끔", hc.cfg.safety_dist,
               hc.brake_dist, mdp::act::V_FWD);
+  if (low) return verify_low(hc, worlds, lidar, n_env, n_steps, people, negative, low_host);
   sim::Env gpu(hc, worlds, lidar, n_env, seed, true), cpu(hc, worlds, lidar, n_env, seed, false);
   gpu.set_people_max(std::vector<int>(n_env, people));
   cpu.set_people_max(std::vector<int>(n_env, people));

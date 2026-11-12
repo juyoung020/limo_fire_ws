@@ -34,3 +34,9 @@ add_executable(hybrid_eval hybrid_eval.cpp)
 set_source_files_properties(hybrid_eval.cpp PROPERTIES LANGUAGE CUDA)   # observations.h·ppo.h 머리글
 target_link_libraries(hybrid_eval frontier_explorer_h explore_ppo)
 target_compile_options(hybrid_eval PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra>)
+
+# 아래층 RL 정책 측정(low_policy_run): 기준선 도구 low_run.cpp 를 정책 걸음 루프까지 넣어 빌드 (--mode follow --policy <체크포인트>)
+add_executable(low_policy_run low_run.cpp)
+set_source_files_properties(low_run.cpp PROPERTIES LANGUAGE CUDA)   # ppo.h 머리글
+target_compile_definitions(low_policy_run PRIVATE LOW_RUN_POLICY=1)
+target_link_libraries(low_policy_run frontier_explorer_h explore_ppo)

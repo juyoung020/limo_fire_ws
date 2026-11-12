@@ -764,6 +764,32 @@ ACSpec explore_spec_hier() {
   return s;
 }
 
+ACSpec explore_spec_low() {
+  namespace o = mdp::obs;
+  namespace l = mdp::low;
+  ACSpec s;
+  NetSpec e;
+  e.imgs = {{0, o::NEAR_C, o::NEAR_H, o::NEAR_W}, {l::LIDAR_OFF, 1, l::LIDAR_HW, l::LIDAR_HW}, {l::DEPTH_OFF, o::DEPTH_C, o::DEPTH_H, o::DEPTH_W}};
+  e.img_stride = l::IMG;
+  e.conv_ch = {16, 32, 32, 32};   // 위층과 같은 꼴 (같은 융합 커널): 평탄화 가까운 지도 4×4 · 라이다 2×2 · 깊이 3×4 × 32 = 1024
+  e.in1d = 0;
+  e.out = 0;
+  s.enc = e;
+  NetSpec a;
+  a.in1d = l::N1D;
+  a.hidden = {256, 128, 64};   // 잠정 — 위층 MLP 의 반 (10 Hz 로 도는 쪽, network/README "아래층")
+  a.out = l::ACT;
+  NetSpec c = a;
+  c.in1d = l::N1D + o::PRIV;
+  c.out = 1;
+  s.actor = a;
+  s.critic = c;
+  s.n_cont = l::CONT;
+  s.norm_dim = l::N1D + o::PRIV;
+  s.split_enc = true;
+  return s;
+}
+
 ACSpec explore_spec_graph() {
   namespace g = mdp::graph;
   ACSpec s;

@@ -45,6 +45,8 @@ struct StepOut {
   const int32_t* done;          // [N] mdp::cur::Done — 종료 여부는 mdp::cur::terminal(done), 끊김 = 3
   const EpInfo* ep;             // [N] done ≠ 0 인 환경의 끝난 판 정보 (덮음·t95·길이·충돌·단계·맵)
   int o1d;                      // 관측 1D 한 환경 칸 수
+  const uint8_t* low_img = nullptr;   // 아래층 RL 정책 관측 [N][kLowImg] (cfg.low_rl 일 때만 — include/low_task.h)
+  const float* low_1d = nullptr;      // [N][kLow1d]
 };
 
 // 그래프 모드 관측 (cfg.graph_on — mdp/obs_layout.h mdp::graph, mdp/graph.h). StepOut 처럼 장치 포인터(CPU 판이면 호스트), 그래프 모드가 아니면 nullptr
@@ -101,6 +103,14 @@ class Env {
   void get_low(std::vector<LowEp>& out) const;
   void set_low_cmd(const std::vector<LowCmd>& cmd);
   void get_map_env(int env, std::vector<int16_t>& out) const;
+  // 아래층 RL (cfg.low_rl — include/low_task.h "아래층 RL", low_rl.h): step 한 번 = 걸음 하나(0.1 s), LowCmd::follow == 2 인 환경은 행동 줄
+  // [v, ω, …] (한 환경 cfg.low_act_w 칸)로 몬다. cfg.low_auto 면 환경이 목표·계획·관측을 알아서 하고, 아니면 호스트가 걸음마다
+  // set_low_cmd → low_prepare(다음 step 에 줄 행동 줄 — 규칙 추종 환경의 후보 번호, 없으면 nullptr) → outputs().low_img·low_1d 로 정책 → step
+  void low_prepare(const float* actions = nullptr, cudaStream_t st = 0);
+  void get_low_cmd(std::vector<LowCmd>& out) const;
+  void get_low_rl(std::vector<LowRl>& out) const;
+  void get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
+  void take_low_stat(std::vector<LowRlStat>& out);   // 누적을 가져가며 0 으로
   void get_terms(std::vector<float>& terms) const;
   void get_ep(std::vector<EpInfo>& ep) const;
   void get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const;
@@ -159,6 +169,9 @@ inline void to_normalized(const EnvCfg& c, float v, float vy, float w, float dec
 // 한 걸음 (src/env_kernel.cu, src/env_ref.cpp)
 void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);   // actions: [N][mdp::act::DIM]
 void env_step_cpu(const EnvBatch& b, const float* actions);
+// 아래층 RL 준비 단계 (include/low_rl.h 머리말 — low_auto 가 아니면 호스트가 LowCmd 를 넣은 뒤 부른다. Env::low_prepare)
+void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);
+void env_low_prepare_cpu(const EnvBatch& b, const float* actions);
 // 시험용 (tools/rl_node_check): CPU 참조판 걸음 안의 라이다 장(지도 쪽 준비 뒤 빔마다 거리·세기)과 걸음 끝 상태(판 끝 판정 뒤, 링·관측 전)를
 // 밖으로 넘긴다 — 실물 노드(limo_fire_rl RobotEnv)에 같은 센서 값을 넣어 관측이 같은지 본다. 탭은 스레드 1 개(set_cpu_threads(1))일 때만 쓴다
 struct CpuTap {

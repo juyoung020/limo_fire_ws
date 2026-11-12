@@ -305,6 +305,21 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     }
     if (hc.cfg.low_stat || hc.cfg.low_task) b_.low = alloc<LowEp>(n_env);   // 아래층 계측·단독 과제 (include/low_task.h)
     if (hc.cfg.low_task) b_.lowcmd = alloc<LowCmd>(n_env);
+    if (hc.cfg.low_rl) {   // 아래층 RL (include/low_task.h "아래층 RL")
+      if (!hc.cfg.low_task) throw std::runtime_error("low_rl 은 low_task 와 같이 켠다");
+      std::vector<LowRl> r(n_env);
+      for (int i = 0; i < n_env; ++i) {
+        uint64_t s = seed ^ (0xA24BAED4963EE407ull + (uint64_t)i * 0x9FB21C651E98DF25ull);
+        r[i].rng = dm::splitmix64(s);
+        lowrl_clear(r[i]);
+        r[i].stall = 0;
+        r[i].stall_tgt = -1;
+      }
+      b_.lowrl = upload(r);
+      b_.lowstat = alloc<LowRlStat>(n_env);
+      b_.low_img = alloc<uint8_t>((size_t)kLowImg * n_env);
+      b_.low_1d = alloc<float>((size_t)kLow1d * n_env);
+    }
   }
   b_.priv = alloc<float>((size_t)mdp::obs::PRIV * n_env);
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
@@ -379,7 +394,12 @@ void Env::step(const float* actions, cudaStream_t st) {
 }
 
 StepOut Env::outputs() const {
-  return StepOut{b_.obs_img, b_.obs_1d, b_.priv, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d};
+  return StepOut{b_.obs_img, b_.obs_1d, b_.priv, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d};
+}
+
+void Env::low_prepare(const float* actions, cudaStream_t st) {
+  if (gpu_) env_low_prepare_gpu(b_, actions, st);
+  else env_low_prepare_cpu(b_, actions);
 }
 
 void Env::sync() const {
@@ -438,6 +458,25 @@ void Env::set_low_cmd(const std::vector<LowCmd>& cmd) {
   if (!b_.lowcmd || (int)cmd.size() != b_.n_env) throw std::runtime_error("set_low_cmd: 단독 과제 모드가 아니거나 길이가 다름");
   if (gpu_) cudaMemcpy(b_.lowcmd, cmd.data(), cmd.size() * sizeof(LowCmd), cudaMemcpyHostToDevice);
   else std::copy(cmd.begin(), cmd.end(), b_.lowcmd);
+}
+void Env::get_low_cmd(std::vector<LowCmd>& out) const {
+  if (!b_.lowcmd) { out.clear(); return; }
+  fetch(gpu_, b_.lowcmd, (size_t)b_.n_env, out);
+}
+void Env::get_low_rl(std::vector<LowRl>& out) const {
+  if (!b_.lowrl) { out.clear(); return; }
+  fetch(gpu_, b_.lowrl, (size_t)b_.n_env, out);
+}
+void Env::get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const {
+  if (!b_.lowrl) { img.clear(); o1d.clear(); return; }
+  fetch(gpu_, b_.low_img, (size_t)kLowImg * b_.n_env, img);
+  fetch(gpu_, b_.low_1d, (size_t)kLow1d * b_.n_env, o1d);
+}
+void Env::take_low_stat(std::vector<LowRlStat>& out) {
+  if (!b_.lowstat) { out.clear(); return; }
+  fetch(gpu_, b_.lowstat, (size_t)b_.n_env, out);
+  if (gpu_) cudaMemset(b_.lowstat, 0, sizeof(LowRlStat) * b_.n_env);
+  else std::fill(b_.lowstat, b_.lowstat + b_.n_env, LowRlStat{});
 }
 void Env::get_map_env(int env, std::vector<int16_t>& out) const {
   const size_t cells = (size_t)b_.cfg.size * b_.cfg.size;

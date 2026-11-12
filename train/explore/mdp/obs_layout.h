@@ -131,6 +131,19 @@ constexpr int GLOB = 16;              // 전역 벡터 칸 수 (float, 정규화
 // 이 모드의 행동: 환경마다 act::DIM 칸, a[0] = 고른 스텐실 번호 0 … NB − 1 (정수 값), 나머지 0
 }  // namespace mdp::graph
 
+// 아래층 RL (sim/include/low_rl.h — 단독 과제를 정책이 10 Hz 로 몲): 위층과 같은 관측 원본에서 잘라 만든 아래층 전용 관측.
+// 그림 u8 [IMG]: 가까운 지도 6 × 64 × 64 (예약 물체 채널에 깊이 카메라 장애물 층) | 라이다 1 × 32 × 32 (각도 칸 248 × 프레임 4, Z 차례) | 깊이 1 × 40 × 64
+// 숫자 float [N1D] (칸 뜻은 sim/include/low_task.h kLo*), 행동 = (v, ω) + 선언 자리 (환경이 안 읽음)
+namespace mdp::low {
+constexpr int LIDAR_HW = 32;
+constexpr int LIDAR_OFF = mdp::obs::NEAR_SIZE;
+constexpr int DEPTH_OFF = LIDAR_OFF + LIDAR_HW * LIDAR_HW;
+constexpr int IMG = DEPTH_OFF + mdp::obs::DEPTH_SIZE;   // 28160
+constexpr int N1D = 32;
+constexpr int CONT = 2;        // v, ω (옆 이동 없음)
+constexpr int ACT = CONT + 1;  // 신경망 출력 폭 (끝 칸 = 선언 로짓 자리)
+}  // namespace mdp::low
+
 namespace mdp::act {
 constexpr int CONT = 3;    // v, vy, ω — [−1, 1] 정규 단위, 환경이 한도를 곱하고 자름
 constexpr int DECLARE = 1; // 끝 선언 (베르누이 로짓)
