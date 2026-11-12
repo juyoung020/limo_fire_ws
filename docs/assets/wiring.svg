@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="980" viewBox="0 0 1400 980" font-family="Malgun Gothic, Arial, sans-serif" font-size="15">
+  <rect width="1400" height="980" fill="#ffffff"/>
+  <text x="30" y="40" font-size="24" font-weight="bold">LIMO 화재 로봇 — 추가 장치 회로 (ESP32-S3 하나로)</text>
+  <text x="30" y="66" fill="#555">굵은 빨강 = 19 V, 주황 = 6 V 서보 전원, 보라 = 5 V, 검정 = GND(모두 공통), 초록 = 신호</text>
+
+  <!-- 19V source -->
+  <rect x="30" y="110" width="200" height="90" rx="8" fill="#fdecea" stroke="#c62828" stroke-width="2"/>
+  <text x="45" y="140" font-weight="bold">LIMO PRO 배터리 19 V</text>
+  <text x="45" y="162" font-size="13">전원 버튼 나눔 케이블</text>
+  <text x="45" y="184" font-size="13">전체 10 A 제한</text>
+
+  <rect x="290" y="120" width="160" height="70" rx="8" fill="#fff" stroke="#c62828" stroke-width="2"/>
+  <text x="305" y="150" font-weight="bold">Y 분배 케이블</text>
+  <text x="305" y="172" font-size="13">한쪽 DC, 한쪽 +·− 선</text>
+  <line x1="230" y1="155" x2="290" y2="155" stroke="#c62828" stroke-width="5"/>
+
+  <!-- Jetson -->
+  <rect x="520" y="100" width="190" height="60" rx="8" fill="#eee" stroke="#666" stroke-width="2"/>
+  <text x="535" y="128" font-weight="bold">Jetson Orin Nano</text>
+  <text x="535" y="148">(원래 연결 그대로 19 V)</text>
+  <line x1="450" y1="140" x2="520" y2="130" stroke="#c62828" stroke-width="5"/>
+
+  <!-- XL4015 -->
+  <rect x="520" y="200" width="190" height="80" rx="8" fill="#fff3e0" stroke="#ef6c00" stroke-width="2"/>
+  <text x="535" y="228" font-weight="bold">XL4015 강압 (5 A)</text>
+  <text x="535" y="250">19 V → <tspan font-weight="bold">6.0 V</tspan></text>
+  <text x="535" y="270" fill="#555" font-size="13">서보 꽂기 전에 맞춤</text>
+  <polyline points="450,170 480,170 480,240 520,240" fill="none" stroke="#c62828" stroke-width="5"/>
+
+  <!-- LM2596 -->
+  <rect x="520" y="310" width="190" height="80" rx="8" fill="#f3e5f5" stroke="#6a1b9a" stroke-width="2"/>
+  <text x="535" y="338" font-weight="bold">5 V 강압 (LM2596 등)</text>
+  <text x="535" y="360">19 V → <tspan font-weight="bold">5.0 V</tspan></text>
+  <text x="535" y="380" fill="#555" font-size="13">보유 모듈을 5.0 V 로 맞춤</text>
+  <polyline points="480,240 480,350 520,350" fill="none" stroke="#c62828" stroke-width="5"/>
+
+  <!-- servo rail -->
+  <line x1="710" y1="240" x2="1010" y2="240" stroke="#ef6c00" stroke-width="4"/>
+  <circle cx="830" cy="240" r="5" fill="#ef6c00"/>
+  <rect x="808" y="250" width="50" height="34" rx="4" fill="#fff" stroke="#ef6c00"/>
+  <text x="812" y="272" font-size="12">1000µF</text>
+  <text x="790" y="300" font-size="12" fill="#555">16 V 이상, 서보 옆</text>
+  <rect x="1010" y="195" width="170" height="60" rx="8" fill="#fff3e0" stroke="#ef6c00" stroke-width="2"/>
+  <text x="1022" y="220" font-weight="bold">레버 서보 DS3218</text>
+  <text x="1022" y="242">장전·발사</text>
+  <rect x="1200" y="195" width="170" height="60" rx="8" fill="#fff3e0" stroke="#ef6c00" stroke-width="2"/>
+  <text x="1212" y="220" font-weight="bold">각도 서보 MG996R</text>
+  <text x="1212" y="242">발사대 기울기 5~30°</text>
+  <line x1="1180" y1="240" x2="1200" y2="240" stroke="#ef6c00" stroke-width="4"/>
+
+  <!-- 5V rail -->
+  <line x1="710" y1="350" x2="1370" y2="350" stroke="#6a1b9a" stroke-width="4"/>
+  <rect x="1010" y="370" width="170" height="70" rx="8" fill="#f3e5f5" stroke="#6a1b9a" stroke-width="2"/>
+  <text x="1022" y="396" font-weight="bold">레이더 LD2450</text>
+  <text x="1022" y="418" font-size="13">5 V 필수 (3.3 V 안 켜짐)</text>
+  <line x1="1095" y1="350" x2="1095" y2="370" stroke="#6a1b9a" stroke-width="4"/>
+  <rect x="1200" y="370" width="170" height="70" rx="8" fill="#f3e5f5" stroke="#6a1b9a" stroke-width="2"/>
+  <text x="1212" y="396" font-weight="bold">초음파 HC-SR04 ×2</text>
+  <text x="1212" y="418">왼쪽·오른쪽 (±20°)</text>
+  <line x1="1285" y1="350" x2="1285" y2="370" stroke="#6a1b9a" stroke-width="4"/>
+
+  <!-- ESP32 -->
+  <rect x="380" y="480" width="330" height="400" rx="10" fill="#e3f2fd" stroke="#1565c0" stroke-width="3"/>
+  <text x="395" y="510" font-weight="bold" font-size="18">ESP32-S3 N16R8 개발 보드</text>
+  <text x="395" y="533" fill="#555">USB-C ↔ Jetson USB (전원 + 데이터)</text>
+  <g font-family="Consolas, monospace" font-size="15">
+    <text x="395" y="570">GPIO 10  ← 열화상 TX   (UART1 RX)</text>
+    <text x="395" y="592">GPIO 11  → 열화상 RX   (UART1 TX)</text>
+    <text x="395" y="622">GPIO 17  ← 레이더 TX   (UART2 RX)</text>
+    <text x="395" y="644">GPIO 18  → 레이더 RX   (UART2 TX)</text>
+    <text x="395" y="674">GPIO 4   → 레버 서보 신호</text>
+    <text x="395" y="696">GPIO 5   → 각도 서보 신호</text>
+    <text x="395" y="726">GPIO 6   → 초음파 왼 TRIG</text>
+    <text x="395" y="748">GPIO 7   ← 초음파 왼 ECHO (분배)</text>
+    <text x="395" y="770">GPIO 15  → 초음파 오른 TRIG</text>
+    <text x="395" y="792">GPIO 16  ← 초음파 오른 ECHO (분배)</text>
+    <text x="395" y="822">GPIO 12  → 앰프 BCLK  (I2S)</text>
+    <text x="395" y="844">GPIO 13  → 앰프 LRC   (I2S)</text>
+    <text x="395" y="866">GPIO 14  → 앰프 DIN   (I2S)</text>
+  </g>
+
+  <!-- Jetson USB link -->
+  <polyline points="710,115 745,115 745,455 650,455 650,480" fill="none" stroke="#2e7d32" stroke-width="3" stroke-dasharray="8 5"/>
+  <text x="752" y="440" fill="#2e7d32" font-size="13">USB</text>
+
+  <!-- thermal -->
+  <rect x="30" y="520" width="250" height="90" rx="8" fill="#f3e5f5" stroke="#6a1b9a" stroke-width="2"/>
+  <polyline points="530,390 530,460 155,460 155,520" fill="none" stroke="#6a1b9a" stroke-width="3"/>
+  <text x="45" y="548" font-weight="bold">열화상 GY-MCU90640</text>
+  <text x="45" y="570" font-size="13">VCC ← 5 V 줄 (ESP32 핀에서 안 받음)</text>
+  <text x="45" y="592" font-size="13">PS 핀은 비워 둠 (GND면 I2C 모드)</text>
+  <line x1="280" y1="570" x2="380" y2="570" stroke="#2e7d32" stroke-width="3"/>
+  <line x1="280" y1="590" x2="380" y2="590" stroke="#2e7d32" stroke-width="3"/>
+
+  <!-- divider -->
+  <rect x="800" y="700" width="290" height="110" rx="8" fill="#fff" stroke="#333" stroke-width="2"/>
+  <text x="815" y="728" font-weight="bold">ECHO 전압 줄이기 (초음파마다)</text>
+  <text x="815" y="752" font-size="14">ECHO → 1 kΩ → (가운데) → ESP32 GPIO</text>
+  <text x="815" y="776" font-size="14">가운데 → 2 kΩ → GND</text>
+  <text x="815" y="800" font-size="14">5 V × 2/3 = 3.3 V</text>
+  <line x1="710" y1="745" x2="800" y2="745" stroke="#2e7d32" stroke-width="3"/>
+
+  <!-- signal lines to right devices -->
+  <polyline points="710,630 960,630 960,420 1010,420" fill="none" stroke="#2e7d32" stroke-width="3"/>
+  <polyline points="710,685 980,685 980,265 1010,265" fill="none" stroke="#2e7d32" stroke-width="3"/>
+  <polyline points="710,700 1000,700 1000,280 1290,280 1290,255" fill="none" stroke="#2e7d32" stroke-width="2"/>
+  <polyline points="1090,760 1285,760 1285,440" fill="none" stroke="#2e7d32" stroke-width="3"/>
+
+  <!-- GND bus -->
+  <line x1="30" y1="930" x2="1370" y2="930" stroke="#000" stroke-width="3"/>
+  <text x="30" y="958" font-weight="bold">GND 공통: XL4015 출력 −, 5 V 강압 출력 −, ESP32 GND, 서보 갈색선, 센서 GND 를 모두 한 점으로</text>
+  <line x1="545" y1="880" x2="545" y2="930" stroke="#000" stroke-width="3"/>
+
+  <!-- speaker amp -->
+  <rect x="800" y="840" width="290" height="70" rx="8" fill="#f3e5f5" stroke="#6a1b9a" stroke-width="2"/>
+  <text x="815" y="866" font-weight="bold">앰프 MAX98357A → 스피커</text>
+  <text x="815" y="888" font-size="13">3 W 8 Ω (JST-PH2.0), 앰프 5 V · 하나 구매</text>
+  <line x1="710" y1="845" x2="800" y2="870" stroke="#2e7d32" stroke-width="3"/>
+  <polyline points="1090,875 1190,875 1190,350" fill="none" stroke="#6a1b9a" stroke-width="3"/>
+</svg>

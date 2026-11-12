@@ -104,7 +104,7 @@
 | 서보 MG996R | 메탈기어 | 노즐 팬 | 순간 2~3 A |
 | 서보 DS3218 PRO | 20 kg, 180°, 메탈기어 | 노즐 틸트 | 순간 2~3 A |
 | 펌프 DP-521 | 12 V 다이어프램, 0.48 MPa, 3.5 L/min | 물 분사 | D4184 MOSFET(40 V 50 A)으로 ON/OFF |
-| 전원 | LM2596 × 3, XL4015 5 A, DC Y 분배 케이블 | 서보 6 V, 센서·ESP32 5 V | 확인 사항은 [parts.md](parts.md#받은-뒤-확인할-것) |
+| 전원 | XL4015 5 A(서보 6 V) + 5 V 강압(센서), DC Y 분배 케이블 | 서보 6 V, 센서 5 V, ESP32 는 Jetson USB | 배선·핀은 [wiring.md](wiring.md) |
 
 장착 위치가 정해지면 모듈마다 xacro 하나씩 `limo_fire_description` 에 더한다.
 
