@@ -5,8 +5,8 @@ GPU 학습 환경(C++/CUDA/Rust). ROS 패키지가 아니라 빌드에서 빠진
 | 폴더 | 내용 | 상태 |
 |---|---|---|
 | `maps/` | 맵 변환기 `fmap` (Rust): HouseExpo·ProcTHOR·덕트호스 생성기 → 공통 점유 격자 `.fmap` + 소화기·비상구·화재 감지기 배치. 탐사·조준 공용 | 됨 |
-| `explore/sim/` | 탐사 RL — GPU 학습 시뮬(CUDA): 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, 확률 지도, 보상, 로봇 중심 관측. CPU 참조판과 비트 동일 | 됨(맵 읽기·속도 남음) |
-| `explore/mdp/` · `network/` · `ppo/` · `scripts/` | 탐사 RL — 관측·보상·커리큘럼, MLP 정책·가치, PPO, 실행기 ([구조](explore/README.md)) | 할 일 |
+| `explore/sim/` | 탐사 RL — GPU 학습 시뮬(CUDA): 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, 확률 지도, 움직이는 사람, 보상, 로봇 중심 관측. CPU 참조판과 비트 동일 | 됨 |
+| `explore/mdp/` · `network/` · `ppo/` · `scripts/` | 탐사 RL — 관측·보상·커리큘럼, CNN 혼합 정책·가치, PPO, 실행기 ([구조](explore/README.md)) | 됨 — 두 층 구조로 가는 중([계획](explore/ROADMAP.md)) |
 | `aim/` | 조준 RL | 나중 |
 | `detect/` | YOLO 탐지(불·연기·소화기·비상구·사람·문), C++/CUDA 학습기 | 할 일 |
 
@@ -48,4 +48,4 @@ cd train/explore/sim && cmake -S . -B build && cmake --build build -j
 구동은 실물 녹화로 맞추고 확인한다: `motion_export`(limo_fire_sim) → `./build/motion_check <구동.csv> [--fit]`.
 GPU 환경 전체를 실물 녹화로 다시 돌린다: `bag_export <녹화> <x.lfrec>`(지도 `.map.yaml` 도) → `./build/map2scene x.lfrec.map.yaml x.scene` → `./build/replay_check x.scene <구동.csv> x.lfrec`.
 보정 녹화는 [analysis/calibration.yaml](explore/sim/analysis/calibration.yaml) 에 역할(fit·validate)과 뺄 구간을 적고 `--set analysis/calibration.yaml fit|validate` 로 돌린다 (`motion_check --fit`, `replay_check --fit-dropout`).
-아직: IMU·오도메트리 자세 추정, 카메라, `train/maps` 맵 읽기, 속도(젯슨 1,024 환경 3,600 행동/초 — 라이다 평면 자르기로 올릴 것). 옛 초안 환경(`.fmap` 맵 읽기 포함)은 `archive/explore_env`.
+옛 초안 환경(`.fmap` 맵 읽기 포함)은 `archive/explore_env`.

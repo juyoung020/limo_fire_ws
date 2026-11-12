@@ -15,7 +15,7 @@ explore/
 └── scenes/     시험 장면(.scene, git 제외 — 만드는 명령은 baselines/frontier/README)
 ```
 
+지금 방향(위층 = 목적지 고르기, 아래층 = 조작)과 두 층의 입력·출력·단계는 [ROADMAP.md](ROADMAP.md).
 학습을 보는 화면은 [viewer/](viewer/README.md): 러너가 `viewer/include/runfolder.h` 로 `runs/<실험>/` 에 쓰면 `trainview --root train/explore/runs` 가 곡선·판 재생을 보여 준다.
 구성은 학습기 쪽은 rsl_rl(algorithms·modules·storage·runners), 과제 쪽은 Isaac Lab(`<과제>/mdp`) 을 줄여 따랐다.
 보상·관측 크기·끝 조건·PPO 하이퍼파라미터는 yaml 이 아니라 코드 안에 둔다. 바꾸면 다시 컴파일하고 체크포인트에서 이어 학습한다.
-지금 관측·보상·끝 판정은 아직 `sim/include/env.h` 안(`write_obs`, `finish_step`)에 있고 `mdp/` 로 옮길 차례다.

@@ -11,7 +11,7 @@
 | 워크스페이스·규칙 | 됨 | 루트, [CLAUDE.md](../CLAUDE.md) |
 | 시뮬레이터 역할 나누기 | 됨 | [README](../README.md#시뮬레이션) |
 | 맵 52,032 개 + 소방 시설 배치 | 됨 | `train/maps` |
-| 탐사 RL GPU 학습 시뮬 (CUDA, 실물에 맞춤) | 됨 — PPO·학습 뷰어·맵 읽기 남음 | `train/explore/sim` |
+| 탐사 RL 학습 (GPU 시뮬·PPO·학습 뷰어·프론티어 기준선) | 됨 — 두 층 구조(목적지 고르기 + 조작)로 가는 중 | `train/explore`, [계획](../train/explore/ROADMAP.md) |
 | LIMO Pro 기본 URDF·TF | 됨 — 센서 모듈은 배치 정해지면 | `src/limo_fire/limo_fire_description` |
 | YOLO 데이터 모으기 | 공개 데이터·크롤링 됨, 직접 찍기 남음 | `train/detect/data` |
 | 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 6.8 만 장 라벨, YOLO 데이터셋(8:1:1) 만듦 | `train/detect/teacher`, `tools/yolods` |
@@ -63,10 +63,10 @@ AWS 병원·창고·서점·집 월드(`sim/maps`)는 메시라 아직 격자로
 
 ## 4. 탐사 RL GPU 학습 시뮬 (`train/explore/sim`)
 
-- 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, Cartographer 식 확률 지도, 보상, 로봇 중심 관측(지도 64 × 64 · 깊이 64 × 40 · 숫자 7)을 CUDA 커널 한 번에 돌린다. CPU 참조판과 비트까지 같다.
-- 행동은 `config/env.yaml action.mode`: 속도(0.1 s 마다 v, ω) 또는 목표점(0.5 s 마다 16 방향 × 3 거리).
+- 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, Cartographer 식 확률 지도, 움직이는 사람, 보상, 로봇 중심 관측(가까운·먼 지도, 깊이, 라이다, 숫자 — 크기는 `train/explore/mdp/obs_layout.h`)을 CUDA 커널 한 번에 돌린다. CPU 참조판과 비트까지 같다.
+- 행동은 속도 직접(0.1 s 마다) 또는 목적지 고르기(1 s 마다 프론티어 후보 8 곳 중 하나). 상세는 `train/explore/mdp/README.md`.
 - 실행·검증 방법은 [train/README.md](../train/README.md), 실측 근거는 `train/explore/sim/analysis`.
-- 남은 것: PPO·학습 뷰어, `train/maps` 맵 읽기, 속도.
+- 학습기(PPO)·학습 뷰어·프론티어 기준선도 있다(`train/explore`). 지금 방향과 남은 단계는 [train/explore/ROADMAP.md](../train/explore/ROADMAP.md).
 - 첫 초안 환경(목표점 행동·칸 DDA 라이다, 2026-10-23)은 `archive/explore_env` 로 옮겼다.
 
 ## 5. URDF·TF (`limo_fire_description`)
@@ -131,7 +131,7 @@ YOLO 는 사진 속 상자(픽셀 위치·크기), 클래스, 확신도만 낸�
 | 2 | ~~데이터셋 합치기 도구~~ 됨(`tools/yolods`) |
 | 3 | ~~YOLO26s 학습기~~ 됨(처음부터 새로 작성, Ultralytics 와 정합성 확인) → 100 epoch 학습 결과 보고 라벨 잡음(자동차 문 = door 등) 손보기 |
 | 4 | 학교에서 시험용 사진 찍기 (팀) |
-| 5 | 탐사 RL: 관측 만들기 + PPO + 뷰어 |
+| 5 | ~~탐사 RL: 관측 만들기 + PPO + 뷰어~~ 됨 → 두 층 구조: 후보 뽑기 개선, 아래층(조작) 학습, 합쳐 미세 조정 |
 | 6 | 부품 도착 후 센서 모듈 URDF·ESP32 브리지 |
 | 7 | 11/30 중간평가 — PPT + 동영상 |
 

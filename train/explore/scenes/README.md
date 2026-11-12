@@ -1,6 +1,6 @@
 # scenes — 탐사 RL 학습·시험 맵 묶음
 
-ROADMAP S2. 장면 파일(`.scene`, 형식 2 — `sim/include/scene_host.h`)과 목록은 다시 만들 수 있는 생성물이라 저장소에 넣지 않는다(.gitignore). 아래 명령으로 같은 씨앗이면 같은 묶음이 나온다.
+옛 ROADMAP(`archive/explore_roadmap_1104`) S2. 장면 파일(`.scene`, 형식 2 — `sim/include/scene_host.h`)과 목록은 다시 만들 수 있는 생성물이라 저장소에 넣지 않는다(.gitignore). 아래 명령으로 같은 씨앗이면 같은 묶음이 나온다.
 
 | 폴더 | 내용 |
 |---|---|

@@ -54,10 +54,11 @@ ros2 topic echo /explore_frontier/state
 
 학습한 계층형 탐사 정책(`train --hier`)을 실물 LIMO 에서 돌린다. 1 s 마다 프론티어 후보 8 곳 중 하나를 골라 Nav2 `NavigateToPose` 목표로 보내고,
 지도가 닫히면(시뮬 성공 판정과 같음) 멈추고 `~/done` 에 `true` 를 낸다.
+주행을 Nav2 대신 학습한 아래층 정책이 맡는 구조는 만드는 중이다([train/explore/ROADMAP.md](../../../train/explore/ROADMAP.md)).
 
 **관측은 학습 시뮬과 같은 코드다.** `/scan` 한 장을 시뮬 걸음 하나(0.1 s)로 보고, 시뮬이 쓰는 함수(`train/explore/sim/include/env.h`·`obs_ref.h`, `mdp/`)에
 실물 값을 그대로 넣는다. 관측 지도도 Cartographer `/map` 을 바꿔 쓰지 않고, 시뮬과 같은 로그 오즈 갱신으로 `/scan` + Cartographer 자세(TF `map → base_link`)에서
-쌓는다([계획 6 절](../../../docs/rl_explore_plan.md#6-배치)). 그래서 같은 센서 값이면 관측이 시뮬과 비트까지 같다(아래 "확인").
+쌓는다. 그래서 같은 센서 값이면 관측이 시뮬과 비트까지 같다(아래 "확인").
 
 ## 실행 (로봇)
 
