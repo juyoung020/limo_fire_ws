@@ -2,7 +2,8 @@
 // env_bench <장면.scene> [장면 …] [--list 목록] [--envs 1024] [--steps 50] [--env config/env.yaml] [--model config/sensor_model.yaml]
 //           [--cpu] [--threads N]   CPU 참조판(같은 단계 함수·같은 BVH 순회)을 스레드 N 개로 — 같은 맵·행동열·환경 수로 GPU 와 비교.
 //           [--hier] 계층형(행동 = 후보 번호, 걸음 하나 = 결정 하나)  [--graph] 그래프 모드(행동 = 이웃 번호) — 그래프 관측만 다시 내는 시간도 잰다
-//   끝에 상태 해시를 찍는다: 같은 인자면 GPU 와 CPU 가 같은 값이어야 한다(비트 같음)
+//   끝에 상태 해시를 찍는다: 같은 인자면 GPU(SIM_EXACT=1 또는 SIM_NO_OPTIX=1)와 CPU 가 같은 값이어야 한다(비트 같음).
+//   기본은 학습과 같은 RT 코어 빠른 길이라 해시가 CPU 와 다를 수 있다(include/optix_rt.h) — 어느 길인지 해시 옆에 적는다
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
@@ -95,6 +96,7 @@ int main(int argc, char** argv) {
               (double)n_env * n_steps * (hc.cfg.substeps / hc.cfg.lidar_every) / sec);
   if (hier) std::printf("%s: 결정 하나 = 걸음 %d 개 → 초당 걸음 %.0f\n", graph ? "그래프 모드" : "계층형", hc.cfg.decide_steps, (double)n_env * n_steps * hc.cfg.decide_steps / sec);
   if (graph) std::printf("그래프 관측만: 환경 %d 개 한 번 %.3f ms (20 번 평균), 다시 낸 값 %s\n", n_env, graph_ms, graph_same ? "그대로" : "달라짐");
-  std::printf("무작위 행동 %d 걸음 뒤 평균 덮은 비율 %.3f, 상태 해시 %016llx\n", n_steps + 1, cov / n_env, (unsigned long long)h);
+  std::printf("무작위 행동 %d 걸음 뒤 평균 덮은 비율 %.3f, 상태 해시 %016llx (광선 길 %s%s)\n", n_steps + 1, cov / n_env, (unsigned long long)h,
+              sim::ray_path_name(env.ray_path()), env.bit_exact() ? "" : " — CPU 와 비트까지 같지 않음");
   return 0;
 }

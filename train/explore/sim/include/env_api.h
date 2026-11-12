@@ -56,6 +56,13 @@ struct GraphOut {
   const int32_t* cand;          // [N][graph::NB]  현재 노드의 이웃 칸 (y · gw + x, −1 간선 없음) — 행동 a[0] = k 의 목표. 행동 마스크 = cand ≥ 0 = edge[cur] 비트
 };
 
+// GPU 광선 길 (include/optix_rt.h). CPU 참조판과 비트까지 같은 것은 kRayRtFast 만 빼고 모두 — 빠른 길은 하드웨어 삼각형 교차라
+// 모서리·동점에서 다른 삼각형(또는 맞음·빗나감)을 골라 통계로만 같다. GPU 결과를 --cpu·옛 빌드와 줄 단위로 견주는 도구는 정확한 길로 돈다
+enum RayPath : int { kRayCpu = 0, kRaySoft = 1, kRayRtExact = 2, kRayRtFast = 3 };
+inline const char* ray_path_name(int p) {
+  return p == kRayCpu ? "cpu" : (p == kRaySoft ? "gpu_soft" : (p == kRayRtExact ? "rt_exact" : "rt_fast"));
+}
+
 class Env {
  public:
   // gpu: true 면 장치 메모리·커널, false 면 CPU 참조판
@@ -103,6 +110,8 @@ class Env {
 
   const EnvBatch& batch() const { return b_; }
   int n_env() const { return b_.n_env; }
+  int ray_path() const { return !gpu_ ? kRayCpu : (!b_.rt ? kRaySoft : (b_.rt_fast ? kRayRtFast : kRayRtExact)); }
+  bool bit_exact() const { return ray_path() != kRayRtFast; }   // CPU 참조판과 비트까지 같다고 약속하는 길인가
 
  private:
   bool gpu_;

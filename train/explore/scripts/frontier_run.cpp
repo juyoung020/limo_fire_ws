@@ -4,6 +4,8 @@
 //   frontier_run --scenes a.scene [b.scene …] [--modes nav2,fast] [--episodes 4] [--root train/explore/runs] [--name frontier]
 //                [--seed 1] [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml] [--frontier baselines/frontier/config/frontier.yaml]
 //                [--obs-every 5] [--cpu] [--eval-seed]
+//   GPU 광선은 정확한 길(SIM_EXACT=1, sim/include/optix_rt.h)로 돈다 — 같은 인자의 --cpu 판과 판 기록이 비트까지 같다(ts 만 다름). 학습 기본인
+//   RT 코어 빠른 길은 모서리에 걸친 광선에서 다른 삼각형을 골라 빔 수만 개에 하나꼴로 갈린다. 빠른 길로 재려면 SIM_EXACT=0 (run.json ray_path 에 적힘)
 //   --modes 에 slot0 · slot0_nosafe 를 넣으면 계층형 규칙 정책(늘 0 번 후보, 아래 run_hier)을 같은 판으로
 //   --people K: 계층형 판마다 사람 0 ~ K 명 (시험 맵 넓이 = 커리큘럼 단계 2 → 2). 끝 지표는 벽 충돌·사람 충돌을 나누고 충돌 때 명령(앞·제자리 회전·뒤·멈춤)도 셈
 //   --eval-seed: 장면 i 의 시뮬 씨앗을 학습 러너 평가와 같은 규칙(train.cpp evaluate: seed · 7919 + 17 + i)으로 — --scenes 를 train --test 와
@@ -15,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -33,6 +36,14 @@ namespace {
 constexpr int kLidarN = 248;   // 재생 라이다: ±110°, 248 칸 (mdp/README 라이다 관측과 같은 꼴)
 constexpr float kLidarFov = 220.f * (float)M_PI / 180.f, kLidarMax = 8.f;
 constexpr float kSuccessCov = 0.95f;   // 성공 기준(덮음) — mdp/README 성공 기준·env.yaml success_coverage 와 같은 값
+
+// 이 실행이 쓴 광선 길을 run.json 에 적는다 (env_api.h RayPath). 빠른 길이면 --cpu 판과 비트까지 같지 않다고 알림
+void note_ray_path(rf::RunFolder& run, const sim::Env& env) {
+  run.set_meta("ray_path", sim::ray_path_name(env.ray_path()));
+  static bool said = false;
+  if (!said && !env.bit_exact()) std::fprintf(stderr, "frontier_run: RT 코어 빠른 길(SIM_EXACT=0) — 같은 인자의 --cpu 판과 비트까지 같지 않다\n");
+  said = true;
+}
 
 struct Args {
   std::vector<std::string> scenes, modes{"nav2", "fast"};
@@ -146,6 +157,7 @@ int run_mode(const Args& a, const std::string& mode) {
     const sim::World& W = worlds[wi];
     std::vector<sim::World> one{W};
     sim::Env env(hc, one, lidar, N, a.eval_seed ? a.seed * 7919ull + 17 + wi : a.seed * 1000003ull + wi * 7919ull, !a.cpu);
+    note_ray_path(run, env);
     env.reset();
     env.sync();
     // 재생용 정답 맵·광선
@@ -437,6 +449,7 @@ int run_hier(const Args& a, const std::string& mode) {
     std::vector<int32_t> r_cand;
     cr::Stat r_stat;
     sim::Env env(hc, one, lidar, N, a.seed * 1000003ull + wi * 7919ull, !a.cpu);
+    note_ray_path(run, env);
     env.reset();
     env.sync();
     if (a.people > 0) {   // 사람 상한은 판 시작 인자 — 놓고 다시 리셋 (people 0 이면 안 건드려 옛 판과 같은 씨앗)
@@ -730,6 +743,7 @@ if (!graph) dist_m[i] += std::hypot(s.x - px[i], s.y - py[i]);   // 결정 사�
 }  // namespace
 
 int main(int argc, char** argv) {
+  setenv("SIM_EXACT", "1", 0);   // 판 기록을 --cpu·다른 실행과 줄 단위로 견주는 도구 — 정확한 길 (머리 주석)
   Args a;
   for (int i = 1; i < argc; ++i) {
     const std::string k = argv[i];

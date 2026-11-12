@@ -351,7 +351,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       rt_ = new OptixRt(sc, dt);
       b_.rt = rt_;
       const char* ex = std::getenv("SIM_EXACT");
-      b_.rt_fast = (ex && std::atoi(ex)) ? 0 : 1;   // 기본 빠른 길, SIM_EXACT=1 이면 정확한 길
+      b_.rt_fast = (ex && std::atoi(ex)) ? 0 : 1;   // 기본 빠른 길(CPU 와 통계로만 같음), SIM_EXACT=1 이면 정확한 길 — Env::ray_path
     }
 #endif
     // 장치 사본 (OptiX raygen 이 읽음). 묶음은 여기서 다 정해지고 그 뒤 안 바뀐다

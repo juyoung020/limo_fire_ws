@@ -14,6 +14,9 @@
 시뮬 쪽: `sim/include/env.h` 가 이 헤더들을 부르고(`finish_step` → `rewards.h`·`curriculums.h`, 끝에서 `observations.h`), 러너는
 `sim::Env::step(actions)`·`outputs()`(`sim/include/env_api.h` `StepOut`, 모두 장치 포인터)로 쓴다. 확인: `sim/tools/env_verify`(관측·보상·끝까지 GPU == CPU 비트 같음,
 `--negative`, 관측 값 범위), `reward_probe`.
+GPU == CPU 비트 같음은 GPU 광선이 정확한 길(`SIM_EXACT=1`)·소프트 순회일 때의 약속이다. 학습 기본인 RT 코어 빠른 길은 통계로만 같다(`sim/include/optix_rt.h`,
+`rt_fastcheck`). 결과를 CPU 판·다른 실행과 줄 단위로 견주는 도구(`env_verify`·`env_dump`·`graph_check`·`rl_node_check`·`frontier_run`)는 정확한 길로 돌고,
+어느 길로 돌았는지 적는다(`Env::ray_path`, `frontier_run` 은 run.json `ray_path`). 평가 조건 그대로의 비트 비교는 `env_verify --eval [--people K]`.
 
 덮음(정답 기준)은 시뮬 한 걸음 안에서 센다(`sim/include/env.h` `wall_credit`·`scan_apply`, 분모는 `sim/src/env_host.cpp` `build_world`). 보상·평가·프론티어 기준선이 모두 이 값을 쓴다.
 

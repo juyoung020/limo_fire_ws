@@ -6,6 +6,11 @@
 //   --negative: GPU 쪽 행동 하나를 바꿔 일부러 어긋나게 한다 (검사가 틀림을 잡는지)
 //   --people K: 환경마다 사람 상한 K (판마다 0~K 명, people.h). --negative-person: 가운데 걸음에 GPU 쪽 사람 하나를 1 cm 옮긴다
 //   --slot0: (--hier 와) 늘 후보 0 번 — 복구·목표 허용 길까지 비교
+//   --eval: 평가 도구(scripts/frontier_run --modes slot0)와 같은 조건 — --hier --slot0 · 커리큘럼 끔 · 환경 32 · 결정 120(평가 판 평균 길이쯤) · CPU 참조판 스레드 8
+//           (--envs·--steps·--threads 를 뒤에 주면 그 값).
+//           --people K 를 같이 주면 사람 있는 평가. --seed S: Env 씨앗 (기본 7)
+//   비교하는 GPU 광선 길을 끝줄에 적는다. 정확한 길(SIM_EXACT=1, 여기 기본)·소프트 순회만 비트 비교 대상이다 — RT 코어 빠른 길(SIM_EXACT=0, 학습 기본)은
+//   설계상 통계로만 같아(include/optix_rt.h, tools/rt_fastcheck) "다름" 이 나와도 통과·실패로 세지 않고 종료 코드 2
 //   --graph: 그래프 모드(--hier 위에, mdp/graph.h — 행동 = 현재 노드의 이웃 번호, 열에 여덟은 유효 이웃 중 무작위). 노드 특징·간선·현재 노드·전역 숫자·이웃 칸이
 //            판 시작·결정마다 GPU == CPU 인지, 정답 격자를 바꾼 묶음에서 그래프 관측이 같은지 (--negative 는 유효 이웃 번호 하나를 다른 유효 이웃으로)
 //   --hier: 계층형 행동 모드(kActPath — 결정 하나 = 속도 행동 10 걸음 묶음, 후보 번호 무작위). 덧붙여 정답 격자를 쓰지 않는지:
@@ -66,6 +71,8 @@ int main(int argc, char** argv) {
   sim::GraphArgs gargs;   // --graph-node 등 (env_cfg.h)
   int people = 0;
   bool spin = false;
+  bool eval = false;    // --eval: 평가 도구와 같은 조건 (머리 주석)
+  uint64_t seed = 7;
   bool slot0 = false;   // --slot0 (계층형): 늘 후보 0 번 — 같은 목표가 이어져 복구(hier_path.h "복구")·목표 허용 길을 GPU == CPU 로 지나가게
   bool hier = false;   // --spin: 행동을 제자리 돌기(ω 0.5 정규)로 — 작은 방에서 지도 닫힘 성공(판 끝 1) 길을 GPU == CPU 로 지나가게
   for (int i = 1; i < argc; ++i) {
@@ -78,6 +85,8 @@ int main(int argc, char** argv) {
     else if (a == "--people" && i + 1 < argc) people = std::stoi(argv[++i]);
     else if (a == "--spin") spin = true;
     else if (a == "--slot0") slot0 = true;
+    else if (a == "--eval") { hier = slot0 = eval = true; n_env = 32; n_steps = 120; sim::set_cpu_threads(8); }
+    else if (a == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
     else if (a == "--hier") hier = true;
     else if (a == "--graph") hier = graph = true;
     else if (i + 1 < argc && sim::graph_arg(gargs, a, argv[i + 1])) ++i;
@@ -194,7 +203,7 @@ int main(int argc, char** argv) {
   if (graph_stand >= 0) hc.cfg.graph_stand = graph_stand;
   if (graph_open >= 0) hc.cfg.graph_open = graph_open;
   sim::graph_apply(hc.cfg, gargs);
-  if (people > 0) hc.cfg.curriculum = 0;   // 커리큘럼이 켜져 있으면 단계가 사람 수를 정함 — --people 로 정한 수를 쓰려고 끔
+  if (people > 0 || eval) hc.cfg.curriculum = 0;   // 커리큘럼이 켜져 있으면 단계가 사람 수를 정함 — --people 로 정한 수를 쓰려고 끔
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   std::vector<sim::World> worlds;
   try {
@@ -215,7 +224,7 @@ int main(int argc, char** argv) {
                 (w.stage >= 0 ? w.stage : mdp::cur::stage_of_area(w.n_floor * hc.cfg.res * hc.cfg.res)), mdp::rew::t_ref(w.n_wall), w.spawn.size(), w.closed ? "닫힘" : w.leak.c_str());
   std::printf("안전층 %s: 문턱 %.3f m (앞 범퍼에서, 제동 거리 %.3f m + 판단 지연 0.2 s × %.1f m/s)\n", hc.cfg.safety ? "켬" : "끔", hc.cfg.safety_dist,
               hc.brake_dist, mdp::act::V_FWD);
-  sim::Env gpu(hc, worlds, lidar, n_env, 7, true), cpu(hc, worlds, lidar, n_env, 7, false);
+  sim::Env gpu(hc, worlds, lidar, n_env, seed, true), cpu(hc, worlds, lidar, n_env, seed, false);
   gpu.set_people_max(std::vector<int>(n_env, people));
   cpu.set_people_max(std::vector<int>(n_env, people));
   gpu.reset();
@@ -578,6 +587,11 @@ int main(int argc, char** argv) {
                 d_term[1], d_term[2], d_term[3], d_rew[0], d_rew[1], d_rew[2]);
   const bool same = bad_state == 0 && bad_reward == 0 && bad_map == 0 && bad_seen == 0 && bad_trail == 0 && bad_obs == 0 && bad_cam == 0 && bad_graph == 0;
   const bool range_ok = n_nan == 0 && bad_range == 0;
+  std::printf("GPU 광선 길: %s%s\n", sim::ray_path_name(gpu.ray_path()), eval ? " · 평가 조건(--eval)" : "");
+  if (!gpu.bit_exact()) {   // 빠른 길은 비트 비교 대상이 아니다 — 통과로도 실패로도 세지 않음
+    std::printf("RT 코어 빠른 길(SIM_EXACT=0)은 비트 비교 대상이 아님: %s. 정확한 길로 다시 돌릴 것 (통계 동등성은 rt_fastcheck)\n", same ? "이번 실행은 같았음" : "다름");
+    return 2;
+  }
   std::printf("%s\n", same ? "환경 V0 통과: GPU == CPU (비트 같음)" : "다름");
   std::printf("%s\n", range_ok ? "관측 범위 통과" : "관측 범위 실패");
   return negative ? (same ? 1 : 0) : (same && range_ok && gt_ok ? 0 : 1);
