@@ -8,7 +8,7 @@
 
 | 그림 | 파일 | 무엇을 보나 |
 |---|---|---|
-| 회로도 (KiCad 10) | [limo_sensors.pdf](../hardware/wiring/limo_sensors.pdf) · 원본 `limo_sensors.kicad_sch` | 핀 단위 연결. ERC 위반 0, 넷리스트로 위 핀표와 맞춤 확인 |
+| 회로도 (KiCad 10) | [limo_sensors.png](../hardware/wiring/limo_sensors.png) · [pdf](../hardware/wiring/limo_sensors.pdf) · 원본 `limo_sensors.kicad_sch` | 핀 단위 연결. ERC 위반 0, 넷리스트로 위 핀표와 맞춤 확인 |
 | 배선 (WireViz) | [harness.png](../hardware/wiring/harness.png) · 원본 `harness.yml` | 선 한 가닥씩 색·굵기, 양 끝이 납땜인지 듀폰인지 나사 단자인지 |
 | 배선판 납땜 | [board.png](../hardware/wiring/board.png) | 만능기판 구멍마다 무엇을 꽂고 어디를 이어 납땜하는지 |
 
