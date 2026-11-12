@@ -24,6 +24,14 @@ constexpr float kLrProxK = -0.05f;       //   × (1 − 간격 / kLrProxDist) �
 constexpr float kLrSmoothK = -0.01f;     // 매끄러움: × ‖이번 − 직전 행동‖ (정규 단위 v, ω)
 constexpr float kLrBackK = -0.02f;       // 후진: × 후진 명령 크기 (정규 단위 0 ~ 1). 라이다가 뒤 140° 를 못 봄 — 막지는 않고 값만
 constexpr float kLrSafetyK = -0.05f;     // 안전층(앞 틈·몸통 쓸림)이 명령을 고친 걸음
+// ---------- 벽 충돌 대책 (2026-11-13, 모두 잠정 — 재어 고른 값. 진단·견줌 표는 mdp/README "아래층 RL — 벽 충돌") ----------
+// EnvCfg 기본값 (env_cfg.cpp 가 환경변수 SIM_LOW_GUARD · _H · _MARGIN · SIM_LOW_NOBACK · SIM_LR_MPROX_K · _D 로 덮음)
+constexpr int kLrGuardOn = 1;            // 몸통 지킴이 (아래 lowrl_guard) 켬
+constexpr float kLrGuardH = 0.5f;        //   내다보는 시간 (s): 0.3 s·여유 0.03 m 는 벽 충돌 0.083, 0.5 s·0.05 m 는 0.021 /100 m (low_l1 bookstore 사람 0)
+constexpr float kLrGuardMargin = 0.05f;  //   몸통 둘레 여유 (m) = 지도 칸 하나
+constexpr int kLrNoBack = 0;             // 1: 후진 명령을 0 으로
+constexpr float kLrMproxK = -0.3f;       // 움직임 근접: × 몸통 가장 빠른 점 속도 (|v| + 꼭짓점 반경 × |ω|, m/s) × (1 − 간격 / kLrMproxD) 걸음마다.
+constexpr float kLrMproxD = 0.2f;        //   간격이 이보다 가까울 때 (= kLrProxDist). 벽에 붙어 최대 속도로 돌면(0.61 m/s) 걸음마다 −0.18 = 제 속도 진행의 2 배 가까이
 // ---------- 관측 ----------
 constexpr float kLrLook0 = 1.0f, kLrLook1 = 2.5f;   // 부목표: 경로 위 가장 가까운 점에서 이만큼 앞 (m). 잠정 — 가까운 지도 창 반 변 3.2 m 안
 constexpr float kLrNearCell = 0.10f;      // 가까운 지도 픽셀 (m) = mdp::obsgen::kNearCell (env_ref.cpp 가 같은지 확인)
@@ -177,6 +185,59 @@ DEV void lowrl_track(const EnvBatch& b, const EnvState& e, int env, int* p_i, Lo
 
 // ---------- 행동 (걸음 첫머리, 스레드 0) ----------
 // 정책 환경이면 명령을 정하고 true (호출한 쪽은 추종기를 건너뜀). a: 그 환경의 행동 줄 — a[0] = v, a[1] = ω (정규 단위 [−1, 1], 밖은 자름)
+// ---------- 몸통 지킴이 (EnvCfg::lg_on): 정책 명령 (v, ω) 를 lg_h 초 내다봐 몸통 둘레(여유 lg_margin)가 로봇 지도 막힘·깊이 카메라 층 칸에 닿으면 줄임 ----------
+// 근거 (low_l1 bookstore 사람 0 벽 충돌 77 건 진단, mdp/README "아래층 RL — 벽 충돌"): 73 % 가 몸통 뒤·옆(뒤는 모두 라이다 ±110° 밖)이
+// |ω| ≈ 3 rad/s 제자리 회전·후진 중에 닿음. 앞 틈 안전층(front_gap)은 v > 0 직진 통로의 라이다 점만 본다. 닿은 칸은 95 % 가 가까운 지도(3 × 3 픽셀)에,
+// 86 % 가 깊이 층에 이미 있었다. 정책 행동을 뒤에서 고치는 꼴은 NavRL(arXiv 2409.15634)의 안전 방패(safety shield)와 같은 자리.
+// sweep_scale(env.h) 과 다른 점: 깊이 카메라 층도 막힘, 둘레 점 촘촘히(≤ 5.3 cm), 내다보는 구간을 0.05 s 마다, 지금 여유 안이면 여유 0 으로 다시 봄.
+// 참값은 안 쓴다(로봇 지도·깊이 층·추정 자세만) — 실기에서도 같은 규칙을 돌릴 수 있다
+DEV bool lowrl_body_hits(const EnvBatch& b, const EnvState& e, int env, float x, float y, float th, float margin) {
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
+  float s, co;
+  dm::sincosf_d(th, &s, &co);
+  const float hl = c.half_len + margin, hw = c.half_wid + margin;
+  for (int i = 0; i < 32; ++i) {   // 긴 변 9 점 × 2 · 짧은 변 7 점 × 2
+    float u, v;
+    if (i < 18) { u = ((float)(i % 9) * 0.25f - 1.f) * hl; v = i < 9 ? hw : -hw; }
+    else { const int j = i - 18; v = ((float)(j % 7) / 3.f - 1.f) * hw; u = j < 7 ? hl : -hl; }
+    const float px = (x + co * u) - s * v, py = (y + s * u) + co * v;
+    int cx, cy;
+    const int ci = cell_of(c, m, px, py, &cx, &cy);
+    if (ci < 0) continue;
+    if (mdp::cell_class(L[ci]) == mdp::kOcc || cam_lethal(b, env, cx, cy)) return true;
+  }
+  return false;
+}
+DEV float lowrl_guard(const EnvBatch& b, const EnvState& e, int env, float v, float w) {
+  const EnvCfg& c = b.cfg;
+  if (v == 0.f && w == 0.f) return 1.f;
+  const float px = e.x + e.ex, py = e.y + e.ey, pth = e.th + e.eth;
+  float margin = c.lg_margin;
+  if (lowrl_body_hits(b, e, env, px, py, pth, margin)) {   // 이미 여유 안: 여유 0 으로 본다 (빠져나올 길은 남긴다)
+    margin = 0.f;
+    if (lowrl_body_hits(b, e, env, px, py, pth, 0.f)) return 1.f;   // 지도로는 이미 닿음 (자세 오차·잡음 칸) — 못 가림, 막지 않음
+  }
+  const int n = (int)(c.lg_h / 0.05f + 0.5f);
+  float k = 1.f;
+  for (int lv = 0; lv < 3; ++lv, k *= 0.5f) {
+    bool hit = false;
+    float x = px, y = py, th = pth;
+    for (int q = 0; q < n && !hit; ++q) {
+      const float thm = th + 0.5f * k * w * 0.05f;
+      float s, co;
+      dm::sincosf_d(thm, &s, &co);
+      x += k * v * co * 0.05f;
+      y += k * v * s * 0.05f;
+      th += k * w * 0.05f;
+      hit = lowrl_body_hits(b, e, env, x, y, th, margin);
+    }
+    if (!hit) return k;
+  }
+  return 0.f;
+}
+
 DEV bool lowrl_act(const EnvBatch& b, EnvState& e, int env, const float* a) {
   if (!b.lowrl) return false;
   LowRl& R = b.lowrl[env];
@@ -185,7 +246,7 @@ DEV bool lowrl_act(const EnvBatch& b, EnvState& e, int env, const float* a) {
   if (b.lowcmd[env].follow != 2) return false;
   const EnvCfg& c = b.cfg;
   const float n0 = clip1(a[0]), n2 = clip1(a[1]);
-  float v = n0 >= 0.f ? n0 * c.act_v_fwd : n0 * c.act_v_back, w = n2 * c.act_w_max;
+  float v = n0 >= 0.f ? n0 * c.act_v_fwd : (c.lg_noback ? 0.f : n0 * c.act_v_back), w = n2 * c.act_w_max;
   const float wheel = dm::absf(v) + c.wheel_k * dm::absf(w);   // 가장 빠른 바퀴가 한도를 넘으면 같은 비로 (속도 행동과 같은 규칙)
   if (wheel > c.wheel_max) {
     const float k = c.wheel_max / wheel;
@@ -199,6 +260,12 @@ DEV bool lowrl_act(const EnvBatch& b, EnvState& e, int env, const float* a) {
     v *= k2;
     w *= k2;
     if (k2 < 1.f) safe = true;
+  }
+  if (c.lg_on) {
+    const float k3 = lowrl_guard(b, e, env, v, w);
+    v *= k3;
+    w *= k3;
+    if (k3 < 1.f) safe = true;
   }
   e.cmd_v = v;
   e.cmd_vy = 0.f;
@@ -250,6 +317,10 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
       float d = e.people.near_d;
       if (m.clear) d = dm::minf(d, body_clearance(c, m, e.x, e.y, e.th));
       if (d < kLrProxDist) r[kLrProximity] = kLrProxK * (1.f - dm::maxf(d, 0.f) / kLrProxDist);
+      if (c.lr_mprox_k != 0.f && d < c.lr_mprox_d) {   // 움직임 근접: 몸통 가장 빠른 점 속도 = |v| + 꼭짓점 반경 × |ω|
+        const float rc = sqrtf(c.half_len * c.half_len + c.half_wid * c.half_wid);
+        r[kLrProximity] += c.lr_mprox_k * (dm::absf(e.v) + rc * dm::absf(e.w)) * (1.f - dm::maxf(d, 0.f) / c.lr_mprox_d);
+      }
     }
     if (e.step > 1) {
       const float d0 = e.last_act[0] - e.last_act[mdp::act::DIM], d2 = e.last_act[2] - e.last_act[mdp::act::DIM + 2];

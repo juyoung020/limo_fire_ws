@@ -309,6 +309,15 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.sweep_guard = (g && g[0] == '1') ? 1 : 0;
       c.sweep_h = 0.2f;
       c.sweep_margin = 0.02f;
+      // 아래층 RL 벽 충돌 대책 (low_rl.h, mdp/README "아래층 RL — 벽 충돌"). 정책 환경(LowCmd::follow == 2)에만 듣는다.
+      // 환경변수는 견줌 실험용 — 학습·평가·env_verify 가 같은 값을 읽는다. SIM_LOW_GUARD=0 SIM_LOW_NOBACK=0 SIM_LR_MPROX_K=0 이 2026-11-12 동작
+      const auto envf = [](const char* k, float d) { const char* s = std::getenv(k); return s && s[0] ? (float)std::atof(s) : d; };
+      c.lg_on = (int)envf("SIM_LOW_GUARD", (float)kLrGuardOn);
+      c.lg_h = envf("SIM_LOW_GUARD_H", kLrGuardH);
+      c.lg_margin = envf("SIM_LOW_GUARD_MARGIN", kLrGuardMargin);
+      c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
+      c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
+      c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
     }
     {
       // 판 끝·성공 (2026-11-08, 닫힘 정의는 2026-11-10 고침 — mdp/README "판 끝"·"닫힘"): 성공 = 로봇 지도 닫힘(아래 닫힘 규칙) + 지도 진행 없음

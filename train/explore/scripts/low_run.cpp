@@ -61,6 +61,7 @@ struct Args {
   std::string policy;             // low_policy_run: 아래층 정책 체크포인트
   bool step = false;              // low_policy_run: 정책 없이 걸음 루프(규칙 추종기)
   std::vector<int> people_list;   // --people 에 쉼표로 여럿 (low_policy_run 이 차례로 돈다)
+  std::string diag;               // low_policy_run: 충돌 진단 TSV 를 쓸 파일 (없으면 끔 — 판·표·지문은 그대로)
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
 };
 
@@ -623,6 +624,122 @@ int run_follow(const Args& a, bool verify) {
 // 단독 과제를 아래층 RL 걸음(cfg.low_rl — env.step 한 번 = 0.1 s 걸음 하나)으로 돌린다. 예열·목표 뽑기·유효 판정·기록·표는 run_follow 와 같고,
 // 과제 구간을 모는 것만 정책(LowCmd::follow 2, --policy) 또는 규칙 추종기(follow 1, --step — 같은 루프에서 기준선이 다시 나오는지 보는 대조)다.
 // 다른 점: 호스트가 결정(1 s)이 아니라 걸음마다 보므로 통과한 바로 다음 걸음에 새 목표가 들어간다 (기준선은 결정 끝까지 쉼 — 쉰 걸음은 어느 쪽도 과제 시간에 안 셈)
+// ---------- 진단 (--diag 파일): 정책 환경의 충돌 걸음마다(와 견줄 보통 걸음 표본) 걸음 앞 상태·행동·관측에 그 장애물이 있었나를 한 줄씩 (TSV). 끄면 아무것도 안 함 ----------
+struct DiagHist { float v, w, a0, a1; int safe; };
+constexpr int kDiagH = 16;
+struct Diag {
+  std::FILE* f = nullptr;
+  std::vector<sim::EnvState> st;       // 걸음 앞 상태
+  std::vector<uint8_t> img;            // 걸음 앞 정책 관측
+  std::vector<float> o1d;
+  std::vector<sim::LowRl> rl, rl_post;
+  std::vector<DiagHist> hist;          // [N][kDiagH] 고리
+  std::vector<int> hn;
+  long n_ref = 0;
+};
+// 가장 가까운 막힌 칸(정답 격자): 걸음 앞 자세에서 (v, ω) 로 0.1 s 나아간 몸통 사각형에 가장 가까운 칸 → 걸음 앞 몸통 좌표 (u 앞, v 왼쪽)·몸통까지 거리
+bool diag_nearest(const sim::EnvCfg& c, const sim::World& W, const sim::EnvState& e, float* hu, float* hv, float* hd) {
+  const float dtk = (float)c.substeps * c.dt;
+  const float thm = e.th + 0.5f * e.w * dtk, x1 = e.x + e.v * std::cos(thm) * dtk, y1 = e.y + e.v * std::sin(thm) * dtk, th1 = e.th + e.w * dtk;
+  const float s0 = std::sin(e.th), c0 = std::cos(e.th), s1 = std::sin(th1), c1 = std::cos(th1);
+  const int cx = (int)std::floor((e.x - W.ox) / c.res), cy = (int)std::floor((e.y - W.oy) / c.res);
+  float best = 1e9f;
+  bool got = false;
+  for (int y = cy - 14; y <= cy + 14; ++y)
+    for (int x = cx - 14; x <= cx + 14; ++x) {
+      if (x < 0 || y < 0 || x >= W.gw || y >= W.gh || !(W.grid[(size_t)y * W.gw + x] & 1)) continue;
+      const float wx = W.ox + ((float)x + 0.5f) * c.res, wy = W.oy + ((float)y + 0.5f) * c.res;
+      const float u1 = c1 * (wx - x1) + s1 * (wy - y1), v1 = c1 * (wy - y1) - s1 * (wx - x1);
+      const float u0 = c0 * (wx - e.x) + s0 * (wy - e.y), v0 = c0 * (wy - e.y) - s0 * (wx - e.x);
+      const float d1 = std::hypot(std::max(std::fabs(u1) - c.half_len, 0.f), std::max(std::fabs(v1) - c.half_wid, 0.f));
+      const float d0 = std::hypot(std::max(std::fabs(u0) - c.half_len, 0.f), std::max(std::fabs(v0) - c.half_wid, 0.f));
+      const float score = std::max(d1, 0.03f) * 1000.f + d0;
+      if (score < best) { best = score; *hu = u0; *hv = v0; *hd = d0; got = true; }
+    }
+  return got;
+}
+void diag_row(Diag& D, const char* kind, const sim::EnvCfg& c, const sim::World& W, int people, int i, const sim::LowEp& L, const sim::LowCmd& cmd, int safe_now, int goal_age) {
+  using namespace mdp::obs;
+  const sim::EnvState& e = D.st[i];
+  const uint8_t* I = D.img.data() + (size_t)i * sim::kLowImg;
+  const float* O = D.o1d.data() + (size_t)i * sim::kLow1d;
+  float hu = 0, hv = 0, hd = 9;
+  const bool got = diag_nearest(c, W, e, &hu, &hv, &hd);
+  // 부딪힌 곳 (몸통 기준): F 앞면 · FC 앞 모서리 · S 옆면 · RC 뒤 모서리 · R 뒷면
+  const char* reg = "-";
+  if (got) {
+    const bool fu = hu > c.half_len, ru = hu < -c.half_len, sv = std::fabs(hv) > c.half_wid;
+    reg = fu ? (sv ? "FC" : "F") : ru ? (sv ? "RC" : "R") : "S";
+  }
+  int near0 = -1, near0m = -1, cam = -1, fov = 0;
+  float geom = 0, lr[LIDAR_FRAMES] = {0, 0, 0, 0};
+  const auto lid = [&](int bin, int f) {   // 라이다 그림 → m (lowrl_img 의 Z 차례 거꾸로)
+    const int z = 4 * bin + f;
+    int row = 0, col = 0;
+    for (int k = 0; k < 5; ++k) { col |= ((z >> (2 * k)) & 1) << k; row |= ((z >> (2 * k + 1)) & 1) << k; }
+    const float q = (float)I[sim::kLowLidarOff + row * sim::kLowLidarHW + col] / 255.f;
+    return q * q * c.map_max_range;
+  };
+  if (got) {
+    const int row = (int)std::lround(NEAR_H / 2 - 0.5f - hu / 0.1f), col = (int)std::lround(NEAR_W / 2 - 0.5f - hv / 0.1f);
+    near0m = 0; cam = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        const int r = row + dy, q = col + dx;
+        if (r < 0 || q < 0 || r >= NEAR_H || q >= NEAR_W) continue;
+        const int p0 = I[r * NEAR_W + q], p2 = I[sim::kLowCamCh * NEAR_H * NEAR_W + r * NEAR_W + q];
+        if (dy == 0 && dx == 0) near0 = p0;
+        near0m = std::max(near0m, p0);
+        cam = std::max(cam, p2);
+      }
+    const float lx = hu - c.mount_x, ang = std::atan2(hv, lx);
+    geom = std::hypot(lx, hv);
+    const int bin = (int)std::floor((ang - kLidarMin) / kLidarBin);
+    fov = bin >= 0 && bin < LIDAR_BINS;
+    for (int f = 0; f < LIDAR_FRAMES; ++f) {
+      float m = 99.f;
+      if (fov) for (int k = std::max(0, bin - 3); k <= std::min(LIDAR_BINS - 1, bin + 3); ++k) m = std::min(m, lid(k, f));
+      lr[f] = m;
+    }
+  }
+  float gap = 99.f;   // 관측 라이다 최신 장으로 센 앞 틈 (env.h front_gap 과 같은 식 — 그림 눈금만큼 거침)
+  {
+    const float half = c.half_wid + 0.05f, bumper = c.half_len - c.mount_x;
+    for (int k = 0; k < LIDAR_BINS; ++k) {
+      const float r = lid(k, 0);
+      if (r >= c.map_max_range * 0.999f) continue;
+      const float a = kLidarMin + ((float)k + 0.5f) * kLidarBin, fx = r * std::cos(a), fy = r * std::sin(a);
+      if (fx <= 0.f || std::fabs(fy) > half) continue;
+      gap = std::min(gap, fx - bumper);
+    }
+  }
+  const int cx = (int)std::floor((e.x - W.ox) / c.res), cy = (int)std::floor((e.y - W.oy) / c.res);
+  const int clr = cx >= 0 && cy >= 0 && cx < W.gw && cy < W.gh ? (int)W.clear[(size_t)cy * W.gw + cx] : -1;
+  float gd = -1.f;
+  if (cmd.target >= 0) {
+    const float gx = W.ox + ((float)(cmd.target % W.gw) + 0.5f) * c.res - (e.x + e.ex), gy = W.oy + ((float)(cmd.target / W.gw) + 0.5f) * c.res - (e.y + e.ey);
+    gd = std::hypot(gx, gy);
+  }
+  const DiagHist* H = D.hist.data() + (size_t)i * kDiagH;
+  const int hn = D.hn[i];
+  const auto h = [&](int back) -> const DiagHist& { return H[((hn - 1 - back) % kDiagH + kDiagH) % kDiagH]; };   // back 0 = 이번 걸음
+  float v5 = -9, v10 = -9, wmax5 = 0, a0m5 = 0;
+  int safe10 = 0, k5 = 0;
+  for (int k = 0; k < std::min(hn, 10); ++k) {
+    safe10 += h(k).safe;
+    if (k < 5) { wmax5 = std::max(wmax5, std::fabs(h(k).w)); a0m5 += h(k).a0; ++k5; }
+  }
+  if (hn > 5) v5 = h(5).v;
+  if (hn > 10) v10 = h(10).v;
+  const DiagHist& now = h(0);
+  std::fprintf(D.f, "%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\n",
+               kind, W.name.c_str(), people, i, e.step - L.f_start, goal_age, e.x, e.y, e.th, e.v, e.w, now.a0, now.a1, safe_now, v5, v10, wmax5, k5 ? a0m5 / k5 : 0.f, safe10,
+               hu, hv, hd, reg, near0, near0m, cam, fov, geom, lr[0], lr[1], lr[2], lr[3], gap, clr, gd, O[sim::kLoRem] * sim::kLrGoalNorm, O[sim::kLoSub] * sim::kLrSubNorm,
+               O[sim::kLoSub + 1], O[sim::kLoSub + 2], (int)O[sim::kLoHasPath], e.step - D.rl[i].p_step, e.delay);
+  if (kind[0] != 'r') std::fflush(D.f);
+}
+const char* kDiagHead = "kind\tscene\tpeople\tenv\ttask_step\tgoal_age\tx\ty\tth\tv\tw\ta_v\ta_w\tsafe\tv5\tv10\twmax5\ta_v_mean5\tsafe10\thu\thv\thd\treg\tnear0\tnear0max\tcam\tfov\tgeom\tlid0\tlid1\tlid2\tlid3\tgap\tclr_cm\tgoal_d\trem\tsub_d\tsub_sin\tsub_cos\thas_path\tplan_age\tdelay\n";
+
 struct PolRes {
   std::string scene;
   int people;
@@ -667,6 +784,12 @@ int run_policy(const Args& a) {
   cudaMalloc(&d_pol, sizeof(float) * PW * N);
   cudaMemset(d_zero, 0, sizeof(float) * AW * N);
   cudaMemset(d_act, 0, sizeof(float) * AW * N);
+  Diag dg;
+  if (!a.diag.empty()) {
+    dg.f = std::fopen(a.diag.c_str(), "w");
+    if (!dg.f) throw std::runtime_error("--diag 파일을 못 엶: " + a.diag);
+    std::fputs(kDiagHead, dg.f);
+  }
   for (int people : people_set)
   for (size_t wi = 0; wi < a.scenes.size(); ++wi) {
     std::vector<sim::World> one{sim::build_world(stem(a.scenes[wi]), sim::load_scene(a.scenes[wi]), hc)};
@@ -723,10 +846,16 @@ int run_policy(const Args& a) {
       fnv(h, rec, sizeof(rec));
     };
     const long max_t = (long)M * ((long)(warm_max + 200) * DS + c.low_time_steps + 2 * DS) + 50 * DS;
+    if (dg.f) { dg.hist.assign((size_t)N * kDiagH, DiagHist{}); dg.hn.assign(N, 0); }
     for (long t = 0; active > 0 && t < max_t; ++t) {
       env.set_low_cmd(cmd);
       env.low_prepare(d_zero);
       env.sync();
+      if (dg.f) {   // 걸음 앞 상태·관측 (진단)
+        env.get_state(dg.st);
+        env.get_low_obs(dg.img, dg.o1d);
+        env.get_low_rl(dg.rl);
+      }
       if (use_pol) {
         const sim::StepOut o = env.outputs();
         ppo->act_inference(o.low_img, o.low_1d, d_pol, N, -1);
@@ -743,9 +872,20 @@ int run_policy(const Args& a) {
       env.get_reward(rew, done);
       env.get_state(st);
       env.get_low(low);
+      if (dg.f) env.get_low_rl(dg.rl_post);
       for (int i = 0; i < N; ++i) {
         if (phase[i] == 2) continue;
         const LowEp& L = low[i];
+        if (dg.f && phase[i] == 1 && cmd[i].follow == 2) {   // 진단: 정책이 몬 걸음
+          const int safe_now = done[i] ? (L.kind == sim::kLowSafety) : dg.rl_post[i].safe;
+          dg.hist[(size_t)i * kDiagH + dg.hn[i] % kDiagH] = DiagHist{dg.st[i].v, dg.st[i].w, pol[(size_t)PW * i], pol[(size_t)PW * i + 1], safe_now};
+          dg.hn[i] += 1;
+          const int e_ = done[i] ? L.end : 0;
+          if (e_ == sim::kLowEndWall || e_ == sim::kLowEndPerson)
+            diag_row(dg, e_ == sim::kLowEndWall ? "wall" : (L.hit_dir == 1 ? "personF" : "personB"), c, W, people, i, L, cmd[i], safe_now, dg.st[i].step - step0[i]);
+          else if (!done[i] && (dg.n_ref++ % 97) == 0) diag_row(dg, "ref", c, W, people, i, L, cmd[i], safe_now, dg.st[i].step - step0[i]);
+          if (done[i]) dg.hn[i] = 0;
+        }
         if (phase[i] == 0) {   // 예열 탐사
           if (done[i]) { warm_fail += 1; warm[i] = warm_draw(); continue; }
           if (--warm[i] > 0) continue;
@@ -860,6 +1000,7 @@ int run_policy(const Args& a) {
     res.push_back(R);
     std::fflush(stdout);
   }
+  if (dg.f) std::fclose(dg.f);
   cudaFree(d_act);
   cudaFree(d_zero);
   cudaFree(d_pol);
@@ -910,6 +1051,7 @@ int main(int argc, char** argv) {
     else if (k == "--people") { a.people_list.clear(); for (const std::string& s : split(val(), ',')) a.people_list.push_back(std::stoi(s)); if (!a.people_list.empty()) a.people = a.people_list[0]; }
     else if (k == "--policy") a.policy = val();
     else if (k == "--step") a.step = true;
+    else if (k == "--diag") a.diag = val();
     else if (k == "--warm") { const auto v = split(val(), ','); if (v.size() == 2) { a.warm_lo = std::stof(v[0]); a.warm_hi = std::stof(v[1]); } }
     else if (k == "--len") { const auto v = split(val(), ','); if (v.size() == 4) for (int j = 0; j < 4; ++j) a.len[j] = std::stof(v[j]); }
     else if (k == "--time-limit") a.time_limit = std::stof(val());

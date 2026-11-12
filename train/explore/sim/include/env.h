@@ -81,6 +81,11 @@ struct EnvCfg {
   int reward_occ;
   int sweep_guard;          // 몸통 쓸림 안전층 켬 (실험, 기본 끔 — apply_action sweep_scale): 로봇 지도 막힘 칸을 다음 sweep_h 초 몸통이 쓸면 명령을 줄임
   float sweep_h, sweep_margin;   // 내다보는 시간 (s), 몸통 둘레 여유 (m)
+  // 아래층 RL 벽 충돌 대책 (2026-11-13, low_rl.h · mdp/README "아래층 RL — 벽 충돌"). 기본값은 low_rl.h 상수, env_cfg.cpp 가 환경변수로 덮는다
+  int lg_on;                     // 몸통 지킴이 (lowrl_guard): 정책 명령을 로봇 지도 막힘 + 깊이 카메라 층으로 내다봐 줄임
+  float lg_h, lg_margin;         //   내다보는 시간 (s) · 몸통 둘레 여유 (m)
+  int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
+  float lr_mprox_k, lr_mprox_d;  // 움직임 근접 벌점: × 몸통 가장 빠른 점 속도 (m/s) × (1 − 간격 / lr_mprox_d). 0 = 끔
   int curriculum;           // 1: 환경마다 단계(맵 묶음·오차 배율), 0: 모든 맵 고르게·오차 배율 1 (기준선·도구)
   int cur_top_random;       // 1: 맨 위 단계에서 또 올림 조건이면 무작위 단계로 (curriculums.h on_episode_end — 기본 켬, SIM_CUR_TOPRAND=0 이면 끔)
   // 오르내림 규칙 (env.yaml curriculum, curriculums.h): cur_rule = mdp::cur::kCurSuccess(최근 cur_window 판 성공 비율 ≥ cur_up 올림 · < cur_down 내림, 미끄러지는 창)
