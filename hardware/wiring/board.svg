@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1610" height="888" font-family="Malgun Gothic, sans-serif">
-<rect width="1610" height="888" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="888" font-family="Malgun Gothic, sans-serif">
+<rect width="1440" height="888" fill="#fff"/>
 <text x="30" y="40" font-size="26" text-anchor="start" fill="#222" font-weight="bold">배선판 (만능기판, 구멍 간격 2.54 mm) — 납땜 위치</text>
 <text x="30" y="70" font-size="15" text-anchor="start" fill="#222" font-weight="normal">위(부품 면)에서 본 그림. 굵은 색 줄 = 뒷면에서 납이나 단선으로 잇는 길. ● 빨강 테두리 = 선을 바로 납땜, ■ 파랑 = 수 핀 헤더 납땜(듀폰 암 선 꽂음).</text>
-<text x="30" y="95" font-size="15" text-anchor="start" fill="#222" font-weight="normal">크기: 구멍 24 × 11 이상(약 65 × 30 mm). 칸 번호는 위 숫자(열)·왼쪽 숫자(줄).</text>
-<rect x="130.2" y="160.2" width="829.5999999999999" height="387.59999999999997" rx="8" fill="#e8d9a8" stroke="#a08850" stroke-width="2"/>
+<text x="30" y="95" font-size="15" text-anchor="start" fill="#222" font-weight="normal">크기: 구멍 19 × 11 (약 50 × 30 mm 로 잘라 씀 — 옆판 전장 판 받침 간격과 같음). 칸 번호는 위 숫자(열)·왼쪽 숫자(줄).</text>
+<rect x="130.2" y="160.2" width="659.5999999999999" height="387.59999999999997" rx="8" fill="#e8d9a8" stroke="#a08850" stroke-width="2"/>
 <text x="154" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">1</text>
 <text x="188" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">2</text>
 <text x="222" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">3</text>
@@ -23,11 +23,6 @@
 <text x="698" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">17</text>
 <text x="732" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">18</text>
 <text x="766" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">19</text>
-<text x="800" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">20</text>
-<text x="834" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">21</text>
-<text x="868" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">22</text>
-<text x="902" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">23</text>
-<text x="936" y="146" font-size="11" text-anchor="middle" fill="#777" font-weight="normal">24</text>
 <text x="118" y="188" font-size="11" text-anchor="end" fill="#777" font-weight="normal">1</text>
 <text x="118" y="222" font-size="11" text-anchor="end" fill="#777" font-weight="normal">2</text>
 <text x="118" y="256" font-size="11" text-anchor="end" fill="#777" font-weight="normal">3</text>
@@ -248,173 +243,119 @@
 <circle cx="766" cy="456" r="5" fill="#fff" stroke="#b09a60"/>
 <circle cx="766" cy="490" r="5" fill="#fff" stroke="#b09a60"/>
 <circle cx="766" cy="524" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="184" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="218" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="252" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="286" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="320" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="354" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="388" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="422" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="456" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="490" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="800" cy="524" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="184" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="218" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="252" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="286" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="320" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="354" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="388" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="422" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="456" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="490" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="834" cy="524" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="184" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="218" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="252" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="286" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="320" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="354" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="388" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="422" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="456" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="490" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="868" cy="524" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="184" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="218" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="252" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="286" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="320" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="354" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="388" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="422" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="456" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="490" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="902" cy="524" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="184" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="218" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="252" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="286" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="320" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="354" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="388" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="422" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="456" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="490" r="5" fill="#fff" stroke="#b09a60"/>
-<circle cx="936" cy="524" r="5" fill="#fff" stroke="#b09a60"/>
 <line x1="154" y1="184" x2="290" y2="184" stroke="#c62828" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
 <text x="312" y="189" font-size="14" text-anchor="start" fill="#c62828" font-weight="bold">19 V 줄</text>
-<line x1="528" y1="252" x2="868" y2="252" stroke="#6a1b9a" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
-<text x="890" y="257" font-size="14" text-anchor="start" fill="#6a1b9a" font-weight="bold">5 V 줄</text>
-<line x1="154" y1="286" x2="868" y2="286" stroke="#111111" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
-<text x="890" y="291" font-size="14" text-anchor="start" fill="#111111" font-weight="bold">GND 줄</text>
-<line x1="324" y1="320" x2="494" y2="320" stroke="#ef6c00" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
-<text x="516" y="325" font-size="14" text-anchor="start" fill="#ef6c00" font-weight="bold">6 V 줄</text>
-<line x1="426" y1="354" x2="426" y2="388" stroke="#2e7d32" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
-<line x1="494" y1="354" x2="494" y2="388" stroke="#2e7d32" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
-<line x1="596" y1="388" x2="630" y2="388" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
-<line x1="766" y1="388" x2="800" y2="388" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
-<line x1="596" y1="456" x2="630" y2="456" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
-<line x1="766" y1="456" x2="834" y2="456" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
-<line x1="358" y1="320" x2="358" y2="286" stroke="#666" stroke-width="2"/>
-<circle cx="358.0" cy="303.0" r="15" fill="#263238" stroke="#000"/>
-<rect x="343.0" y="288.0" width="8" height="30" fill="#90a4ae"/>
-<text x="358" y="212" font-size="12" text-anchor="middle" fill="#263238" font-weight="bold">C1 1000µF (긴 다리 + 는 6 V 줄)</text>
-<circle cx="358" cy="320" r="4" fill="#9e9e9e" stroke="#333"/>
-<circle cx="358" cy="286" r="4" fill="#9e9e9e" stroke="#333"/>
-<line x1="630" y1="388" x2="766" y2="388" stroke="#666" stroke-width="2"/>
-<rect x="676.0" y="381.0" width="44" height="14" rx="4" fill="#cfe3f7" stroke="#1565c0"/>
-<text x="698.0" y="376.0" font-size="13" text-anchor="middle" fill="#1565c0" font-weight="bold">R1 1k</text>
-<circle cx="630" cy="388" r="4" fill="#9e9e9e" stroke="#333"/>
-<circle cx="766" cy="388" r="4" fill="#9e9e9e" stroke="#333"/>
-<line x1="766" y1="388" x2="766" y2="286" stroke="#666" stroke-width="2"/>
-<rect x="759.0" y="315.0" width="14" height="44" rx="4" fill="#cfe3f7" stroke="#1565c0"/>
-<text x="778.0" y="341.0" font-size="13" text-anchor="start" fill="#1565c0" font-weight="bold">R2 2k</text>
-<circle cx="766" cy="388" r="4" fill="#9e9e9e" stroke="#333"/>
-<circle cx="766" cy="286" r="4" fill="#9e9e9e" stroke="#333"/>
-<line x1="630" y1="456" x2="766" y2="456" stroke="#666" stroke-width="2"/>
-<rect x="676.0" y="449.0" width="44" height="14" rx="4" fill="#cfe3f7" stroke="#1565c0"/>
-<text x="698.0" y="444.0" font-size="13" text-anchor="middle" fill="#1565c0" font-weight="bold">R3 1k</text>
-<circle cx="630" cy="456" r="4" fill="#9e9e9e" stroke="#333"/>
+<line x1="494" y1="252" x2="664" y2="252" stroke="#6a1b9a" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
+<text x="686" y="257" font-size="14" text-anchor="start" fill="#6a1b9a" font-weight="bold">5 V 줄</text>
+<line x1="154" y1="286" x2="766" y2="286" stroke="#111111" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
+<text x="788" y="291" font-size="14" text-anchor="start" fill="#111111" font-weight="bold">GND 줄</text>
+<line x1="290" y1="320" x2="460" y2="320" stroke="#ef6c00" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
+<text x="482" y="325" font-size="14" text-anchor="start" fill="#ef6c00" font-weight="bold">6 V 줄</text>
+<line x1="392" y1="354" x2="392" y2="388" stroke="#2e7d32" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+<line x1="460" y1="354" x2="460" y2="388" stroke="#2e7d32" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+<line x1="528" y1="388" x2="562" y2="388" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+<line x1="698" y1="388" x2="732" y2="388" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+<line x1="528" y1="456" x2="562" y2="456" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+<line x1="698" y1="456" x2="766" y2="456" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+<line x1="698" y1="456" x2="698" y2="490" stroke="#555" stroke-width="7" stroke-linecap="round" opacity="0.8"/>
+<line x1="324" y1="320" x2="324" y2="286" stroke="#666" stroke-width="2"/>
+<circle cx="324.0" cy="303.0" r="15" fill="#263238" stroke="#000"/>
+<rect x="309.0" y="288.0" width="8" height="30" fill="#90a4ae"/>
+<text x="324" y="212" font-size="12" text-anchor="middle" fill="#263238" font-weight="bold">C1 1000µF (긴 다리 + 는 6 V 줄)</text>
+<circle cx="324" cy="320" r="4" fill="#9e9e9e" stroke="#333"/>
+<circle cx="324" cy="286" r="4" fill="#9e9e9e" stroke="#333"/>
+<line x1="562" y1="388" x2="698" y2="388" stroke="#666" stroke-width="2"/>
+<rect x="608.0" y="381.0" width="44" height="14" rx="4" fill="#cfe3f7" stroke="#1565c0"/>
+<text x="630.0" y="376.0" font-size="13" text-anchor="middle" fill="#1565c0" font-weight="bold">R1 1k</text>
+<circle cx="562" cy="388" r="4" fill="#9e9e9e" stroke="#333"/>
+<circle cx="698" cy="388" r="4" fill="#9e9e9e" stroke="#333"/>
+<line x1="698" y1="388" x2="698" y2="286" stroke="#666" stroke-width="2"/>
+<rect x="691.0" y="315.0" width="14" height="44" rx="4" fill="#cfe3f7" stroke="#1565c0"/>
+<text x="710.0" y="341.0" font-size="13" text-anchor="start" fill="#1565c0" font-weight="bold">R2 2k</text>
+<circle cx="698" cy="388" r="4" fill="#9e9e9e" stroke="#333"/>
+<circle cx="698" cy="286" r="4" fill="#9e9e9e" stroke="#333"/>
+<line x1="562" y1="456" x2="698" y2="456" stroke="#666" stroke-width="2"/>
+<rect x="608.0" y="449.0" width="44" height="14" rx="4" fill="#cfe3f7" stroke="#1565c0"/>
+<text x="630.0" y="444.0" font-size="13" text-anchor="middle" fill="#1565c0" font-weight="bold">R3 1k</text>
+<circle cx="562" cy="456" r="4" fill="#9e9e9e" stroke="#333"/>
+<circle cx="698" cy="456" r="4" fill="#9e9e9e" stroke="#333"/>
+<line x1="766" y1="456" x2="766" y2="286" stroke="#666" stroke-width="2"/>
+<rect x="759.0" y="349.0" width="14" height="44" rx="4" fill="#cfe3f7" stroke="#1565c0"/>
+<text x="778.0" y="375.0" font-size="13" text-anchor="start" fill="#1565c0" font-weight="bold">R4 2k</text>
 <circle cx="766" cy="456" r="4" fill="#9e9e9e" stroke="#333"/>
-<line x1="834" y1="456" x2="834" y2="286" stroke="#666" stroke-width="2"/>
-<rect x="827.0" y="349.0" width="14" height="44" rx="4" fill="#cfe3f7" stroke="#1565c0"/>
-<text x="846.0" y="375.0" font-size="13" text-anchor="start" fill="#1565c0" font-weight="bold">R4 2k</text>
-<circle cx="834" cy="456" r="4" fill="#9e9e9e" stroke="#333"/>
-<circle cx="834" cy="286" r="4" fill="#9e9e9e" stroke="#333"/>
-<rect x="588" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="596" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H1</text>
-<rect x="588" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="596" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H2</text>
-<rect x="656" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="664" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H3</text>
-<rect x="656" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="664" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H4</text>
-<rect x="724" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="732" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H5</text>
-<rect x="724" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="732" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H6</text>
-<rect x="792" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="800" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H7</text>
-<rect x="792" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="800" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H8</text>
-<rect x="860" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="868" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H9</text>
-<rect x="860" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="868" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H10</text>
+<circle cx="766" cy="286" r="4" fill="#9e9e9e" stroke="#333"/>
+<rect x="520" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="528" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H1</text>
+<rect x="520" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="528" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H2</text>
+<rect x="554" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="562" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H3</text>
 <rect x="554" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="562" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H11</text>
-<rect x="418" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<rect x="418" y="312" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<rect x="418" y="346" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<rect x="486" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<rect x="486" y="312" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<rect x="486" y="346" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<rect x="418" y="380" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="426" y="414" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">S1</text>
-<rect x="486" y="380" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="494" y="414" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">S2</text>
-<rect x="588" y="380" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="596" y="414" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">E1</text>
-<rect x="792" y="380" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="800" y="414" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">E2</text>
-<rect x="588" y="448" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="596" y="482" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">E3</text>
-<rect x="826" y="448" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
-<text x="834" y="482" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">E4</text>
-<rect x="413" y="273" width="26" height="94" fill="none" stroke="#ef6c00" stroke-width="2" stroke-dasharray="4 3"/>
-<rect x="481" y="273" width="26" height="94" fill="none" stroke="#ef6c00" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="562" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H4</text>
+<rect x="588" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="596" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H5</text>
+<rect x="588" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="596" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H6</text>
+<rect x="622" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="630" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H7</text>
+<rect x="622" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="630" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H8</text>
+<rect x="656" y="244" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="664" y="239" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H9</text>
+<rect x="656" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="664" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H10</text>
+<rect x="180" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="188" y="312" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">H11</text>
+<rect x="384" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<rect x="384" y="312" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<rect x="384" y="346" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<rect x="452" y="278" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<rect x="452" y="312" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<rect x="452" y="346" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<rect x="384" y="380" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="392" y="414" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">S1</text>
+<rect x="452" y="380" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="460" y="414" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">S2</text>
+<rect x="520" y="380" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="528" y="414" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">E1</text>
+<rect x="724" y="380" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="732" y="414" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">E2</text>
+<rect x="520" y="448" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="528" y="482" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">E3</text>
+<rect x="690" y="482" width="16" height="16" fill="#1565c0" stroke="#0d47a1"/>
+<text x="698" y="516" font-size="12" text-anchor="middle" fill="#0d47a1" font-weight="bold">E4</text>
+<rect x="379" y="273" width="26" height="94" fill="none" stroke="#ef6c00" stroke-width="2" stroke-dasharray="4 3"/>
+<rect x="447" y="273" width="26" height="94" fill="none" stroke="#ef6c00" stroke-width="2" stroke-dasharray="4 3"/>
 <circle cx="154" cy="184" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
 <circle cx="222" cy="184" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
 <circle cx="290" cy="184" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
 <circle cx="154" cy="286" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
 <circle cx="222" cy="286" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
+<circle cx="256" cy="286" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
+<circle cx="290" cy="320" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
 <circle cx="290" cy="286" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
-<circle cx="324" cy="320" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
-<circle cx="324" cy="286" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
-<circle cx="528" cy="252" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
-<circle cx="528" cy="286" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
-<text x="1004" y="150" font-size="15" text-anchor="start" fill="#c62828" font-weight="bold">선을 바로 납땜 (빨강 테두리)</text>
-<text x="1004" y="174" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B1 (1,1) Y 케이블 + (빨강)  ·  B2 (1,4) Y 케이블 − (검정)</text>
-<text x="1004" y="198" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B3 (3,1) → XL4015 IN+  ·  B4 (3,4) → XL4015 IN−</text>
-<text x="1004" y="222" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B5 (5,1) → LM2596 IN+  ·  B6 (5,4) → LM2596 IN−</text>
-<text x="1004" y="246" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B7 (6,5) ← XL4015 OUT+  ·  B8 (6,4) ← XL4015 OUT−</text>
-<text x="1004" y="270" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B9 (12,3) ← LM2596 OUT+  ·  B10 (12,4) ← LM2596 OUT−</text>
-<text x="1004" y="294" font-size="14" text-anchor="start" fill="#222" font-weight="normal"></text>
-<text x="1004" y="318" font-size="15" text-anchor="start" fill="#1565c0" font-weight="bold">수 핀 헤더 (파랑) — 듀폰 암 선을 꽂음</text>
-<text x="1004" y="342" font-size="14" text-anchor="start" fill="#222" font-weight="normal">H1~H10: 위 5 V / 아래 GND 쌍 → 열화상·레이더·초음파 왼·오른·앰프</text>
-<text x="1004" y="366" font-size="14" text-anchor="start" fill="#222" font-weight="normal">H11 (13,4) GND → ESP32 GND</text>
-<text x="1004" y="390" font-size="14" text-anchor="start" fill="#222" font-weight="normal">서보 헤더 (9,4~6)·(11,4~6): 위부터 GND·V+·SIG, 서보 플러그 갈색이 위</text>
-<text x="1004" y="414" font-size="14" text-anchor="start" fill="#222" font-weight="normal">S1 (9,7) ← ESP32 GPIO4 · S2 (11,7) ← ESP32 GPIO5</text>
-<text x="1004" y="438" font-size="14" text-anchor="start" fill="#222" font-weight="normal">E1 (14,7) ← 초음파 왼 ECHO · E2 (20,7) → ESP32 GPIO7</text>
-<text x="1004" y="462" font-size="14" text-anchor="start" fill="#222" font-weight="normal">E3 (14,9) ← 초음파 오른 ECHO · E4 (21,9) → ESP32 GPIO16</text>
-<text x="1004" y="486" font-size="14" text-anchor="start" fill="#222" font-weight="normal"></text>
-<text x="1004" y="510" font-size="15" text-anchor="start" fill="#333" font-weight="bold">부품</text>
-<text x="1004" y="534" font-size="14" text-anchor="start" fill="#222" font-weight="normal">C1 1000 µF 16 V 이상: 긴 다리(+) (7,5) 6 V 줄, 짧은 다리(−) (7,4) GND 줄</text>
-<text x="1004" y="558" font-size="14" text-anchor="start" fill="#222" font-weight="normal">R1·R3 1 kΩ, R2·R4 2 kΩ (없으면 1 kΩ 두 개 이어서)</text>
-<text x="1004" y="582" font-size="14" text-anchor="start" fill="#222" font-weight="normal"></text>
-<text x="1004" y="606" font-size="15" text-anchor="start" fill="#2e7d32" font-weight="bold">납땜 후 확인 (전원 넣기 전)</text>
-<text x="1004" y="630" font-size="14" text-anchor="start" fill="#222" font-weight="normal">테스터 통전: 19 V 줄 ↔ GND, 6 V ↔ GND, 5 V ↔ GND 가 붙어 있지 않을 것</text>
-<text x="1004" y="654" font-size="14" text-anchor="start" fill="#222" font-weight="normal">19 V 넣고 XL4015 → 6.0 V, LM2596 → 5.0 V 맞춘 뒤에 장치 꽂기</text>
+<circle cx="494" cy="252" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
+<circle cx="494" cy="286" r="9" fill="#ffcdd2" stroke="#c62828" stroke-width="3"/>
+<text x="834" y="150" font-size="15" text-anchor="start" fill="#c62828" font-weight="bold">선을 바로 납땜 (빨강 테두리)</text>
+<text x="834" y="174" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B1 (1,1) Y 케이블 + (빨강)  ·  B2 (1,4) Y 케이블 − (검정)</text>
+<text x="834" y="198" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B3 (3,1) → XL4015 IN+  ·  B4 (3,4) → XL4015 IN−</text>
+<text x="834" y="222" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B5 (5,1) → LM2596 IN+  ·  B6 (4,4) → LM2596 IN−</text>
+<text x="834" y="246" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B7 (5,5) ← XL4015 OUT+  ·  B8 (5,4) ← XL4015 OUT−</text>
+<text x="834" y="270" font-size="14" text-anchor="start" fill="#222" font-weight="normal">B9 (11,3) ← LM2596 OUT+  ·  B10 (11,4) ← LM2596 OUT−</text>
+<text x="834" y="294" font-size="14" text-anchor="start" fill="#222" font-weight="normal"></text>
+<text x="834" y="318" font-size="15" text-anchor="start" fill="#1565c0" font-weight="bold">수 핀 헤더 (파랑) — 듀폰 암 선을 꽂음</text>
+<text x="834" y="342" font-size="14" text-anchor="start" fill="#222" font-weight="normal">H1~H10 (12~16열): 위 5 V / 아래 GND 쌍 → 열화상·레이더·초음파 왼·오른·앰프</text>
+<text x="834" y="366" font-size="14" text-anchor="start" fill="#222" font-weight="normal">H11 (2,4) GND → ESP32 GND</text>
+<text x="834" y="390" font-size="14" text-anchor="start" fill="#222" font-weight="normal">서보 헤더 (8,4~6)·(10,4~6): 위부터 GND·V+·SIG, 서보 플러그 갈색이 위</text>
+<text x="834" y="414" font-size="14" text-anchor="start" fill="#222" font-weight="normal">S1 (8,7) ← ESP32 GPIO4 · S2 (10,7) ← ESP32 GPIO5</text>
+<text x="834" y="438" font-size="14" text-anchor="start" fill="#222" font-weight="normal">E1 (12,7) ← 초음파 왼 ECHO · E2 (18,7) → ESP32 GPIO7</text>
+<text x="834" y="462" font-size="14" text-anchor="start" fill="#222" font-weight="normal">E3 (12,9) ← 초음파 오른 ECHO · E4 (17,10) → ESP32 GPIO16</text>
+<text x="834" y="486" font-size="14" text-anchor="start" fill="#222" font-weight="normal"></text>
+<text x="834" y="510" font-size="15" text-anchor="start" fill="#333" font-weight="bold">부품</text>
+<text x="834" y="534" font-size="14" text-anchor="start" fill="#222" font-weight="normal">C1 1000 µF 16 V 이상: 긴 다리(+) (6,5) 6 V 줄, 짧은 다리(−) (6,4) GND 줄</text>
+<text x="834" y="558" font-size="14" text-anchor="start" fill="#222" font-weight="normal">R1·R3 1 kΩ, R2·R4 2 kΩ (없으면 1 kΩ 두 개 이어서)</text>
+<text x="834" y="582" font-size="14" text-anchor="start" fill="#222" font-weight="normal"></text>
+<text x="834" y="606" font-size="15" text-anchor="start" fill="#2e7d32" font-weight="bold">납땜 후 확인 (전원 넣기 전)</text>
+<text x="834" y="630" font-size="14" text-anchor="start" fill="#222" font-weight="normal">테스터 통전: 19 V 줄 ↔ GND, 6 V ↔ GND, 5 V ↔ GND 가 붙어 있지 않을 것</text>
+<text x="834" y="654" font-size="14" text-anchor="start" fill="#222" font-weight="normal">19 V 넣고 XL4015 → 6.0 V, LM2596 → 5.0 V 맞춘 뒤에 장치 꽂기</text>
 </svg>
