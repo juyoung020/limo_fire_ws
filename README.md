@@ -71,6 +71,16 @@
 
 자세한 설계와 실험 계획은 [스펙·구현 방향](docs/spec.md)에 있다.
 
+### 탐사 강화학습 (시뮬)
+
+<img src="docs/assets/explore_rl_bookstore.gif" width="520" alt="서점 맵에서 학습된 위층 정책이 후보를 골라 가며 지도를 넓히고 지도 닫힘으로 탐사를 끝내는 모습">
+<img src="docs/assets/explore_rl_small_house.gif" width="560" alt="작은 집 맵에서 같은 정책이 탐사를 끝내는 모습">
+
+<sub>처음 보는 시험 맵 두 곳(서점 6 배속 · 작은 집 5 배속, 사람 없음). 학습된 위층(PPO)이 1 초마다 주황 후보 중 하나(분홍)를 고르고, 아래층은 아직 규칙 주행이다.
+학습으로 빠르게 달리는 아래층은 따로 만드는 중이라 여기에는 들어 있지 않다. 32 판 가운데 걸린 시간이 중간인 판을 골랐다. 자세한 것은 [train/explore](train/explore/README.md).</sub>
+
+<br>
+
 ## 하드웨어
 
 AgileX LIMO Pro(라이다, depth 카메라, IMU) 위에 ESP32로 제어하는 모듈을 올린다. 추가 부품비 95,127원.
