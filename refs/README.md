@@ -35,5 +35,8 @@ HEADER 의 계획기·학습 코드는 공개되지 않았다(지형 분할 모�
 
 두 논문과 우리 탐사 RL 의 차이는 [papers/header_fare_diff.md](papers/header_fare_diff.md) 에 정리했다.
 
+## 판단 전용 모델
+로봇의 상위 판단만 맡는 시각·언어 모델(API 전용 · 가중치 공개)을 [decision_models.md](decision_models.md) 에 정리했다.
+
 ## datasheets/
 부품 데이터시트(MLX90640, HLK-LD2450, HC-SR04 …).
