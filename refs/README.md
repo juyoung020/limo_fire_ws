@@ -34,6 +34,7 @@ HEADER 의 계획기·학습 코드는 공개되지 않았다(지형 분할 모�
 | `FARE_2601.14681.pdf` | FARE (Liao et al., 2026): HEADER 위에 LLM 상위 판단 | `curl -L -o refs/papers/FARE_2601.14681.pdf https://arxiv.org/pdf/2601.14681` |
 
 두 논문과 우리 탐사 RL 의 차이는 [papers/header_fare_diff.md](papers/header_fare_diff.md) 에 정리했다.
+판단 모델로 프론티어를 고르는 구상과 가까운 선행연구는 [papers/decision_explore_prior.md](papers/decision_explore_prior.md) 에 정리했다.
 
 ## 판단 전용 모델
 로봇의 상위 판단만 맡는 시각·언어 모델(API 전용 · 가중치 공개)을 [decision_models.md](decision_models.md) 에 정리했다.
