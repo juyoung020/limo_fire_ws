@@ -4,6 +4,28 @@
 
 ![배선도](assets/wiring.svg)
 
+자세한 그림은 [`hardware/wiring/`](../hardware/wiring/) 에 있다.
+
+| 그림 | 파일 | 무엇을 보나 |
+|---|---|---|
+| 회로도 (KiCad 10) | [limo_sensors.pdf](../hardware/wiring/limo_sensors.pdf) · 원본 `limo_sensors.kicad_sch` | 핀 단위 연결. ERC 위반 0, 넷리스트로 위 핀표와 맞춤 확인 |
+| 배선 (WireViz) | [harness.png](../hardware/wiring/harness.png) · 원본 `harness.yml` | 선 한 가닥씩 색·굵기, 양 끝이 납땜인지 듀폰인지 나사 단자인지 |
+| 배선판 납땜 | [board.png](../hardware/wiring/board.png) | 만능기판 구멍마다 무엇을 꽂고 어디를 이어 납땜하는지 |
+
+![배선판 납땜 위치](../hardware/wiring/board.png)
+
+## 납땜할 곳 (한눈에)
+
+| 곳 | 납땜 | 비고 |
+|---|---|---|
+| Y 분배 케이블 +·− 선 → 배선판 B1·B2 | 선 2 | 피복 벗긴 끝 |
+| 배선판 ↔ XL4015·LM2596 입출력 | 선 8 (양 끝 16 곳) | 0.75 mm² 이상(서보 쪽), 모듈 패드 |
+| 배선판 부품 | 헤더 핀 23, 콘덴서 1, 저항 4, 뒷면 줄 잇기 | 배선판 그림대로 |
+| 열화상 GY-MCU90640 | 4 핀 헤더 (VIN GND RX TX) | 이미 달려 있으면 생략 |
+| 앰프 MAX98357A | 7 핀 헤더 + 나사 단자대 | 받은 그대로는 따로 들어 있음 |
+| 스피커 | 납땜 없음 | JST 플러그 잘라 단자대에 나사로 |
+| 초음파·서보·ESP32 | 납땜 없음 | 기본 핀·플러그에 듀폰 선 |
+
 ## 왜 ESP32-S3 인가 (라즈베리파이 4 와 비교)
 
 | | ESP32-S3 | 라즈베리파이 4 |

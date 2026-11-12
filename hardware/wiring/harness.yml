@@ -1,0 +1,251 @@
+options:
+  fontname: Malgun Gothic
+  bgcolor: WH
+  color_mode: full
+
+metadata:
+  title: LIMO 추가 장치 배선 (선 한 가닥씩, 납땜 위치 표시)
+
+connectors:
+  P19:
+    type: 19 V 입력
+    subtype: Y 분배 케이블 한쪽, 피복 벗긴 +·− 선
+    pinlabels: [+19V, GND]
+    notes: 배선판 B1·B2 에 납땜
+
+  XL:
+    type: XL4015 강압 → 6.0 V
+    subtype: 모듈 패드 (납땜)
+    pinlabels: [IN+, IN-, OUT+, OUT-]
+    notes: 4 곳 모두 납땜. 꽂기 전 가변저항으로 6.0 V
+
+  LM:
+    type: LM2596 강압 → 5.0 V
+    subtype: 모듈 패드 (납땜)
+    pinlabels: [IN+, IN-, OUT+, OUT-]
+    notes: 4 곳 모두 납땜. 꽂기 전 가변저항으로 5.0 V
+
+  BRD:
+    type: 배선판 (만능기판)
+    subtype: 전원 분배 + 서보 헤더 + ECHO 분압 + 1000µF
+    pinlabels:
+      - B1 19V+ 입력
+      - B2 GND 입력
+      - B3 19V+ → XL4015
+      - B4 GND → XL4015
+      - B5 19V+ → LM2596
+      - B6 GND → LM2596
+      - B7 6V ← XL OUT+
+      - B8 GND ← XL OUT-
+      - B9 5V ← LM OUT+
+      - B10 GND ← LM OUT-
+      - H1 5V 핀 (열화상)
+      - H2 GND 핀 (열화상)
+      - H3 5V 핀 (레이더)
+      - H4 GND 핀 (레이더)
+      - H5 5V 핀 (초음파 왼)
+      - H6 GND 핀 (초음파 왼)
+      - H7 5V 핀 (초음파 오른)
+      - H8 GND 핀 (초음파 오른)
+      - H9 5V 핀 (앰프)
+      - H10 GND 핀 (앰프)
+      - H11 GND 핀 (ESP32)
+      - E1 ECHO 왼 입력 (5 V)
+      - E2 ECHO 왼 출력 (3.3 V)
+      - E3 ECHO 오른 입력 (5 V)
+      - E4 ECHO 오른 출력 (3.3 V)
+      - S1 서보 헤더 1 신호
+      - S2 서보 헤더 2 신호
+    notes: B1~B10 은 선을 기판에 직접 납땜. H·E·S 는 수 핀 헤더(납땜) — 듀폰 암 선을 꽂음. 기판 안 납땜은 배선판 그림 참고
+
+  ESP:
+    type: ESP32-S3-DevKitC-1
+    subtype: J1 헤더 (수 핀, 납땜 없음)
+    pinlabels: [GPIO4, GPIO5, GPIO6, GPIO7, GPIO15, GPIO16, GPIO17, GPIO18, GPIO10, GPIO11, GPIO12, GPIO13, GPIO14, GND]
+    pins: [4, 5, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20, 22]
+    notes: USB-C 로 Jetson 에 연결 (전원·데이터). 3V3·5V 핀은 비움
+
+  TH:
+    type: 열화상 GY-MCU90640
+    subtype: 4 핀 헤더 납땜 (VIN GND RX TX)
+    pinlabels: [VIN, GND, RX, TX]
+    notes: PS·SCL·SDA·B0 는 비움
+
+  RD:
+    type: 레이더 HLK-LD2450
+    subtype: 4 핀 (5V Rx Tx GND)
+    pinlabels: [5V, Rx, Tx, GND]
+    notes: 단독 시험 때 쓴 연결 그대로
+
+  SL:
+    type: 초음파 왼 HC-SR04
+    subtype: 4 핀 헤더 (기본 달려 옴)
+    pinlabels: [VCC, TRIG, ECHO, GND]
+  SR:
+    type: 초음파 오른 HC-SR04
+    subtype: 4 핀 헤더 (기본 달려 옴)
+    pinlabels: [VCC, TRIG, ECHO, GND]
+
+  AMP:
+    type: 앰프 MAX98357A
+    subtype: 7 핀 헤더 + 나사 단자대 납땜
+    pinlabels: [LRC, BCLK, DIN, GAIN, SD, GND, Vin]
+    notes: GAIN·SD 비움 (9 dB, 켜짐)
+  AMPO:
+    type: 앰프 출력 단자대
+    subtype: 나사 단자대 (+ −)
+    pinlabels: [+, '-']
+  SPK:
+    type: 스피커 3W 8Ω
+    subtype: JST 플러그 잘라 피복 벗김
+    pinlabels: [빨강 +, 검정 -]
+
+  SV1:
+    type: 레버 서보 DS3218
+    subtype: 서보 플러그 → 배선판 서보 헤더 1 (GND V+ SIG)
+    pinlabels: [SIG]
+  SV2:
+    type: 각도 서보 MG996R
+    subtype: 서보 플러그 → 배선판 서보 헤더 2 (GND V+ SIG)
+    pinlabels: [SIG]
+
+cables:
+  W19:
+    wirecount: 2
+    colors: [RD, BK]
+    gauge: 0.75 mm2
+    notes: 피복 벗긴 끝을 배선판에 납땜
+  WXI:
+    wirecount: 2
+    colors: [RD, BK]
+    gauge: 0.75 mm2
+    notes: 양 끝 납땜
+  WLI:
+    wirecount: 2
+    colors: [RD, BK]
+    gauge: 0.5 mm2
+    notes: 양 끝 납땜
+  WXO:
+    wirecount: 2
+    colors: [OG, BK]
+    gauge: 0.75 mm2
+    notes: 양 끝 납땜 (서보 순간 5 A)
+  WLO:
+    wirecount: 2
+    colors: [VT, BK]
+    gauge: 0.5 mm2
+    notes: 양 끝 납땜
+  WTH:
+    wirecount: 4
+    colors: [VT, BK, YE, GN]
+    category: bundle
+    notes: 듀폰 암-암 점퍼
+  WRD:
+    wirecount: 4
+    colors: [VT, BK, YE, GN]
+    category: bundle
+    notes: 듀폰 암-암 점퍼
+  WSL:
+    wirecount: 4
+    colors: [VT, BK, BU, WH]
+    category: bundle
+    notes: 듀폰 암-암 점퍼 (앞 범퍼까지 길게)
+  WSR:
+    wirecount: 4
+    colors: [VT, BK, BU, WH]
+    category: bundle
+    notes: 듀폰 암-암 점퍼 (앞 범퍼까지 길게)
+  WAMP:
+    wirecount: 5
+    colors: [VT, BK, YE, GN, BU]
+    category: bundle
+    notes: 듀폰 암-암 점퍼
+  WSPK:
+    wirecount: 2
+    colors: [RD, BK]
+    notes: 스피커 선을 단자대에 나사로 조임
+  WSG:
+    wirecount: 2
+    colors: [OG, OG]
+    category: bundle
+    notes: 듀폰 암-암 점퍼 (서보 신호)
+  WEG:
+    wirecount: 3
+    colors: [WH, WH, BK]
+    category: bundle
+    notes: 듀폰 암-암 점퍼 (ECHO 3.3 V, GND)
+
+connections:
+  - - P19: [1, 2]
+    - W19: [1, 2]
+    - BRD: [1, 2]
+  - - BRD: [3, 4]
+    - WXI: [1, 2]
+    - XL: [1, 2]
+  - - BRD: [5, 6]
+    - WLI: [1, 2]
+    - LM: [1, 2]
+  - - XL: [3, 4]
+    - WXO: [1, 2]
+    - BRD: [7, 8]
+  - - LM: [3, 4]
+    - WLO: [1, 2]
+    - BRD: [9, 10]
+  # 열화상: 전원은 배선판, 신호는 ESP32
+  - - BRD: [11, 12]
+    - WTH: [1, 2]
+    - TH: [1, 2]
+  - - ESP: [17, 16]
+    - WTH: [3, 4]
+    - TH: [3, 4]
+  # 레이더
+  - - BRD: [13, 14]
+    - WRD: [1, 2]
+    - RD: [1, 4]
+  - - ESP: [11, 10]
+    - WRD: [3, 4]
+    - RD: [2, 3]
+  # 초음파 왼: TRIG 는 ESP32 로 바로, ECHO 는 배선판 분압으로
+  - - BRD: [15, 16]
+    - WSL: [1, 2]
+    - SL: [1, 4]
+  - - ESP: [6]
+    - WSL: [3]
+    - SL: [2]
+  - - BRD: [22]
+    - WSL: [4]
+    - SL: [3]
+  # 초음파 오른
+  - - BRD: [17, 18]
+    - WSR: [1, 2]
+    - SR: [1, 4]
+  - - ESP: [8]
+    - WSR: [3]
+    - SR: [2]
+  - - BRD: [24]
+    - WSR: [4]
+    - SR: [3]
+  # 분압 출력·GND → ESP32
+  - - BRD: [23, 25, 21]
+    - WEG: [1, 2, 3]
+    - ESP: [7, 9, 22]
+  # 앰프
+  - - BRD: [19, 20]
+    - WAMP: [1, 2]
+    - AMP: [7, 6]
+  - - ESP: [19, 18, 20]
+    - WAMP: [3, 4, 5]
+    - AMP: [1, 2, 3]
+  - - AMPO: [1, 2]
+    - WSPK: [1, 2]
+    - SPK: [1, 2]
+  # 서보 신호: ESP32 → 배선판 서보 헤더 SIG (서보 플러그는 헤더에 꽂음)
+  - - ESP: [4, 5]
+    - WSG: [1, 2]
+    - BRD: [26, 27]
+  - - BRD: [26]
+    - -->
+    - SV1: [1]
+  - - BRD: [27]
+    - -->
+    - SV2: [1]

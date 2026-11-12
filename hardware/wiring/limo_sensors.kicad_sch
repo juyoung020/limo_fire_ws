@@ -1,0 +1,430 @@
+(kicad_sch (version 20250610) (generator "eeschema") (generator_version "9.99") (uuid "ae6316f1-2701-4cc4-9e0f-78a9ab582882") (paper "A3") (title_block (title "LIMO fire robot - add-on wiring (ESP32-S3)") (date "2026-11-12") (rev "1") (company "KAU Robot Programming team")) (lib_symbols (symbol "lfw:ESP32-S3-DevKitC-1" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 30.48 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "ESP32-S3-DevKitC-1 (J1 헤더, USB-C ↔ Jetson)" (at 0 -30.48 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "ESP32-S3-DevKitC-1_0_1" (rectangle (start -12.7 29.21) (end 12.7 -29.21) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "ESP32-S3-DevKitC-1_1_1" (pin power_out line (at 15.24 26.67 180) (length 2.54) (name "3V3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_out line (at 15.24 24.13 180) (length 2.54) (name "3V3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin input line (at 15.24 21.59 180) (length 2.54) (name "RST" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 19.05 180) (length 2.54) (name "GPIO4" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "4" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 16.51 180) (length 2.54) (name "GPIO5" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "5" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 13.97 180) (length 2.54) (name "GPIO6" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "6" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 11.43 180) (length 2.54) (name "GPIO7" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "7" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 8.89 180) (length 2.54) (name "GPIO15" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "8" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 6.35 180) (length 2.54) (name "GPIO16" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "9" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 3.81 180) (length 2.54) (name "GPIO17" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "10" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 1.27 180) (length 2.54) (name "GPIO18" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "11" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -1.27 180) (length 2.54) (name "GPIO8" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "12" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -3.81 180) (length 2.54) (name "GPIO3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "13" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -6.35 180) (length 2.54) (name "GPIO46" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "14" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -8.89 180) (length 2.54) (name "GPIO9" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "15" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -11.43 180) (length 2.54) (name "GPIO10" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "16" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -13.97 180) (length 2.54) (name "GPIO11" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "17" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -16.51 180) (length 2.54) (name "GPIO12" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "18" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -19.05 180) (length 2.54) (name "GPIO13" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "19" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin bidirectional line (at 15.24 -21.59 180) (length 2.54) (name "GPIO14" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "20" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at 15.24 -24.13 180) (length 2.54) (name "5V" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "21" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at 15.24 -26.67 180) (length 2.54) (name "GND" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "22" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:XL4015" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 5.08 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "XL4015 강압 → 6.0 V" (at 0 -5.08 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "XL4015_0_1" (rectangle (start -10.16 3.81) (end 10.16 -3.81) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "XL4015_1_1" (pin power_in line (at -12.70 1.27 0) (length 2.54) (name "IN+" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -12.70 -1.27 0) (length 2.54) (name "IN-" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_out line (at 12.70 1.27 180) (length 2.54) (name "OUT+" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at 12.70 -1.27 180) (length 2.54) (name "OUT-" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "4" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:BUCK5V" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 5.08 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "LM2596 강압 → 5.0 V" (at 0 -5.08 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "BUCK5V_0_1" (rectangle (start -10.16 3.81) (end 10.16 -3.81) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "BUCK5V_1_1" (pin power_in line (at -12.70 1.27 0) (length 2.54) (name "IN+" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -12.70 -1.27 0) (length 2.54) (name "IN-" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_out line (at 12.70 1.27 180) (length 2.54) (name "OUT+" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at 12.70 -1.27 180) (length 2.54) (name "OUT-" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "4" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:GY-MCU90640" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 12.70 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "열화상 GY-MCU90640" (at 0 -12.70 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "GY-MCU90640_0_1" (rectangle (start -10.16 11.43) (end 10.16 -11.43) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "GY-MCU90640_1_1" (pin power_in line (at -12.70 8.89 0) (length 2.54) (name "VIN" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -12.70 6.35 0) (length 2.54) (name "GND" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin input line (at -12.70 3.81 0) (length 2.54) (name "RX" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin output line (at -12.70 1.27 0) (length 2.54) (name "TX" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "4" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at -12.70 -1.27 0) (length 2.54) (name "SCL" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "5" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at -12.70 -3.81 0) (length 2.54) (name "SDA" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "6" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at -12.70 -6.35 0) (length 2.54) (name "B0" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "7" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at -12.70 -8.89 0) (length 2.54) (name "PS" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "8" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:HLK-LD2450" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 7.62 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "레이더 HLK-LD2450" (at 0 -7.62 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "HLK-LD2450_0_1" (rectangle (start -10.16 6.35) (end 10.16 -6.35) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "HLK-LD2450_1_1" (pin power_in line (at -12.70 3.81 0) (length 2.54) (name "5V" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin input line (at -12.70 1.27 0) (length 2.54) (name "Rx" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin output line (at -12.70 -1.27 0) (length 2.54) (name "Tx" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -12.70 -3.81 0) (length 2.54) (name "GND" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "4" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:HC-SR04" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 7.62 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "HC-SR04" (at 0 -7.62 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "HC-SR04_0_1" (rectangle (start -10.16 6.35) (end 10.16 -6.35) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "HC-SR04_1_1" (pin power_in line (at -12.70 3.81 0) (length 2.54) (name "VCC" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin input line (at -12.70 1.27 0) (length 2.54) (name "TRIG" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin output line (at -12.70 -1.27 0) (length 2.54) (name "ECHO" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -12.70 -3.81 0) (length 2.54) (name "GND" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "4" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:MAX98357A" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 11.43 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "앰프 MAX98357A" (at 0 -11.43 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "MAX98357A_0_1" (rectangle (start -10.16 10.16) (end 10.16 -10.16) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "MAX98357A_1_1" (pin input line (at -12.70 7.62 0) (length 2.54) (name "LRC" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin input line (at -12.70 5.08 0) (length 2.54) (name "BCLK" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin input line (at -12.70 2.54 0) (length 2.54) (name "DIN" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at -12.70 0.00 0) (length 2.54) (name "GAIN" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "4" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at -12.70 -2.54 0) (length 2.54) (name "SD" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "5" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -12.70 -5.08 0) (length 2.54) (name "GND" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "6" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -12.70 -7.62 0) (length 2.54) (name "VIN" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "7" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin output line (at 12.70 7.62 180) (length 2.54) (name "OUT+" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "8" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin output line (at 12.70 5.08 180) (length 2.54) (name "OUT-" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "9" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:SERVO" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 6.35 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "서보" (at 0 -6.35 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "SERVO_0_1" (rectangle (start -7.62 5.08) (end 7.62 -5.08) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "SERVO_1_1" (pin input line (at -10.16 2.54 0) (length 2.54) (name "SIG" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -10.16 0.00 0) (length 2.54) (name "V+" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin power_in line (at -10.16 -2.54 0) (length 2.54) (name "GND" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "3" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:SPEAKER" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 5.08 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "스피커 3W 8Ω" (at 0 -5.08 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "SPEAKER_0_1" (rectangle (start -7.62 3.81) (end 7.62 -3.81) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "SPEAKER_1_1" (pin passive line (at -10.16 1.27 0) (length 2.54) (name "+" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at -10.16 -1.27 0) (length 2.54) (name "-" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "lfw:PIGTAIL" (pin_names (offset 1.016)) (exclude_from_sim no) (in_bom yes) (on_board yes) (property "Reference" "U" (at 0 5.08 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "19 V 입력 (Y 분배 케이블 피복 벗긴 +, - 선)" (at 0 -5.08 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Description" "" (at 0 0 0) (hide yes) (effects (font (size 1.27 1.27)))) (symbol "PIGTAIL_0_1" (rectangle (start -10.16 3.81) (end 10.16 -3.81) (stroke (width 0.254) (type default)) (fill (type background)))) (symbol "PIGTAIL_1_1" (pin passive line (at 12.70 1.27 180) (length 2.54) (name "+" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "1" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))(pin passive line (at 12.70 -1.27 180) (length 2.54) (name "-" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (number "2" (effects (font (face "Malgun Gothic") (size 1.27 1.27)))))) (embedded_fonts no))(symbol "power:PWR_FLAG"
+		(power global)
+		(pin_numbers
+			(hide yes)
+		)
+		(pin_names
+			(offset 0)
+			(hide yes)
+		)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(duplicate_pin_numbers_are_jumpers no)
+		(property "Reference" "#FLG"
+			(at 0 1.905 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "PWR_FLAG"
+			(at 0 3.81 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Special symbol for telling ERC where power comes from"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_keywords" "flag power"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(symbol "PWR_FLAG_0_0"
+			(pin power_out line
+				(at 0 0 90)
+				(length 0)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+		)
+		(symbol "PWR_FLAG_0_1"
+			(polyline
+				(pts
+					(xy 0 0) (xy 0 1.27) (xy -1.016 1.905) (xy 0 2.54) (xy 1.016 1.905) (xy 0 1.27)
+				)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+		)
+		(embedded_fonts no)
+	)(symbol "Device:R"
+		(pin_numbers
+			(hide yes)
+		)
+		(pin_names
+			(offset 0)
+		)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(duplicate_pin_numbers_are_jumpers no)
+		(property "Reference" "R"
+			(at 2.032 0 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "R"
+			(at 0 0 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at -1.778 0 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_keywords" "R res resistor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_fp_filters" "R_*"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(symbol "R_0_1"
+			(rectangle
+				(start -1.016 -2.54)
+				(end 1.016 2.54)
+				(stroke
+					(width 0.254)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+		)
+		(symbol "R_1_1"
+			(pin passive line
+				(at 0 3.81 270)
+				(length 1.27)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+			(pin passive line
+				(at 0 -3.81 90)
+				(length 1.27)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "2"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+		)
+		(embedded_fonts no)
+	)(symbol "Device:C_Polarized"
+		(pin_numbers
+			(hide yes)
+		)
+		(pin_names
+			(offset 0.254)
+		)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(duplicate_pin_numbers_are_jumpers no)
+		(property "Reference" "C"
+			(at 0.635 2.54 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "C_Polarized"
+			(at 0.635 -2.54 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" ""
+			(at 0.9652 -3.81 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Polarized capacitor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_keywords" "cap capacitor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_fp_filters" "CP_*"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(symbol "C_Polarized_0_1"
+			(rectangle
+				(start -2.286 0.508)
+				(end 2.286 1.016)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(polyline
+				(pts
+					(xy -1.778 2.286) (xy -0.762 2.286)
+				)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(polyline
+				(pts
+					(xy -1.27 2.794) (xy -1.27 1.778)
+				)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(rectangle
+				(start 2.286 -0.508)
+				(end -2.286 -1.016)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type outline)
+				)
+			)
+		)
+		(symbol "C_Polarized_1_1"
+			(pin passive line
+				(at 0 3.81 270)
+				(length 2.794)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+			(pin passive line
+				(at 0 -3.81 90)
+				(length 2.794)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "2"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+		)
+		(embedded_fonts no)
+	)) (symbol (lib_id "lfw:PIGTAIL") (at 40.64 50.80 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "d5b1cb70-1b95-475c-b902-6a187e883424") (property "Reference" "J1" (at 40.64 43.18 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "19 V 입력 (Y 분배 케이블 피복 벗긴 +, - 선)" (at 40.64 58.42 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 40.64 50.80 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 40.64 50.80 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "a11ac78b-863f-411d-aa20-fe21afb0531d"))(pin "2" (uuid "c8e7cc3c-56ea-4359-96d8-3b224292999e")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "J1") (unit 1))))) (wire (pts (xy 53.34 49.53) (xy 58.42 49.53)) (stroke (width 0) (type default)) (uuid "bfd4cb33-a0eb-4a56-9cef-bf770a2e5943")) (label "+19V" (at 58.42 49.53 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "b7040bc4-78a1-4574-b0e5-67a01c183e01")) (wire (pts (xy 53.34 52.07) (xy 58.42 52.07)) (stroke (width 0) (type default)) (uuid "0055c4e1-8972-4618-bede-ae570b77cf53")) (label "GND" (at 58.42 52.07 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "3d499050-9c22-48d7-9340-132d1ed30a77")) (symbol (lib_id "lfw:XL4015") (at 96.52 45.72 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "c76a7e99-1ea3-4113-94b7-3625f01c1326") (property "Reference" "U2" (at 96.52 35.56 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "XL4015 강압 → 6.0 V" (at 96.52 55.88 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 96.52 45.72 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 96.52 45.72 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "d4057c88-8338-4408-9bb2-b86a231109d5"))(pin "2" (uuid "1d4a93a2-483a-4a06-a7c9-4abe50444aec"))(pin "3" (uuid "64a1ca6b-e20f-4f8e-a1e0-a73c24c8fdb1"))(pin "4" (uuid "2145f389-8f48-43a4-9446-a6ba5d073ad0")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "U2") (unit 1))))) (wire (pts (xy 83.82 44.45) (xy 78.74 44.45)) (stroke (width 0) (type default)) (uuid "5e4043eb-239d-470e-967d-6f860d9cdc03")) (label "+19V" (at 78.74 44.45 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "df7e034c-cc47-4705-9ec7-afc42e78eff0")) (wire (pts (xy 83.82 46.99) (xy 78.74 46.99)) (stroke (width 0) (type default)) (uuid "ac677a5a-6d53-4801-93a6-bd5d12f20df5")) (label "GND" (at 78.74 46.99 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "d7ff48e2-1cbc-4230-afdc-2b7d1e4ce429")) (wire (pts (xy 109.22 44.45) (xy 114.30 44.45)) (stroke (width 0) (type default)) (uuid "cf64d917-fa40-4694-82fc-b573c64bafcd")) (label "+6V" (at 114.30 44.45 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "c17f74f3-ecd2-4ec5-a9af-7e09d7096c0b")) (wire (pts (xy 109.22 46.99) (xy 114.30 46.99)) (stroke (width 0) (type default)) (uuid "e5c16867-9656-4230-88a7-3f04c4a35b9e")) (label "GND" (at 114.30 46.99 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "e888558c-7730-4052-baf6-a0b7b6cb941c")) (symbol (lib_id "lfw:BUCK5V") (at 96.52 76.20 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "7be2d291-6ccf-480f-a1d7-7852359f77ac") (property "Reference" "U3" (at 96.52 66.04 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "LM2596 강압 → 5.0 V" (at 96.52 86.36 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 96.52 76.20 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 96.52 76.20 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "0fcf8e0b-cebb-4ebf-bb47-0c55aeeafe38"))(pin "2" (uuid "4748d787-1de6-46f3-81a6-23cda8cc26e7"))(pin "3" (uuid "ea630cf0-844c-4bd7-a551-92507b32730e"))(pin "4" (uuid "0c4b1a48-d983-4817-ae4c-1f990b14c78c")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "U3") (unit 1))))) (wire (pts (xy 83.82 74.93) (xy 78.74 74.93)) (stroke (width 0) (type default)) (uuid "bed1d1e4-4927-44dd-b5cb-b809c9249033")) (label "+19V" (at 78.74 74.93 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "e0c78703-7f62-4567-aff9-ebbb9e01bbba")) (wire (pts (xy 83.82 77.47) (xy 78.74 77.47)) (stroke (width 0) (type default)) (uuid "985daae0-43ff-4f65-b316-3f5ad485fb92")) (label "GND" (at 78.74 77.47 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "98a3cea8-df7d-4c80-b134-25734b936482")) (wire (pts (xy 109.22 74.93) (xy 114.30 74.93)) (stroke (width 0) (type default)) (uuid "3e2dc37e-0082-4cdc-b9fe-27e03ee91924")) (label "+5V" (at 114.30 74.93 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "1df3be52-d408-44d6-a6cf-9a6b80e4bb83")) (wire (pts (xy 109.22 77.47) (xy 114.30 77.47)) (stroke (width 0) (type default)) (uuid "42bc4e02-f9e4-4eb2-989b-55c951de8afc")) (label "GND" (at 114.30 77.47 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "01474aaa-67a9-4f90-aeb8-3ad163d2145a")) (symbol (lib_id "Device:C_Polarized") (at 132.08 45.72 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "7e534be4-1359-4d0f-ac59-3695d816bd8c") (property "Reference" "C1" (at 135.89 44.45 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "1000uF 16V" (at 135.89 46.99 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 132.08 45.72 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 132.08 45.72 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "04425e29-0f1f-4637-8d00-8d253ec86d65"))(pin "2" (uuid "8a434e84-e54f-433c-a582-e2627c16c4b1")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "C1") (unit 1))))) (wire (pts (xy 132.08 41.91) (xy 132.08 36.83)) (stroke (width 0) (type default)) (uuid "f26fcb50-28e9-4bc6-9162-066e064ef65e")) (label "+6V" (at 132.08 36.83 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "2871f73e-6745-4ec7-acab-ecdb52a374b2")) (wire (pts (xy 132.08 49.53) (xy 132.08 54.61)) (stroke (width 0) (type default)) (uuid "1b1ce2aa-0e12-4f1a-b93a-f4a266fd562b")) (label "GND" (at 132.08 54.61 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "22109ab0-c9d2-4244-a0ff-62cea33ad793")) (symbol (lib_id "lfw:SERVO") (at 170.18 40.64 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "74bb3b93-4f85-4ce0-a6f3-da2ba61a6418") (property "Reference" "M1" (at 170.18 31.75 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "레버 서보 DS3218 (갈색 GND, 빨강 +, 주황 신호)" (at 170.18 49.53 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 170.18 40.64 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 170.18 40.64 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "534a19b7-9c8f-4e51-a637-7996bf0b8fd3"))(pin "2" (uuid "dcc0a0f2-ed84-459e-befb-1f1bc5c115d9"))(pin "3" (uuid "11ad00e8-7be2-4c27-91ca-6df4d57d1a85")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "M1") (unit 1))))) (wire (pts (xy 160.02 38.10) (xy 154.94 38.10)) (stroke (width 0) (type default)) (uuid "3b77c58e-ac77-4025-aad4-3ba2eaafe12b")) (label "SERVO_LEVER" (at 154.94 38.10 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "bd0af043-440c-4852-a479-205b58a35547")) (wire (pts (xy 160.02 40.64) (xy 154.94 40.64)) (stroke (width 0) (type default)) (uuid "2f88e210-2507-430e-9332-c47a69c7a936")) (label "+6V" (at 154.94 40.64 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "b8b97abf-9e6d-4ef8-bbbd-0f1981aa86ad")) (wire (pts (xy 160.02 43.18) (xy 154.94 43.18)) (stroke (width 0) (type default)) (uuid "a7dd2994-b805-4880-817c-df33c3658e60")) (label "GND" (at 154.94 43.18 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "5249f879-1fcd-4844-b761-504d9573f04a")) (symbol (lib_id "lfw:SERVO") (at 170.18 63.50 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "8ec86721-fa87-4978-a89f-d81628f51171") (property "Reference" "M2" (at 170.18 54.61 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "각도 서보 MG996R (갈색 GND, 빨강 +, 주황 신호)" (at 170.18 72.39 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 170.18 63.50 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 170.18 63.50 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "90adb5e1-8968-448a-81bc-c2f955816a4b"))(pin "2" (uuid "5cfaabe8-b546-49a6-b82b-8ddcb3790496"))(pin "3" (uuid "e494c23e-e7eb-41e9-a027-bf18a95a3a6c")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "M2") (unit 1))))) (wire (pts (xy 160.02 60.96) (xy 154.94 60.96)) (stroke (width 0) (type default)) (uuid "3d5d8f4d-e3a1-4b3c-9284-9f2b2db45b5c")) (label "SERVO_TILT" (at 154.94 60.96 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "91e4f183-698d-4cd0-a358-9cf737a8900c")) (wire (pts (xy 160.02 63.50) (xy 154.94 63.50)) (stroke (width 0) (type default)) (uuid "58d1e553-e206-44c4-a1ca-5894222bb79b")) (label "+6V" (at 154.94 63.50 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "eec2a281-6145-4c10-a9fe-aa902f3b4118")) (wire (pts (xy 160.02 66.04) (xy 154.94 66.04)) (stroke (width 0) (type default)) (uuid "abe26665-359f-4727-bb14-f035987b11b2")) (label "GND" (at 154.94 66.04 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "ceef27e3-f762-4854-8223-f14fcefff90a")) (symbol (lib_id "lfw:ESP32-S3-DevKitC-1") (at 50.80 160.02 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "168a6783-31a8-4196-b95c-da0d51a49632") (property "Reference" "U1" (at 50.80 127.00 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "ESP32-S3-DevKitC-1 (J1 헤더, USB-C ↔ Jetson)" (at 50.80 193.04 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 50.80 160.02 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 50.80 160.02 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "02745a5a-d1f9-4f3a-9fd9-9d3c05ef1a96"))(pin "2" (uuid "16435dd0-4dc0-4d23-9c36-1afeacee04a6"))(pin "3" (uuid "fce386a8-3c72-482c-8232-039d3bcd838e"))(pin "4" (uuid "7df9f549-0aba-4d20-afb7-c1041fcf77d9"))(pin "5" (uuid "55d4254a-5e71-44b1-a58f-bac7eb08679e"))(pin "6" (uuid "2dfad220-e3a4-45d4-960a-d840a6f86c55"))(pin "7" (uuid "ef65d447-6a6b-4692-b28f-33e508e10050"))(pin "8" (uuid "5c9152c1-809d-4d5c-a6c3-cf7f0727fd12"))(pin "9" (uuid "34eccfae-3d9b-4071-99f2-f817ff8bd29d"))(pin "10" (uuid "21b491fe-3d3e-43d5-8050-ce5f2a61220d"))(pin "11" (uuid "32ca2ff2-7eeb-493a-b20c-8bdb03c73e32"))(pin "12" (uuid "d845810c-3229-4806-9523-9106cfa25982"))(pin "13" (uuid "30b22039-cd60-4cf5-adf8-c6f75c9c4905"))(pin "14" (uuid "9ed540ed-e79b-420a-bd70-06c5fecbce78"))(pin "15" (uuid "21f9183f-33a4-4949-a39c-f489c28d9d11"))(pin "16" (uuid "90a71384-21c2-4c1c-a8a5-79249aafac8f"))(pin "17" (uuid "41bd9774-c202-4021-9f46-5e1f79d0785c"))(pin "18" (uuid "f07e90a1-0883-47a4-bbab-05644594304b"))(pin "19" (uuid "099f9663-b111-44ce-9c7f-5c3bcf14461c"))(pin "20" (uuid "ade7e4fe-5da6-4229-8a6c-60b52399afea"))(pin "21" (uuid "1df3ec3d-2b0d-4bc9-bca6-7446708f411a"))(pin "22" (uuid "a04f5203-a65c-47e4-869f-01e0998822b0")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "U1") (unit 1))))) (no_connect (at 66.04 133.35) (uuid "439e9e43-e2c4-4523-bd9a-162d6b41f9f3")) (no_connect (at 66.04 135.89) (uuid "2a7b940a-5702-483d-85ad-158ed5c319c4")) (no_connect (at 66.04 138.43) (uuid "cdb8e09d-1ee1-4bf6-a148-951478c1877c")) (wire (pts (xy 66.04 140.97) (xy 71.12 140.97)) (stroke (width 0) (type default)) (uuid "1541cfc0-673e-4b24-ad77-51239c7a65c3")) (label "SERVO_LEVER" (at 71.12 140.97 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "2e4c4dd3-f422-4cc5-a7cb-c0100bd784cb")) (wire (pts (xy 66.04 143.51) (xy 71.12 143.51)) (stroke (width 0) (type default)) (uuid "931add37-68a7-423a-9867-34c262c2abae")) (label "SERVO_TILT" (at 71.12 143.51 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "92b3a222-568f-4b3c-893a-a09213f3b3ee")) (wire (pts (xy 66.04 146.05) (xy 71.12 146.05)) (stroke (width 0) (type default)) (uuid "0349b2ab-a680-4318-ba1e-04b557738618")) (label "SONAR_L_TRIG" (at 71.12 146.05 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "3d6f834d-0c20-4f51-8442-07e7c82bfa81")) (wire (pts (xy 66.04 148.59) (xy 71.12 148.59)) (stroke (width 0) (type default)) (uuid "491209a0-8398-4add-ac9e-25503defc7c6")) (label "SONAR_L_ECHO" (at 71.12 148.59 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "6667ce64-5cc4-43e9-96bf-4d00d3b5c257")) (wire (pts (xy 66.04 151.13) (xy 71.12 151.13)) (stroke (width 0) (type default)) (uuid "6ee41db6-ecef-44e9-ada7-58d8e956da9d")) (label "SONAR_R_TRIG" (at 71.12 151.13 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "87ba486b-84f1-45e9-beea-23d0f3170681")) (wire (pts (xy 66.04 153.67) (xy 71.12 153.67)) (stroke (width 0) (type default)) (uuid "9f0d9c50-b8e4-4630-9d87-f68933483c87")) (label "SONAR_R_ECHO" (at 71.12 153.67 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "a481559b-97c1-4e35-b3a8-89d625dff767")) (wire (pts (xy 66.04 156.21) (xy 71.12 156.21)) (stroke (width 0) (type default)) (uuid "448b7bb2-fa66-4941-93c7-0982a2115a97")) (label "RADAR_TX" (at 71.12 156.21 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "0c915ecc-b5bf-459a-9205-49465a2f7dea")) (wire (pts (xy 66.04 158.75) (xy 71.12 158.75)) (stroke (width 0) (type default)) (uuid "e348f33b-417b-4f79-8377-724a6b38bee5")) (label "RADAR_RX" (at 71.12 158.75 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "c05eb4e8-041f-4173-be94-02dae8ce2688")) (no_connect (at 66.04 161.29) (uuid "d25b3bf4-8592-47a4-9fb1-481638b4f140")) (no_connect (at 66.04 163.83) (uuid "dd350a70-2eec-493d-bc5d-811392571360")) (no_connect (at 66.04 166.37) (uuid "faef06b9-9314-4eaf-a753-7742977f8001")) (no_connect (at 66.04 168.91) (uuid "926415d7-d326-488b-8614-8e6861ad067b")) (wire (pts (xy 66.04 171.45) (xy 71.12 171.45)) (stroke (width 0) (type default)) (uuid "1c585cce-7def-4f70-860d-1b602eae835a")) (label "THERM_TX" (at 71.12 171.45 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "e6a60674-6cd9-4718-a801-6af1153b23d1")) (wire (pts (xy 66.04 173.99) (xy 71.12 173.99)) (stroke (width 0) (type default)) (uuid "97cf2335-661d-46de-96b8-075c8798d3b4")) (label "THERM_RX" (at 71.12 173.99 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "f0a801a9-aa38-4e91-aa87-913c350261e1")) (wire (pts (xy 66.04 176.53) (xy 71.12 176.53)) (stroke (width 0) (type default)) (uuid "e7357885-af9d-4216-85e0-3e4117e2b1bf")) (label "I2S_BCLK" (at 71.12 176.53 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "92356905-8b1d-4c2b-a51c-28e9ca2a7faa")) (wire (pts (xy 66.04 179.07) (xy 71.12 179.07)) (stroke (width 0) (type default)) (uuid "e929c6cc-1573-47c5-991b-c4335f58481f")) (label "I2S_LRC" (at 71.12 179.07 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "b48ece52-27e8-4679-8fe1-b2133c13528d")) (wire (pts (xy 66.04 181.61) (xy 71.12 181.61)) (stroke (width 0) (type default)) (uuid "67c8143c-a1db-47d0-a47a-2984b4aa3884")) (label "I2S_DIN" (at 71.12 181.61 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "300f1f46-966c-48e2-b047-f50df3e1a3d4")) (no_connect (at 66.04 184.15) (uuid "eb76f1f1-2a6e-46a8-a258-2d20a11f13b5")) (wire (pts (xy 66.04 186.69) (xy 71.12 186.69)) (stroke (width 0) (type default)) (uuid "235cfdf3-290e-44df-b964-b59d12e11146")) (label "GND" (at 71.12 186.69 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "27076edb-3e3b-4677-8913-d8baf47d786d")) (symbol (lib_id "lfw:GY-MCU90640") (at 132.08 109.22 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "554b5140-d098-44eb-9bfb-5a6213955cd0") (property "Reference" "U4" (at 132.08 93.98 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "열화상 GY-MCU90640" (at 132.08 124.46 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 132.08 109.22 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 132.08 109.22 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "87e4b6d2-0997-476a-9894-b076adc68e29"))(pin "2" (uuid "4949f07b-fe9e-49f1-8620-305cbf0d3fe6"))(pin "3" (uuid "c83ae4df-2425-4762-bd9a-2292ccbfdfcd"))(pin "4" (uuid "24b43eac-ea5e-4b7f-bbf1-2157ad796a10"))(pin "5" (uuid "03255678-d843-4978-be69-da1c5801c244"))(pin "6" (uuid "ed7bba39-11aa-4a94-8f49-520d60a8edd0"))(pin "7" (uuid "655b0fb1-6c0f-42ed-87b9-b52f01fdc82b"))(pin "8" (uuid "a36fd3ca-f2b2-4023-a059-da829f22698d")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "U4") (unit 1))))) (wire (pts (xy 119.38 100.33) (xy 114.30 100.33)) (stroke (width 0) (type default)) (uuid "53082467-4ec3-4c81-a3ed-c30d75d228cf")) (label "+5V" (at 114.30 100.33 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "c4d5f371-558b-44b1-b8ce-69f6a1307f58")) (wire (pts (xy 119.38 102.87) (xy 114.30 102.87)) (stroke (width 0) (type default)) (uuid "134f2c7d-1184-4208-9281-9c6c9442032b")) (label "GND" (at 114.30 102.87 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "09cc7dc9-f9c0-431f-967e-6261a1e8ef57")) (wire (pts (xy 119.38 105.41) (xy 114.30 105.41)) (stroke (width 0) (type default)) (uuid "26167f6f-20a1-4031-91b9-4dc83cf1e9c5")) (label "THERM_RX" (at 114.30 105.41 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "4c341c9c-a4a9-4c00-90f3-620f6349fd95")) (wire (pts (xy 119.38 107.95) (xy 114.30 107.95)) (stroke (width 0) (type default)) (uuid "57f947a8-00c5-4d82-b594-65285c6e4ce0")) (label "THERM_TX" (at 114.30 107.95 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "d234e880-4387-4ff7-94b6-39416e490d99")) (no_connect (at 119.38 110.49) (uuid "a42cf121-6bc7-4050-8f21-884509260021")) (no_connect (at 119.38 113.03) (uuid "7d8a8882-5cd2-4f61-a84b-f2ef03ae71d2")) (no_connect (at 119.38 115.57) (uuid "abbdc791-1ce3-40c1-91ec-dbcaaaf7ae97")) (no_connect (at 119.38 118.11) (uuid "2488a428-4592-483f-96ce-640baed8f66b")) (symbol (lib_id "lfw:HLK-LD2450") (at 132.08 140.97 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "b1f8078b-a5d1-4655-aa37-90a374c01329") (property "Reference" "U5" (at 132.08 130.81 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "레이더 HLK-LD2450" (at 132.08 151.13 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 132.08 140.97 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 132.08 140.97 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "ab1f56cc-8a82-4711-956d-635484c10ba9"))(pin "2" (uuid "3df33cbd-11f5-4e2d-849b-7cbfe3611cd7"))(pin "3" (uuid "023fb95d-7c7b-4731-b6e0-692d3199e06f"))(pin "4" (uuid "f24adfb7-e3ea-47ce-9b16-9e3c37bcb2be")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "U5") (unit 1))))) (wire (pts (xy 119.38 137.16) (xy 114.30 137.16)) (stroke (width 0) (type default)) (uuid "d34e3b15-f2c7-4864-b155-a87ff7439c01")) (label "+5V" (at 114.30 137.16 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "188b516d-589b-4d3d-b2e9-2c8a308927d7")) (wire (pts (xy 119.38 139.70) (xy 114.30 139.70)) (stroke (width 0) (type default)) (uuid "a61a852c-cf86-4c6c-b045-f0aa7060d9cf")) (label "RADAR_RX" (at 114.30 139.70 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "e2444739-50a6-4741-8aae-5325fca680a7")) (wire (pts (xy 119.38 142.24) (xy 114.30 142.24)) (stroke (width 0) (type default)) (uuid "a8c92d6e-5eec-4d5c-8ef3-35b56317a476")) (label "RADAR_TX" (at 114.30 142.24 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "8d2a7120-6f68-4ac8-8653-9a7f2461ef9e")) (wire (pts (xy 119.38 144.78) (xy 114.30 144.78)) (stroke (width 0) (type default)) (uuid "7ae881d8-3a70-4bc1-8d6f-83529ab969b6")) (label "GND" (at 114.30 144.78 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "1db22fe1-59d0-49ab-930a-5c215122be59")) (symbol (lib_id "lfw:HC-SR04") (at 132.08 167.64 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "9e75fa4e-b050-4519-957f-4bebe6175561") (property "Reference" "U6" (at 132.08 157.48 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "HC-SR04" (at 132.08 177.80 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 132.08 167.64 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 132.08 167.64 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "b2559fb9-5c2d-47a2-b080-5715ed6a6a5f"))(pin "2" (uuid "eae818b5-eb19-49bc-8466-152ff323fc36"))(pin "3" (uuid "4d3a6ef2-0940-4d84-90b6-ecd1f4c96fc7"))(pin "4" (uuid "75ea8599-f6b5-45df-a73f-9f6d3d97493f")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "U6") (unit 1))))) (wire (pts (xy 119.38 163.83) (xy 114.30 163.83)) (stroke (width 0) (type default)) (uuid "f83949e5-b728-4656-be4a-6fe14eef96ce")) (label "+5V" (at 114.30 163.83 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "4b4054d8-8ae1-490b-877c-dd29dc10f98a")) (wire (pts (xy 119.38 166.37) (xy 114.30 166.37)) (stroke (width 0) (type default)) (uuid "75418de4-7a00-4a5c-b8a1-3040cd7bbb29")) (label "SONAR_L_TRIG" (at 114.30 166.37 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "06f1729a-d609-40fd-ad73-13f18663ac28")) (wire (pts (xy 119.38 168.91) (xy 114.30 168.91)) (stroke (width 0) (type default)) (uuid "b95d2496-ff14-4bd6-8dbd-a072319279ee")) (label "SONAR_L_ECHO5V" (at 114.30 168.91 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "dcbc2b63-9230-4d74-a8e2-7469b9458dc7")) (wire (pts (xy 119.38 171.45) (xy 114.30 171.45)) (stroke (width 0) (type default)) (uuid "262876c9-c1fc-4f3e-b079-04028406cb34")) (label "GND" (at 114.30 171.45 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "7113613b-cb36-4e57-8e05-46f4270a1343")) (symbol (lib_id "lfw:HC-SR04") (at 132.08 195.58 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "e033ed7a-6e16-4ca2-b35d-25e993678687") (property "Reference" "U7" (at 132.08 185.42 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "HC-SR04" (at 132.08 205.74 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 132.08 195.58 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 132.08 195.58 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "b167a56b-3423-4fdb-9f63-117048616e65"))(pin "2" (uuid "5bd64275-2a74-440b-a5fc-a177c11300e7"))(pin "3" (uuid "9fd55335-7632-45f9-8b2e-ce68feb4b917"))(pin "4" (uuid "22f6bea6-a7c6-4833-9885-062dab9a58ca")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "U7") (unit 1))))) (wire (pts (xy 119.38 191.77) (xy 114.30 191.77)) (stroke (width 0) (type default)) (uuid "ab7f55ad-b63b-46cc-b8ac-3dfaa2c305f3")) (label "+5V" (at 114.30 191.77 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "9adbde27-33f2-463a-af9c-51af583691e6")) (wire (pts (xy 119.38 194.31) (xy 114.30 194.31)) (stroke (width 0) (type default)) (uuid "21e702b9-204f-4dba-a73d-e3662ba18e65")) (label "SONAR_R_TRIG" (at 114.30 194.31 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "7d88cad5-2848-463c-b554-5ac681ad9144")) (wire (pts (xy 119.38 196.85) (xy 114.30 196.85)) (stroke (width 0) (type default)) (uuid "abd29bc7-b663-41bd-84d1-d7ca11875a46")) (label "SONAR_R_ECHO5V" (at 114.30 196.85 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "eacdcf9b-ea22-4461-af50-5b6ae4e7d8dd")) (wire (pts (xy 119.38 199.39) (xy 114.30 199.39)) (stroke (width 0) (type default)) (uuid "777d9183-8bba-440c-8f04-457e35a1f250")) (label "GND" (at 114.30 199.39 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "47b10bb5-ac13-4d77-bd4f-3b4db53508aa")) (symbol (lib_id "Device:R") (at 180.34 162.56 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "5f2e1bbc-ba65-49d6-abed-553b77306d7d") (property "Reference" "R1" (at 184.15 161.29 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "1k" (at 184.15 163.83 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 180.34 162.56 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 180.34 162.56 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "a7a3a1b4-9abc-4e24-867a-dc0bcb94837c"))(pin "2" (uuid "6c30037d-5e55-4a0e-a911-cf839a4062a9")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "R1") (unit 1))))) (wire (pts (xy 180.34 158.75) (xy 180.34 153.67)) (stroke (width 0) (type default)) (uuid "40b4b3ad-9cc3-4d78-9adf-7c68af98d83f")) (label "SONAR_L_ECHO5V" (at 180.34 153.67 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "c9a3e840-ca35-4d6f-89ad-7389fc96a501")) (wire (pts (xy 180.34 166.37) (xy 180.34 171.45)) (stroke (width 0) (type default)) (uuid "e5406248-b20d-4a6b-a756-234ab3be478b")) (label "SONAR_L_ECHO" (at 180.34 171.45 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "dc93f017-b698-4891-ae02-d4c3e4b178ed")) (symbol (lib_id "Device:R") (at 200.66 162.56 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "2db711b2-53f7-4773-b84f-13514788ef85") (property "Reference" "R2" (at 204.47 161.29 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "2k" (at 204.47 163.83 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 200.66 162.56 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 200.66 162.56 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "6a8a538f-2016-4d1c-9bd9-d48f3132eebd"))(pin "2" (uuid "e9a50181-8cf9-4d25-81a8-a58705fa2a8d")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "R2") (unit 1))))) (wire (pts (xy 200.66 158.75) (xy 200.66 153.67)) (stroke (width 0) (type default)) (uuid "ff7f6f9d-ac6b-4eb2-bf95-781312173be1")) (label "SONAR_L_ECHO" (at 200.66 153.67 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "bdaddbfc-02b1-4c55-b691-dc48206ecd03")) (wire (pts (xy 200.66 166.37) (xy 200.66 171.45)) (stroke (width 0) (type default)) (uuid "9f3cc703-1484-4253-aa33-a5a93545231e")) (label "GND" (at 200.66 171.45 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "4df6428c-9953-4b3f-a6eb-33af207f462b")) (symbol (lib_id "Device:R") (at 180.34 190.50 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "75e49e5b-b997-4f65-9852-1990e3f37584") (property "Reference" "R3" (at 184.15 189.23 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "1k" (at 184.15 191.77 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 180.34 190.50 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 180.34 190.50 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "a1ce6250-785a-428c-9fe6-87c8fe6d28ac"))(pin "2" (uuid "71415ede-6a02-4bf4-8e2d-a76198e663d5")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "R3") (unit 1))))) (wire (pts (xy 180.34 186.69) (xy 180.34 181.61)) (stroke (width 0) (type default)) (uuid "b43fb462-28f9-4b1a-847c-0f58e05b0f0b")) (label "SONAR_R_ECHO5V" (at 180.34 181.61 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "fed8c3a0-c24a-40bb-877f-65763a2de72c")) (wire (pts (xy 180.34 194.31) (xy 180.34 199.39)) (stroke (width 0) (type default)) (uuid "1715ff19-c8d6-41f5-af5f-ff6177725103")) (label "SONAR_R_ECHO" (at 180.34 199.39 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "c31c1af1-51bf-40b9-92b2-20187adbfddb")) (symbol (lib_id "Device:R") (at 200.66 190.50 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "490a0367-bbdc-412a-82fd-a0b1319076d7") (property "Reference" "R4" (at 204.47 189.23 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "2k" (at 204.47 191.77 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 200.66 190.50 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 200.66 190.50 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "b0907c9d-0c82-4be8-be7b-18a78335a99d"))(pin "2" (uuid "3c94e125-f50b-4fff-a4e0-d2e73b24e0a9")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "R4") (unit 1))))) (wire (pts (xy 200.66 186.69) (xy 200.66 181.61)) (stroke (width 0) (type default)) (uuid "1b90f316-ee8c-467a-b4f4-1cb0a5c38c09")) (label "SONAR_R_ECHO" (at 200.66 181.61 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "6488f2e1-c5d6-43af-aa67-d88c58b9f795")) (wire (pts (xy 200.66 194.31) (xy 200.66 199.39)) (stroke (width 0) (type default)) (uuid "9fb6081c-736b-4810-9ee6-02b9a8b6865c")) (label "GND" (at 200.66 199.39 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "f6098308-c4bf-4033-9175-d0c9bada0343")) (symbol (lib_id "lfw:MAX98357A") (at 254.00 109.22 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "f7e882a4-53cb-465e-9c25-27dd81404aee") (property "Reference" "U8" (at 254.00 92.71 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "앰프 MAX98357A" (at 254.00 125.73 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 254.00 109.22 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 254.00 109.22 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "5c888966-56d0-4a7e-9b22-251c255d7b6a"))(pin "2" (uuid "1ae70ca1-1fd3-404e-88a5-e9a88be1b0d5"))(pin "3" (uuid "91880e6a-23fb-453b-ad0b-d1a9cb02b3df"))(pin "4" (uuid "10efa788-2aed-4993-b11e-9f7027bb9e55"))(pin "5" (uuid "8d45a5df-7f57-4819-bfbf-777adccfc81b"))(pin "6" (uuid "014c8079-bacb-4e31-97fe-33df23d90a5b"))(pin "7" (uuid "0f4e344b-9e8e-405b-9a5c-82d1e48f6ea2"))(pin "8" (uuid "02bf5d28-1ae2-46d9-9e3d-bb0d61e89241"))(pin "9" (uuid "9c324f90-2a8f-43e4-80a3-69a60c8afe33")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "U8") (unit 1))))) (wire (pts (xy 241.30 101.60) (xy 236.22 101.60)) (stroke (width 0) (type default)) (uuid "9638e3b9-c9b5-478c-9e0f-e3e019ff83ed")) (label "I2S_LRC" (at 236.22 101.60 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "65c15470-5e68-458a-8760-dee7a948de9d")) (wire (pts (xy 241.30 104.14) (xy 236.22 104.14)) (stroke (width 0) (type default)) (uuid "5d6d70a3-6537-47ca-9213-aedc08b6cbae")) (label "I2S_BCLK" (at 236.22 104.14 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "98e8d808-3e36-4a45-9af9-08cc34d52509")) (wire (pts (xy 241.30 106.68) (xy 236.22 106.68)) (stroke (width 0) (type default)) (uuid "e72faaaf-b329-4433-837f-922e9eb7c91f")) (label "I2S_DIN" (at 236.22 106.68 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "d99ec7ca-0ad6-4224-9495-68e2e9515288")) (no_connect (at 241.30 109.22) (uuid "0f8c81bb-2231-47be-88a6-705f15bc3a85")) (no_connect (at 241.30 111.76) (uuid "54bfb4ca-4979-4f80-861f-949ebb73f9fe")) (wire (pts (xy 241.30 114.30) (xy 236.22 114.30)) (stroke (width 0) (type default)) (uuid "a8a7b681-b710-44ba-a15b-86a323b4b881")) (label "GND" (at 236.22 114.30 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "6bb32580-b3c7-400d-afe9-565c47b616ad")) (wire (pts (xy 241.30 116.84) (xy 236.22 116.84)) (stroke (width 0) (type default)) (uuid "ecbefcbf-723e-4f5a-8427-6367e74e055c")) (label "+5V" (at 236.22 116.84 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "f57b9618-a1cd-4022-85e6-a61fa10a2f61")) (wire (pts (xy 266.70 101.60) (xy 271.78 101.60)) (stroke (width 0) (type default)) (uuid "5dcc9613-3e40-45af-a8c0-568fa74ea639")) (label "SPK_P" (at 271.78 101.60 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "4ad5451b-804b-4533-9e79-f550475300ed")) (wire (pts (xy 266.70 104.14) (xy 271.78 104.14)) (stroke (width 0) (type default)) (uuid "0168bd14-6cf9-4050-9aa2-2310e157f0e1")) (label "SPK_N" (at 271.78 104.14 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "4c761e07-643e-4b60-8516-c968595c3183")) (symbol (lib_id "lfw:SPEAKER") (at 340.36 109.22 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "65951a7c-af78-4a15-83ae-f342aecd3b43") (property "Reference" "LS1" (at 340.36 101.60 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Value" "스피커 3W 8Ω" (at 340.36 116.84 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 340.36 109.22 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 340.36 109.22 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "70f4d0b3-99e8-4003-9831-5a3dbbd923de"))(pin "2" (uuid "b4bae8a7-bbbe-4cd8-9e5e-4b99541783aa")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "LS1") (unit 1))))) (wire (pts (xy 330.20 107.95) (xy 325.12 107.95)) (stroke (width 0) (type default)) (uuid "11f27807-37d4-496b-816a-cd0f2d8a78c4")) (label "SPK_P" (at 325.12 107.95 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "aa5cbfe6-afea-49bc-b932-40d1a874d119")) (wire (pts (xy 330.20 110.49) (xy 325.12 110.49)) (stroke (width 0) (type default)) (uuid "7a53578a-6853-4bd7-b268-6da58b56c0c5")) (label "SPK_N" (at 325.12 110.49 180) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify right bottom)) (uuid "f90f224d-f0ef-4f5f-ba8c-e5400e6fb05b")) (symbol (lib_id "power:PWR_FLAG") (at 20.32 22.86 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "78cfd2fd-3adc-4476-829a-abd298a7a79b") (property "Reference" "#FLG01" (at 20.32 19.86 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Value" "PWR_FLAG" (at 20.32 19.05 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 20.32 22.86 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 20.32 22.86 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "e7aace75-cd0c-4b78-9066-8cbc9aa7466d")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "#FLG01") (unit 1))))) (wire (pts (xy 20.32 22.86) (xy 20.32 27.94)) (stroke (width 0) (type default)) (uuid "0eb4e9f5-9167-45fd-8508-09bd5a3614d4")) (label "+19V" (at 20.32 27.94 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "1d2c8c54-d294-4ba1-b82e-dfc92a19d71e")) (symbol (lib_id "power:PWR_FLAG") (at 30.48 22.86 0) (unit 1) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid "1ab12b5c-eeef-4956-9a99-6750e7b80622") (property "Reference" "#FLG02" (at 30.48 19.86 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Value" "PWR_FLAG" (at 30.48 19.05 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)))) (property "Footprint" "" (at 30.48 22.86 0) (hide yes) (effects (font (size 1.27 1.27)))) (property "Datasheet" "" (at 30.48 22.86 0) (hide yes) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "b62f04f3-a37c-47a6-bacd-a128d282d7b7")) (instances (project "limo_sensors" (path "/ae6316f1-2701-4cc4-9e0f-78a9ab582882" (reference "#FLG02") (unit 1))))) (wire (pts (xy 30.48 22.86) (xy 30.48 27.94)) (stroke (width 0) (type default)) (uuid "b2c81d20-c4ad-4a74-b2ac-00a9849ea6c7")) (label "GND" (at 30.48 27.94 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left bottom)) (uuid "e25eb041-05de-47d6-8129-bb2ea669b7ce")) (text "전원: LIMO 19 V → J1(Y 분배 케이블의 피복 벗긴 +·− 선) → U2 XL4015 6.0 V(서보), U3 LM2596 5.0 V(센서·앰프). ESP32 는 USB-C 로 Jetson 에서만 전원·데이터. 보드 3V3·5V 핀(1·2·21)은 비움." (exclude_from_sim no) (at 20.32 238.76 0) (effects (font (face "Malgun Gothic") (size 1.5 1.5)) (justify left)) (uuid "80bd3234-32fc-4368-b95d-05cfb611deb1")) (text "처음 켤 때: 장치 꽂기 전 U2 출력 6.0 V, U3 출력 5.0 V 를 테스터로 맞춤. 열화상 TX 쉬는 전압이 3.3 V 근처인지 확인." (exclude_from_sim no) (at 20.32 245.11 0) (effects (font (face "Malgun Gothic") (size 1.5 1.5)) (justify left)) (uuid "d5c090ed-1e82-458c-b082-c0f1288f9085")) (text "R1·R2, R3·R4: HC-SR04 ECHO(5 V) → 3.3 V. MAX98357A GAIN·SD 비움 = 9 dB, 켜짐. 열화상 PS 비움 = UART 모드." (exclude_from_sim no) (at 20.32 251.46 0) (effects (font (face "Malgun Gothic") (size 1.5 1.5)) (justify left)) (uuid "b2c3d376-6d03-44ce-8d94-45a541f43358")) (text "핀 출처: ESP32-S3-DevKitC-1 사용자 가이드 J1 표 / LD2450 매뉴얼 4.2 / GY-MCU90640 매뉴얼 / HC-SR04 Handson 4.1" (exclude_from_sim no) (at 20.32 257.81 0) (effects (font (face "Malgun Gothic") (size 1.27 1.27)) (justify left)) (uuid "0b19e0fa-1b43-44bb-a267-f63577a4926f")) (sheet_instances (path "/" (page "1"))) (embedded_fonts no))
