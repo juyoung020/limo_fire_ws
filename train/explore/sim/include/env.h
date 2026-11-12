@@ -103,6 +103,7 @@ struct EnvCfg {
   PeopleCfg people;         // 움직이는 사람 (people.h)
   // 계층형 행동 (kActPath, include/hier_path.h · env.yaml action.path). 결정 하나 = 속도 행동 주기(substeps · dt) × decide_steps
   int decide_steps;
+  int cand_v2;              // 1: 후보 v2 (mdp/frontier.h cand_pick2 — 조각 합치기 · 큰 덩어리 자리 · 예상 관측량). 0 = 기존 후보 (비트 같음)
   float path_v;             // RPP desired_linear_vel·velocity_smoother 최고 속도 (기준선 fast 판과 같은 1 m/s)
   int path_cost_reg;        // RPP 장애물 근접 감속 켬
   float path_cs_dist, path_cs_gain;   // cost_scaling_dist · cost_scaling_gain (Nav2 기본 0.6 · 1.0)

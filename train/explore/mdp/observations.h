@@ -444,7 +444,7 @@ DEV void obs_cand(const EnvBatch& b, const EnvState& e, int env, const mdp::Cand
       F[F_COS] = dm::clampf((co * ddx + s * ddy) / d, -1.f, 1.f);
     }
     F[F_SIZE] = dm::minf(1.f, (float)t.n * c.res / kFrontSizeNorm);
-    F[F_UTIL] = dm::minf(1.f, (float)t.util / kUtilNorm);
+    F[F_UTIL] = dm::minf(1.f, (float)t.util / (c.cand_v2 ? (float)mdp::cand_gain_norm(mdp::cand_gain_cells(c.map_max_range, c.res)) : kUtilNorm));
     F[F_CUR] = t.cur ? 1.f : 0.f;
     F[F_VALID] = 1.f;
     cur |= t.cur ? (1 << k) : 0;

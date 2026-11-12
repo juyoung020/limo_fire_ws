@@ -61,9 +61,16 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
       thread_local std::vector<uint64_t> key2;
       if (key2.size() < out.size()) key2.resize(out.size());
       mdp::cand_keys(mv, mdp::obsgen::reach_robot(c), r, sb, out.data(), n_out, key2.data());
-      mdp::cand_pick(out.data(), key2.data(), n_out, n_tot, e.goal_cell, flag.data(), label.data(), &cs);
-      const int R = mdp::cand_util_radius(c.res);
-      for (int k = 0; k < cs.n; ++k) cs.c[k].util = mdp::cand_util(mv, cs.c[k].cell % m.gw, cs.c[k].cell / m.gw, R);
+      if (c.cand_v2) {
+        mdp::cand_pick2(out.data(), key2.data(), n_out, n_tot, e.goal_cell, flag.data(), label.data(), m.gw, mdp::cand2_merge_cells(c.res), &cs);
+        const int R = mdp::cand_gain_cells(c.map_max_range, c.res);
+        for (int k = 0; k < cs.n; ++k)
+          for (int a = 0; a < mdp::hier::kGainRays; ++a) cs.c[k].util += mdp::cand_gain_ray(mv, cs.c[k].cell % m.gw, cs.c[k].cell / m.gw, a, R);
+      } else {
+        mdp::cand_pick(out.data(), key2.data(), n_out, n_tot, e.goal_cell, flag.data(), label.data(), &cs);
+        const int R = mdp::cand_util_radius(c.res);
+        for (int k = 0; k < cs.n; ++k) cs.c[k].util = mdp::cand_util(mv, cs.c[k].cell % m.gw, cs.c[k].cell / m.gw, R);
+      }
     }
   }
   if (b.cand) mdp::obsgen::obs_cand(b, e, env, cs);

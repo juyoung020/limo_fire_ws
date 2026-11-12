@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "cand_rules.h"
 #include "env_api.h"
 #include "frontier.h"
 #include "frontier_explorer.h"
@@ -43,6 +44,7 @@ struct Args {
   bool cpu = false, eval_seed = false;
   int graph_open = -1;    // 그래프 모드 유틸리티가 안 본 프론티어 칸만 세는지 (0·1, 설정 파일 대신)
   int graph_stand = -1;   // 그래프 모드 노드·간선 칸 기준을 설정 파일 대신 (0 빈 칸 · 1 설 수 있는 칸)
+  cr::Opt rule;           // cand_* 규칙 정책 스위치 (scripts/cand_rules.h): --rule-range · --rule-fov · --rule-stick · --rule-turn · --rule-tile
   sim::GraphArgs gargs;   // --graph-node · --graph-term · --graph-view · --graph-pass · --graph-timeout · --graph-maxdec (sim/include/env_cfg.h)
 };
 
@@ -389,6 +391,7 @@ int run_mode(const Args& a, const std::string& mode) {
 //   graph_front  : 견줌용 — 그래프 관측 밖 정보(계층형 0 번 후보 칸 = slot0 이 가는 곳)를 써서 그 칸에 가장 가까운 노드 쪽 첫 이웃.
 //                  "이웃 노드 고르기 + 같은 하위 주행" 으로 slot0 만큼 되는지(행동 공간·주행 몫)를 관측 몫과 갈라 보려는 것
 //   graph_random : 무작위 유효 이웃 (바닥선). 유효 이웃이 없으면 0 번 — 시뮬이 제자리 회전
+// 후보 고르기 규칙 정책 (scripts/cand_rules.h — slot0 과 같은 판·같은 후보, 고르는 규칙만 다름): cand_gain · cand_gainf · cand_tsp (로봇 지도만) · cand_gtgain · cand_gt (정답 격자 씀)
 int run_hier(const Args& a, const std::string& mode) {
   sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
   const fb::Params P = fb::load_params(a.frontier, a.env, "fast");   // 안전 시간만 기준선과 같게
@@ -400,6 +403,7 @@ int run_hier(const Args& a, const std::string& mode) {
   if (graph && a.graph_stand >= 0) hc.cfg.graph_stand = a.graph_stand;
   if (graph && a.graph_open >= 0) hc.cfg.graph_open = a.graph_open;
   if (graph) sim::graph_apply(hc.cfg, a.gargs);
+  const int rule = cr::mode_of(mode);   // −1 = 규칙 정책 아님
   const float dec_s = (float)(hc.cfg.substeps * hc.cfg.decide_steps) * hc.cfg.dt;
   hc.cfg.max_steps = (int)std::ceil(P.t_safe / (hc.cfg.substeps * hc.cfg.dt)) + 100;
   const sim::LidarModel lidar = sim::load_lidar_model(a.model);
@@ -417,6 +421,21 @@ int run_hier(const Args& a, const std::string& mode) {
   for (size_t wi = 0; wi < a.scenes.size(); ++wi) {
     std::vector<sim::World> one{sim::build_world(stem(a.scenes[wi]), sim::load_scene(a.scenes[wi]), hc)};
     const sim::World& W = one[0];
+    cr::GtMap gt;
+    if (rule == cr::kGt || rule == cr::kGtGain) {
+      gt = cr::build_gt(W, hc.cfg, a.rule);
+      std::fprintf(stderr, "[%s %s] 정답 격자 표: 타일 %.2f m · 닻 %d 개 · 거리 표 %.0f MB\n", mode.c_str(), W.name.c_str(), a.rule.tile_m, gt.nA(), gt.field.size() * 2 / 1e6);
+      if (rule == cr::kGt) {
+        const cr::GtTour t = cr::gt_tour(W, hc.cfg, gt, a.rule);
+        std::printf("[%s %s] 정답 격자를 다 아는 순회 (참고값 — cand_rules.h gt_tour): 시점 평균 %d 개 · need 칸 덮음 %.3f · 시작 칸 평균 길이 %.1f m\n", mode.c_str(), W.name.c_str(), t.n_view, t.cover, t.len_m);
+      }
+    }
+    std::vector<uint32_t> r_trail;
+    std::vector<uint8_t> r_cam;
+    std::vector<float> r_pts;
+    std::vector<int16_t> r_map;
+    std::vector<int32_t> r_cand;
+    cr::Stat r_stat;
     sim::Env env(hc, one, lidar, N, a.seed * 1000003ull + wi * 7919ull, !a.cpu);
     env.reset();
     env.sync();
@@ -567,6 +586,15 @@ int run_hier(const Args& a, const std::string& mode) {
     // 그래프 모드는 결정 길이가 제각각 (노드 하나 이동) — 안전 시간(판 끝)까지 돌게 넉넉히
     for (int d = 0; left > 0 && d < (graph ? c.max_steps : c.max_steps / c.decide_steps) + 10; ++d) {
       if (graph) choose();
+      if (rule >= 0) {
+        env.get_cand(r_cand);
+        env.get_map(r_map);
+        env.get_trail(r_trail);
+        env.get_camlayer(r_cam, r_pts);
+        env.get_state(st);
+        cr::choose_all(rule, c, W, &gt, a.rule, N, r_map, r_trail, r_cam, st, r_cand, fin, act.data(), mdp::act::DIM, &r_stat);
+        if (!a.cpu) cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
+      }
       env.step(a.cpu ? act.data() : d_act);
       env.sync();
       if (graph) env.get_gdec(gd);
@@ -670,6 +698,14 @@ if (!graph) dist_m[i] += std::hypot(s.x - px[i], s.y - py[i]);   // 결정 사�
     double dec_all = dec_all_n;
     std::fprintf(stderr, "[%s %s] 이동 거리: 성공 판 평균 %.1f m · 모든 판 평균 %.1f m · 평균 속도 %.3f m/s · 판당 결정 %.1f 개 · 결정당 %.2f s\n", mode.c_str(), W.name.c_str(), succ > 0 ? d_succ / succ : 0.0, d_all / n,
                  t_all > 0 ? d_all / t_all : 0.0, dec_all_n / n, dec_all_n > 0 ? steps_all * (c.substeps * c.dt) / dec_all_n : 0.0);
+    if (rule >= 0)
+    {
+      const double nd = std::max(1.0, (double)r_stat.dec);
+      std::fprintf(stderr, "[%s %s] 후보 통계 (결정 %ld 개): 유효 후보 %.2f 개 · 더 가까운 후보의 %.1f m 안 후보 %.2f 개 · 후보에 못 든 덩어리가 있는 결정 %.3f (평균 %.2f 개) · 못 든 덩어리가 후보보다 큰 결정 %.3f · "
+                   "목표를 바꾼 결정 %.3f\n", mode.c_str(), W.name.c_str(), r_stat.dec, r_stat.valid / nd, cr::kNearM, r_stat.crowd / nd, r_stat.full / nd, r_stat.left / nd, r_stat.big_left / nd, r_stat.sw / nd);
+      std::fprintf(stderr, "[%s %s] 규칙 (사거리 %.1f m · 시야각 %.0f° · 바꾸기 문턱 %.2f · 돌기 %.2f m/rad): 0 번이 아닌 후보를 고른 결정 비율 %.3f\n", mode.c_str(), W.name.c_str(),
+                   a.rule.range_m > 0 ? a.rule.range_m : c.map_max_range, a.rule.fov_deg, a.rule.stick, a.rule.turn_m, r_stat.nonzero / nd);
+    }
     if (graph)
       std::fprintf(stderr, "[%s %s] 결정 (간격 %.1f m · 판 끝 %s · 경로 끝 감속 %s · 결정 %s · 방문 유틸리티 유지 %d): 사유 닿음 %.3f · 막힘 %.3f · 시간 초과 %.3f · 길 없음 %.3f · 경로 끝 어긋남 %.3f · 판 끝 %.3f, "
                    "유틸리티 0 으로 끝난 판 %.3f (그때 지도 닫힘 %.3f) · 그래프 끊김(닿는 칸 위 노드 중 그래프에 없는 비율) %.4f (노드 %.0f 개, 관측당 닿는 칸 넓이 평균 %.1f m²)\n",
@@ -712,6 +748,11 @@ int main(int argc, char** argv) {
     else if (k == "--frontier") a.frontier = nx();
     else if (k == "--obs-every") a.obs_every = std::max(1, std::stoi(nx()));
     else if (k == "--people") a.people = std::stoi(nx());
+    else if (k == "--rule-range") a.rule.range_m = std::stof(nx());
+    else if (k == "--rule-fov") a.rule.fov_deg = std::stof(nx());
+    else if (k == "--rule-stick") a.rule.stick = std::stof(nx());
+    else if (k == "--rule-turn") a.rule.turn_m = std::stof(nx());
+    else if (k == "--rule-tile") a.rule.tile_m = std::stof(nx());
     else if (i + 1 < argc && sim::graph_arg(a.gargs, k, argv[i + 1])) ++i;
     else if (k == "--graph-stand") a.graph_stand = std::stoi(nx());
     else if (k == "--graph-open") a.graph_open = std::stoi(nx());
@@ -725,7 +766,7 @@ int main(int argc, char** argv) {
   }
   try {
     for (auto& m : a.modes) {
-      if (m == "slot0" || m == "slot0_nosafe" || m == "graph_guide" || m == "graph_max" || m == "graph_front" || m == "graph_random") run_hier(a, m);
+      if (m == "slot0" || m == "slot0_nosafe" || m == "graph_guide" || m == "graph_max" || m == "graph_front" || m == "graph_random" || cr::mode_of(m) >= 0) run_hier(a, m);
       else run_mode(a, m);
     }
   } catch (const std::exception& e) {

@@ -76,8 +76,9 @@ enum : int {
   F_DIST = 0,   // 로봇 칸 → 덩어리 가장 가까운 칸 BFS 길 거리(설 수 있는 칸 4 이웃) × 5 cm / kFrontNorm 25.6 m (자름 2)
   F_SIN = 1,    // 그 칸 방향 (로봇 기준 sin, cos)
   F_COS = 2,
-  F_SIZE = 3,   // 덩어리 크기 칸 수 × 5 cm / 10 m (자름 1)
+  F_SIZE = 3,   // 덩어리 크기 칸 수 × 5 cm / 10 m (자름 1). 후보 v2: 합친 덩어리 칸 수 합
   F_UTIL = 4,   // 주변 프론티어 칸 수: 그 칸 둘레 ±kUtilRadius 네모 안 프론티어 칸(지도 전체, 시선 검사 없음) / kUtilNorm (자름 1)
+                // 후보 v2: 예상 관측량 = 그 칸에서 360° 로 시선이 닿는 모름 넓이 / 광선 길이 원 넓이 (0 ~ 1, mdp::cand_gain_ray)
   F_CUR = 5,    // 지금 목표(직전 결정에서 고른 칸)가 이 덩어리 안이면 1
   F_VALID = 6,  // 후보 있음 1 / 빈 칸 0 (= 행동 가림 — 빈 칸은 확률 0)
 };
@@ -88,6 +89,13 @@ constexpr int kCandMinCells = 1;     // 후보 덩어리 크기 문턱 (칸) —
 constexpr int kCandMinDist = 6;      // 후보 칸은 로봇 칸에서 BFS 6 칸(0.3 m) 이상 — 그 안은 라이다가 못 보는 뒤·발밑(fov 220°)이라 가도 안 풀림. 잠정
                                      // (2026-11-08 규칙 정책: 이 문턱 없이 늘 0 번을 고르면 거리 0 덩어리에 "도착"해 128 판 모두 정체)
 constexpr float kUtilRadius = 2.0f;  // m — 잠정 (시선 검사 없는 근사)
+// 후보 v2 (EnvCfg::cand_v2 = 1 일 때만, env.yaml action.path.candidates_v2 — mdp/README "계층형 후보 v2"). 끄면 위 규칙 그대로(비트 같음).
+// 관측 크기·칸 배치는 그대로이고 뜻만 바뀐다: F_SIZE = 합친 덩어리 칸 수, F_UTIL = 예상 관측량 (아래). 후보 차례 = 가까운 순 K − kCand2Far 개 + 큰 순 kCand2Far 개
+constexpr float kCand2Merge = 1.0f;  // m — 고른 후보 칸에서 직선 이만큼 안(그리고 길 거리 차 2 배 안)의 다른 덩어리는 그 후보에 합침. 잠정
+                                     // (기존 후보는 결정마다 평균 2.6 개가 더 가까운 후보의 1 m 안 — 시험 맵 256 판, frontier_run cand_stat. FUEL 은 군집을 2 m 로 쪼개 그보다 잘게는 안 나눔)
+constexpr int kCand2Far = 3;         // 가까운 순이 아니라 큰 순으로 채우는 자리 수 — 잠정 (TARE 가 지평 밖 구역을 전역 순회에 남기는 것, DSVP 의 전역 프론티어와 같은 뜻)
+constexpr int kGainRays = 64;        // 예상 관측량 광선 수 (360°)
+constexpr float kGainRange = 0.8f;   // 광선 길이 = 이 비 × 지도 사거리(map.max_range) — ARiADNE UTILITY_RANGE 0.8 × SENSOR_RANGE (parameter.py)
 constexpr float kUtilNorm = 160.f;   // 칸 — 잠정 (±2 m 창 한 변 80 칸 × 2 줄)
 constexpr int kPathMax = 64;         // 웨이포인트 상한 (EnvState)
 }  // namespace mdp::hier

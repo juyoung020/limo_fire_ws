@@ -244,7 +244,7 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   __shared__ uint32_t s_r[kAccShared];   // 범위가 작으면: 번진 곳 (RE 대신)
   __shared__ int s_scan[kRT];
   __shared__ int s_hit[kHitCap], s_hit2[kHitCap], s_nhit2;
-  __shared__ unsigned long long s_best;
+  __shared__ unsigned long long s_best, s_key2;   // s_key2: 후보 v2 가 고른 덩어리의 열쇠
   __shared__ int s_best_n;
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
@@ -569,7 +569,9 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
     if (blk) atomicAdd(&s_block, blk);
   }
   const int need = over ? 0 : min(mdp::kReachTop, s_found);
-  const int need_all = (over || !hier) ? 0 : min(mdp::hier::K, s_found_all);
+  // 후보 v2 는 모든 덩어리의 열쇠가 있어야 함(합치기·큰 순) → 일찍 멈추지 않고 끝까지 번짐
+  const bool v2 = hier && c.cand_v2 != 0;
+  const int need_all = (over || !hier) ? 0 : (v2 ? (s_found_all > 0 ? 0x7fffffff : 0) : min(mdp::hier::K, s_found_all));
   // 계층형: 지금 목표 칸이 번진 프론티어 칸이면 그 덩어리 뿌리 (CPU 참조: frontier_search 의 flag bit1 · label)
   if (hier && tid == 0 && !over && e.goal_cell >= 0) {
     const int gx = e.goal_cell % m.gw, gy = e.goal_cell / m.gw, gwx = gx >> 5;
@@ -712,7 +714,47 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
     RS.top[t].dist = (int32_t)(key >> 32);
     RS.top[t].cell = (int32_t)(key & 0xffffffffull);
   });
-  if (hier) {
+  if (v2) {   // mdp::cand_pick2 와 같은 값: 자리마다 뿌리 전체를 블록 병렬로 세 번 훑음 (차례 값 최소 → 그 뿌리 → 가까운 뿌리 합치고 지움)
+    const int Rm = mdp::cand2_merge_cells(c.res);
+    for (int t = 0; t < mdp::hier::K; ++t) {
+      const bool far = t >= mdp::hier::K - mdp::hier::kCand2Far;
+      __syncthreads();
+      if (tid == 0) { s_best = ~0ull; s_best_n = 0; s_best_r = 0; s_key2 = ~0ull; }
+      __syncthreads();
+      unsigned long long mine = ~0ull;
+      for (int i = tid; i < n_tot; i += kRT)
+        if (KEY2[i] != ~0ull) {
+          const unsigned long long o = mdp::cand2_order(KEY2[i], CNT[i], far);
+          if (o < mine) mine = o;
+        }
+      if (mine != ~0ull) atomicMin(&s_best, mine);
+      __syncthreads();
+      const unsigned long long best = s_best;
+      if (best == ~0ull) break;   // 블록 전체 같은 값
+      for (int i = tid; i < n_tot; i += kRT)
+        if (KEY2[i] != ~0ull && mdp::cand2_order(KEY2[i], CNT[i], far) == best) s_key2 = KEY2[i];   // 차례 값에 칸 번호가 들어 있어 하나뿐
+      __syncthreads();
+      const unsigned long long key = s_key2;
+      int add = 0, cur = 0;
+      for (int i = tid; i < n_tot; i += kRT) {
+        if (KEY2[i] == ~0ull || !mdp::cand2_near(KEY2[i], key, m.gw, Rm)) continue;
+        add += CNT[i];
+        cur |= i == s_groot ? 1 : 0;
+        KEY2[i] = ~0ull;
+      }
+      if (add) atomicAdd(&s_best_n, add);
+      if (cur) atomicOr(&s_best_r, 1);
+      __syncthreads();
+      if (tid == 0) {
+        CS.c[t].n = s_best_n;
+        CS.c[t].dist = (int32_t)(key >> 32);
+        CS.c[t].cell = (int32_t)(key & 0xffffffffull);
+        CS.c[t].cur = s_best_r;
+        CS.c[t].util = 0;
+        CS.n = t + 1;
+      }
+    }
+  } else if (hier) {
     __syncthreads();   // 위 훑기의 공유 칸(s_best …)을 다시 쓰기 전
     pick(KEY2, s_hit2, s_nhit2, mdp::hier::K, kc, [&](int t, int r, unsigned long long key, int n) {
       CS.c[t].n = n;
@@ -758,7 +800,16 @@ __global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate,
   const uint32_t* FM = b.fmap + (size_t)env * c.size * ws;
   if (tid < mdp::hier::K) s_util[tid] = 0;
   __syncthreads();
-  for (int it = tid; it < mdp::hier::K * rows; it += kRT) {
+  if (c.cand_v2) {   // 후보 v2: 예상 관측량 (mdp::cand_gain_ray 의 합) — (후보, 광선)마다 스레드
+    const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
+    const int Rg = mdp::cand_gain_cells(c.map_max_range, c.res);
+    for (int it = tid; it < mdp::hier::K * mdp::hier::kGainRays; it += kRT) {
+      const int k = it / mdp::hier::kGainRays;
+      if (cs.c[k].n <= 0) continue;
+      const int g = mdp::cand_gain_ray(mv, cs.c[k].cell % m.gw, cs.c[k].cell / m.gw, it % mdp::hier::kGainRays, Rg);
+      if (g) atomicAdd(&s_util[k], g);
+    }
+  } else for (int it = tid; it < mdp::hier::K * rows; it += kRT) {
     const int k = it / rows;
     if (cs.c[k].n <= 0) continue;
     const int cx = cs.c[k].cell % m.gw, y = cs.c[k].cell / m.gw + it % rows - R;

@@ -141,6 +141,8 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     c.decide_steps = (int)std::lround(dp / pv);
     if (c.decide_steps < 1 || std::fabs(c.decide_steps * pv - dp) > 1e-4f) throw std::runtime_error(path + ": action.path.period 는 velocity.period 의 배수");
     c.path_v = ap["v"].as<float>();
+    c.cand_v2 = ap["candidates_v2"] && ap["candidates_v2"].as<bool>() ? 1 : 0;
+    if (const char* g = std::getenv("SIM_CAND_V2")) c.cand_v2 = g[0] == '1' ? 1 : 0;   // 앞뒤 비교
     c.path_cost_reg = ap["use_cost_regulated_linear_velocity_scaling"].as<bool>() ? 1 : 0;
     c.path_cs_dist = ap["cost_scaling_dist"].as<float>();
     c.path_cs_gain = ap["cost_scaling_gain"].as<float>();

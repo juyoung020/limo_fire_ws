@@ -458,5 +458,69 @@ DEV int cand_util(const MapView& m, int cx, int cy, int R) {
   return n;
 }
 
+// ---- 후보 v2 (hier::kCand2…, EnvCfg::cand_v2). 기존 규칙의 세 약점을 고침 — (a) 빔 틈 조각이 저마다 후보가 돼 한곳에 몰림 (b) 가까운 순으로만 잘라 먼 큰 덩어리가 빠짐
+// (c) "가면 얼마나 새로 보이나" 가 없음. 열쇠·자격(cand_keys)은 그대로이고 고르는 법만 다르다. 정수·순서 무관(CPU 순차 = GPU 블록 병렬):
+//   자리 k = 0 … K − 1: 남은 덩어리 중 차례 값(cand2_order)이 가장 작은 것 — 앞 K − kCand2Far 자리는 열쇠(가까운 순), 뒤 kCand2Far 자리는 칸 수 큰 순(같으면 칸 번호).
+//   고른 덩어리와 가까운(cand2_near) 남은 덩어리는 모두 그 후보에 합침: 칸 수를 더하고 목록에서 뺌 (지금 목표 덩어리가 합쳐지면 cur = 1).
+// 0 번 자리는 기존과 같은 칸(가장 가까운 덩어리의 가장 가까운 칸). 다만 "지금 목표" 표시가 합쳐진 덩어리까지 넓어져 경로를 이어 쓰는 때(hier_path.h act_same)가 달라지므로
+// 늘 0 번을 고르는 규칙(slot0)의 판 결과는 비트까지 같지는 않다(시험 맵 256 판 거리 차 1 % 안 — mdp/README "후보 v2").
+DEV int cand2_merge_cells(float res) { return (int)(hier::kCand2Merge / res + 0.5f); }
+DEV uint64_t cand2_order(uint64_t key, int n, bool far) { return far ? (((uint64_t)(0xffffffffu - (uint32_t)n) << 32) | (key & 0xffffffffull)) : key; }
+DEV bool cand2_near(uint64_t a, uint64_t b, int w, int Rm) {
+  const int ca = (int)(a & 0xffffffffull), cb = (int)(b & 0xffffffffull);
+  const int dx = ca % w - cb % w, dy = ca / w - cb / w, dd = (int)(a >> 32) - (int)(b >> 32);
+  return dx * dx + dy * dy <= Rm * Rm && (dd < 0 ? -dd : dd) <= 2 * Rm;
+}
+// CPU 참조 (GPU: reach_block 의 v2 고르기). key2 는 cand_keys 가 낸 것 — 여기서 지워 가며 씀
+DEV void cand_pick2(const Frontier* out, uint64_t* key2, int n_out, int n_tot, int goal, const uint8_t* flag, const int32_t* label, int w, int Rm, CandSummary* s) {
+  cand_clear(s);
+  if (n_tot > kReachCap) return;
+  const int glab = (goal >= 0 && (flag[goal] & 2)) ? label[goal] : -1;
+  for (int k = 0; k < hier::K; ++k) {
+    const bool far = k >= hier::K - hier::kCand2Far;
+    uint64_t best = ~0ull;
+    int bi = -1;
+    for (int i = 0; i < n_out; ++i) {
+      if (key2[i] == ~0ull || out[i].n < hier::kCandMinCells) continue;
+      const uint64_t o = cand2_order(key2[i], out[i].n, far);
+      if (o < best) { best = o; bi = i; }
+    }
+    if (bi < 0) break;
+    const uint64_t key = key2[bi];
+    int n = 0, cur = 0;
+    for (int i = 0; i < n_out; ++i) {
+      if (key2[i] == ~0ull || out[i].n < hier::kCandMinCells || !cand2_near(key2[i], key, w, Rm)) continue;   // 고른 덩어리 자신도 여기서
+      n += out[i].n;
+      cur |= i == glab ? 1 : 0;
+      key2[i] = ~0ull;
+    }
+    s->c[k].n = n;
+    s->c[k].dist = (int32_t)(key >> 32);
+    s->c[k].cell = (int32_t)(key & 0xffffffffull);
+    s->c[k].cur = cur;
+    s->n = k + 1;
+  }
+}
+// 예상 관측량 (후보 v2 의 CandTop::util): 칸 (cx, cy) 에서 광선 a 를 한 칸씩 R 칸까지 — 막힘 칸에서 끝, 모름 칸마다 그 거리 t 를 더함(호 길이 ∝ t 라 합이 넓이에 비례).
+// 광선 kGainRays 개의 합 / cand_gain_norm = 시선이 닿는 모름 넓이 / 반지름 R 원 넓이. 선행연구와의 차이: ARiADNE·HEADER 는 시선이 닿는 프론티어 칸 수, FUEL 은 시점에서 보이는
+// 프론티어 칸 수, DSVP 는 시야 안 모름 복셀 수 — 여기는 DSVP 쪽(모름 넓이)이고 시야는 220° 가 아니라 360° (닿을 때 머리 방향을 후보 칸만으론 모름 — 규칙 정책 쪽에서 220° 로 잼)
+DEV int cand_gain_cells(float max_range, float res) { return (int)(hier::kGainRange * max_range / res); }
+DEV int cand_gain_norm(int R) { return hier::kGainRays * R * (R + 1) / 2; }
+DEV int cand_gain_ray(const MapView& m, int cx, int cy, int a, int R) {
+  // 광선 방향 cos(2π(a + 0.5) / 64) × 16384 — 정수 표 (CPU·GPU 가 같은 값을 내게). sin 은 16 칸 앞 (hier::kGainRays = 64 에 맞춘 표)
+  const int16_t T[64] = {16364,16207,15893,15426,14811,14053,13160,12140,11003,9760,8423,7005,5520,3981,2404,804,-804,-2404,-3981,-5520,-7005,-8423,-9760,-11003,-12140,-13160,-14053,-14811,-15426,-15893,-16207,-16364,-16364,-16207,-15893,-15426,-14811,-14053,-13160,-12140,-11003,-9760,-8423,-7005,-5520,-3981,-2404,-804,804,2404,3981,5520,7005,8423,9760,11003,12140,13160,14053,14811,15426,15893,16207,16364};
+  static_assert(hier::kGainRays == 64, "광선 표는 64 방향");
+  const int C = T[a], S = T[(a + 48) & 63];
+  const auto rnd = [](int v) { v += 8192; return v >= 0 ? v >> 14 : -((-v + 16383) >> 14); };   // 내림 나눗셈 (음수 옮김은 구현마다 다를 수 있어 따로)
+  int g = 0;
+  for (int t = 1; t <= R; ++t) {
+    const int x = cx + rnd(t * C), y = cy + rnd(t * S);
+    if (x < 0 || y < 0 || x >= m.w || y >= m.h) break;
+    const uint8_t cl = cls_at(m, x, y);
+    if (cl == kOcc) break;
+    if (cl == kUnk) g += t;
+  }
+  return g;
+}
 
 }  // namespace mdp
