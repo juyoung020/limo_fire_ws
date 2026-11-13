@@ -53,3 +53,7 @@ RViz 운용 화면(`limo_fire_description` `viewer.launch.xml`) 왼쪽 아래 **
 - 불 탐지를 켜면 순찰 멈춤 → 사건 1 → `HAZARD_DETECTED` 한 번, 119 는 막힘 로그 → 고급 모드 없음 → `FALLBACK_TO_BASIC` → 다시 봐도 같은 사건(신고 되풀이 없음).
 - 라이다를 끊으면 `SENSOR_FAULT` `LIDAR_TOPIC_LOST`.
 - Webots·Nav2 위에서는 아직 안 돌려 봄. 로봇 Jetson(Humble)에 BehaviorTree.CPP 4.x 가 있는지도 아직 확인 안 함.
+
+## 이미 처리한 불
+
+순찰 중 불을 보면 멈추는데, 이미 처리한 사건 자리(3 m 안)의 불은 처리(`MarkIncidentHandled`) 뒤 `recheck_s`(300 s) 동안 멈추지 않고 순찰을 계속한다(`IsKnownHazard`). 300 s 가 지나도 보이면 다시 멈춰 감시한다. 이것이 없으면 꺼지지 않은 불 앞에서 감시 → 순찰 시작 → 같은 불 → 감시만 되풀이한다.

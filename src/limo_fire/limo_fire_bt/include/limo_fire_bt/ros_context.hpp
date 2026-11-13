@@ -94,6 +94,10 @@ public:
   // ---- 임무 상태 ----
   int create_incident(const MapPoint & where);
   std::optional<MapPoint> incident_location(int id) const;
+  // 사건을 처리했다고 적는다 (IncidentManager). 순찰 중 같은 자리 불을 recheck_s 동안 다시 멈추지 않는 데 쓴다
+  void mark_incident_handled(int id);
+  // 마지막 처리 뒤 지난 시간 (s). 처리한 적 없으면 nullopt
+  std::optional<double> since_incident_handled(int id) const;
   bool survivor_search_requested() const {return survivor_search_;}
 
   // 관리자 알림: /mission/events 에 한 줄 JSON + 로그
@@ -140,6 +144,7 @@ private:
   std::map<std::string, DetectionHistory> detections_;
   std::map<std::string, std::shared_ptr<void>> latest_;
   std::map<int, MapPoint> incidents_;
+  std::map<int, rclcpp::Time> incident_handled_;
   int next_incident_ = 1;
   std::deque<std::pair<double, std::string>> events_;
   std::map<std::string, std::string> status_;

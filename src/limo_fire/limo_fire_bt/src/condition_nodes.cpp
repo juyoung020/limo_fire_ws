@@ -225,6 +225,33 @@ public:
   }
 };
 
+// 이미 처리한 사건 자리의 불인가: incident 위치에서 radius_m 안이고, 마지막 처리 뒤 recheck_s 가 안 지났으면 SUCCESS.
+// 순찰 중 같은 불을 볼 때마다 순찰을 멈추고 감시로 돌아가는 고리를 막는다 (recheck_s 가 지나면 다시 멈춰 감시)
+class IsKnownHazard : public RosCondition
+{
+public:
+  using RosCondition::RosCondition;
+  static PortsList providedPorts()
+  {
+    return {InputPort<int>("incident"), InputPort<MapPoint>("location"), InputPort<double>("radius_m"),
+      InputPort<double>("recheck_s", "처리 뒤 이 시간이 지나면 같은 자리 불도 다시 멈춰 감시")};
+  }
+  NodeStatus tick() override
+  {
+    const int id = need<int>(*this, "incident");
+    const auto at = ctx_->incident_location(id);
+    const auto since = ctx_->since_incident_handled(id);
+    if (!at || !since) {return NodeStatus::FAILURE;}
+    const auto p = need<MapPoint>(*this, "location");
+    if (std::hypot(p.x - at->x, p.y - at->y) > need<double>(*this, "radius_m")) {return NodeStatus::FAILURE;}
+    const double left = need<double>(*this, "recheck_s") - *since;
+    if (left <= 0) {return NodeStatus::FAILURE;}
+    RCLCPP_INFO_THROTTLE(ctx_->logger(), *ctx_->node()->get_clock(), 10000,
+      "사건 %d 자리 불 (이미 처리함) — 순찰 계속, %.0f s 뒤 다시 감시", id, left);
+    return NodeStatus::SUCCESS;
+  }
+};
+
 // 서비스가 그래프에 있는가 (타입은 보지 않는다)
 class IsServiceAvailable : public RosCondition
 {
@@ -400,6 +427,7 @@ void register_condition_nodes(BT::BehaviorTreeFactory & f, const std::shared_ptr
   f.registerNodeType<IsFireGone>("IsFireGone", ctx);
   f.registerNodeType<IsLocalizationStable>("IsLocalizationStable", ctx);
   f.registerNodeType<IsSameIncident>("IsSameIncident", ctx);
+  f.registerNodeType<IsKnownHazard>("IsKnownHazard", ctx);
   f.registerNodeType<IsServiceAvailable>("IsServiceAvailable", ctx);
   f.registerNodeType<IsSmallFire>("IsSmallFire");
   f.registerNodeType<IsSurvivorSearchRequested>("IsSurvivorSearchRequested", ctx);

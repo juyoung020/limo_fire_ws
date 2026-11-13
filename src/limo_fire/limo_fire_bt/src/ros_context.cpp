@@ -254,6 +254,18 @@ std::optional<MapPoint> RosContext::incident_location(int id) const
   return it->second;
 }
 
+void RosContext::mark_incident_handled(int id)
+{
+  incident_handled_[id] = now();
+}
+
+std::optional<double> RosContext::since_incident_handled(int id) const
+{
+  const auto it = incident_handled_.find(id);
+  if (it == incident_handled_.end()) {return std::nullopt;}
+  return (node_->now() - it->second).seconds();
+}
+
 void RosContext::event(const std::string & json)
 {
   std_msgs::msg::String m;

@@ -85,6 +85,19 @@ public:
   }
 };
 
+// 사건을 지금 처리했다고 적는다 (IsKnownHazard 의 recheck_s 기준 시각)
+class MarkIncidentHandled : public RosSync
+{
+public:
+  using RosSync::RosSync;
+  static PortsList providedPorts() {return {InputPort<int>("incident")};}
+  NodeStatus tick() override
+  {
+    ctx_->mark_incident_handled(need<int>(*this, "incident"));
+    return NodeStatus::SUCCESS;
+  }
+};
+
 // 관리자 알림. 지금은 /mission/events 한 줄 JSON (웹 앱 limo_fire_report 가 받을 자리)
 class NotifyAdmin : public RosSync
 {
@@ -222,6 +235,7 @@ public:
 void register_mission_nodes(BT::BehaviorTreeFactory & f, const std::shared_ptr<RosContext> & ctx)
 {
   f.registerNodeType<CreateIncident>("CreateIncident", ctx);
+  f.registerNodeType<MarkIncidentHandled>("MarkIncidentHandled", ctx);
   f.registerNodeType<NotifyAdmin>("NotifyAdmin", ctx);
   f.registerNodeType<Call119>("Call119", ctx);
   f.registerNodeType<RecordFireLocation>("RecordFireLocation", ctx);
