@@ -37,7 +37,7 @@ RViz 운용 화면(`limo_fire_description` `viewer.launch.xml`) 왼쪽 아래 **
 |---|---|---|
 | 센서 주기 | 트리의 `IsTopicAlive` (타입 상관없이 받음). 시뮬 차이는 `topic_remap`·`min_hz_override` | 있음 |
 | 불·연기·사람 탐지 | `/yolo_detector/detections` (시뮬은 `/gt/detections`), `hit_window_s` 안에 `min_hits` 장 | 있음 |
-| 불 위치·크기·사람 수 | `/object_mapper/objects` (`use_depth` 일 때). 없으면 컬러 카메라 방향으로 `approx_distance_m`(잠정) 앞 | 있음 |
+| 불 위치·크기·사람 수 | `/object_mapper/objects` (`use_depth` 일 때). 없으면 정렬된 깊이 영상에서 탐지 상자 가운데 거리(`depth.*`), 깊이도 없으면 카메라 앞 `approx_distance_m`(잠정) | 있음 |
 | 순찰점 | `patrol_file` yaml `patrol: [[x, y], ...]`. `robot_start` 가 있으면 세계 좌표(시뮬 월드 yaml)로 보고 지도로 옮김 | 시뮬만 |
 | 연기 모드 | `/smoke_mode/set` (limo_fire_navigation) | 있음 |
 | 탐사 | `/explore_frontier/enable`·`/state` (limo_fire_rl) | 있음 |

@@ -123,21 +123,25 @@ public:
       }
     }
     if (!where) {
-      // 마지막으로 찍힌 장에서 가장 확실한 상자 가운데·폭
-      double u = 0, w = 0, best = -1;
+      // 마지막으로 찍힌 장에서 가장 확실한 상자 → 깊이로 잰 지도 위치 (깊이가 없으면 고정 거리로 대략)
+      const vision_msgs::msg::BoundingBox2D * box = nullptr;
+      double best = -1;
       for (const auto & d : last.msg->detections) {
         for (const auto & r : d.results) {
           if (r.hypothesis.class_id == cls_ && r.hypothesis.score > best) {
             best = r.hypothesis.score;
-            u = d.bbox.center.position.x;
-            w = d.bbox.size_x;
+            box = &d.bbox;
           }
         }
       }
-      const double dist = ctx_->param<double>("approx_distance_m");
-      where = ctx_->approx_location(u, dist);
-      if (!where) {return NodeStatus::FAILURE;}   // 카메라 정보·TF 가 없으면 위치를 낼 수 없다
-      if (size <= 0) {size = ctx_->approx_width(w, dist).value_or(0.0);}
+      const auto fix = box ? ctx_->locate_box(*box) : std::nullopt;
+      if (!fix) {return NodeStatus::FAILURE;}   // 카메라 정보·TF 가 없으면 위치를 낼 수 없다
+      if (!fix->measured) {
+        RCLCPP_WARN_THROTTLE(ctx_->logger(), *ctx_->node()->get_clock(), 10000,
+          "%s 거리를 깊이로 못 잼 — 카메라 앞 %.1f m 로 대략", cls_.c_str(), ctx_->param<double>("approx_distance_m"));
+      }
+      where = fix->p;
+      if (size <= 0) {size = fix->width_m;}
     }
     setOutput("location", *where);
     if (config().output_ports.count("size")) {setOutput("size", size);}

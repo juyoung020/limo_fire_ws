@@ -13,6 +13,7 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
+#include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -38,6 +39,14 @@ struct DetectionFrame
 {
   rclcpp::Time stamp;
   vision_msgs::msg::Detection2DArray::ConstSharedPtr msg;
+};
+
+// 탐지 상자의 지도 위치·폭 (locate_box)
+struct BoxFix
+{
+  MapPoint p;
+  double width_m = 0;
+  bool measured = false;   // true: 깊이로 잼, false: 고정 거리로 대신
 };
 
 // 탐지 하나 (지도 위 물체 목록 /object_mapper/objects 에서)
@@ -86,10 +95,9 @@ public:
 
   // ---- 위치 ----
   std::optional<Pose2> robot_pose();
-  // 탐지 상자 가운데를 지도 좌표로: 카메라에서 distance_m 앞의 점 (깊이를 못 믿을 때 대략 위치)
-  std::optional<MapPoint> approx_location(double u, double distance_m);
-  // 상자 폭(px)을 distance_m 에서의 실제 폭(m)으로
-  std::optional<double> approx_width(double width_px, double distance_m);
+  // 탐지 상자 하나를 지도 좌표로: 정렬된 깊이 영상에서 상자 가운데 부분의 거리를 재고(depth.*),
+  // 깊이가 없거나 정렬이 안 됐으면 approx_distance_m 앞으로 대신한다 (measured=false)
+  std::optional<BoxFix> locate_box(const vision_msgs::msg::BoundingBox2D & box);
 
   // ---- 임무 상태 ----
   int create_incident(const MapPoint & where);
@@ -125,6 +133,7 @@ private:
     std::deque<rclcpp::Time> stamps;
   };
   bool subscribe_rate(const std::string & name);
+  std::optional<double> box_depth(const vision_msgs::msg::BoundingBox2D & box, const sensor_msgs::msg::CameraInfo & info);
 
   struct DetectionHistory
   {

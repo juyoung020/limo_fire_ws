@@ -47,6 +47,12 @@ RosContext::RosContext(rclcpp::Node::SharedPtr node)
   history_s_ = node_->declare_parameter<double>("detection_history_s", 15.0);
   // 탐지 좌표(컬러 영상) → 방향. 깊이를 못 믿을 때 대략 위치에 쓴다
   node_->declare_parameter<std::string>("camera_info_topic", "/camera/color/camera_info");
+  // 탐지 상자 거리: 정렬된 깊이 영상에서 상자 가운데 box_shrink 부분의 하위 percentile 값 (object_mapper 와 같은 방식)
+  node_->declare_parameter<std::string>("depth.topic", "/camera/depth/image_raw");
+  node_->declare_parameter<double>("depth.box_shrink", 0.5);
+  node_->declare_parameter<double>("depth.percentile", 0.3);
+  node_->declare_parameter<double>("depth.min_m", 0.2);
+  node_->declare_parameter<double>("depth.max_m", 5.0);
 
   event_pub_ = node_->create_publisher<std_msgs::msg::String>(
     node_->declare_parameter<std::string>("event_topic", "/mission/events"), rclcpp::QoS(50).reliable());
@@ -214,30 +220,61 @@ std::optional<Pose2> RosContext::robot_pose()
   }
 }
 
-std::optional<MapPoint> RosContext::approx_location(double u, double distance_m)
+std::optional<double> RosContext::box_depth(const vision_msgs::msg::BoundingBox2D & box,
+  const sensor_msgs::msg::CameraInfo & info)
+{
+  const auto img = latest<sensor_msgs::msg::Image>(param<std::string>("depth.topic"), rclcpp::SensorDataQoS());
+  // 깊이가 컬러에 정렬돼 있어야(같은 frame, 같은 크기) 탐지 상자 좌표를 그대로 댈 수 있다
+  if (!img || img->header.frame_id != info.header.frame_id || img->width != info.width ||
+    img->height != info.height || (img->encoding != "16UC1" && img->encoding != "32FC1"))
+  {
+    return std::nullopt;
+  }
+  const double shrink = param<double>("depth.box_shrink");
+  const double dmin = param<double>("depth.min_m"), dmax = param<double>("depth.max_m");
+  const int x0 = std::max(0, static_cast<int>(box.center.position.x - box.size_x * shrink / 2));
+  const int x1 = std::min(static_cast<int>(img->width) - 1, static_cast<int>(box.center.position.x + box.size_x * shrink / 2));
+  const int y0 = std::max(0, static_cast<int>(box.center.position.y - box.size_y * shrink / 2));
+  const int y1 = std::min(static_cast<int>(img->height) - 1, static_cast<int>(box.center.position.y + box.size_y * shrink / 2));
+  std::vector<float> vals;
+  for (int y = y0; y <= y1; ++y) {
+    const uint8_t * row = img->data.data() + static_cast<size_t>(y) * img->step;
+    for (int x = x0; x <= x1; ++x) {
+      const float d = img->encoding == "16UC1" ?
+        reinterpret_cast<const uint16_t *>(row)[x] * 0.001f : reinterpret_cast<const float *>(row)[x];
+      if (std::isfinite(d) && d >= dmin && d <= dmax) {vals.push_back(d);}
+    }
+  }
+  if (vals.size() < 5) {return std::nullopt;}
+  // 하위 percentile: 불 뒤의 벽이 섞여도 앞쪽(불)을 고른다 (object_mapper 와 같은 방식)
+  const auto k = static_cast<size_t>(param<double>("depth.percentile") * (vals.size() - 1));
+  std::nth_element(vals.begin(), vals.begin() + k, vals.end());
+  return vals[k];
+}
+
+std::optional<BoxFix> RosContext::locate_box(const vision_msgs::msg::BoundingBox2D & box)
 {
   const auto info = latest<sensor_msgs::msg::CameraInfo>(
     param<std::string>("camera_info_topic"), rclcpp::SensorDataQoS());
-  if (!info || info->k[0] <= 0) {return std::nullopt;}
+  if (!info || info->k[0] <= 0 || info->k[4] <= 0) {return std::nullopt;}
+  BoxFix fix;
+  const auto measured = box_depth(box, *info);
+  fix.measured = measured.has_value();
+  const double z = measured.value_or(param<double>("approx_distance_m"));
   geometry_msgs::msg::PointStamped cam, map;
   cam.header.frame_id = info->header.frame_id;
-  cam.point.x = (u - info->k[2]) * distance_m / info->k[0];
-  cam.point.z = distance_m;
+  cam.point.x = (box.center.position.x - info->k[2]) * z / info->k[0];
+  cam.point.y = (box.center.position.y - info->k[5]) * z / info->k[4];
+  cam.point.z = z;
   try {
     map = tf_buffer_->transform(cam, map_frame_);
   } catch (const tf2::TransformException & e) {
     RCLCPP_WARN_THROTTLE(logger(), *node_->get_clock(), 5000, "카메라 → 지도 TF 없음: %s", e.what());
     return std::nullopt;
   }
-  return MapPoint{map.point.x, map.point.y, map.point.z};
-}
-
-std::optional<double> RosContext::approx_width(double width_px, double distance_m)
-{
-  const auto info = latest<sensor_msgs::msg::CameraInfo>(
-    param<std::string>("camera_info_topic"), rclcpp::SensorDataQoS());
-  if (!info || info->k[0] <= 0) {return std::nullopt;}
-  return width_px * distance_m / info->k[0];
+  fix.p = {map.point.x, map.point.y, map.point.z};
+  fix.width_m = box.size_x * z / info->k[0];
+  return fix;
 }
 
 int RosContext::create_incident(const MapPoint & where)
