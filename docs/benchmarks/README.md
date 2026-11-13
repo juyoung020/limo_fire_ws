@@ -230,3 +230,12 @@ Webots 정답 자세(`limo_fire_sim GroundTruthPose`)와 비교한다. 표는 `<
 - 15° 원뿔 두 개가 ±20° 를 보니 **정면 ±12.5° 는 두 원뿔 사이 빈틈**이다. 정면 장애물을 늦게 볼 수 있다(따로 재지는 않음).
 
 판별 보고서: `20261113_08*`·`09*`·`10*_nav_s2_*` (md·csv).
+
+영상 (2026-11-13, 같은 조건으로 maze 를 한 판씩 다시 돌려 궤적을 기록):
+[../assets/smoke_maze_hold_vs_sonar.mp4](../assets/smoke_maze_hold_vs_sonar.mp4) · GIF 아래. 왼쪽 `hold`, 오른쪽 `sonar`, 12 배속.
+초록 = 실제 위치(Webots 정답), 빨강 = 로봇이 생각한 위치(Nav2 `map → base_link`), 파란 원 = 순찰점, 노란 원뿔 = 초음파 2 개(채움 = 메아리 옴).
+이 판 결과: `hold` 13/13 · 추정 오차 최대 0.26 m, `sonar` 8/13 · 최대 3.06 m (위 표의 판과 같은 경향) — `vid_hold`·`vid_sonar` 보고서.
+`sonar` 는 위쪽 통로로 가면서 추정(빨강)이 벽 쪽에서 흔들리다 실제 위치(초록)와 갈라진다. 그림은 저장 지도 위에 기록 값을 그린 것이고 Webots 화면이 아니다
+(기록·그림 도구는 Python 이라 저장소에 안 올림 — 기록 항목: 정답 자세·추정 자세·연기 모드 상태·초음파 2 개, 10 Hz).
+
+![연기 모드 maze: hold 대 sonar](../assets/smoke_maze_hold_vs_sonar.gif)

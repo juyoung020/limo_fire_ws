@@ -7,6 +7,10 @@ Nav2·Cartographer 파라미터(`config/`), 저장 지도(`maps/`), 연기 모�
 
 연기 속에서 저장 지도 위를 **바퀴 오도메트리 + IMU 만으로** 움직인다. 라이다·카메라는 쓰지 않는다.
 
+![연기 모드 maze: hold 대 sonar](../../../docs/assets/smoke_maze_hold_vs_sonar.gif)
+
+시뮬(Webots 덕트호스 미로, 초음파 2 개, 12 배속). 왼쪽 기본 `hold` 는 실제 위치(초록)와 로봇이 생각한 위치(빨강)가 끝까지 붙어 간다. 오른쪽 `sonar`(초음파로 위치 보정)는 중간에 갈라진다 — [benchmarks 결과 5](../../../docs/benchmarks/README.md).
+
 ```bash
 ros2 service call /smoke_mode/set std_srvs/srv/SetBool "{data: true}"    # 켬
 ros2 service call /smoke_mode/set std_srvs/srv/SetBool "{data: false}"   # 평상시로

@@ -117,6 +117,7 @@
 - 연기 모드 감속은 앞 두 개 중 하나라도 0.6 m 안이면(`sonar.slow_topics`).
 - BT 의 초음파 살아 있음·연기 구역 훑기 토픽을 `/ultrasonic/front` → `/ultrasonic/front_left` 로(새 설계에 front 가 없음).
 - 장착 자리는 받침 그림에서 읽은 잠정 — 실물 받침을 달면 실측해 URDF·proto 를 고친다.
+- 영상: [maze hold 대 sonar](assets/smoke_maze_hold_vs_sonar.mp4) (실제 위치·추정 위치·초음파를 지도 위에 그림).
 
 ## 3. 시험 (1·3 단계 공통)
 
