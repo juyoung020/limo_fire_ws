@@ -60,6 +60,7 @@ class FireManager : public rclcpp::Node {
       angular_, stand_min_, stand_max_, obstacle_, min_score_,
       zone_update_distance_, clock_skew_;
   double nearest_ = 0;
+  double nav_distance_remaining_ = -1.0;
   template <class T, class Fn>
   void sub(const std::string &param, Fn fn, rclcpp::QoS qos = rclcpp::QoS(10)) {
     subs_.push_back(
@@ -112,8 +113,20 @@ class FireManager : public rclcpp::Node {
     return true;
   }
   void dispatch() {
-    if (!mission_ || !nav_->action_server_is_ready()) {
-      fail("Nav2 action unavailable");
+    if (!mission_ || nav_pending_ || nav_goal_ || !nav_terminal_)
+      return;
+    if (!nav_->action_server_is_ready() || !fresh(odom_at_)) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Waiting for Nav2 and fresh odometry before dispatching mission");
+      return;
+    }
+    try {
+      tf_.lookupTransform(map_frame_, base_frame_, tf2::TimePointZero);
+    } catch (const tf2::TransformException &) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Waiting for map-to-base TF before dispatching mission");
       return;
     }
     const auto token = ++epoch_;
@@ -122,10 +135,12 @@ class FireManager : public rclcpp::Node {
     cancel_sent_ = false;
     cancel_ack_ = false;
     goal_sent_at_ = now();
+    nav_distance_remaining_ = -1.0;
     command_ = geometry_msgs::msg::Twist();
     command_at_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
     auto goal = *mission_->get_goal();
     goal.behavior_tree.clear(); // use repository default replanning BT
+    state("NAVIGATING", "goal dispatched");
     rclcpp_action::Client<N>::SendGoalOptions opts;
     opts.goal_response_callback = [this, token](NH::SharedPtr h) {
       if (token != epoch_ || !mission_ || state_ == "SAFE_STOP") {
@@ -141,8 +156,10 @@ class FireManager : public rclcpp::Node {
       }
     };
     opts.feedback_callback = [this, token](auto, auto f) {
-      if (token == epoch_ && mission_)
+      if (token == epoch_ && mission_) {
+        nav_distance_remaining_ = f->distance_remaining;
         mission_->publish_feedback(std::make_shared<N::Feedback>(*f));
+      }
     };
     opts.result_callback = [this, token](const NH::WrappedResult &r) {
       if (token != epoch_)
@@ -153,11 +170,28 @@ class FireManager : public rclcpp::Node {
         return; // STOPPING requires cancellation acknowledgement AND terminal
                 // result
       if (r.code == rclcpp_action::ResultCode::SUCCEEDED) {
+        try {
+          const auto pose =
+              tf_.lookupTransform(map_frame_, base_frame_, tf2::TimePointZero);
+          const auto &target = mission_->get_goal()->pose.pose.position;
+          const double error = std::hypot(
+              pose.transform.translation.x - target.x,
+              pose.transform.translation.y - target.y);
+          if (error > 0.30) {
+            fail("Nav2 reported success " + std::to_string(error) +
+                 "m from mission goal (remaining=" +
+                 std::to_string(nav_distance_remaining_) + "m)");
+            return;
+          }
+        } catch (const tf2::TransformException &) {
+          fail("Nav2 reported success but map-to-base TF is unavailable");
+          return;
+        }
         if (mission_) {
           mission_->succeed(std::make_shared<N::Result>(*r.result));
           mission_.reset();
         }
-        state("NAVIGATING", "goal reached");
+        state("NAVIGATING", "goal reached and position verified");
       } else
         fail("Nav2 action failed");
     };
@@ -300,6 +334,13 @@ class FireManager : public rclcpp::Node {
                            : zero);
     if (state_ == "SAFE_STOP")
       return;
+    if (mission_ && moving() && !nav_pending_ && !nav_goal_ && nav_terminal_) {
+      if ((now() - entered_).seconds() > timeout_) {
+        fail("Nav2, odometry, or map-to-base TF readiness timeout");
+        return;
+      }
+      dispatch();
+    }
     if (nav_pending_ && (now() - goal_sent_at_).seconds() > timeout_) {
       fail("Nav2 goal acknowledgement timeout");
       return;
@@ -542,6 +583,11 @@ public:
         },
         [this](auto h) {
           mission_ = h;
+          nav_pending_ = false;
+          nav_goal_.reset();
+          nav_terminal_ = true;
+          external_cancel_ = false;
+          state("NAVIGATING", "waiting for Nav2, odometry, and map-to-base TF");
           dispatch();
         });
     timer_ = create_wall_timer(
