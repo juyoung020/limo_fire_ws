@@ -1,6 +1,10 @@
 // 아래층 계측·단독 과제의 걸음 함수 (기록 꼴·설명은 low_task.h). env.h 가운데서 include (hier_path.h·graph_env.h 뒤). 모두 스레드 0. env.h 가 namespace sim 안에서 포함한다.
 #pragma once
 
+// 이 환경이 합친 탐사 판인가 (EnvCfg::low_explore). 탐사 판 학습(low_auto 2)은 환경의 low_solo % 를 단독 과제로 돌린다 — 환경 번호 해시로 가름
+// (맵 배정이 환경 번호 차례라 번호 그대로 나누면 맵과 얽힘). 그 밖의 모드는 설정값 그대로
+DEV bool low_solo_env(const EnvCfg& c, int env) { return c.low_auto == 2 && (int)((((uint32_t)env * 2654435761u) >> 8) % 100u) < c.low_solo; }
+DEV bool low_xenv(const EnvBatch& b, int env) { return b.cfg.low_explore != 0 && !low_solo_env(b.cfg, env); }
 
 DEV int low_ang_bin(float err) {
   const float d = dm::absf(err) * 57.29578f;
@@ -58,7 +62,7 @@ DEV void low_begin(const EnvBatch& b, const EnvState& e, int env, const PathWhy&
     L.left = 0.f;
     L.goal_prev = e.goal_cell;
     L.plans_prev = e.p_plans;
-    if (!c.low_explore) {   // 정체 닻: 새 목적지부터 다시 (합친 탐사는 목적지가 1 s 마다 바뀌어도 닻을 그대로 — 자리로만 잼)
+    if (!low_xenv(b, env)) {   // 정체 닻: 새 목적지부터 다시 (합친 탐사는 목적지가 1 s 마다 바뀌어도 닻을 그대로 — 자리로만 잼)
       L.a_step = e.step;
       L.ax = e.x;
       L.ay = e.y;
@@ -126,7 +130,7 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
     }
     return false;
   }
-  if (c.low_explore) {   // 합친 탐사 (low_task.h): 판은 탐사 규칙이 끝낸다. 통과·경로 끝은 표시만(위층이 바로 다시 고름), 정체는 신호만 올리고 닻을 새로
+  if (low_xenv(b, env)) {   // 합친 탐사 (low_task.h): 판은 탐사 규칙이 끝낸다. 통과·경로 끝은 표시만(위층이 바로 다시 고름), 정체는 신호만 올리고 닻을 새로
     const int tgt = b.lowcmd && b.lowcmd[env].follow != 0 ? b.lowcmd[env].target : -1;
     const float px = e.x + e.ex, py = e.y + e.ey;
     if (tgt >= 0 && e.goal_cell == tgt) {

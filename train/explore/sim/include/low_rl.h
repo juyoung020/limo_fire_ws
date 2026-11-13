@@ -5,7 +5,7 @@
 //   [물리·라이다·지도 — 기존 그대로]
 //   [걸음 끝] lowrl_finish   보상 8 항(아래 상수)·누적. 판 끝 규칙은 단독 과제(low_step.h low_finish) 그대로
 //   [판이 끝났으면 리셋·새 판 관측 — 기존 그대로]
-//   [준비]  lowrl_goal_*     (low_auto) 새 목표 뽑기
+//   [준비]  lowrl_goal_*     (low_auto) 새 목표 뽑기 — 1: 아는 칸에서 무작위(단독 과제) · 2: 위층 0 번 후보 규칙(탐사 판 학습, lowrl_goal_explore)
 //           깊이 카메라 층 · 경로 계획 (hier_path.h — lowrl_due 일 때만: low_period 걸음마다 · 목표가 바뀌면 바로)
 //           lowrl_pack       정책 관측 (low_img · low_1d) — 방금 짠 경로 기준
 // 준비 단계는 low_auto 면 env.step·reset 이 끝에서 부르고, 아니면 호스트가 LowCmd 를 넣은 뒤 Env::low_prepare 로 부른다 (위층이 1 Hz 로 목적지를 넣는 자리).
@@ -29,7 +29,7 @@ constexpr float kLrSafetyK = -0.05f;     // 안전층(앞 틈·몸통 쓸림)이
 constexpr int kLrGuardOn = 1;            // 몸통 지킴이 (아래 lowrl_guard) 켬
 constexpr float kLrGuardH = 0.5f;        //   내다보는 시간 (s): 0.3 s·여유 0.03 m 는 벽 충돌 0.083, 0.5 s·0.05 m 는 0.021 /100 m (low_l1 bookstore 사람 0)
 constexpr float kLrGuardMargin = 0.05f;  //   몸통 둘레 여유 (m) = 지도 칸 하나
-constexpr int kLrNoBack = 0;             // 1: 후진 명령을 0 으로
+constexpr int kLrNoBack = 1;             // 1: 정책 후진 명령을 0 으로 — v ∈ [0, 1.0] m/s (2026-11-13 기본. 뒤 140° 는 라이다 밖, Long 외·DRL-VO 도 v ≥ 0 — mdp/README "아래층 RL — 탐사 판 학습"). 0 = 옛 [−0.3, 1.0]
 constexpr float kLrMproxK = -0.3f;       // 움직임 근접: × 몸통 가장 빠른 점 속도 (|v| + 꼭짓점 반경 × |ω|, m/s) × (1 − 간격 / kLrMproxD) 걸음마다.
 constexpr float kLrMproxD = 0.2f;        //   간격이 이보다 가까울 때 (= kLrProxDist). 벽에 붙어 최대 속도로 돌면(0.61 m/s) 걸음마다 −0.18 = 제 속도 진행의 2 배 가까이
 // 사람 충돌·속도 대책 (2026-11-13, mdp/README "아래층 RL — 사람 충돌·속도"). 실험 동안 0(끔) — 환경변수 SIM_LR_PPL_K 등으로 켠다
@@ -68,6 +68,7 @@ constexpr float kLrLook0 = 1.0f, kLrLook1 = 2.5f;   // 부목표: 경로 위 가
 constexpr float kLrNearCell = 0.10f;      // 가까운 지도 픽셀 (m) = mdp::obsgen::kNearCell (env_ref.cpp 가 같은지 확인)
 constexpr float kLrSubNorm = 3.0f;       // 부목표 거리 정규화 (m)
 constexpr float kLrGoalNorm = 15.0f;     // 목적지 거리·남은 경로 정규화 (m, 자름 1) — 과제 경로 길이 상한
+constexpr float kLrXReachLen = 1.0f;     // 탐사 판 학습: 통과 보상은 처음 계획 길이가 이보다 긴 목표에 한 번만 (m) — 잠정. 통과 반경(0.5 m) 안에 생긴 후보에 서서 걸음마다 받는 것을 막음
 // ---------- 자동 목표 (low_auto) ----------
 constexpr int kLrProbes = 256;           // 한 번에 찔러 보는 칸 수 (아는 칸 상자 안 무작위)
 // 직선 거리 등급 (m) — 앞 등급에 설 수 있는 칸이 하나라도 있으면 그 등급에서 뽑는다. 기준선 과제는 경로 3 ~ 15 m (scripts/low_run.cpp),
@@ -112,6 +113,12 @@ DEV void lowrl_clear(LowRl& R) {
     R.tk_hit[i] = R.tk_miss[i] = R.tk_mov[i] = 0;
     R.tk_x[i] = R.tk_y[i] = R.tk_vx[i] = R.tk_vy[i] = R.tk_pp[i] = R.tk_pv[i] = R.tk_vv[i] = R.tk_r[i] = R.tk_x0[i] = R.tk_y0[i] = 0.f;
   }
+  R.x_redo = 1;
+  R.x_last = 0;
+  R.x_sig = 0;
+  R.x_paid = 0;
+  R.x_n = 0;
+  for (int i = 0; i < kLowXBl; ++i) { R.x_cell[i] = -1; R.x_until[i] = 0; }
      // (막힘 신호 stall·stall_tgt 는 그대로 — 판을 끝낸 정체를 위층이 읽게)
 }
 
@@ -162,6 +169,80 @@ DEV void lowrl_goal_set(const EnvBatch& b, const EnvState& e, int env, uint64_t 
   R.g_step = e.step;
   R.g_len = -1.f;
   R.rem_ok = 0;
+}
+
+// ---------- 탐사 판 학습의 목표 (EnvCfg::low_auto == 2, 스레드 0 — 준비 단계 맨 앞, 탐사 판 환경만: low_step.h low_xenv) ----------
+// 위층 0 번 후보 규칙을 환경 안에서 돌린다. scripts/combine_run.cpp 의 호스트 규칙(평가)과 같은 차례·같은 식 — combine_run --auto 가 두 길의 결과가 같은지 잰다:
+//  (걸음 뒤) 막힘 신호가 새로 서면 그 칸을 피하는 칸에 넣고 다시 고름 · 정책 환경이 통과 / 경로 끝이 목표 밖 / 경로 없음이면 (뒤 둘은 그 칸을 피하고) 다시 고름
+//  (결정: 걸음 번호가 decide_steps 의 배수이거나 다시 고름) 피하는 칸이 아닌 첫 후보 칸. 그 덩어리가 지금 목표 칸을 품으면(cand_cur) 목표 칸을 그대로.
+//  후보가 없으면 LowCmd{−1, 0} — 규칙 추종기의 "목표 없음"(제자리 회전)이 몬다 (경로 계획 단계가 후보 번호 −1 로 — env_kernel.cu env_plan_kernel · env_ref.cpp)
+// 근거 (mdp/README "아래층 RL — 탐사 판 학습"): 평가 때 받는 목표(프론티어 후보 칸 · 직선 평균 2.5 m · 1.7 s 마다 바뀜 · 벽 가까이)를 학습 때 그대로 받게 한다
+DEV bool lowx_avoided(const EnvCfg& c, const MapDev& m, const LowRl& R, int cell, int step) {
+  if (cell < 0) return false;
+  const float q = (c.rec_bl_r > 0.f ? c.rec_bl_r : 0.5f) / c.res;
+  for (int k = 0; k < kLowXBl; ++k) {
+    if (R.x_cell[k] < 0 || step >= R.x_until[k]) continue;
+    const int dx = cell % m.gw - R.x_cell[k] % m.gw, dy = cell / m.gw - R.x_cell[k] / m.gw;
+    if ((float)(dx * dx + dy * dy) <= q * q) return true;
+  }
+  return false;
+}
+DEV void lowx_avoid_add(const EnvCfg& c, LowRl& R, int cell, int step) {
+  if (cell < 0) return;
+  const int bl = c.rec_bl_steps > 0 ? c.rec_bl_steps : (int)(10.f / ((float)c.substeps * c.dt) + 0.5f);
+  R.x_cell[R.x_n % kLowXBl] = cell;
+  R.x_until[R.x_n % kLowXBl] = step + bl;
+  R.x_n += 1;
+}
+DEV void lowrl_goal_explore(const EnvBatch& b, const EnvState& e, int env) {
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  LowRl& R = b.lowrl[env];
+  LowCmd& cmd = b.lowcmd[env];
+  const LowEp& L = b.low[env];
+  if (e.step == 0) {   // 새 판 (걸음 사이 값은 lowrl_clear 가 지움)
+    cmd.target = -1;
+    cmd.follow = 0;
+    R.x_redo = 1;
+    R.x_sig = R.stall;   // 지난 판에서 남은 신호는 새 가장자리로 안 봄
+  } else {
+    if (R.stall && !R.x_sig) {
+      lowx_avoid_add(c, R, R.stall_tgt, e.step);
+      R.x_redo = 1;
+    }
+    R.x_sig = R.stall;
+    if (cmd.follow == 2) {
+      const bool reached = L.reach_step == e.step && L.reached > 0;
+      const bool off = !reached && L.hold != 0;
+      const bool nopath = !reached && !off && e.step > R.x_last && (e.goal_cell != cmd.target || e.p_n <= 0);
+      if (reached || off || nopath) {
+        if (!reached) lowx_avoid_add(c, R, cmd.target, e.step);
+        R.x_redo = 1;
+      }
+    }
+  }
+  if (!(e.step % c.decide_steps == 0 || R.x_redo)) return;
+  R.x_redo = 0;
+  R.x_last = e.step;
+  const int32_t* C = b.cand + (size_t)env * mdp::hier::K;
+  int k = -1;
+  for (int j = 0; j < mdp::hier::K && k < 0; ++j)
+    if (C[j] >= 0 && !lowx_avoided(c, m, R, C[j], e.step)) k = j;
+  int tgt = k >= 0 ? C[k] : -1;
+  if (k >= 0 && ((b.cand_cur[env] >> k) & 1) && cmd.follow == 2 && cmd.target >= 0 && cmd.target == e.goal_cell && e.p_n > 0 && !lowx_avoided(c, m, R, cmd.target, e.step))
+    tgt = cmd.target;
+  if (tgt >= 0) {
+    if (tgt != cmd.target || cmd.follow != 2) {   // 새 목표 (누적용: 처음 계획 길이·걸린 걸음을 다시 — lowrl_pack 이 채움)
+      R.g_step = e.step;
+      R.g_len = -1.f;
+      R.x_paid = 0;
+    }
+    cmd.target = tgt;
+    cmd.follow = 2;
+  } else {
+    cmd.target = -1;
+    cmd.follow = 0;
+  }
 }
 
 // ---------- 경로 위 자리 ----------
@@ -617,8 +698,8 @@ DEV bool lowrl_act(const EnvBatch& b, EnvState& e, int env, const float* a) {
   R.safe = 0;
   if (b.lowcmd[env].follow != 2) return false;
   const EnvCfg& c = b.cfg;
-  const float n0 = clip1(a[0]), n2 = clip1(a[1]);
-  float v = n0 >= 0.f ? n0 * c.act_v_fwd : (c.lg_noback ? 0.f : n0 * c.act_v_back), w = n2 * c.act_w_max;
+  const float n0 = c.lg_noback ? dm::maxf(0.f, clip1(a[0])) : clip1(a[0]), n2 = clip1(a[1]);   // 후진 없음: 음수 v 행동은 0 (직전 행동 관측·매끄러움·후진 항도 자른 값으로 — 후진 항은 저절로 0)
+  float v = n0 >= 0.f ? n0 * c.act_v_fwd : n0 * c.act_v_back, w = n2 * c.act_w_max;
   const float wheel = dm::absf(v) + c.wheel_k * dm::absf(w);   // 가장 빠른 바퀴가 한도를 넘으면 같은 비로 (속도 행동과 같은 규칙)
   if (wheel > c.wheel_max) {
     const float k = c.wheel_max / wheel;
@@ -754,6 +835,7 @@ DEV float lowrl_ppl_risk(const EnvBatch& b, const EnvState& e) {
 DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
   if (!b.lowrl) return;
   LowRl& R = b.lowrl[env];
+  const bool xm = b.cfg.low_auto == 2 && low_xenv(b, env);   // 탐사 판 학습의 탐사 판 환경
   if (R.pol) {
     const EnvCfg& c = b.cfg;
     const MapDev& m = b.maps[e.map];
@@ -764,13 +846,16 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     lowrl_track(b, e, env, &pi, t);
     e.p_i = pi;
     const bool reached = L.reach_step == e.step && L.reached > 0;
+    // 탐사 판 학습: 통과는 목표마다 처음 한 번만 센다 (탐사 판은 통과 반경 안에 있는 걸음마다 표시가 서고, 위층 규칙이 같은 칸을 다시 줄 수 있음)
+    const bool reach_new = reached && !(xm && R.x_paid);
+    if (xm && reached) R.x_paid = 1;
     const bool off = !reached && L.hold != 0;                                   // 경로 끝에 왔는데 통과 반경 밖
     const bool nopath = !reached && !off && t.has_goal && !t.has_path;          // 경로를 못 짬
     float r[kLrTerms];
     for (int k = 0; k < kLrTerms; ++k) r[k] = 0.f;
     if (R.rem_ok && t.has_path) r[kLrProgress] = kLrProgressK * dm::clampf(R.rem_prev - t.rem, -kLrProgressClip, kLrProgressClip);
     r[kLrTime] = kLrTimeK;
-    if (reached) r[kLrReach] = kLrReachK;
+    if (reach_new && (!xm || R.g_len >= kLrXReachLen)) r[kLrReach] = kLrReachK;   // 탐사 판 학습: 처음 계획 길이 kLrXReachLen 넘는 목표만 (위 상수)
     if (e.collided) r[kLrCollision] = e.people.hit_person ? c.lr_pcol_k : kLrCollisionK;
     {   // 근접: 충돌 판정과 같은 정답 격자(collision_band 에 걸린 칸 — 라이다 평면 밖 장애물도) · 사람
       float d = e.people.near_d;
@@ -802,7 +887,7 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
       const float dx = e.x - L.x0, dy = e.y - L.y0;
       S.dist += sqrtf(dx * dx + dy * dy);
     }
-    if (reached) {
+    if (reach_new) {
       S.reached += 1;
       if (R.g_len >= 0.f) {
         S.reach_len += R.g_len;
@@ -816,14 +901,26 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
       if (e.collided) {
         if (e.people.hit_person) S.hit_person += 1;
         else S.hit_wall += 1;
+      } else if (xm) {   // 탐사 판: 닫힘 성공·진행 없음은 아래 x_* 에
       } else if (L.end == kLowEndStall) {
         S.stall += 1;
       } else if (L.end != kLowEndGoals) {
         S.timeout += 1;
       }
     }
+  } else if (b.cfg.low_auto == 2) {   // 탐사 판 학습: 규칙 추종기가 몬 걸음(후보 없음)은 보상 0 — 정책 행동이 안 쓰인 걸음
+    e.reward = 0.f;
+    b.lowstat[env].x_rule_steps += 1;
   }
-  if ((e.done || b.cfg.low_explore) && b.low[env].end == kLowEndStall) {   // 위층에 알리는 막힘 신호 (정책·규칙 추종 모두 — 합친 탐사는 판을 안 끝내고 신호만)
+  if (xm && e.done) {
+    LowRlStat& S = b.lowstat[env];
+    S.x_eps += 1;
+    if (e.done == mdp::cur::kDeclareOk) { S.x_ok += 1; S.x_ok_steps += e.step; }
+    else if (e.done == mdp::cur::kCollision) S.x_wall += 1;
+    else if (e.done == mdp::cur::kCollisionPerson) S.x_person += 1;
+    else if (e.done == mdp::cur::kNoProgress) S.x_idle += 1;
+  }
+  if ((e.done || low_xenv(b, env)) && b.low[env].end == kLowEndStall) {   // 위층에 알리는 막힘 신호 (정책·규칙 추종 모두 — 합친 탐사는 판을 안 끝내고 신호만)
     R.stall = 1;
     R.stall_tgt = b.lowcmd[env].follow != 0 ? b.lowcmd[env].target : e.goal_cell;
   }

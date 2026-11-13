@@ -176,6 +176,8 @@ struct EnvCfg {
   // 아래층 RL (include/low_task.h "아래층 RL" · low_rl.h — 스위치는 도구·학습기가 켠다, 기본 0. low_task 도 켜야 함)
   int low_rl;                      // 1 = env.step 한 번이 걸음 하나, follow 2 인 환경은 행동 줄 (v, ω) 로 (EnvBatch::lowrl)
   int low_auto;                    // 1 = 환경이 목표를 스스로 뽑고 모든 환경이 follow 2 (학습) · 0 = 호스트가 LowCmd 를 넣고 Env::low_prepare (평가·두 층 같이)
+                                   // 2 = 탐사 판 학습 (low_explore 와 같이 — low_rl.h lowrl_goal_explore): 위층 0 번 후보 규칙을 환경이 걸음마다 돌려 LowCmd 를 넣는다
+  int low_solo;                    // low_auto 2 일 때 단독 과제(자동 목표 · 단독 과제 판 끝 규칙)로 도는 환경의 몫 (%, 환경 번호 해시 — low_step.h low_xenv). 나머지가 탐사 판
   int low_period;                  // 경로를 다시 살피는 주기 (걸음 — 목표가 바뀌면 바로). 0 이면 decide_steps
   int low_explore;                 // 1 = 두 층을 합친 탐사 (low_rl 위 스위치 — low_task.h "합친 탐사"): 탐사 판 끝 규칙(닫힘 성공·진행 없음)을 그대로 두고,
                                    //     단독 과제의 정체·시간·목표 수는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
@@ -1373,7 +1375,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   in.closed = c.success_closed && !e.collided && (float)e.since_occ * dt_act >= c.close_idle_s && (e.step + 1) % c.close_every == 0 && e.map_closed ? 1 : 0;
   const bool gterm = c.graph_on && c.graph_term;   // 그래프 모드 전작 방식: 닫힘 성공·진행 없음 규칙 없음 (끝 = 유틸리티 합 0 — graph_env.h graph_finish)
   if (gterm) in.closed = 0;
-  if (b.lowcmd && !c.low_explore) in.closed = 0;   // 아래층 단독 과제: 탐사 판 끝 규칙(닫힘 성공·진행 없음) 없음 (low_task.h) — 합친 탐사(low_explore)는 그대로 둠
+  if (b.lowcmd && !low_xenv(b, env)) in.closed = 0;   // 아래층 단독 과제: 탐사 판 끝 규칙(닫힘 성공·진행 없음) 없음 (low_task.h) — 합친 탐사(low_explore)는 그대로 둠
   // 덮음 보상 자리: 로봇 지도에서 이번 행동 동안 판 처음 막힘이 된 칸 수 (map_progress 가 이 걸음 칸에 막 넣은 값 — 진행 없음 시계와 같은 셈)
   // 진행 없음 시계와 같은 문턱: 한 행동에 kIdleOccMin 개 미만이면 0 — 멈춰 있어도 자세 오차·빔 잡음으로 드문드문 생기는 막힘 칸을 보상하지 않는다
   {
@@ -1408,7 +1410,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   e.since_wall = new_wall > 0 ? 0 : e.since_wall + 1;
   in.idle = !e.collided && !in.declared && !in.closed && (float)e.since_occ * dt_act >= mdp::cur::kIdleTime;
   if (gterm) in.idle = false;
-  if (b.lowcmd && !c.low_explore) in.idle = false;
+  if (b.lowcmd && !low_xenv(b, env)) in.idle = false;
   float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
   e.reward = mdp::rew::terms(in, T);
   e.slip_acc = 0.f;

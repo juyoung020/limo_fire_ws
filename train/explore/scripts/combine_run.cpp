@@ -4,6 +4,8 @@
 //   combine_run --scenes a.scene [b.scene …] [--policy <아래층 체크포인트>] [--episodes 256] [--seed 1] [--people 0] [--eval-seed] [--out <접두사>]
 //               [--no-avoid] [--no-redecide] [--no-stick] [--hold <걸음>] [--stall-s <초>] [--rule-near <m>] [--env …] [--model …] [--frontier …]
 //   --policy 를 주면 아래층 RL(LowCmd::follow 2 — 목표 칸 = 고른 후보 칸), 안 주면 같은 걸음 루프에서 규칙 추종기(follow 0 — 후보 번호를 그대로, 대조).
+//   --auto: 위층 규칙을 호스트 대신 환경이 돌린다 (EnvCfg::low_auto 2 — 탐사 판 학습 train --low --low-explore 와 같은 길, --policy 와 같이). 판 결과가 호스트 규칙과
+//           같아야 한다 (학습 때 받는 목표 = 평가 때 받는 목표). 위층 걸음 통계(결정 수 등)는 호스트 규칙 것만 셈
 //   판·씨앗·판 길이 상한은 frontier_run --modes slot0 와 같다 (장면 i 의 씨앗 seed · 1000003 + i · 7919, --eval-seed 면 seed · 7919 + 17 + i).
 //
 // 위층 규칙 (환경마다, 결정 = 10 걸음마다 · 아래 "바로 다시 고름" 때):
@@ -41,6 +43,7 @@ struct Args {
   bool eval_seed = false, avoid = true, redecide = true, stick = true;
   double rule_near = 0.0;   // > 0 이면 아래층 RL 판에서도 목표까지 직선 거리가 이 값 아래인 결정은 규칙 추종기에 맡김 (실험용)
   double stall_s = 0.0;   // > 0 이면 정체 판정 시간(env.yaml follow.stall_time)을 이 값으로 (실험용)
+  bool autox = false;   // --auto: 위층 규칙을 환경이 돌림 (EnvCfg::low_auto 2 — 탐사 판 학습과 같은 길). 호스트 규칙과 결과가 같은지 재는 용
   int hold = 0;   // 아래층 RL: 목표 칸을 정한 뒤 이 걸음 수 동안은 주기 결정에서 안 바꿈 (0 = 끔 — 실험용)
 };
 
@@ -70,6 +73,7 @@ int run(const Args& a) {
   hc.cfg.low_act_w = 0;     // 행동 줄 폭 mdp::act::DIM — 규칙 추종 환경이 후보 번호를 읽음
   if (a.stall_s > 0.0) hc.cfg.low_idle_steps = std::max(1, (int)std::lround(a.stall_s / (hc.cfg.substeps * hc.cfg.dt)));
   hc.cfg.low_explore = 1;   // 합친 탐사: 탐사 판 끝 규칙 그대로 · 정체는 막힘 신호만
+  if (a.autox) hc.cfg.low_auto = 2;   // 위층 규칙을 환경이 (low_rl.h lowrl_goal_explore) — 준비 단계는 step·reset 이 끝에서 부름
   const sim::LidarModel lidar = sim::load_lidar_model(a.model);
   const sim::EnvCfg& c = hc.cfg;
   const int N = a.episodes, AW = mdp::act::DIM, PW = mdp::low::ACT, K = mdp::hier::K, DS = c.decide_steps;
@@ -119,6 +123,7 @@ int run(const Args& a) {
     std::vector<unsigned char> hb((size_t)N * kH, 0);
     std::vector<double> dist(N, 0.0), chord(N, 0.0), px(N), py(N), cx(N), cy(N);
     // 판마다 걸음 통계 (원인 분석)
+    std::vector<int> fc_step(N, -1), t_n(N, 0), t_sum(N, 0), t_cell(N, -1), t_start(N, 0), t_prev(N, -1);   // 처음 닫힌 걸음 · 60° 이상 전환 (수 · 걸음 합 · 재는 중인 목표 칸 · 시작 걸음 · 직전 목표 칸)
     std::vector<int> n_dec(N, 0), n_sw(N, 0), n_stall(N, 0), n_reach(N, 0), n_off(N, 0), n_nopath(N, 0), n_safe(N, 0), n_back(N, 0), n_slow(N, 0), n_nogoal(N, 0), n_avoided(N, 0), n_early(N, 0), n_pathless(N, 0);
     std::vector<double> tgt_d(N, 0.0), w_abs(N, 0.0);
     std::vector<int> n_rule(N, 0);
@@ -142,10 +147,12 @@ int run(const Args& a) {
       av[i].n += 1;
     };
     int left = N;
+    std::vector<sim::LowCmd> ecmd;
     for (long t = 0; left > 0 && t < (long)c.max_steps + 10 * DS; ++t) {
       env.get_cand(cand);
       env.get_cand_cur(cur);
-      for (int i = 0; i < N; ++i) {
+      if (a.autox) env.get_low_cmd(ecmd);
+      for (int i = 0; i < N && !a.autox; ++i) {
         if (fin[i]) { cmd[i] = sim::LowCmd{-1, 0}; act[(size_t)AW * i] = 0.f; continue; }   // 끝난 환경: 규칙 탐사로 흘려 둠 (안 셈)
         const sim::EnvState& s = st[i];
         if (!(s.step % DS == 0 || redo[i])) continue;
@@ -190,10 +197,14 @@ int run(const Args& a) {
           dbin[d < 1.0 ? 0 : d < 3.0 ? 1 : d < 15.0 ? 2 : 3] += 1;
         }
       }
-      cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
-      env.set_low_cmd(cmd);
-      env.low_prepare(d_act);
-      env.sync();
+      if (a.autox) {
+        cmd = ecmd;   // 환경이 고른 목표 (아래 걸음 통계·정책 행동 넣기가 같은 값을 보게)
+      } else {
+        cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
+        env.set_low_cmd(cmd);
+        env.low_prepare(d_act);
+        env.sync();
+      }
       if (use_pol) {
         const sim::StepOut o = env.outputs();
         ppo->act_inference(o.low_img, o.low_1d, d_pol, N, -1);
@@ -237,6 +248,21 @@ int run(const Args& a) {
           if (!use_pol) sw_step[i] = s.step;
           goal_prev[i] = s.goal_cell;
         }
+        if (s.map_closed && fc_step[i] < 0) fc_step[i] = s.step;
+        {   // 60° 이상 전환: 목표 칸이 바뀐 걸음에 새 목표 쪽 방위가 60° 이상이면 재기 시작, 방위가 30° 안에 들면 끝 (그 전에 목표가 또 바뀌면 버림)
+          const auto bearing = [&](int cell) {
+            const double dx = W.ox + ((double)(cell % W.gw) + 0.5) * c.res - s.x, dy = W.oy + ((double)(cell / W.gw) + 0.5) * c.res - s.y;
+            return std::fabs(std::remainder(std::atan2(dy, dx) - (double)s.th, 6.283185307179586)) * 57.29577951308232;
+          };
+          if (t_cell[i] >= 0) {
+            if (s.goal_cell != t_cell[i]) t_cell[i] = -1;
+            else if (bearing(t_cell[i]) < 30.0) { t_n[i] += 1; t_sum[i] += s.step - t_start[i]; t_cell[i] = -1; }
+          }
+          if (s.goal_cell != t_prev[i]) {
+            if (t_prev[i] >= 0 && s.goal_cell >= 0 && bearing(s.goal_cell) >= 60.0) { t_cell[i] = s.goal_cell; t_start[i] = s.step; }
+            t_prev[i] = s.goal_cell;
+          }
+        }
         end_v[i] = s.v;
         end_w[i] = s.w;
         hx[(size_t)i * kH + nsteps[i] % kH] = s.x;
@@ -274,11 +300,12 @@ int run(const Args& a) {
     // 장면 요약
     double n = N, succ = 0, cw = 0, cp = 0, idle = 0, trunc = 0, ts = 0, t_all = 0, d_all = 0, ch_all = 0, d_succ = 0, cov_s = 0;
     double s_dec = 0, s_sw = 0, s_stall = 0, s_reach = 0, s_off = 0, s_nopath = 0, s_safe = 0, s_back = 0, s_slow = 0, s_nogoal = 0, s_avoided = 0, s_early = 0, s_steps = 0, s_tgt = 0, s_w = 0, s_pathless = 0, ep_stall = 0, s_rule = 0;
+    double fc_s = 0, s_tn = 0, s_tsum = 0;
     std::FILE* f = nullptr;
     if (!a.out.empty()) {
       f = std::fopen((a.out + "_" + W.name + ".tsv").c_str(), "w");
       if (!f) throw std::runtime_error("--out 파일을 못 엶");
-      std::fputs("env\tdone\tt\tcoverage\tdist_m\tchord_m\tdecisions\tswitches\tstalls\treached\toff\tnopath\tsafe_steps\tback_steps\tslow_steps\tnogoal_dec\tend_v\tend_steps_since_goal_change\tend_goal_dist\tend_safe\tend_w\tend_5s_span_m\tend_5s_back_steps\n", f);
+      std::fputs("env\tdone\tt\tcoverage\tdist_m\tchord_m\tdecisions\tswitches\tstalls\treached\toff\tnopath\tsafe_steps\tback_steps\tslow_steps\tnogoal_dec\tend_v\tend_steps_since_goal_change\tend_goal_dist\tend_safe\tend_w\tend_5s_span_m\tend_5s_back_steps\tfirst_closed_t\tturn60_n\tturn60_steps\n", f);
     }
     for (int i = 0; i < N; ++i) {
       const int dd = fin[i] ? first[i].done : mdp::cur::kTruncated;
@@ -308,8 +335,10 @@ int run(const Args& a) {
         }
       }
       if (f)
-        std::fprintf(f, "%d\t%d\t%.1f\t%.4f\t%.2f\t%.2f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%d\t%.2f\t%d\t%.2f\t%.2f\t%d\n", i, dd, ti, fin[i] ? first[i].coverage : 0.f, dist[i], chord[i], n_dec[i], n_sw[i], n_stall[i], n_reach[i], n_off[i],
-                     n_nopath[i], n_safe[i], n_back[i], n_slow[i], n_nogoal[i], end_v[i], end_since[i], end_d[i], end_safe[i], end_w[i], span, nb);
+        std::fprintf(f, "%d\t%d\t%.1f\t%.4f\t%.2f\t%.2f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%d\t%.2f\t%d\t%.2f\t%.2f\t%d\t%.1f\t%d\t%d\n", i, dd, ti, fin[i] ? first[i].coverage : 0.f, dist[i], chord[i], n_dec[i], n_sw[i], n_stall[i], n_reach[i], n_off[i],
+                     n_nopath[i], n_safe[i], n_back[i], n_slow[i], n_nogoal[i], end_v[i], end_since[i], end_d[i], end_safe[i], end_w[i], span, nb, fc_step[i] >= 0 ? fc_step[i] * dt : -1.0, t_n[i], t_sum[i]);
+      if (dd == mdp::cur::kDeclareOk) fc_s += fc_step[i] >= 0 ? fc_step[i] * dt : first[i].t;
+      s_tn += t_n[i]; s_tsum += t_sum[i];
     }
     if (f) std::fclose(f);
     const char* tag = use_pol ? "rl" : "rule";
@@ -323,6 +352,8 @@ int run(const Args& a) {
                 dbin[0] / ng, dbin[1] / ng, dbin[2] / ng, dbin[3] / ng);
     std::printf("[%s %s] 아래층: 막힘 신호 %.0f 번 (선 판 비율 %.3f) · 통과 %.0f · 경로 끝이 목표 밖 %.0f · 경로 없음 %.0f | 걸음 비율 — 안전층이 고침 %.3f · 뒤로 %.3f · 0.1 m/s 아래 %.3f · 경로 없이 몬 걸음 %.3f · 평균 |ω| %.2f rad/s\n",
                 tag, W.name.c_str(), s_stall, ep_stall / n, s_reach, s_off, s_nopath, s_safe / nst, s_back / nst, s_slow / nst, s_pathless / nst, s_w / nst);
+    std::printf("[%s %s] 더: 지도가 처음 닫힌 시각 %.1f s (성공 판 평균) · 뒤로 걸음 비율 %.4f · 안전층·지킴이가 고친 걸음 %.2f s/판 · 60° 이상 전환 판당 %.1f 번 · 평균 %.2f s (목표 쪽 방위 30° 안까지; 그 전에 목표가 바뀐 것은 뺌)\n",
+                tag, W.name.c_str(), succ > 0 ? fc_s / succ : 0.0, s_back / nst, s_safe * dt / n, s_tn / n, s_tn > 0 ? s_tsum * dt / s_tn : 0.0);
     std::fflush(stdout);
   }
   cudaFree(d_act);
@@ -358,6 +389,7 @@ int main(int argc, char** argv) {
       else if (k == "--hold") a.hold = std::stoi(nx());
       else if (k == "--stall-s") a.stall_s = std::stod(nx());
       else if (k == "--rule-near") a.rule_near = std::stod(nx());
+      else if (k == "--auto") a.autox = true;
       else { std::fprintf(stderr, "모르는 인자 %s\n", k.c_str()); return 2; }
     } catch (const std::exception& e) {
       std::fprintf(stderr, "combine_run: %s\n", e.what());

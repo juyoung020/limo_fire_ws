@@ -1172,7 +1172,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   const bool due = lowrl_due(b, e, env);   // 아래층 RL: 계획 차례인 환경만 (끄면 늘 true). 고치는 것은 아래 동기화 뒤 스레드 0
   if (tid == 0 && due) {
     int force = 0;   // 복구 (hier_path.h path_recovery): 다시 계획 · 포기한 목표면 다른 후보(없으면 −1)
-    const int k_in = lowrl_policy(b, env) ? 0 : (actions ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1);   // 정책 환경: 행동 줄은 속도 — 목표는 LowCmd 하나
+    const int k_in = lowrl_policy(b, env) ? 0 : (actions && c.low_auto != 2 ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1);   // 정책 환경: 행동 줄은 속도 — 목표는 LowCmd 하나
     const int k = path_recovery(b, e, env, k_in, &force);
     e.p_slot = k;
     const int tgt = k >= 0 ? act_cells(b, env)[k] : -1;
@@ -1469,6 +1469,10 @@ __global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
 // 자동 목표: 환경 하나 = 블록 하나, 스레드마다 탐침 하나 → 가장 작은 열쇠
 __global__ void __launch_bounds__(kLrProbes) env_low_goal_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
+  if (b.cfg.low_auto == 2 && low_xenv(b, env)) {   // 탐사 판 학습: 위층 0 번 후보 규칙 (스레드 하나)
+    if (tid == 0) lowrl_goal_explore(b, b.st[env], env);
+    return;
+  }
   if (!b.lowrl[env].need_goal) return;   // 블록 전체 같은 값 (아래 둘째 동기화 뒤 스레드 0 만 고침)
   __shared__ unsigned long long key;
   if (tid == 0) key = ~0ull;

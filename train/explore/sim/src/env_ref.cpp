@@ -338,7 +338,9 @@ static_assert(kLrNearCell == mdp::obsgen::kNearCell, "low_rl.h 가까운 지도 
 static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
   const EnvCfg& c = b.cfg;
   EnvState e = b.st[env];
-  if (c.low_auto && b.lowrl[env].need_goal) {
+  if (c.low_auto == 2 && low_xenv(b, env)) {   // 탐사 판 학습: 위층 0 번 후보 규칙
+    lowrl_goal_explore(b, e, env);
+  } else if (c.low_auto && b.lowrl[env].need_goal) {
     const mdp::Robot rb = path_rb_plan(c, mdp::obsgen::reach_robot(c));
     uint64_t key = ~0ull;
     for (int j = 0; j < kLrProbes; ++j) {
@@ -349,7 +351,7 @@ static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
   }
   if (lowrl_due(b, e, env)) {
     hier_camlayer_cpu(b, e, env);
-    plan_cpu(b, e, env, lowrl_policy(b, env) ? 0 : (actions ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1));
+    plan_cpu(b, e, env, lowrl_policy(b, env) ? 0 : (actions && c.low_auto != 2 ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1));
     lowrl_planned(b, e, env);
   }
   lowrl_pack(b, e, env);

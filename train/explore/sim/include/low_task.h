@@ -110,6 +110,7 @@ struct LowEp {
 
 constexpr int kLrTrk = 16;   // 사람 추적(low_rl.h lowrl_trk)이 들고 가는 덩어리 수 상한 — 선 물체(의자 다리·기둥)도 한 칸씩 쓴다
 
+constexpr int kLowXBl = 8;   // 탐사 판 학습: 환경마다 피하는 칸 수 (고리 — combine_run.cpp kBl 과 같음)
 // 환경마다 걸음 사이에 들고 가는 값
 struct LowRl {
   uint64_t rng;        // 자동 목표(low_auto) 난수 — 환경 난수(EnvState::rng)와 따로 (판 흐름을 안 바꿈)
@@ -144,6 +145,13 @@ struct LowRl {
   float tk_r[kLrTrk];          //   반지름 (m)
   float tk_x0[kLrTrk], tk_y0[kLrTrk];   //   처음 잡힌 자리 — 거기서 벗어난 거리가 사람 판정 조건
 
+  // 탐사 판 학습 (EnvCfg::low_auto == 2 — low_rl.h lowrl_goal_explore): 환경 안에서 도는 위층 0 번 후보 규칙의 상태 (scripts/combine_run.cpp 호스트 규칙과 같은 값)
+  int32_t x_redo;      //   다음 준비 단계에 주기와 무관하게 다시 고름 (통과·경로 끝이 밖·경로 없음·막힘 신호)
+  int32_t x_last;      //   마지막으로 고른 걸음 번호
+  int32_t x_sig;       //   지난 걸음의 막힘 신호 (오르는 가장자리만 봄)
+  int32_t x_paid;      //   지금 목표의 통과를 이미 셈 (보상·누적은 목표마다 한 번)
+  int32_t x_n;         //   피하는 칸 고리에 넣은 수
+  int32_t x_cell[kLowXBl], x_until[kLowXBl];   //   피하는 칸 · 그 걸음 번호까지
 };
 
 // 보상 항 (차례 = LowRlStat::term 칸 번호 — 도구·학습기가 이름표를 같은 차례로 가짐)
@@ -163,6 +171,9 @@ struct LowRlStat {
   int32_t reach_steps;      // 통과한 목표들의 걸린 걸음 합
   float dist;               // 이동 거리 (m)
   float reach_len;          // 통과한 목표들의 처음 계획 길이 합 (m) — ÷ (reach_steps × 걸음 시간) = 과제 구간 평균 속도
+  // 탐사 판 학습 (low_auto 2 의 탐사 판 환경만 — 규칙 추종 걸음에 끝난 판도 셈): 끝난 판 · 닫힘 성공 · 벽 충돌 · 사람 충돌 · 진행 없음 · 성공 판의 걸음 합
+  int32_t x_eps, x_ok, x_wall, x_person, x_idle, x_ok_steps;
+  int32_t x_rule_steps;     // 규칙 추종기가 몬 걸음 (후보 없음 — 제자리 회전)
 };
 
 // 아래층 관측 (정책 입력 — 위층과 같은 원본 버퍼(obs_img·obs_1d·지도·깊이 카메라 층·경로)에서 잘라 만든다, low_rl.h lowrl_img·lowrl_pack):

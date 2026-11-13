@@ -16,6 +16,8 @@
 //   --low: 아래층 RL 모드(include/low_rl.h — 걸음 하나 = 행동 하나, 정책 자리에 무작위·경로 쫓기 행동). 상태·보상·관측에 더해 아래층 관측(그림·숫자)·
 //          걸음 사이 값·목표·누적이 걸음마다 GPU == CPU 인지. --low-host: 목표를 호스트가 넣는 길(Env::low_prepare — 정책·규칙 추종·예열 탐사 환경을 섞음)
 //          --low-explore: 그 위에 합친 탐사(EnvCfg::low_explore — 탐사 판 끝 규칙 그대로, 정체는 막힘 신호만. scripts/combine_run.cpp 가 쓰는 길)
+//          --low-train: 탐사 판 학습(EnvCfg::low_auto 2 + low_explore — 위층 0 번 후보 규칙을 환경이 돌림, low_rl.h lowrl_goal_explore. scripts/train --low --low-explore 가 쓰는 길).
+//                       --low-solo P 를 같이 주면 환경의 P % 는 단독 과제로 (섞어 학습)
 //   --hier: 계층형 행동 모드(kActPath — 결정 하나 = 속도 행동 10 걸음 묶음, 후보 번호 무작위). 덧붙여 정답 격자를 쓰지 않는지:
 //           CPU 묶음의 정답 격자(MapDev::grid)를 모두 막힘·모두 빈 칸으로 바꾼 사본에서 경로 계획·추종기 명령이 같은지 (--negative 는 후보 번호 하나를 바꿈)
 #include <algorithm>
@@ -61,6 +63,7 @@ void range_1d(int i, float* lo, float* hi) {
 }  // namespace
 
 // ---- 아래층 RL (--low) ----
+static int g_low_train = 0, g_low_solo = 0;   // --low-train · --low-solo
 int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const sim::LidarModel& lidar, int n_env, int n_steps, int people, bool negative, bool host, bool explore) {
   using sim::LowRl; using sim::LowCmd; using sim::LowRlStat; using sim::LowEp;
   hc.cfg.action_mode = sim::kActPath;
@@ -68,6 +71,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
   hc.cfg.low_auto = host ? 0 : 1;
   hc.cfg.low_explore = explore ? 1 : 0;   // 합친 탐사 (--low-explore): 탐사 판 끝 규칙 그대로 · 정체는 신호만
+  if (g_low_train) { hc.cfg.low_auto = 2; hc.cfg.low_explore = 1; hc.cfg.low_solo = g_low_solo; }   // 탐사 판 학습
   hc.cfg.low_act_w = host ? 0 : 3;   // 자동: 학습기와 같은 폭 (v, ω, 선언 자리). 호스트: 규칙 추종 환경이 후보 번호를 읽게 mdp::act::DIM
   const sim::EnvCfg& c = hc.cfg;
   const int A = c.low_act_w > 0 ? c.low_act_w : mdp::act::DIM, K = mdp::rew::kTerms;
@@ -247,6 +251,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
         tot.steps += S.steps; tot.episodes += S.episodes; tot.goals += S.goals; tot.reached += S.reached; tot.hit_wall += S.hit_wall;
         tot.hit_person += S.hit_person; tot.stall += S.stall; tot.timeout += S.timeout; tot.giveup += S.giveup; tot.safe_steps += S.safe_steps;
         tot.back_steps += S.back_steps; tot.reach_steps += S.reach_steps; tot.dist += S.dist; tot.reach_len += S.reach_len;
+        tot.x_eps += S.x_eps; tot.x_ok += S.x_ok; tot.x_wall += S.x_wall; tot.x_person += S.x_person; tot.x_idle += S.x_idle; tot.x_ok_steps += S.x_ok_steps; tot.x_rule_steps += S.x_rule_steps;
       }
       mark(b2, bad_stat, t);
     }
@@ -273,6 +278,12 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
               tot.goals, tot.reached, tot.giveup, tot.reached ? tot.reach_len / tot.reached : 0.f,
               tot.reach_steps ? tot.reach_len / (tot.reach_steps * c.substeps * c.dt) : 0.f, tot.safe_steps, tot.back_steps, tot.dist);
   if (explore) std::printf("합친 탐사(low_explore): 막힘 신호 %zu 번 · 닫힘 성공 %zu 판 · 진행 없음 %zu 판 (정체·시간·목표 수는 판을 안 끝냄)\n", n_sig, n_ok, n_idle);
+  if (g_low_train) {
+    int nx = 0;
+    for (int i = 0; i < n_env; ++i) nx += !sim::low_solo_env(c, i);
+    std::printf("탐사 판 학습(low_auto 2, 단독 과제 몫 %d %%): 탐사 판 환경 %d / %d · 끝난 탐사 판 %d (닫힘 성공 %d · 벽 %d · 사람 %d · 진행 없음 %d) · 규칙 추종 걸음 %d\n", c.low_solo, nx, n_env, tot.x_eps,
+                tot.x_ok, tot.x_wall, tot.x_person, tot.x_idle, tot.x_rule_steps);
+  }
   std::printf("보상 항 합:");
   for (int k = 0; k < sim::kLrTerms; ++k) std::printf(" %s %.3f", tn[k], tot.term[k]);
   std::printf(" (걸음 보상 합 %.3f)\n", rew_sum);
@@ -323,6 +334,8 @@ int main(int argc, char** argv) {
     else if (a == "--low") low = true;
     else if (a == "--low-host") low = low_host = true;
     else if (a == "--low-explore") low = low_host = low_explore = true;
+    else if (a == "--low-train") { low = low_explore = true; g_low_train = 1; }
+    else if (a == "--low-solo" && i + 1 < argc) g_low_solo = std::stoi(argv[++i]);
     else if (a == "--graph") hier = graph = true;
     else if (i + 1 < argc && sim::graph_arg(gargs, a, argv[i + 1])) ++i;
     else if (a == "--graph-stand") graph_stand = std::atoi(argv[++i]);
