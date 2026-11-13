@@ -13,6 +13,7 @@
   <xacro:include filename="$(find limo_fire_description)/urdf/limo_pro_base.xacro"/>
   <xacro:include filename="$(find limo_fire_description)/urdf/orbbec_dabai.xacro"/>
   <xacro:include filename="$(find limo_fire_description)/urdf/ultrasonic.xacro"/>
+  <xacro:include filename="$(find limo_fire_description)/urdf/webots_control.xacro"/>
 
   <xacro:limo_pro_base/>
 
@@ -28,4 +29,9 @@
        높이 base_link −0.06 m = 바닥 위 약 0.085 m. 시뮬 LimoFire.proto ultrasonic 과 같은 값 -->
   <xacro:ultrasonic parent="base_link" name="ultrasonic_front_left" xyz="0.18 0.025 -0.06" yaw="${20*pi/180}" pitch="${-5*pi/180}"/>
   <xacro:ultrasonic parent="base_link" name="ultrasonic_front_right" xyz="0.18 -0.025 -0.06" yaw="${-20*pi/180}" pitch="${-5*pi/180}"/>
+
+  <!-- Webots 바퀴 구동 (webots_control.xacro) -->
+  <xacro:if value="${'$(arg platform)' == 'webots'}">
+    <xacro:webots_control/>
+  </xacro:if>
 </robot>

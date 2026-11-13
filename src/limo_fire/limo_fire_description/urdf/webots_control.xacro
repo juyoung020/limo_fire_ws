@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- Webots 바퀴 구동 (ros2_control). platform:=webots 일 때만 붙는다.
+     Jazzy 의 controller_manager 는 하드웨어 설명을 /robot_description 토픽(= 이 URDF)에서 읽는다.
+     Humble 은 드라이버 파라미터(limo_fire_sim/resource/limo_webots.urdf)에서 읽으므로 이 블록을 쓰지 않는다 — 두 곳의 관절 목록을 같게 둔다.
+     관절 이름 = Webots LimoFourDiff.proto 의 바퀴 모터 이름 -->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:macro name="webots_wheel" params="name">
+    <joint name="${name}">
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <command_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+  <xacro:macro name="webots_control">
+    <ros2_control name="WebotsControl" type="system">
+      <hardware>
+        <plugin>webots_ros2_control::Ros2ControlSystem</plugin>
+      </hardware>
+      <xacro:webots_wheel name="front_left_wheel"/>
+      <xacro:webots_wheel name="front_right_wheel"/>
+      <xacro:webots_wheel name="rear_left_wheel"/>
+      <xacro:webots_wheel name="rear_right_wheel"/>
+    </ros2_control>
+  </xacro:macro>
+</robot>

@@ -1,0 +1,41 @@
+# ROS 2 판마다 다른 Nav2 값 — Jazzy. nav2_params.yaml(Humble 형식) 다음에 읽어 바뀐 것만 덮는다.
+# 팀 기준 환경은 Humble(로봇 Jetson). 이 파일은 Jazzy 개발 PC 에서 시뮬을 돌리려고 둔다
+planner_server:
+  ros__parameters:
+    GridBased:
+      plugin: "nav2_smac_planner::SmacPlanner2D"   # Jazzy 는 "패키지::클래스" 만 받는다 (Humble 은 "/")
+
+behavior_server:
+  ros__parameters:
+    spin:
+      plugin: "nav2_behaviors::Spin"
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+
+# Jazzy 바퀴 제어기(diff_drive_controller 4.x, 시뮬)는 TwistStamped 만 받는다. Nav2 가 /cmd_vel 을 TwistStamped 로 내게 한다
+# (실물 섀시 limo_fire_base 는 Twist — 실물은 Humble 이라 이 파일을 읽지 않는다)
+/**:
+  ros__parameters:
+    enable_stamped_cmd_vel: true
+
+# BT 플러그인 목록은 nav2_humble.yaml 에만 있다 (Jazzy 는 기본 목록을 스스로 읽음). BT 파일은 Jazzy 설치 경로로
+bt_navigator:
+  ros__parameters:
+    default_nav_to_pose_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml
+    default_nav_through_poses_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
+
+# 초음파 층(range_layer)을 뺀다: 초음파가 없는 월드(limo_fire_maze 등 ultrasonic FALSE)에서 Jazzy 는 이 층이 costmap 갱신을
+# 붙잡아 제어 루프가 20 Hz 대신 3~4 Hz 로 돌고 로봇이 경로를 못 따라갔다(2026-11-13, 빼면 경고 0). Humble 에서도 그런지는 확인 안 함.
+# 초음파를 켠 월드(연기 모드)를 Jazzy 에서 돌릴 때는 이 블록을 빼야 한다
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      plugins: ["obstacle_layer", "inflation_layer"]

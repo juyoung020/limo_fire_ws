@@ -71,6 +71,20 @@ WeGo 값으로 시작했지만 덕트호스 미로에서 막혀 바꿨다. **모
 - 시뮬 불·연기는 사진 그림판이라 YOLO 가 거의 못 잡는다 ([benchmarks](benchmarks/README.md)). 불 대응 흐름은 시뮬에서 불 위치를 직접 주거나 실물로 시험한다.
 - 시뮬은 실시간의 약 0.7 배, 카메라 약 20 장/초.
 
+## ROS 2 Jazzy PC 에서 돌리기
+
+팀 기준 환경은 Humble(로봇 Jetson)이다. Jazzy(Ubuntu 24.04) 개발 PC 에서 시뮬을 돌리려면 아래가 더 필요하다 (2026-11-13 확인).
+
+| 무엇 | 까닭 | 할 일 |
+|---|---|---|
+| Webots 기본 물체 파일 | 월드가 `webots://projects/...` 를 설치본에서 읽는데 deb 설치본(R2025a)에는 `.proto` 가 없다 → 바닥·벽이 빠지고 로봇이 떨어짐(창은 회색·검은 화면) | `git clone --depth 1 --branch R2025a --filter=blob:none --sparse https://github.com/cyberbotics/webots.git` → `git sparse-checkout set projects/objects projects/appearances projects/humans projects/default` → `sudo rsync -a <clone>/projects/ /usr/local/webots/projects/` (약 640 MB) |
+| `WEBOTS_HOME` | `env.sh` 는 Humble 을 불러오므로 쓰지 않는다 | `export WEBOTS_HOME=/usr/local/webots` |
+| 빌드 | 실물 드라이버·YOLO(CUDA) 는 빌드되지 않는다 | `colcon build --packages-up-to limo_fire_bringup limo_fire_bt limo_fire_sim webots_ros2_limo --packages-ignore limo_fire_perception ydlidar_ros2_driver orbbec_camera orbbec_camera_msgs orbbec_description robot_localization limo_fire_base limo_fire_esp32_bridge dl_ros2_application dl_ros2_msgs lift_ctr wego wego_2d_nav wego_msgs limo_ros2_application` |
+
+판마다 다른 설정은 파일로 나눴다 (Humble 동작은 그대로):
+- Nav2: `navigation.launch.xml` 이 `nav2_params.yaml` 다음에 `nav2_$ROS_DISTRO.yaml` 을 읽는다. Jazzy 는 플러그인 이름 `::`, BT 플러그인 목록을 적지 않음(Humble 목록은 `nav2_humble.yaml`), BT 파일 경로, `/cmd_vel` TwistStamped, 초음파 층 뺌(초음파 없는 월드에서 제어 루프 3~4 Hz 로 떨어짐 — Humble 은 확인 안 함).
+- 바퀴 구동: Jazzy 의 controller_manager 는 하드웨어 설명을 `/robot_description` 에서 읽으므로 webots 판 URDF 에 ros2_control 블록(`webots_control.xacro`)을 둔다. 속도 입력은 Humble `~/cmd_vel_unstamped`, Jazzy `~/cmd_vel`(TwistStamped) 둘 다 `/cmd_vel` 로 잇는다.
+
 ## 덕트호스 미로 (`limo_fire_maze`) 너비
 
 덕트호스 지름은 **0.30 m** — LIMO Pro 전체 높이 0.251 m([AgileX LIMO Pro 사양](https://global.agilex.ai/products/limo-pro) 322 × 220 × 251 mm,

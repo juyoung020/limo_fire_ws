@@ -26,11 +26,12 @@
     <remap from="/Ros2Supervisor/clock" to="/clock"/>
   </node>
 
-  <!-- LIMO 컨트롤러: 센서 플러그인 + ros2_control(바퀴). Webots 가 월드를 다 읽을 때까지 스스로 기다린다 -->
+  <!-- LIMO 컨트롤러: 센서 플러그인 + ros2_control(바퀴). Webots 가 월드를 다 읽을 때까지 스스로 기다린다.
+       바퀴 제어기 속도 입력: Humble ~/cmd_vel_unstamped(Twist), Jazzy ~/cmd_vel(TwistStamped) — 둘 다 /cmd_vel 로 잇는다 -->
   <executable name="webots_controller_LIMO" output="screen" respawn="true"
               cmd="$(find-pkg-share webots_ros2_driver)/scripts/webots-controller --robot-name=LIMO --protocol=ipc --port=$(var port) ros2 --ros-args
                    -p robot_description:=$(var driver_urdf) -p use_sim_time:=true -p set_robot_state_publisher:=false
-                   -r /diffdrive_controller/cmd_vel_unstamped:=/cmd_vel --params-file $(var limo_share)/resource/diff/ros2control.yaml">
+                   -r /diffdrive_controller/cmd_vel_unstamped:=/cmd_vel -r /diffdrive_controller/cmd_vel:=/cmd_vel --params-file $(var limo_share)/resource/diff/ros2control.yaml">
     <env name="WEBOTS_HOME" value="$(find-pkg-prefix webots_ros2_driver)"/>
   </executable>
 
