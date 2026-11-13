@@ -484,6 +484,15 @@ public:
           fail("invalid fire coordinates");
         return;
       }
+      // A camera may detect fire before the depth sensor can localize it.
+      // Keep following the Nav2 goal until object_mapper publishes a real pose;
+      // an unlocalized hint is not safe input for danger zones or extinguishing.
+      if (m->id == "unlocalized_fire" && !m->position_valid) {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 5000,
+            "Fire detected without a usable depth pose; waiting for localization");
+        return;
+      }
       auto size = classify(m->width_m, m->size_valid, small_, large_);
       auto it = seen_.find(m->id);
       if (state_ == "STOPPING" && m->id == fire_.id)
