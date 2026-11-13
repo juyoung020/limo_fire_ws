@@ -318,6 +318,19 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
       c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
+      // 사람 충돌·속도 대책 (mdp/README "아래층 RL — 사람 충돌·속도"). 보상만 바꾼다 — 정책 행동·관측은 그대로
+      c.lr_ppl_k = envf("SIM_LR_PPL_K", kLrPplK);
+      c.lr_ppl_t = envf("SIM_LR_PPL_T", kLrPplT);
+      c.lr_ppl_m = envf("SIM_LR_PPL_M", kLrPplM);
+      c.lr_pcol_k = envf("SIM_LR_PCOL_K", kLrPersonCollisionK);
+      c.lr_w_k = envf("SIM_LR_W_K", kLrTurnK);
+      c.ps_on = (int)envf("SIM_LOW_YIELD", (float)kLrYieldOn);
+      c.ps_h = envf("SIM_LOW_YIELD_H", kLrYieldH);
+      c.ps_gate = envf("SIM_LOW_YIELD_GATE", kLrYieldGate);
+      c.ps_margin = envf("SIM_LOW_YIELD_MARGIN", kLrYieldMargin);
+      c.ps_hold = (int)envf("SIM_LOW_YIELD_HOLD", (float)kLrYieldHold);
+      c.ps_mem = (int)envf("SIM_LOW_YIELD_MEM", (float)kLrYieldMem);
+      c.lr_w0 = (c.wheel_max - c.act_v_fwd) / c.wheel_k;   // 이 아래 ω 는 바퀴 한도가 v 를 안 깎는다 (1.11 − 1.0) / 0.2 = 0.55 rad/s
     }
     {
       // 판 끝·성공 (2026-11-08, 닫힘 정의는 2026-11-10 고침 — mdp/README "판 끝"·"닫힘"): 성공 = 로봇 지도 닫힘(아래 닫힘 규칙) + 지도 진행 없음

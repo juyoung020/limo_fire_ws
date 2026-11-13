@@ -32,6 +32,25 @@ constexpr float kLrGuardMargin = 0.05f;  //   몸통 둘레 여유 (m) = 지도 
 constexpr int kLrNoBack = 0;             // 1: 후진 명령을 0 으로
 constexpr float kLrMproxK = -0.3f;       // 움직임 근접: × 몸통 가장 빠른 점 속도 (|v| + 꼭짓점 반경 × |ω|, m/s) × (1 − 간격 / kLrMproxD) 걸음마다.
 constexpr float kLrMproxD = 0.2f;        //   간격이 이보다 가까울 때 (= kLrProxDist). 벽에 붙어 최대 속도로 돌면(0.61 m/s) 걸음마다 −0.18 = 제 속도 진행의 2 배 가까이
+// 사람 충돌·속도 대책 (2026-11-13, mdp/README "아래층 RL — 사람 충돌·속도"). 실험 동안 0(끔) — 환경변수 SIM_LR_PPL_K 등으로 켠다
+constexpr float kLrPplK = 0.0f;          // 사람 마주침: × (1 − 가장 가까워질 때까지 시간 / kLrPplT) 걸음마다 (음수로 켬). 아래 lowrl_ppl_risk
+constexpr float kLrPplT = 2.0f;          //   내다보는 시간 (s) — 잠정. 진단: 닿기 2 s 전 간격 중앙 1.4 ~ 2.6 m, 그때 이미 라이다에 보임
+constexpr float kLrPplM = 0.15f;         //   그때 몸통(반 길이 원) ~ 사람 간격이 이보다 좁으면 (m) — 잠정
+constexpr float kLrPersonCollisionK = kLrCollisionK;   // 사람 충돌 (판 끝). 벽과 같게 시작
+constexpr float kLrTurnK = -0.04f;       // 회전: × max(0, |정책 ω| − 바퀴 한도가 v 를 깎기 시작하는 ω) (rad/s) 걸음마다 (0 이면 끔). 꼴은 Long et al.(arXiv 1709.10082) 식 7
+constexpr int kLrYieldOn = 0;            // 사람 비켜 주기 (아래 lowrl_yield). 기본 끔(채택 안 함) — SIM_LOW_YIELD=1 로 켬 (2 = 참값 사람, 3 = 추적만 돌리고 명령은 안 고침 — 둘 다 진단 전용)
+constexpr float kLrYieldH = 1.5f;        //   내다보는 시간 (s) — 잠정. 진단: 1 s 전에 서서 기다렸다면 앞 사람 충돌의 68 ~ 75 % 가 안 닿음
+constexpr float kLrYieldMargin = 0.10f;  //   사람 둘레 여유 (m) — 잠정
+constexpr int kLrYieldHold = 5;          //   줄인 뒤 0.5 s 는 그 배율 그대로 — 잠정 (감속 중엔 추적이 꺼지므로 떨림을 막음)
+constexpr float kLrYieldGate = 1.5f;     //   세 장 사이 각속도 차가 이보다 크면 추적을 쉼 (rad/s) — 잠정
+constexpr int kLrClus = 24;              //   라이다 한 장에서 보는 덩어리 수 상한
+constexpr int kLrMovers = 8;             //   움직이는 덩어리(사람) 수 상한 = kMaxPeople
+constexpr float kLrClusJump = 0.15f;     //   이웃 칸 거리 차가 이보다 크면 다른 덩어리 (m)
+constexpr float kLrClusW0 = 0.10f, kLrClusW1 = 0.65f;   //   덩어리 폭 (m): 사람 원기둥 지름 0.4 ~ 0.6 이 보이는 현 길이
+constexpr float kLrClusRange = 4.0f;     //   이 거리 안 덩어리만 (m)
+constexpr float kLrMoveV0 = 0.25f;       //   이 속도 넘게 두 구간(0.2 s 씩) 모두 같은 쪽으로 움직여야 사람으로 본다 (m/s)
+constexpr float kLrMoveV1 = 1.6f;        //   이보다 빠르면 사람이 아님 (사람 최고 1.3 m/s + 여유) — 가려졌다 드러나는 가장자리가 이렇게 보임
+constexpr int kLrYieldMem = 10;          //   닿을 것으로 본 사람을 안 보여도 1 s 는 같은 속도로 계속 본다 — 잠정 (진단: 추적이 걸음의 41 % 에서 끊김)
 // ---------- 관측 ----------
 constexpr float kLrLook0 = 1.0f, kLrLook1 = 2.5f;   // 부목표: 경로 위 가장 가까운 점에서 이만큼 앞 (m). 잠정 — 가까운 지도 창 반 변 3.2 m 안
 constexpr float kLrNearCell = 0.10f;      // 가까운 지도 픽셀 (m) = mdp::obsgen::kNearCell (env_ref.cpp 가 같은지 확인)
@@ -69,6 +88,12 @@ DEV void lowrl_clear(LowRl& R) {
   R.safe = 0;
   R.g_step = 0;
   R.g_len = -1.f;
+  R.ps_hold = 0;
+  R.ps_k = 1.f;
+  R.ps_n = -2;
+  R.ps_res = 1.f;
+  for (int i = 0; i < 5; ++i) R.ps_m[i] = 0.f;
+  R.ps_age = 0;
      // (막힘 신호 stall·stall_tgt 는 그대로 — 판을 끝낸 정체를 위층이 읽게)
 }
 
@@ -238,6 +263,178 @@ DEV float lowrl_guard(const EnvBatch& b, const EnvState& e, int env, float v, fl
   return 0.f;
 }
 
+// ---------- 사람 비켜 주기 (EnvCfg::ps_on): 걸어오는 사람의 길을 내다봐 닿을 것 같으면 v 를 ½ · 0 으로 줄여 먼저 보낸다 ----------
+// 근거 (low_c0 사람 2 앞 사람 충돌 진단, mdp/README "아래층 RL — 사람 충돌·속도"): 닿은 사람은 모두 로봇을 무시하고 걷는 사람,
+// 닿기 1 s 전 그 자리에 서서 기다렸다면 68 ~ 75 % 가 안 닿는다(사람이 지나감). 앞 틈 안전층은 몸통 폭 직진 통로에 든 점만 보고 서므로
+// 옆에서 가로질러 오는 사람에겐 늦다. 꼴은 NavRL(arXiv 2409.15634)의 속도 장애물 안전 방패 — 정책 명령에 가장 가까운 안 닿는 명령으로 바꿈
+// (여기서는 v 배율 1 · ½ · 0 만 본다. 서도 닿으면 — 사람이 곧장 로봇으로 옴 — 못 가리니 정책에 맡김).
+// 사람 찾기는 센서만(ps_on == 1): 라이다 링의 지금·0.2 s 전·0.4 s 전 장에서 "앞에 따로 선 폭 0.10 ~ 0.65 m 덩어리"를 뽑아 지도 좌표로 옮기고
+// 가까운 것끼리 이어, 두 구간 모두 kLrMoveV0 넘게 같은 쪽으로 움직인 덩어리 = 걷는 사람. 로봇 속도·회전이 그 사이 크게 바뀌었으면
+// (장을 쏜 때와 장 자세를 적은 때의 차이가 구간마다 달라 선 물체가 움직여 보임) 그 걸음은 추적을 쉰다 → −1.
+struct LrMover { float x, y, vx, vy, r; };
+
+// wk = 그 장을 쏠 때 로봇 각속도. 관측 칸은 ROS 가 적는 각도(펴기 전)라 빔 시각(스캔 시작 + (각도 + fov/2)/2π × scan_time)만큼 돈 몫을 여기서 편다
+// (env.h 의 빔 펴기와 같은 식 — 안 펴면 ω 가 바뀔 때 선 물체가 움직여 보인다: ω 0.3 rad/s 차이 · 2 m 거리에서 겉보기 0.2 m/s)
+DEV int lowrl_clusters(const EnvBatch& b, const EnvState& e, int env, int slot, float wk, float* cx, float* cy, float* cr) {
+  const EnvCfg& c = b.cfg;
+  const float* R = b.lidar_ring + ((size_t)env * kLidarRing + slot) * mdp::obs::LIDAR_BINS;
+  const float px = e.lid_pose[3 * slot], py = e.lid_pose[3 * slot + 1];
+  float s, co;
+  dm::sincosf_d(e.lid_pose[3 * slot + 2], &s, &co);
+  const float tk = e.noise.scan_time / kTwoPi;
+  int n = 0, k0 = -1;
+  bool left_ok = false;
+  float rmin = 0.f;
+  for (int k = 0; k <= mdp::obs::LIDAR_BINS; ++k) {
+    const bool valid = k < mdp::obs::LIDAR_BINS && R[k] < c.map_max_range;
+    const bool cont = valid && k0 >= 0 && dm::absf(R[k] - R[k - 1]) < kLrClusJump;
+    if (k0 >= 0 && !cont) {   // 덩어리 [k0, k − 1] 닫음
+      const int k1 = k - 1;
+      const bool right_ok = k < mdp::obs::LIDAR_BINS && (!valid || R[k] > R[k1] + kLrClusJump);   // 시야 끝에 걸린 덩어리는 버림
+      if (left_ok && right_ok && k1 - k0 >= 2 && rmin < kLrClusRange && n < kLrClus) {
+        const float g0 = mdp::obs::kLidarMin + ((float)k0 + 0.5f) * mdp::obs::kLidarBin, g1 = mdp::obs::kLidarMin + ((float)k1 + 0.5f) * mdp::obs::kLidarBin;
+        const float a0 = g0 + wk * tk * (g0 + 0.5f * e.noise.fov), a1 = g1 + wk * tk * (g1 + 0.5f * e.noise.fov);
+        float s0, c0, s1, c1;
+        dm::sincosf_d(a0, &s0, &c0);
+        dm::sincosf_d(a1, &s1, &c1);
+        const float wx = R[k1] * c1 - R[k0] * c0, wy = R[k1] * s1 - R[k0] * s0;
+        const float chord = sqrtf(wx * wx + wy * wy);
+        if (chord >= kLrClusW0 && chord <= kLrClusW1) {
+          const float rr = dm::clampf(0.5f * chord, 0.10f, 0.30f), d = rmin + rr;
+          float sm, cm;
+          dm::sincosf_d(0.5f * (a0 + a1), &sm, &cm);
+          const float lx = c.mount_x + d * cm, ly = c.mount_y + d * sm;
+          cx[n] = (px + co * lx) - s * ly;
+          cy[n] = (py + s * lx) + co * ly;
+          cr[n] = rr;
+          ++n;
+        }
+      }
+      k0 = -1;
+    }
+    if (valid && k0 < 0) {
+      k0 = k;
+      left_ok = k > 0 && (!(R[k - 1] < c.map_max_range) || R[k - 1] > R[k] + kLrClusJump);
+      rmin = R[k];
+    } else if (valid) {
+      rmin = dm::minf(rmin, R[k]);
+    }
+  }
+  return n;
+}
+
+DEV int lowrl_movers(const EnvBatch& b, const EnvState& e, int env, LrMover* M) {
+  const EnvCfg& c = b.cfg;
+  const int sA = e.lid_head, sB = (sA + kLidarRing - 2) % kLidarRing, sC = (sA + kLidarRing - 4) % kLidarRing;
+  const float* PA = e.lid_pose + 3 * sA;
+  const float* PB = e.lid_pose + 3 * sB;
+  const float* PC = e.lid_pose + 3 * sC;
+  const float step = (float)c.substeps * c.dt;
+  const int sA1 = (sA + kLidarRing - 1) % kLidarRing, sB1 = (sB + kLidarRing - 1) % kLidarRing, sC1 = (sC + 1) % kLidarRing;
+  // 장마다 각속도: 그 장으로 끝난 걸음의 방향 변화 / 걸음 (가장 옛 장은 앞 장이 링에 없어 바로 뒤 걸음 것)
+  const float wA = dm::wrap_pi(PA[2] - e.lid_pose[3 * sA1 + 2]) / step, wB = dm::wrap_pi(PB[2] - e.lid_pose[3 * sB1 + 2]) / step;
+  const float wC = dm::wrap_pi(e.lid_pose[3 * sC1 + 2] - PC[2]) / step;
+  if (dm::absf(wA - wB) > c.ps_gate || dm::absf(wB - wC) > c.ps_gate) return -1;   // 각속도가 크게 바뀌는 중: 편 뒤에도 남는 오차가 큼 — 쉼
+  float ax[kLrClus], ay[kLrClus], ar[kLrClus], bx[kLrClus], by[kLrClus], br[kLrClus], qx[kLrClus], qy[kLrClus], qr[kLrClus];
+  const int nA = lowrl_clusters(b, e, env, sA, wA, ax, ay, ar);
+  if (nA == 0) return 0;
+  const int nB = lowrl_clusters(b, e, env, sB, wB, bx, by, br);
+  const int nC = lowrl_clusters(b, e, env, sC, wC, qx, qy, qr);
+  const float dt2 = 2.f * (float)c.substeps * c.dt;
+  const float reach = c.people.v_hi * dt2 + 0.15f, reach2 = reach * reach;
+  int n = 0;
+  for (int i = 0; i < nA && n < kLrMovers; ++i) {
+    int j = -1, l = -1;
+    float best = reach2;
+    for (int k = 0; k < nB; ++k) {
+      const float dd = (ax[i] - bx[k]) * (ax[i] - bx[k]) + (ay[i] - by[k]) * (ay[i] - by[k]);
+      if (dd < best) { best = dd; j = k; }
+    }
+    if (j < 0) continue;
+    best = reach2;
+    for (int k = 0; k < nC; ++k) {
+      const float dd = (bx[j] - qx[k]) * (bx[j] - qx[k]) + (by[j] - qy[k]) * (by[j] - qy[k]);
+      if (dd < best) { best = dd; l = k; }
+    }
+    if (l < 0) continue;
+    const float v1x = (ax[i] - bx[j]) / dt2, v1y = (ay[i] - by[j]) / dt2, v2x = (bx[j] - qx[l]) / dt2, v2y = (by[j] - qy[l]) / dt2;
+    const float s1 = sqrtf(v1x * v1x + v1y * v1y), s2 = sqrtf(v2x * v2x + v2y * v2y);
+    if (s1 < kLrMoveV0 || s2 < kLrMoveV0 || s1 > kLrMoveV1 || s2 > kLrMoveV1) continue;
+    if (v1x * v2x + v1y * v2y < 0.7f * s1 * s2) continue;   // 두 구간 방향이 45° 넘게 다름: 잡음
+    LrMover& m = M[n++];
+    m.vx = 0.5f * (v1x + v2x);
+    m.vy = 0.5f * (v1y + v2y);
+    m.x = ax[i];
+    m.y = ay[i];
+    m.r = dm::maxf(ar[i], dm::maxf(br[j], qr[l]));
+  }
+  return n;
+}
+
+// 진단 전용(ps_on == 2): 참값 사람 자리·속도 (지도 좌표로 옮김) — 센서 추적이 완벽할 때의 상한을 재는 용도
+DEV void lowrl_person_vel(const EnvCfg& c, const People& P, int i, float rx, float ry, float* vx, float* vy) {
+  const PeopleCfg& pc = c.people;
+  const Cyl& C = P.cyl[i];
+  *vx = 0.f;
+  *vy = 0.f;
+  if (!(P.mode[i] & kPersonWalk)) return;
+  const float px = C.x - rx, py = C.y - ry, d2r = px * px + py * py;
+  if (!(P.mode[i] & kPersonIgnore) && d2r < pc.yield_dist * pc.yield_dist) {
+    const float d = sqrtf(d2r);
+    if (d > 1e-4f) { *vx = px / d * pc.yield_speed; *vy = py / d * pc.yield_speed; }
+  } else if (!(P.wait[i] > 0.f)) {
+    const float gx = P.gx[i] - C.x, gy = P.gy[i] - C.y;
+    const float dg = sqrtf(gx * gx + gy * gy);
+    if (dg > 0.05f) { *vx = gx / dg * P.speed[i]; *vy = gy / dg * P.speed[i]; }
+  }
+}
+DEV int lowrl_movers_true(const EnvBatch& b, const EnvState& e, LrMover* M) {
+  const People& P = e.people;
+  int n = 0;
+  for (int i = 0; i < P.n && n < kLrMovers; ++i) {
+    float vx, vy;
+    lowrl_person_vel(b.cfg, P, i, e.x, e.y, &vx, &vy);
+    if (vx * vx + vy * vy < kLrMoveV0 * kLrMoveV0) continue;
+    LrMover& m = M[n++];
+    m.x = P.cyl[i].x + e.ex;
+    m.y = P.cyl[i].y + e.ey;
+    m.vx = vx;
+    m.vy = vy;
+    m.r = P.cyl[i].r;
+  }
+  return n;
+}
+
+// 정책 명령 (v > 0, ω) 에 곱할 v 배율. 로봇: 처음 0.3 s 는 ω 로 돌고 그 뒤 곧게. 사람: 지금 속도 그대로
+DEV float lowrl_yield(const EnvBatch& b, const EnvState& e, float v, float w, const LrMover* M, int n, int* who) {
+  const EnvCfg& c = b.cfg;
+  const float step = (float)c.substeps * c.dt;
+  const int T = (int)(c.ps_h / step + 0.5f);
+  float k = 1.f;
+  for (int lv = 0; lv < 3; ++lv) {
+    bool hit = false;
+    float x = e.x + e.ex, y = e.y + e.ey, th = e.th + e.eth;
+    for (int q = 1; q <= T && !hit; ++q) {
+      if (q <= 3) th += w * step;
+      float s, co;
+      dm::sincosf_d(th, &s, &co);
+      x += k * v * co * step;
+      y += k * v * s * step;
+      const float t = (float)q * step;
+      for (int i = 0; i < n; ++i) {
+        const float dx = (M[i].x + M[i].vx * t) - x, dy = (M[i].y + M[i].vy * t) - y, lim = M[i].r + c.half_len + c.ps_margin;
+        if (dx * dx + dy * dy < lim * lim) {
+          hit = true;
+          if (lv == 0 && *who < 0) *who = i;   // 그대로 가면 처음 닿는 사람
+        }
+      }
+    }
+    if (!hit) return k;
+    k = lv == 0 ? 0.5f : 0.f;
+  }
+  return 2.f;   // 서도 닿음: 못 가림 (부른 쪽이 1 로 씀)
+}
+
 DEV bool lowrl_act(const EnvBatch& b, EnvState& e, int env, const float* a) {
   if (!b.lowrl) return false;
   LowRl& R = b.lowrl[env];
@@ -267,6 +464,60 @@ DEV bool lowrl_act(const EnvBatch& b, EnvState& e, int env, const float* a) {
     w *= k3;
     if (k3 < 1.f) safe = true;
   }
+  if (c.ps_on) {
+    float k4 = 1.f;
+    R.ps_n = -2;
+    R.ps_res = 1.f;
+    if (c.ps_on == 3) {   // 진단 전용: 추적만 돌리고(서 있어도) 명령은 안 고친다 — 로봇에 가장 가까운 움직이는 것과 "비켜 줬을까" 판정을 남긴다
+      LrMover M[kLrMovers + 1];
+      const int n = lowrl_movers(b, e, env, M);
+      R.ps_n = n;
+      R.ps_m[0] = R.ps_m[1] = R.ps_m[2] = R.ps_m[3] = 0.f;
+      if (n > 0) {
+        int who = -1, near = 0;
+        R.ps_res = lowrl_yield(b, e, n0 * c.act_v_fwd, w, M, n, &who);
+        const float rx = e.x + e.ex, ry = e.y + e.ey;
+        for (int i = 1; i < n; ++i)
+          if ((M[i].x - rx) * (M[i].x - rx) + (M[i].y - ry) * (M[i].y - ry) < (M[near].x - rx) * (M[near].x - rx) + (M[near].y - ry) * (M[near].y - ry)) near = i;
+        R.ps_m[0] = M[near].x; R.ps_m[1] = M[near].y; R.ps_m[2] = M[near].vx; R.ps_m[3] = M[near].vy;
+      }
+    } else if (v > 0.f) {
+      LrMover M[kLrMovers + 1];
+      int n = c.ps_on == 2 ? lowrl_movers_true(b, e, M) : lowrl_movers(b, e, env, M);
+      R.ps_n = n;
+      if (n < 0) n = 0;
+      int mem = -1;
+      if (R.ps_age > 0) {   // 기억한 사람: 이번 장에서 다시 잡혔으면(0.5 m 안) 잡힌 것을 쓰고, 아니면 같은 속도로 옮겨 계속 본다
+        const float step = (float)c.substeps * c.dt;
+        R.ps_m[0] += R.ps_m[2] * step;
+        R.ps_m[1] += R.ps_m[3] * step;
+        R.ps_age -= 1;
+        bool seen = false;
+        for (int i = 0; i < n; ++i) {
+          const float dx = M[i].x - R.ps_m[0], dy = M[i].y - R.ps_m[1];
+          if (dx * dx + dy * dy < 0.25f) seen = true;
+        }
+        if (!seen) {
+          mem = n;
+          M[n++] = LrMover{R.ps_m[0], R.ps_m[1], R.ps_m[2], R.ps_m[3], R.ps_m[4]};
+        }
+      }
+      if (n > 0) {
+        int who = -1;
+        R.ps_res = lowrl_yield(b, e, n0 * c.act_v_fwd, w, M, n, &who);   // 정책이 낸 v 로 본다 (이미 줄인 v 로 보면 풀렸다 걸렸다 함)
+        if (R.ps_res < 1.f) k4 = R.ps_res;
+        if (who >= 0 && who != mem) {   // 이번 장에서 잡힌 사람만 기억을 새로 건다 (기억이 기억을 늘리지 않게)
+          R.ps_m[0] = M[who].x; R.ps_m[1] = M[who].y; R.ps_m[2] = M[who].vx; R.ps_m[3] = M[who].vy; R.ps_m[4] = M[who].r;
+          R.ps_age = c.ps_mem;
+        }
+      }
+      if (k4 < 1.f) { R.ps_hold = c.ps_hold; R.ps_k = k4; }
+      else if (R.ps_hold > 0) { R.ps_hold -= 1; k4 = R.ps_k; }
+    } else {
+      R.ps_hold = 0;
+    }
+    if (k4 < 1.f) { v *= k4; safe = true; }
+  }
   e.cmd_v = v;
   e.cmd_vy = 0.f;
   e.cmd_w = w;
@@ -291,6 +542,34 @@ DEV bool lowrl_act(const EnvBatch& b, EnvState& e, int env, const float* a) {
   return true;
 }
 
+// ---------- 사람 마주침 (보상 전용 — 참값을 쓴다. 정책·지킴이는 안 본다) ----------
+// 로봇과 사람이 지금 속도 그대로 가면 lr_ppl_t 초 안에 가장 가까워지는 때 t* 와 그때 간격을 본다. 간격 < lr_ppl_m 인 사람 가운데 (1 − t* / lr_ppl_t) 의 최댓값(0 ~ 1).
+// 사람 속도는 people_step 과 같은 규칙의 "지금 뜻"(걷는 사람: 목표점 쪽 speed, 비켜서는 사람: 로봇 반대쪽 yield_speed, 서 있음·기다림: 0).
+// 근거: 사람 충돌 진단에서 닿은 사람은 모두 로봇을 무시하고 걷는 사람이고, 2 s 전부터 라이다에 보였는데 정책이 길을 안 비킴(mdp/README).
+// 닿기 전부터 값을 주는 꼴은 DRL-VO(arXiv 2301.06512)의 속도 장애물(VO) 방향 보상·NavRL(arXiv 2409.15634)의 동적 안전 보상과 같은 자리
+DEV float lowrl_ppl_risk(const EnvBatch& b, const EnvState& e) {
+  const EnvCfg& c = b.cfg;
+  const PeopleCfg& pc = c.people;
+  const People& P = e.people;
+  float s, co;
+  dm::sincosf_d(e.th, &s, &co);
+  const float rvx = e.v * co, rvy = e.v * s;
+  float worst = 0.f;
+  for (int i = 0; i < P.n; ++i) {
+    const Cyl& C = P.cyl[i];
+    const float px = C.x - e.x, py = C.y - e.y;
+    float vx, vy;
+    lowrl_person_vel(c, P, i, e.x, e.y, &vx, &vy);
+    const float ux = vx - rvx, uy = vy - rvy, u2 = ux * ux + uy * uy;
+    float t = 0.f;
+    if (u2 > 1e-6f) t = dm::clampf(-(px * ux + py * uy) / u2, 0.f, c.lr_ppl_t);
+    const float qx = px + ux * t, qy = py + uy * t;
+    const float gap = sqrtf(qx * qx + qy * qy) - C.r - c.half_len;
+    if (gap < c.lr_ppl_m) worst = dm::maxf(worst, 1.f - t / c.lr_ppl_t);
+  }
+  return worst;
+}
+
 // ---------- 걸음 끝 (finish_step 맨 끝, 스레드 0): 보상·누적 ----------
 DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
   if (!b.lowrl) return;
@@ -312,7 +591,7 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     if (R.rem_ok && t.has_path) r[kLrProgress] = kLrProgressK * dm::clampf(R.rem_prev - t.rem, -kLrProgressClip, kLrProgressClip);
     r[kLrTime] = kLrTimeK;
     if (reached) r[kLrReach] = kLrReachK;
-    if (e.collided) r[kLrCollision] = kLrCollisionK;
+    if (e.collided) r[kLrCollision] = e.people.hit_person ? c.lr_pcol_k : kLrCollisionK;
     {   // 근접: 충돌 판정과 같은 정답 격자(collision_band 에 걸린 칸 — 라이다 평면 밖 장애물도) · 사람
       float d = e.people.near_d;
       if (m.clear) d = dm::minf(d, body_clearance(c, m, e.x, e.y, e.th));
@@ -321,11 +600,13 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
         const float rc = sqrtf(c.half_len * c.half_len + c.half_wid * c.half_wid);
         r[kLrProximity] += c.lr_mprox_k * (dm::absf(e.v) + rc * dm::absf(e.w)) * (1.f - dm::maxf(d, 0.f) / c.lr_mprox_d);
       }
+      if (c.lr_ppl_k != 0.f && e.people.n > 0) r[kLrProximity] += c.lr_ppl_k * lowrl_ppl_risk(b, e);
     }
     if (e.step > 1) {
       const float d0 = e.last_act[0] - e.last_act[mdp::act::DIM], d2 = e.last_act[2] - e.last_act[mdp::act::DIM + 2];
       r[kLrSmooth] = kLrSmoothK * sqrtf(d0 * d0 + d2 * d2);
     }
+    if (c.lr_w_k != 0.f) r[kLrSmooth] += c.lr_w_k * dm::maxf(0.f, dm::absf(e.last_act[2]) * c.act_w_max - c.lr_w0);
     if (e.last_act[0] < 0.f) r[kLrBack] = kLrBackK * -e.last_act[0];
     if (R.safe) r[kLrSafety] = kLrSafetyK;
     float sum = 0.f;

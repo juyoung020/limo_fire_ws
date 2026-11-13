@@ -121,6 +121,12 @@ struct LowRl {
   // 위층(같은 판에서 1 Hz 로 목적지를 넣는 쪽)이 그 후보를 빼고 다시 고르는 데 쓸 자리 (호스트: Env::get_low_rl, 장치: EnvBatch::lowrl)
   int32_t stall;
   int32_t stall_tgt;
+  int32_t ps_hold;     // 사람 비켜 주기(low_rl.h lowrl_yield): 줄인 배율을 더 붙들 걸음 수
+  float ps_k;          //   그 배율
+  int32_t ps_n;        //   진단(low_policy_run --diag): 이번 걸음 추적 결과 — 사람 수 · −1 쉼(로봇 속도가 바뀌는 중) · −2 안 봄(v ≤ 0 · 꺼짐)
+  float ps_res;        //   진단: 이번 걸음 판정 — 1 안 닿음 · 0.5 · 0 줄임 · 2 서도 닿음(못 가림)
+  float ps_m[5];       //   기억한 사람: 마지막으로 닿을 것으로 본 사람의 지도 자리·속도·반지름 (x, y, vx, vy, r) — 안 보이는 걸음엔 같은 속도로 옮김
+  int32_t ps_age;      //   그 기억을 더 쓸 걸음 수 (0 = 없음)
 };
 
 // 보상 항 (차례 = LowRlStat::term 칸 번호 — 도구·학습기가 이름표를 같은 차례로 가짐)

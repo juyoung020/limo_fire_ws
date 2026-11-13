@@ -740,6 +740,90 @@ void diag_row(Diag& D, const char* kind, const sim::EnvCfg& c, const sim::World&
 }
 const char* kDiagHead = "kind\tscene\tpeople\tenv\ttask_step\tgoal_age\tx\ty\tth\tv\tw\ta_v\ta_w\tsafe\tv5\tv10\twmax5\ta_v_mean5\tsafe10\thu\thv\thd\treg\tnear0\tnear0max\tcam\tfov\tgeom\tlid0\tlid1\tlid2\tlid3\tgap\tclr_cm\tgoal_d\trem\tsub_d\tsub_sin\tsub_cos\thas_path\tplan_age\tdelay\n";
 
+// ---------- 사람 충돌·속도 진단 (--diag 를 주면 <파일>.ppl.tsv 와 표준 출력의 "시간 손실" 표. 끄면 아무것도 안 함) ----------
+// 사람 충돌마다 닿기 전 kPplH 걸음의 로봇·그 사람 궤적을 걸음마다 한 줄씩: 누가 누구에게 다가갔나, 언제부터 라이다·지도에 보였나, 안전층이 언제 개입했나를 뒤에서 센다
+constexpr int kPplH = 50;
+struct PplStep {
+  float x, y, th, v, w, a0, a1, cv, cw;   // 걸음 앞 참 자세·속도, 정책 행동, 걸음 뒤 명령 (안전층 뒤)
+  int safe, n;
+  int trk; float yres, m[4];   // 사람 비켜 주기 진단 (LowRl::ps_n · ps_res · ps_m — 그 걸음 뒤 값)
+  float px[sim::kMaxPeople], py[sim::kMaxPeople], lid[sim::kMaxPeople];   // 사람 자리, 그 방위 라이다 최신 장의 가장 짧은 값 (m, 시야 밖 −1)
+  int occ[sim::kMaxPeople], cam[sim::kMaxPeople];                         // 사람 겉(로봇 쪽) 점의 가까운 지도 막힘 채널·깊이 층 채널 (3 × 3 최댓값, 창 밖 −1)
+};
+struct PplDiag {
+  std::FILE* f = nullptr;
+  std::vector<PplStep> hist;   // [N][kPplH] 고리
+  std::vector<int> hn;
+  long id = 0;
+  // 시간 손실 분해 (정책·추종기가 몬 걸음): 분류마다 걸음 수 · 이동 거리
+  double cn[8] = {}, cd[8] = {}, cw[8] = {}, cs[8] = {}, cf[8] = {};   // 걸음 수 · 거리 · |명령 ω| 합 · |ω| 가 바퀴 한도에 걸린 걸음 · ω 부호가 뒤집힌 걸음
+  std::vector<float> pw;   // 환경마다 직전 명령 ω
+};
+const char* kSpdName[8] = {"안전층·지킴이 개입", "새 목표 뒤 1 s", "목표 1 m 안", "급회전(|ω| > 1)", "느린 명령(v < 0.9)", "가속 중(명령 ≥ 0.9, 실제 < 0.9)", "제 속도", "목표 없음"};
+void ppl_push(PplDiag& P, const sim::EnvCfg& c, int i, const sim::EnvState& e, const uint8_t* I, float a0, float a1, float cv, float cw, int safe, const sim::LowRl& rl) {
+  using namespace mdp::obs;
+  PplStep& s = P.hist[(size_t)i * kPplH + P.hn[i] % kPplH];
+  P.hn[i] += 1;
+  s.x = e.x; s.y = e.y; s.th = e.th; s.v = e.v; s.w = e.w; s.a0 = a0; s.a1 = a1; s.cv = cv; s.cw = cw; s.safe = safe; s.n = e.people.n;
+  s.trk = rl.ps_n; s.yres = rl.ps_res;
+  for (int k = 0; k < 4; ++k) s.m[k] = rl.ps_m[k];
+  const float s0 = std::sin(e.th), c0 = std::cos(e.th);
+  const auto lid = [&](int bin) {
+    const int z = 4 * bin;
+    int row = 0, col = 0;
+    for (int k = 0; k < 5; ++k) { col |= ((z >> (2 * k)) & 1) << k; row |= ((z >> (2 * k + 1)) & 1) << k; }
+    const float q = (float)I[sim::kLowLidarOff + row * sim::kLowLidarHW + col] / 255.f;
+    return q * q * c.map_max_range;
+  };
+  for (int k = 0; k < e.people.n; ++k) {
+    const sim::Cyl& C = e.people.cyl[k];
+    s.px[k] = C.x; s.py[k] = C.y;
+    const float u = c0 * (C.x - e.x) + s0 * (C.y - e.y), v = c0 * (C.y - e.y) - s0 * (C.x - e.x);
+    const float lx = u - c.mount_x, d = std::hypot(lx, v), ang = std::atan2(v, lx);
+    const float half = d > C.r ? std::asin(C.r / d) : 1.5f;
+    float m = -1.f;
+    for (int b = (int)std::floor((ang - half - kLidarMin) / kLidarBin); b <= (int)std::floor((ang + half - kLidarMin) / kLidarBin); ++b) {
+      if (b < 0 || b >= LIDAR_BINS) continue;
+      const float r = lid(b);
+      m = m < 0.f ? r : std::min(m, r);
+    }
+    s.lid[k] = m;
+    const float du = std::hypot(u, v), k2 = du > 1e-3f ? std::max(0.f, du - C.r + 0.05f) / du : 0.f;
+    const int row = (int)std::lround(NEAR_H / 2 - 0.5f - u * k2 / 0.1f), col = (int)std::lround(NEAR_W / 2 - 0.5f - v * k2 / 0.1f);
+    s.occ[k] = s.cam[k] = -1;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        const int r = row + dy, q = col + dx;
+        if (r < 0 || q < 0 || r >= NEAR_H || q >= NEAR_W) continue;
+        s.occ[k] = std::max(s.occ[k], (int)I[r * NEAR_W + q]);
+        s.cam[k] = std::max(s.cam[k], (int)I[sim::kLowCamCh * NEAR_H * NEAR_W + r * NEAR_W + q]);
+      }
+  }
+}
+// 충돌 한 건: 걸음 앞 상태(pre)에서 몸통 간격이 가장 작은 사람의 궤적
+void ppl_dump(PplDiag& P, const sim::EnvCfg& c, const char* scene, int people, int i, const sim::EnvState& pre, int hit_dir, int goal_age) {
+  int j = 0;
+  float best = 1e9f;
+  const float s0 = std::sin(pre.th), c0 = std::cos(pre.th);
+  for (int k = 0; k < pre.people.n; ++k) {
+    const float g = sim::body_cyl_gap(c, pre.people.cyl[k], pre.x, pre.y, s0, c0);
+    if (g < best) { best = g; j = k; }
+  }
+  const long id = P.id++;
+  const int hn = P.hn[i];
+  for (int back = 0; back < std::min(hn, kPplH); ++back) {
+    const PplStep& s = P.hist[(size_t)i * kPplH + ((hn - 1 - back) % kPplH + kPplH) % kPplH];
+    if (j >= s.n) break;
+    const float ss = std::sin(s.th), cc = std::cos(s.th);
+    sim::Cyl C = pre.people.cyl[j];
+    C.x = s.px[j]; C.y = s.py[j];
+    std::fprintf(P.f, "%ld\t%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.4f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\t%d\t%d\t%d\t%.1f\t%.3f\t%.3f\t%.3f\t%.3f\n", id, scene, people, i, hit_dir, goal_age, back, s.x, s.y,
+                 s.th, s.v, s.w, s.a0, s.a1, s.cv, s.cw, s.safe, C.x, C.y, C.r, pre.people.mode[j], pre.people.speed[j], sim::body_cyl_gap(c, C, s.x, s.y, ss, cc), s.lid[j], s.occ[j], s.cam[j], s.trk, s.yres, s.m[0], s.m[1], s.m[2], s.m[3]);
+  }
+  std::fflush(P.f);
+}
+const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\tpx\tpy\tpr\tmode\tpspeed\tgap\tlid\tocc\tcam\ttrk\tyres\tmx\tmy\tmvx\tmvy\n";
+
 struct PolRes {
   std::string scene;
   int people;
@@ -789,6 +873,12 @@ int run_policy(const Args& a) {
     dg.f = std::fopen(a.diag.c_str(), "w");
     if (!dg.f) throw std::runtime_error("--diag 파일을 못 엶: " + a.diag);
     std::fputs(kDiagHead, dg.f);
+  }
+  PplDiag pd;
+  if (dg.f) {
+    pd.f = std::fopen((a.diag + ".ppl.tsv").c_str(), "w");
+    if (!pd.f) throw std::runtime_error("--diag 파일을 못 엶: " + a.diag + ".ppl.tsv");
+    std::fputs(kPplHead, pd.f);
   }
   for (int people : people_set)
   for (size_t wi = 0; wi < a.scenes.size(); ++wi) {
@@ -847,6 +937,12 @@ int run_policy(const Args& a) {
     };
     const long max_t = (long)M * ((long)(warm_max + 200) * DS + c.low_time_steps + 2 * DS) + 50 * DS;
     if (dg.f) { dg.hist.assign((size_t)N * kDiagH, DiagHist{}); dg.hn.assign(N, 0); }
+    if (pd.f) {
+      pd.hist.assign((size_t)N * kPplH, PplStep{});
+      pd.hn.assign(N, 0);
+      for (int k = 0; k < 8; ++k) pd.cn[k] = pd.cd[k] = pd.cw[k] = pd.cs[k] = pd.cf[k] = 0;
+      pd.pw.assign((size_t)N, 0.f);
+    }
     for (long t = 0; active > 0 && t < max_t; ++t) {
       env.set_low_cmd(cmd);
       env.low_prepare(d_zero);
@@ -876,6 +972,28 @@ int run_policy(const Args& a) {
       for (int i = 0; i < N; ++i) {
         if (phase[i] == 2) continue;
         const LowEp& L = low[i];
+        if (pd.f && phase[i] == 1 && cmd[i].follow == fol) {   // 사람 충돌 궤적 · 시간 손실 분해 (정책·추종기 모두)
+          const sim::EnvState& e0 = dg.st[i];
+          const int safe_now = L.kind == sim::kLowSafety;
+          const float a0 = use_pol ? pol[(size_t)PW * i] : 0.f, a1 = use_pol ? pol[(size_t)PW * i + 1] : 0.f;
+          ppl_push(pd, c, i, e0, dg.img.data() + (size_t)i * sim::kLowImg, a0, a1, done[i] ? 0.f : st[i].cmd_v, done[i] ? 0.f : st[i].cmd_w, safe_now, dg.rl_post[i]);
+          const int e_ = done[i] ? L.end : 0;
+          if (e_ == sim::kLowEndPerson) ppl_dump(pd, c, W.name.c_str(), people, i, e0, L.hit_dir, e0.step - step0[i]);
+          if (!done[i]) {
+            float gd = 99.f;
+            if (cmd[i].target >= 0) gd = std::hypot(W.ox + ((float)(cmd[i].target % W.gw) + 0.5f) * c.res - (e0.x + e0.ex), W.oy + ((float)(cmd[i].target / W.gw) + 0.5f) * c.res - (e0.y + e0.ey));
+            const float cv = st[i].cmd_v, vcmd = use_pol ? (a0 > 1.f ? 1.f : a0) * c.act_v_fwd : cv;
+            const int k = cmd[i].target < 0 ? 7 : safe_now ? 0 : (e0.step - step0[i] < 10) ? 1 : gd < 1.f ? 2 : std::fabs(e0.w) > 1.f ? 3 : vcmd < 0.9f * c.act_v_fwd ? 4 : e0.v < 0.9f * c.act_v_fwd ? 5 : 6;
+            pd.cn[k] += 1;
+            pd.cd[k] += std::hypot(st[i].x - e0.x, st[i].y - e0.y);
+            const float w_now = st[i].cmd_w, w_lim = (c.wheel_max - c.act_v_fwd) / c.wheel_k;
+            pd.cw[k] += std::fabs(w_now);
+            if (std::fabs(w_now) > w_lim) pd.cs[k] += 1;
+            if (w_now * pd.pw[i] < 0.f && std::fabs(w_now) > 0.3f && std::fabs(pd.pw[i]) > 0.3f) pd.cf[k] += 1;
+            pd.pw[i] = w_now;
+          }
+          if (done[i]) pd.hn[i] = 0;
+        }
         if (dg.f && phase[i] == 1 && cmd[i].follow == 2) {   // 진단: 정책이 몬 걸음
           const int safe_now = done[i] ? (L.kind == sim::kLowSafety) : dg.rl_post[i].safe;
           dg.hist[(size_t)i * kDiagH + dg.hn[i] % kDiagH] = DiagHist{dg.st[i].v, dg.st[i].w, pol[(size_t)PW * i], pol[(size_t)PW * i + 1], safe_now};
@@ -997,10 +1115,18 @@ int run_policy(const Args& a) {
                   b.out[kOutPersonFront], b.out[kOutPersonBack], b.out[kOutStall], b.out[kOutTime], b.out[kOutGiveUp]);
       if (k == 3) { R.goals = n; R.reach = n > 0 ? b.out[kOutReach] / n : 0.0; R.reach_x = decided > 0 ? b.out[kOutReach] / decided : 0.0; }
     }
+    if (pd.f) {   // 시간 손실 = 걸음 시간 − 이동 거리 ÷ 최고 속도 (분류는 위에서부터 먼저 맞는 것 하나)
+      double tn = 0, td = 0;
+      for (int k = 0; k < 8; ++k) { tn += pd.cn[k]; td += pd.cd[k]; }
+      std::printf("시간 손실 분해 (몬 걸음 %.0f, 평균 속도 %.3f, 최고 %.2f m/s): 분류 | 걸음 몫 | 그 걸음 평균 속도 | 손실 몫(전체 시간 대비) | |명령 ω| 평균 | 바퀴 한도에 걸린 걸음 | ω 부호 뒤집힌 걸음\n", tn, tn > 0 ? td / (tn * dt) : 0.0, c.act_v_fwd);
+      for (int k = 0; k < 8; ++k)
+        std::printf("  %-40s %.4f  %.3f  %.4f  %.3f  %.3f  %.3f\n", kSpdName[k], tn > 0 ? pd.cn[k] / tn : 0.0, pd.cn[k] > 0 ? pd.cd[k] / (pd.cn[k] * dt) : 0.0, tn > 0 ? (pd.cn[k] * dt - pd.cd[k] / c.act_v_fwd) / (tn * dt) : 0.0, pd.cn[k] > 0 ? pd.cw[k] / pd.cn[k] : 0.0, pd.cn[k] > 0 ? pd.cs[k] / pd.cn[k] : 0.0, pd.cn[k] > 0 ? pd.cf[k] / pd.cn[k] : 0.0);
+    }
     res.push_back(R);
     std::fflush(stdout);
   }
   if (dg.f) std::fclose(dg.f);
+  if (pd.f) std::fclose(pd.f);
   cudaFree(d_act);
   cudaFree(d_zero);
   cudaFree(d_pol);

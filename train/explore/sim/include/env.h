@@ -86,6 +86,14 @@ struct EnvCfg {
   float lg_h, lg_margin;         //   내다보는 시간 (s) · 몸통 둘레 여유 (m)
   int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
   float lr_mprox_k, lr_mprox_d;  // 움직임 근접 벌점: × 몸통 가장 빠른 점 속도 (m/s) × (1 − 간격 / lr_mprox_d). 0 = 끔
+  float lr_ppl_k, lr_ppl_t, lr_ppl_m;   // 사람 마주침 벌점 (low_rl.h lowrl_ppl_risk): × (1 − 가장 가까워질 때까지 시간 / lr_ppl_t), 그때 간격 < lr_ppl_m 인 사람. 0 = 끔
+  int ps_on;                     // 사람 비켜 주기 (lowrl_yield): 0 끔 · 1 라이다 덩어리 추적(센서만) · 2 참값 사람(진단 전용 — 상한을 재는 용도, 채택 금지)
+  float ps_gate;                 //   추적을 쉬는 각속도 차 (rad/s)
+  float ps_h, ps_margin;         //   내다보는 시간 (s) · 사람 둘레 여유 (m)
+  int ps_mem;                    //   닿을 것으로 본 사람을 기억하는 걸음 수
+  int ps_hold;                   //   줄인 뒤 이 걸음 수 동안 그 배율을 붙듦
+  float lr_pcol_k;               // 사람 충돌 보상 (벽 충돌은 kLrCollisionK 그대로)
+  float lr_w_k, lr_w0;           // 회전 벌점: × max(0, |정책 ω| − lr_w0) (rad/s). 0 = 끔
   int curriculum;           // 1: 환경마다 단계(맵 묶음·오차 배율), 0: 모든 맵 고르게·오차 배율 1 (기준선·도구)
   int cur_top_random;       // 1: 맨 위 단계에서 또 올림 조건이면 무작위 단계로 (curriculums.h on_episode_end — 기본 켬, SIM_CUR_TOPRAND=0 이면 끔)
   // 오르내림 규칙 (env.yaml curriculum, curriculums.h): cur_rule = mdp::cur::kCurSuccess(최근 cur_window 판 성공 비율 ≥ cur_up 올림 · < cur_down 내림, 미끄러지는 창)
