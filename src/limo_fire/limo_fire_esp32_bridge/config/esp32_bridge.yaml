@@ -7,7 +7,7 @@ esp32_bridge:
     heartbeat_timeout: 3.0       # s, 펌웨어 살아 있음 줄 1 s 마다
     ultrasonic:
       # 펌웨어 초음파 번호 순서 = 이 이름 순서 → /ultrasonic/<이름>, 프레임 ultrasonic_<이름>_link (URDF ultrasonic.xacro, 시뮬과 같음)
-      names: ["front", "left", "right"]
+      names: ["front_left", "front_right"]   # 앞 범퍼 아래 좌우 ±20° (docs/wiring.md)
       field_of_view: 0.2618      # 15°, HC-SR04 데이터시트 감지 각
       min_range: 0.02            # 데이터시트 2 cm
       max_range: 4.0             # 데이터시트 400 cm

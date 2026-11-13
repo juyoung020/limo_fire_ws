@@ -193,12 +193,12 @@ global_costmap:
       # 저장 지도(map_server trinary: 0 · 100)에는 바뀌는 것 없음
       lethal_cost_threshold: 65
       plugins: ["static_layer", "obstacle_layer", "range_layer", "inflation_layer"]
-      # 초음파 HC-SR04 × 3 (/ultrasonic/*) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
+      # 초음파 HC-SR04 × 2 (/ultrasonic/front_left·front_right) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
       # 점으로 찍기만 해 잡음이 쌓였다. 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다. 값은 Nav2 기본 + 메아리 없음(최대 거리) = 지움
       range_layer:
         plugin: "nav2_costmap_2d::RangeSensorLayer"
         enabled: True
-        topics: ["/ultrasonic/front", "/ultrasonic/left", "/ultrasonic/right"]
+        topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
         clear_on_max_reading: True
         input_sensor_type: "ALL"
       obstacle_layer:
@@ -246,12 +246,12 @@ local_costmap:
       footprint: "[[-0.16, -0.11], [-0.16, 0.11], [0.16, 0.11], [0.16, -0.11]]"
       footprint_padding: 0.02
       plugins: ["obstacle_layer", "range_layer", "inflation_layer"]
-      # 초음파 HC-SR04 × 3 (/ultrasonic/*) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
+      # 초음파 HC-SR04 × 2 (/ultrasonic/front_left·front_right) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
       # 점으로 찍기만 해 잡음이 쌓였다. 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다. 값은 Nav2 기본 + 메아리 없음(최대 거리) = 지움
       range_layer:
         plugin: "nav2_costmap_2d::RangeSensorLayer"
         enabled: True
-        topics: ["/ultrasonic/front", "/ultrasonic/left", "/ultrasonic/right"]
+        topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
         clear_on_max_reading: True
         input_sensor_type: "ALL"
       inflation_layer:

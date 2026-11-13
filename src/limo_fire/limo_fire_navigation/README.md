@@ -26,7 +26,7 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 | IMU | 빛을 안 써서 영향 없음 | **씀** — 방향(EKF), 부딪힘 감지 |
 | 2D 라이다 YDLIDAR T-mini Plus | 연기 입자에 반사돼 거리가 틀어짐 | 안 씀 |
 | 깊이·컬러 카메라 Orbbec Dabai DC1 | 보이는 빛·적외선 패턴이 연기에 가림 | 안 씀 |
-| 초음파 HC-SR04 × 3 | 빛이 아니라 소리라 덜 막힐 것으로 본다(잠정 — Starr & Lattimer 2014 시험 대상에 sonar 2 종이 있으나 결과 수치는 원문 확인 필요, 열기·기류 영향도 확인 필요) | **`smoke_localization: sonar` 일 때 씀** — AMCL 위치 보정, 장애물. 시뮬엔 있음, 실물은 장착 전([limo_fire_esp32_bridge](../limo_fire_esp32_bridge/README.md)) |
+| 초음파 HC-SR04 × 2 (앞 범퍼 아래 좌우 ±20°) | 빛이 아니라 소리라 덜 막힐 것으로 본다(잠정 — Starr & Lattimer 2014 시험 대상에 sonar 2 종이 있으나 결과 수치는 원문 확인 필요, 열기·기류 영향도 확인 필요) | **`smoke_localization: sonar` 일 때 씀** — AMCL 위치 보정, 장애물. 시뮬엔 있음, 실물은 장착 전([limo_fire_esp32_bridge](../limo_fire_esp32_bridge/README.md)) |
 | 레이더·열화상 | — | 아직 안 달아서 다루지 않음 (부품 대기, [spec.md](../../../docs/spec.md#연기-모드)) |
 
 근거: Starr & Lattimer, "Evaluation of Navigation Sensors in Fire Smoke Environments", *Fire Technology* 50, 2014
@@ -49,7 +49,7 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 | 부딪힘 `smoke_mode/bump` | — | IMU 수평 가속도가 4 m/s² (잠정) 넘으면 그 지도 위치 |
 
 - 연기 속 위치 방식 `smoke_localization`(`config/smoke_mode.yaml`, 기본 `hold`)은 연기 모드가 꺼져 있을 때만 바꿀 수 있다: `ros2 param set /smoke_mode smoke_localization sonar`.
-- `sonar_scan` 노드: 초음파 3 개 Range → base_link 기준 60 칸 스캔(원뿔 15° 폭에 점 3 개, 나머지 칸 +inf = AMCL 이 안 씀). 칸 수가 AMCL `max_beams`(60) 이하라야 AMCL 이 몇 안 되는 점을 버리지 않는다.
+- `sonar_scan` 노드: 초음파 2 개 Range → base_link 기준 60 칸 스캔(원뿔 15° 폭에 점 3 개, 나머지 칸 +inf = AMCL 이 안 씀). 칸 수가 AMCL `max_beams`(60) 이하라야 AMCL 이 몇 안 되는 점을 버리지 않는다.
 - 초음파는 장애물 지도(전역·지역)의 `range_layer`(`nav2_costmap_2d::RangeSensorLayer`, 확률로 찍고 지움)로도 들어간다 — 연기 속 지도에 없는 장애물(4 단계).
 - `map → odom` 은 이 노드 하나만 낸다. 그래서 AMCL 은 `tf_broadcast: false` 다(`nav2_params.yaml`).
 - 들어갈 때·나올 때 장애물 지도를 비운다(연기 전·후의 라이다 흔적을 지움).
@@ -71,6 +71,7 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 - 2026-11-05 (로봇 Jetson, Humble + Webots R2025a, `nav_benchmark`): Webots 맵 4 개 순찰점 46 개를 (a) 라이다 켬 · (b) 연기 모드(바퀴 + IMU 만)
   두 조건으로 다 도착. 결과와 한계는 [docs/benchmarks "주행 벤치마크"](../../../docs/benchmarks/README.md#주행-벤치마크-연기-모드).
 - 부딪힘 감지는 미로 맵 (b) 에서 15 번 떴고 모두 오탐(실제 충돌 0) — 제자리 회전·출발 가속에 걸린다. 문턱(잠정 4 m/s²)을 다시 정해야 한다.
+- 2026-11-13: 초음파를 실물 받침대대로 2 개(앞 좌우 ±20°)로 바꾸니 `hold` 는 네 맵 다 도착, `sonar` 는 더 나빠짐(maze·office 에서 위치를 잃음) — [benchmarks 결과 5](../../../docs/benchmarks/README.md).
 - 2026-11-06 (로봇 Jetson, 거리 −3 % · 초음파 켬): **`smoke_localization: sonar` 가 `hold` 보다 네 맵 모두 나빴다**(office·warehouse 에서 위치를 잃음),
   지도에 없는 상자는 초음파를 켜도 못 피했다 → [docs/benchmarks "결과 2"](../../../docs/benchmarks/README.md). `sonar` 는 실험 단계 — 연기 모드 기본은 `hold`.
 - 2026-11-06 오후 (같은 조건, 고친 뒤): `hold` 는 네 맵 다 끝까지 갔다. `sonar` 는 나아졌지만 여전히 네 맵 모두 `hold` 보다 부정확했다(warehouse 11/13, 최대 1.70 m).

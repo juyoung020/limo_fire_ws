@@ -28,7 +28,7 @@ class SonarScanNode : public rclcpp::Node {
  public:
   SonarScanNode() : Node("sonar_scan") {
     topics_ = declare_parameter<std::vector<std::string>>(
-        "range_topics", {"/ultrasonic/front", "/ultrasonic/left", "/ultrasonic/right"});
+        "range_topics", {"/ultrasonic/front_left", "/ultrasonic/front_right"});
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
     bins_ = declare_parameter<int>("bins", 60);
     rays_ = declare_parameter<int>("rays_per_cone", 3);

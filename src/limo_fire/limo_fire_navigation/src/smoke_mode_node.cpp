@@ -14,6 +14,7 @@
 // 켜고 끄기: 서비스 smoke_mode/set (std_srvs/SetBool). 상태는 smoke_mode/active (std_msgs/Bool, 마지막 값 유지).
 // 나올 때 지금 추정 자세를 쌓인 불확실성과 함께 /initialpose 로 AMCL 에 넘겨 다시 맞추게 한다.
 #include <algorithm>
+#include <vector>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -81,11 +82,12 @@ class SmokeModeNode : public rclcpp::Node {
     blend_ = declare_parameter<double>("sonar.blend", 0.3);
     reseed_after_ = declare_parameter<int>("sonar.reseed_after", 5);
     // 앞 초음파가 slow_distance 보다 가까우면 연기 모드 속도 한도를 slow_speed 로 (장애물을 늦게 봐 상자를 못 피함 — 2026-11-06)
-    front_topic_ = declare_parameter<std::string>("sonar.front_topic", "/ultrasonic/front");
+    slow_topics_ = declare_parameter<std::vector<std::string>>(
+        "sonar.slow_topics", {"/ultrasonic/front_left", "/ultrasonic/front_right"});
     slow_dist_ = declare_parameter<double>("sonar.slow_distance", 0.6);
     slow_speed_ = declare_parameter<double>("sonar.slow_speed", 0.05);
     if (gate_xy_ <= 0.0 || gate_yaw_ <= 0.0 || blend_ <= 0.0 || blend_ > 1.0 || reseed_after_ < 1 || slow_dist_ <= 0.0 ||
-        slow_speed_ <= 0.0)
+        slow_speed_ <= 0.0 || slow_topics_.empty())
       throw std::invalid_argument("smoke_mode: sonar.* 파라미터 확인 (blend 는 (0, 1])");
     localization_ = declare_parameter<std::string>("smoke_localization", "hold");
     if (localization_ != "hold" && localization_ != "sonar")
@@ -127,14 +129,19 @@ class SmokeModeNode : public rclcpp::Node {
         "sonar_scan", rclcpp::SensorDataQoS(), [this](sensor_msgs::msg::LaserScan::SharedPtr m) {
           if (smoke_ && localization_ == "sonar") scan_loc_pub_->publish(*m);   // 연기 속 AMCL 은 초음파만 본다
         });
-    front_sub_ = create_subscription<sensor_msgs::msg::Range>(
-        front_topic_, rclcpp::SensorDataQoS(), [this](sensor_msgs::msg::Range::SharedPtr m) {
-          const bool close = std::isfinite(m->range) && m->range > m->min_range && m->range < slow_dist_;
-          if (close != front_close_) {
-            front_close_ = close;
-            if (smoke_) publish_speed_limit();
-          }
-        });
+    // 앞쪽 초음파 중 하나라도 slow_distance 보다 가까우면 감속 (센서마다 가까움을 따로 들고 있다가 OR)
+    close_.assign(slow_topics_.size(), false);
+    for (size_t k = 0; k < slow_topics_.size(); ++k) {
+      slow_subs_.push_back(create_subscription<sensor_msgs::msg::Range>(
+          slow_topics_[k], rclcpp::SensorDataQoS(), [this, k](sensor_msgs::msg::Range::SharedPtr m) {
+            close_[k] = std::isfinite(m->range) && m->range > m->min_range && m->range < slow_dist_;
+            const bool any = std::any_of(close_.begin(), close_.end(), [](bool c) { return c; });
+            if (any != front_close_) {
+              front_close_ = any;
+              if (smoke_) publish_speed_limit();
+            }
+          }));
+    }
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
         "imu", rclcpp::SensorDataQoS(), std::bind(&SmokeModeNode::on_imu, this, _1));
     map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
@@ -497,8 +504,9 @@ class SmokeModeNode : public rclcpp::Node {
   double gate_xy_, gate_yaw_, blend_, slow_dist_, slow_speed_;
   int reseed_after_, rejects_ = 0;
   bool reseeding_ = false, front_close_ = false;
-  std::string front_topic_;
-  rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr front_sub_;
+  std::vector<std::string> slow_topics_;
+  std::vector<bool> close_;
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr> slow_subs_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;

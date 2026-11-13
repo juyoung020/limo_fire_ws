@@ -95,5 +95,5 @@ ECHO ── 1 kΩ ──┬── ESP32 GPIO (7 또는 16)
 ## 다음 할 일
 
 - [ ] 스피커 앰프 MAX98357A 하나 마련
-- [ ] `firmware/limo_fire_esp32/include/config.h` 의 초음파 핀(옛 ESP32 기준 3 개)을 위 표(ESP32-S3, 2 개)로
+- [x] `firmware/limo_fire_esp32/include/config.h` 의 초음파 핀(옛 ESP32 기준 3 개)을 위 표(ESP32-S3, 2 개)로 (11-13, 토픽 `/ultrasonic/front_left`·`front_right`, 실물에서는 아직 안 돌림)
 - [ ] 보드·모듈 실제 크기로 LIMO 위 자리 잡기(3D 출력 받침과 함께)

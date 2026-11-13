@@ -27,7 +27,7 @@ class Esp32Bridge : public rclcpp::Node {
     port_ = declare_parameter<std::string>("port", "/dev/esp32");
     baud_ = declare_parameter<int>("baud", 115200);
     hb_timeout_ = declare_parameter<double>("heartbeat_timeout", 3.0);
-    names_ = declare_parameter<std::vector<std::string>>("ultrasonic.names", {"front", "left", "right"});
+    names_ = declare_parameter<std::vector<std::string>>("ultrasonic.names", {"front_left", "front_right"});
     fov_ = declare_parameter<double>("ultrasonic.field_of_view", 0.2618);
     min_ = declare_parameter<double>("ultrasonic.min_range", 0.02);
     max_ = declare_parameter<double>("ultrasonic.max_range", 4.0);

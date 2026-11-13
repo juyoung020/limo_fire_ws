@@ -6,13 +6,13 @@ smoke_mode:
     smoke_localization: hold
     # sonar 일 때 초음파 AMCL 자세를 받는 문 (잠정): 바퀴 + IMU 추정과 0.5 m · 0.3 rad 안일 때만 30 % 씩 끌어당김,
     # 5 번 잇달아 어긋나면 AMCL 을 지금 추정 자리로 다시 놓음. 2026-11-06 엔 그대로 믿어 office·warehouse 에서 위치를 잃었다
-    # 앞 초음파가 0.6 m 보다 가까우면 연기 모드 속도 한도를 0.05 m/s 로 (장애물을 늦게 봐 상자를 못 피함)
+    # 앞쪽 초음파(slow_topics) 중 하나라도 0.6 m 보다 가까우면 연기 모드 속도 한도를 0.05 m/s 로 (장애물을 늦게 봐 상자를 못 피함)
     sonar:
       gate_xy: 0.5
       gate_yaw: 0.3
       blend: 0.3
       reseed_after: 5
-      front_topic: /ultrasonic/front
+      slow_topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
       slow_distance: 0.6
       slow_speed: 0.05
     global_frame: map
@@ -55,7 +55,7 @@ smoke_mode:
 # 초음파 3 개 → base_link 스캔 (sonar_scan 노드, docs/smoke_mode_plan.md 3 단계)
 sonar_scan:
   ros__parameters:
-    range_topics: ["/ultrasonic/front", "/ultrasonic/left", "/ultrasonic/right"]
+    range_topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
     base_frame: base_link
     bins: 60            # AMCL max_beams(60) 이하 — 넘으면 AMCL 이 솎으며 몇 안 되는 유효 칸을 버린다
     rays_per_cone: 3    # 원뿔(15°) 폭에 점 3 개 (어디서 반사됐는지 모르므로)

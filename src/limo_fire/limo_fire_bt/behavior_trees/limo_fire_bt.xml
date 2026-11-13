@@ -26,7 +26,7 @@
     /cmd_vel                   geometry_msgs/Twist                  limo_fire_base 가 구독
 
   월드·실물 구성에 따라 있는 토픽
-    /ultrasonic/front          sensor_msgs/Range       10 Hz   Webots ultrasonic TRUE 또는 esp32_bridge. 없으면 연기 모드에 진입하지 않는다
+    /ultrasonic/front_left     sensor_msgs/Range       10 Hz   Webots ultrasonic TRUE 또는 esp32_bridge (앞 왼·오른 2 개 중 왼쪽으로 살아 있음 판단). 없으면 연기 모드에 진입하지 않는다
 
   아직 없는 센서 (ESP32, 부품 대기) - 토픽 이름은 "잠정". 없으면 해당 고급 모드는 진입하지 않는다.
     /joint_states              sensor_msgs/JointState  노즐 서보 (CLAUDE.md 규칙)
@@ -228,7 +228,7 @@
                          objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
                          location="{fire_location}"/>
         <ScriptCondition code="smoke_failed == false"/>
-        <IsTopicAlive topic="/ultrasonic/front" min_hz="5" window_s="1.0"/>
+        <IsTopicAlive topic="/ultrasonic/front_left" min_hz="5" window_s="1.0"/>
         <Script code="active_mode:='SMOKE'"/>
       </Sequence>
       <!-- 우선순위 2: 작은 불 진압. 펌프 서비스와 노즐 서보 상태가 있어야 한다 -->
@@ -305,7 +305,7 @@
     <Fallback name="SmokeMode_OrFail">
       <Sequence name="SmokeMode_Body">
         <ReactiveSequence name="SweepWithSensorMonitor">
-          <IsTopicAlive topic="/ultrasonic/front" min_hz="5" window_s="1.0" _onFailure="fail_reason:='ULTRASONIC_FAULT'"/>
+          <IsTopicAlive topic="/ultrasonic/front_left" min_hz="5" window_s="1.0" _onFailure="fail_reason:='ULTRASONIC_FAULT'"/>
           <Parallel success_count="1" failure_count="1" name="EvacuateAndSearch">
             <PlayEvacuationGuidance _onFailure="fail_reason:='SPEAKER_FAULT'"/>
             <Fallback name="TrackPeople">
@@ -316,7 +316,7 @@
               <TrackPeopleCamera detections_topic="/yolo_detector/detections" objects_topic="/object_mapper/objects"
                                  min_score="0.5" people="{detected_people}"/>
             </Fallback>
-            <SweepSmokeZone zone="{fire_location}" ultrasonic_topic="/ultrasonic/front" radius_m="1.5" points="4"
+            <SweepSmokeZone zone="{fire_location}" ultrasonic_topic="/ultrasonic/front_left" radius_m="1.5" points="4"
                             smoke_service="/smoke_mode/set"
                             min_range_m="0.25" action_name="/navigate_to_pose"
                             _onFailure="fail_reason:='NAVIGATION_FAILED'"/>
@@ -541,7 +541,7 @@
       <input_port name="points" type="int" default="4">훑는 점 수</input_port>
       <input_port name="radius_m" type="double" default="1.500000">zone 에서 훑는 반지름</input_port>
       <input_port name="min_range_m" type="double" default="0.250000"/>
-      <input_port name="ultrasonic_topic" type="std::string" default="/ultrasonic/front">sensor_msgs/Range</input_port>
+      <input_port name="ultrasonic_topic" type="std::string" default="/ultrasonic/front_left">sensor_msgs/Range</input_port>
       <input_port name="zone" type="limo_fire_bt::MapPoint"/>
     </Action>
     <Action ID="TrackPeopleCamera">

@@ -7,7 +7,7 @@
   <arg name="viz" default="false"/>
   <arg name="base" default="true" description="false 면 베이스(바퀴·IMU)·EKF 를 켜지 않고 센서만"/>
   <arg name="max_clocks" default="true" description="jetson_clocks 로 CPU·GPU·메모리 클럭을 최대로 고정 (재부팅하면 풀림, sudo 암호 없이 될 때만)"/>
-  <arg name="esp32" default="false" description="ESP32 다리(초음파 HC-SR04 × 3 → /ultrasonic/*). 초음파·ESP32 를 단 뒤 true (limo_fire_esp32_bridge README)"/>
+  <arg name="esp32" default="false" description="ESP32 다리(초음파 HC-SR04 × 2 → /ultrasonic/*). 초음파·ESP32 를 단 뒤 true (limo_fire_esp32_bridge README)"/>
 
   <!-- 클럭 고정: 카메라처럼 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려가 YOLO 가 21 ms → 고정하면 11 ms -->
   <executable cmd="sudo -n /usr/bin/jetson_clocks" name="jetson_clocks" output="screen" if="$(var max_clocks)"/>
@@ -42,7 +42,7 @@
     <param from="$(find-pkg-share limo_fire_bringup)/config/ydlidar.yaml"/>
   </node>
 
-  <!-- ESP32: 초음파 HC-SR04 × 3 → /ultrasonic/front·left·right (sensor_msgs/Range). 펌웨어 firmware/limo_fire_esp32 -->
+  <!-- ESP32: 초음파 HC-SR04 × 2 → /ultrasonic/front_left·front_right (sensor_msgs/Range). 펌웨어 firmware/limo_fire_esp32 -->
   <node pkg="limo_fire_esp32_bridge" exec="esp32_bridge" name="esp32_bridge" output="screen" if="$(var esp32)">
     <param from="$(find-pkg-share limo_fire_esp32_bridge)/config/esp32_bridge.yaml"/>
   </node>

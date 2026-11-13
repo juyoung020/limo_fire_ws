@@ -10,8 +10,8 @@
 #   2. 메시 경로를 원본 자리로
 #   3. wheelRadiusScale — 바퀴 접촉 원기둥 반지름 배율. 센서 플러그인(limo_sensors.py)은 반지름 0.045 m 로 거리를 세므로 1 이 아니면
 #      오도메트리 거리가 그만큼 틀린다(시뮬 오도메트리 오차, docs/smoke_mode_plan.md). 기본 1.0 = 원본과 같음
-#   4. ultrasonic — TRUE 면 초음파 HC-SR04 3 개(sonar_front·sonar_left·sonar_right, 연기 모드 초음파 위치 추정). 기본 FALSE = 원본과 같음.
-#      자리는 limo_fire_description urdf/ultrasonic.xacro 와 같게 (잠정, 실물 장착 전)
+#   4. ultrasonic — TRUE 면 초음파 HC-SR04 2 개(sonar_front_left·sonar_front_right, 연기 모드). 기본 FALSE = 원본과 같음.
+#      자리는 limo_fire_description urdf/limo_fire.urdf.xacro 와 같게 (잠정 — hardware/mounts 초음파 받침 그림에서 읽음, 실측 아님)
 # 원본이 바뀌면 같이 맞춘다: diff src/external/webots_ros2_limo/protos/LimoFourDiff.proto sim/webots/protos/LimoFire.proto
 PROTO LimoFire [
   field  SFVec3f     translation     0 0 0
@@ -23,7 +23,7 @@ PROTO LimoFire [
   field  SFBool      supervisor      FALSE           # Is `Robot.supervisor`.
   field  SFBool      synchronization TRUE            # Is `Robot.synchronization`.
   field  SFBool      selfCollision   FALSE           # Is `Robot.selfCollision`.
-  field  SFBool      ultrasonic      FALSE           # limo_fire: 초음파 3 개 켬 (연기 모드)
+  field  SFBool      ultrasonic      FALSE           # limo_fire: 초음파 2 개 켬 (연기 모드)
   field  SFFloat     wheelRadiusScale 1.0            # limo_fire: 바퀴 실제 반지름 = 0.045 m × 이 값 (1.0 = 원본, 시뮬 오도메트리 거리 오차 실험용)
 ]
 {
@@ -207,16 +207,19 @@ PROTO LimoFire [
         }
       }
       %< if (fields.ultrasonic.value) { >%
-      # limo_fire: 초음파 HC-SR04 × 3 (데이터시트: 2~400 cm, 감지 각 15°). 원뿔은 광선 5 개 — Webots 가 합친 값이 실물(가장 가까운 메아리)과 다를 수 있다(확인할 것).
+      # limo_fire: 초음파 HC-SR04 × 2, 앞 범퍼 아래 받침에 좌우 ±20°·위 5° (hardware/mounts print_sonar). 데이터시트: 2~400 cm, 감지 각 15°. 원뿔은 광선 5 개 — Webots 가 합친 값이 실물(가장 가까운 메아리)과 다를 수 있다(확인할 것).
       # lookupTable 셋째 열 = 잡음 표준편차 / 값 (1 %, 잠정 — 실측 전). 400 cm 넘으면 400 cm(메아리 없음 = 최대) 로 자른다
-      %< const sonars = [['sonar_front', '0.16 0 -0.03', '0 0 1 0'], ['sonar_left', '0 0.11 -0.03', '0 0 1 1.5708'], ['sonar_right', '0 -0.11 -0.03', '0 0 1 -1.5708']]; >%
+      # 메아리 없음(4.0 m)에는 잡음을 안 붙인다 — 붙이면 일부가 메시지 max_range(3.96 m) 아래로 떨어져 장애물 지도에 3.9 m 앞 가짜 장애물로 찍힌다
+      # (11-13 측정: 메아리 없음 38 개 중 7 개). 실물 ESP32 다리도 시간 초과면 max_range 그대로 낸다
+      # 회전 = z 축 ±20° 다음 y 축 −5°(위로) 를 축·각 하나로 합친 값 — 측정 방향(x)이 (0.936, ±0.341, 0.087)
+      %< const sonars = [['sonar_front_left', '0.18 0.025 -0.06', '0.042343 -0.240139 0.969815 0.359701'], ['sonar_front_right', '0.18 -0.025 -0.06', '-0.042343 -0.240139 -0.969815 0.359701']]; >%
       %< for (const s of sonars) { >%
       DistanceSensor {
         translation %<= s[1] >%
         rotation %<= s[2] >%
         name "%<= s[0] >%"
         type "sonar"
-        lookupTable [ 0.02 0.02 0.01, 4.0 4.0 0.01 ]
+        lookupTable [ 0.02 0.02 0.01, 3.99 3.99 0.01, 4.0 4.0 0 ]
         numberOfRays 5
         aperture 0.2618
       }

@@ -247,7 +247,7 @@ public:
   static PortsList providedPorts()
   {
     return {InputPort<MapPoint>("zone"),
-      InputPort<std::string>("ultrasonic_topic", "/ultrasonic/front", "sensor_msgs/Range"),
+      InputPort<std::string>("ultrasonic_topic", "/ultrasonic/front_left", "sensor_msgs/Range"),
       InputPort<double>("min_range_m", 0.25, ""), InputPort<double>("radius_m", 1.5, "zone 에서 훑는 반지름"),
       InputPort<int>("points", 4, "훑는 점 수"),
       InputPort<std::string>("smoke_service", "/smoke_mode/set", "std_srvs/SetBool"),

@@ -15,7 +15,7 @@
 | 오디오 | USB PnP Audio (JMTek 0c76:161f) | USB | — | 장착, 스피커·마이크 여부 확인 필요 |
 | 열화상 | GY-MCU90640 (MLX90640 BAB 55°, 32×24) | ESP32 UART 115200baud | 예정 | 보유 · ESP32-S3 에 단독 연결해 온도 확인(11-11), 로봇 미장착 |
 | 레이더 | HLK-LD2450 24GHz | ESP32 UART 256000baud | 예정 | 보유 · ESP32-C3 에 단독 연결해 표적 확인(11-11), 로봇 미장착 |
-| 초음파 | HC-SR04 × 3 | ESP32 GPIO | `/ultrasonic/front·left·right` (`sensor_msgs/Range`) | 키트 보유 · 펌웨어·다리 준비(실물 시험 전), 시뮬엔 있음 |
+| 초음파 | HC-SR04 × 2 (앞 범퍼 아래 좌우 ±20°·위 5°, [mounts](../hardware/mounts/README.md)) | ESP32 GPIO | `/ultrasonic/front_left·front_right` (`sensor_msgs/Range`) | 키트 보유 · 펌웨어·다리 준비(실물 시험 전), 시뮬엔 있음 |
 | 노즐 팬·틸트 | MG996R(팬) + DS3218 PRO 20kg(틸트) | ESP32 PWM | 예정 `/joint_states` | 부품 대기 |
 | 펌프 | DP-521 12V 다이어프램 + D4184 MOSFET | ESP32 GPIO | 예정 `std_srvs/SetBool` | 부품 대기 |
 | 제어 보드 | ESP32-S3-N16R8 개발 보드 · ESP32-C3 SuperMini | USB 시리얼 115200 (`/dev/esp32`) | `limo_fire_esp32_bridge` (펌웨어 `firmware/limo_fire_esp32`) | 보유(11-11). 펌웨어 초음파 핀은 원래 ESP32 기준이라 이 보드들에 맞춰야 함 |
@@ -100,7 +100,7 @@
 |---|---|---|---|
 | 열화상 GY-MCU90640 | MLX90640 BAB, 55° 화각, 32×24, 최대 300 °C, UART | 작은불 열원 확인 | |
 | 레이더 HLK-LD2450 | 24 GHz, 최대 3 명 추적, UART 256000 baud | 연기 속 사람 위치 | 정지한 사람 약함, 하드웨어 UART |
-| 초음파 HC-SR04 × 최대 3 | 5 V, Echo 는 전압 분배 후 ESP32 | 연기 속 장애물, AMCL 보정 | 간섭 막으려고 하나씩 순서대로 트리거 |
+| 초음파 HC-SR04 × 2 | 5 V, Echo 는 전압 분배 후 ESP32, 앞 범퍼 아래 좌우 ±20°·위 5° | 연기 속 장애물, AMCL 보정 | 간섭 막으려고 번갈아 트리거([wiring.md](wiring.md)) |
 | 서보 MG996R | 메탈기어 | 노즐 팬 | 순간 2~3 A |
 | 서보 DS3218 PRO | 20 kg, 180°, 메탈기어 | 노즐 틸트 | 순간 2~3 A |
 | 펌프 DP-521 | 12 V 다이어프램, 0.48 MPa, 3.5 L/min | 물 분사 | D4184 MOSFET(40 V 50 A)으로 ON/OFF |

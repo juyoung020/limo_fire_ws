@@ -1,6 +1,6 @@
 # limo_fire_esp32 — ESP32 펌웨어
 
-LIMO 에 더하는 모듈을 ESP32 하나로 다루는 펌웨어(Arduino 프레임워크, PlatformIO). **지금은 초음파 HC-SR04 × 3 만** 있다
+LIMO 에 더하는 모듈을 ESP32 하나로 다루는 펌웨어(Arduino 프레임워크, PlatformIO). **지금은 초음파 HC-SR04 × 2 만** 있다 (ESP32-S3 개발 보드, 핀은 [docs/wiring.md](../../docs/wiring.md))
 (연기 모드 위치 추정·장애물, [docs/smoke_mode_plan.md](../../docs/smoke_mode_plan.md) 5 단계). 레이더·열화상·서보·펌프는 같은 시리얼 형식에 줄 종류를 더한다.
 ROS 쪽은 [limo_fire_esp32_bridge](../../src/limo_fire/limo_fire_esp32_bridge/README.md).
 
@@ -16,12 +16,11 @@ pio device monitor                # 115200, 줄이 나오는지 보기
 
 | 센서 (ROS 이름) | Trig | Echo |
 |---|---|---|
-| 0 front | GPIO 25 | GPIO 34 |
-| 1 left | GPIO 26 | GPIO 35 |
-| 2 right | GPIO 27 | GPIO 32 |
+| 0 front_left (앞 왼쪽 +20°) | GPIO 6 | GPIO 7 |
+| 1 front_right (앞 오른쪽 −20°) | GPIO 15 | GPIO 16 |
 
 - HC-SR04 는 5 V 로 돌고 **Echo 도 5 V** 다 — ESP32(3.3 V) 에 바로 꽂지 말고 전압 분배(예: 1 kΩ / 2 kΩ) 뒤 꽂는다(docs/hardware.md). GND 는 모두 공통.
-- 셋을 **하나씩 차례로** 쏜다(센서마다 35 ms, 한 바퀴 105 ms ≈ 9.5 Hz) — 동시에 쏘면 서로의 메아리를 받는다(docs/spec.md).
+- 둘을 **번갈아** 쏜다(센서마다 35 ms, 한 바퀴 70 ms ≈ 14 Hz) — 동시에 쏘면 서로의 메아리를 받는다(docs/wiring.md, 60 ms 이상).
 - 거리 = Echo HIGH 길이(왕복 µs) × 343 m/s ÷ 2. 데이터시트는 340 m/s 로 셈 — 20 °C 공기 343 m/s 를 썼다. 25 ms 안에 메아리가 없거나 2~400 cm 밖이면 0(메아리 없음).
 - 근거: HC-SR04 데이터시트(ElecFreaks) — 측정 2~400 cm, 감지 각 15°, 트리거 10 µs 이상, 거리 = 펄스 폭 × 음속 / 2.
 

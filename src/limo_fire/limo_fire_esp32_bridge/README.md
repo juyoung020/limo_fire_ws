@@ -1,10 +1,10 @@
 # limo_fire_esp32_bridge
 
-ESP32(펌웨어 [firmware/limo_fire_esp32](../../../firmware/limo_fire_esp32/README.md)) USB 시리얼 → ROS. 지금은 초음파 HC-SR04 × 3 만.
+ESP32(펌웨어 [firmware/limo_fire_esp32](../../../firmware/limo_fire_esp32/README.md)) USB 시리얼 → ROS. 지금은 초음파 HC-SR04 × 2 만 (앞 범퍼 아래 좌우 ±20°, [docs/wiring.md](../../../docs/wiring.md)).
 
 | 토픽 | 형 | 프레임 |
 |---|---|---|
-| `/ultrasonic/front` · `/ultrasonic/left` · `/ultrasonic/right` | `sensor_msgs/Range` (ULTRASOUND, 시야 15°, 0.02~4.0 m) | `ultrasonic_<이름>_link` (URDF `ultrasonic.xacro`) |
+| `/ultrasonic/front_left` · `/ultrasonic/front_right` | `sensor_msgs/Range` (ULTRASOUND, 시야 15°, 0.02~4.0 m) | `ultrasonic_<이름>_link` (URDF `ultrasonic.xacro`) |
 
 - 시뮬(Webots `LimoFire` `ultrasonic TRUE`)과 같은 토픽·프레임이라 연기 모드(`limo_fire_navigation` `sonar_scan` · `smoke_mode` `smoke_localization: sonar`)가 그대로 쓴다.
 - 메아리 없음 → `range = +inf` (sensor_msgs/Range 규약: 고정 거리 안에 물체 없음).
@@ -29,5 +29,5 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ## 확인한 것 (2026-11-06, 데스크톱 Jazzy)
 
 - 줄 해석 단위 테스트 통과 (`colcon test --packages-select limo_fire_esp32_bridge`: 체크섬·반쪽 줄·앞쪽 쓰레기·필드 오류).
-- 가짜 ESP32(pty 에 펌웨어 형식 줄)로 끝까지: 1234 mm → `/ultrasonic/front` 1.234 m, 0 mm → `/ultrasonic/left` +inf, 체크섬 틀린 줄 → 안 냄. 포트 없음 → 1 초마다 다시 엶.
+- 가짜 ESP32(pty 에 펌웨어 형식 줄)로 끝까지: 1234 mm → 0 번 센서 1.234 m, 0 mm → 1 번 센서 +inf (11-06, 그때 이름 front·left), 체크섬 틀린 줄 → 안 냄. 포트 없음 → 1 초마다 다시 엶.
 - **실물 ESP32·HC-SR04 에서는 아직 안 돌려 봤다.**

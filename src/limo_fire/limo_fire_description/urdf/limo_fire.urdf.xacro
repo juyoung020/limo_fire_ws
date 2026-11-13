@@ -23,9 +23,9 @@
   <xacro:orbbec_dabai parent="base_link" name="camera" xyz="${camera_xyz}"
                       pitch="$(arg camera_pitch)" driver_tf="$(arg camera_driver_tf)"/>
 
-  <!-- 초음파 HC-SR04 × 3 (연기 모드, docs/smoke_mode_plan.md 2 단계). 잠정 자리 — 실물 장착 전이라 실측 아님, 시뮬 LimoFire.proto ultrasonic 과 같은 값.
-       앞: 범퍼 앞 0.16 m, 왼·오른: 옆면 0.11 m. 높이 base_link −0.03 m = 바닥 위 약 0.115 m (라이다 0.111 m 와 비슷 — 같은 벽 높이를 봄) -->
-  <xacro:ultrasonic parent="base_link" name="ultrasonic_front" xyz="0.16 0 -0.03" yaw="0"/>
-  <xacro:ultrasonic parent="base_link" name="ultrasonic_left" xyz="0 0.11 -0.03" yaw="${pi/2}"/>
-  <xacro:ultrasonic parent="base_link" name="ultrasonic_right" xyz="0 -0.11 -0.03" yaw="${-pi/2}"/>
+  <!-- 초음파 HC-SR04 × 2 (연기 모드, docs/smoke_mode_plan.md 2 단계). 앞 범퍼 아래 받침 하나에 좌우 ±20°·위 5° (hardware/mounts print_sonar, docs/wiring.md).
+       자리는 잠정 — 받침 조립 그림(hardware/mounts/limo_mounts.png)에서 읽은 값이고 실측 아님: 범퍼 앞 0.18 m, 가운데서 ±0.025 m(보드 폭 45 mm 둘),
+       높이 base_link −0.06 m = 바닥 위 약 0.085 m. 시뮬 LimoFire.proto ultrasonic 과 같은 값 -->
+  <xacro:ultrasonic parent="base_link" name="ultrasonic_front_left" xyz="0.18 0.025 -0.06" yaw="${20*pi/180}" pitch="${-5*pi/180}"/>
+  <xacro:ultrasonic parent="base_link" name="ultrasonic_front_right" xyz="0.18 -0.025 -0.06" yaw="${-20*pi/180}" pitch="${-5*pi/180}"/>
 </robot>

@@ -9,11 +9,10 @@
         <device reference="depth_camera"><ros><enabled>false</enabled></ros></device>
         <device reference="ir_camera"><ros><enabled>false</enabled></ros></device>
         <device reference="imu compass"><ros><enabled>false</enabled></ros></device>
-        <!-- limo_fire: 초음파 HC-SR04 × 3 (월드에서 LimoFire ultrasonic TRUE 일 때만 있음) → sensor_msgs/Range, 실물 ESP32 다리와 같은 토픽·프레임.
-             10 Hz: 셋을 차례로 쏘는 실물(간섭 — docs/spec.md) 주기에 맞춤 (잠정) -->
-        <device reference="sonar_front"><ros><topicName>/ultrasonic/front</topicName><frameName>ultrasonic_front_link</frameName><updateRate>10</updateRate><alwaysOn>true</alwaysOn></ros></device>
-        <device reference="sonar_left"><ros><topicName>/ultrasonic/left</topicName><frameName>ultrasonic_left_link</frameName><updateRate>10</updateRate><alwaysOn>true</alwaysOn></ros></device>
-        <device reference="sonar_right"><ros><topicName>/ultrasonic/right</topicName><frameName>ultrasonic_right_link</frameName><updateRate>10</updateRate><alwaysOn>true</alwaysOn></ros></device>
+        <!-- limo_fire: 초음파 HC-SR04 × 2 (월드에서 LimoFire ultrasonic TRUE 일 때만 있음) → sensor_msgs/Range, 실물 ESP32 다리와 같은 토픽·프레임.
+             10 Hz: 둘을 번갈아 쏘는 실물(간섭 — docs/wiring.md, 60 ms 이상) 주기에 맞춤 (잠정) -->
+        <device reference="sonar_front_left"><ros><topicName>/ultrasonic/front_left</topicName><frameName>ultrasonic_front_left_link</frameName><updateRate>10</updateRate><alwaysOn>true</alwaysOn></ros></device>
+        <device reference="sonar_front_right"><ros><topicName>/ultrasonic/front_right</topicName><frameName>ultrasonic_front_right_link</frameName><updateRate>10</updateRate><alwaysOn>true</alwaysOn></ros></device>
 
         <!-- /scan, /imu and all /camera/* topics, published with the same names, types,
              frames, rates and QoS as the real LIMO (see webots_ros2_limo/limo_sensors.py). -->
