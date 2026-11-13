@@ -1,0 +1,14 @@
+test_cad_projectile_topples_with_original_hold_threshold (test_physics.PhysicsTests.test_cad_projectile_topples_with_original_hold_threshold) ... ok
+test_exported_history_independently_satisfies_hold (test_physics.PhysicsTests.test_exported_history_independently_satisfies_hold) ... ok
+test_insufficient_hold_is_not_success (test_physics.PhysicsTests.test_insufficient_hold_is_not_success) ... ok
+test_legacy_clearance_reproduces_failure (test_physics.PhysicsTests.test_legacy_clearance_reproduces_failure) ... ok
+test_mass_override_scales_inertia (test_physics.PhysicsTests.test_mass_override_scales_inertia) ... ok
+test_no_launch_and_miss_do_not_topple (test_physics.PhysicsTests.test_no_launch_and_miss_do_not_topple) ... ok
+test_optional_aerodynamic_drag_reduces_ball_range (test_physics.PhysicsTests.test_optional_aerodynamic_drag_reduces_ball_range) ... ok
+test_timestep_refinement_keeps_success (test_physics.PhysicsTests.test_timestep_refinement_keeps_success) ... ok
+test_viewer_closed_early_saves_incomplete_result (test_physics.PhysicsTests.test_viewer_closed_early_saves_incomplete_result) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.762s
+
+OK

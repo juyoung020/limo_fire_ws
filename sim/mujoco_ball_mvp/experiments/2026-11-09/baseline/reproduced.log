@@ -1,0 +1,4 @@
+CONTACT: True (first at 0.23000000000000018 s)
+TOPPLED (>=45 deg for 0.20 s): False
+Final target tilt: 15.5 degrees
+CSV: C:\Users\choej\git\robot-programming\simulation\mujoco_ball_mvp\experiments\2026-11-09\baseline\trace.csv

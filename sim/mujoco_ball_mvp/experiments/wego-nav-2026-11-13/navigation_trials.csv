@@ -1,0 +1,6 @@
+trial_id,host,world,ros_domain,controller,goal_x_m,goal_y_m,result,wall_time_s,final_x_m,final_y_m,recoveries,notes
+rpp_waypoint_1,Wego,limo_fire_presentation,0,RegulatedPurePursuit,0.04,2.2,SUCCEEDED,,0.078,1.930,0,"Nav2 action reported success; wall duration was not captured"
+rpp_waypoint_2,Wego,limo_fire_presentation,0,RegulatedPurePursuit,1.44,4.0,SUCCEEDED,,,,,"Nav2 action reported success; final pose and wall duration not retained"
+rpp_frontier_candidate,Wego,limo_fire_presentation,0,RegulatedPurePursuit,-1.17,4.70,CANCELED,,,,,"Collision-ahead and failed-progress recoveries; manually canceled; later map probe found no remaining frontiers"
+mppi_waypoint_1,Wego,limo_fire_presentation,42,MPPI,0.04,2.2,SUCCEEDED,16,0.171370,2.024246,,"MPPI plugin verified active; action result SUCCEEDED"
+mppi_waypoint_2,Wego,limo_fire_presentation,42,MPPI,1.44,4.0,SUCCEEDED,16,1.540541,3.742880,,"MPPI plugin verified active; action result SUCCEEDED"

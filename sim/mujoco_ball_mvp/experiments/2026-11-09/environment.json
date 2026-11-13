@@ -1,0 +1,12 @@
+{
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "seed": 20261109,
+  "baseline_commit": "6cfdb08d5164c694605235083d3f11b7942d80de",
+  "grid_trials": 180,
+  "grid_successes": 141,
+  "grid_direct_successes": 99,
+  "grid_ground_first_successes": 42,
+  "perturbation_trials": 100,
+  "perturbation_successes": 100
+}

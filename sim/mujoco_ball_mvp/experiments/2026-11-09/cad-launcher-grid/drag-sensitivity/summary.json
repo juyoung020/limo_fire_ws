@@ -1,0 +1,91 @@
+{
+  "scene": "scene_cad.xml",
+  "mujoco_version": "3.17.0",
+  "air_density_kg_m3": 1.2044,
+  "coefficients": [
+    0.0,
+    0.2,
+    0.35,
+    0.45,
+    0.6
+  ],
+  "seed": 20261115,
+  "repeats_per_coefficient_and_point": 30,
+  "paired_perturbations": true,
+  "jitter": {
+    "distance_m": 0.05,
+    "speed_m_s": 0.2,
+    "pitch_deg": 1.0,
+    "yaw_deg": 1.0
+  },
+  "threshold_deg": 45,
+  "hold_seconds": 0.2,
+  "trials": 150,
+  "results": [
+    {
+      "distance_m": 1.25,
+      "speed_m_s": 4.2,
+      "pitch_deg": 30.0,
+      "drag_coefficient": 0.0,
+      "trials": 30,
+      "contacts": 30,
+      "topple_successes": 30,
+      "success_rate": 1.0,
+      "median_contact_time_s": 0.3080000000000002,
+      "median_topple_confirmed_s": 1.209000000000001,
+      "max_tilt_deg": 93.20513417589699
+    },
+    {
+      "distance_m": 1.25,
+      "speed_m_s": 4.2,
+      "pitch_deg": 30.0,
+      "drag_coefficient": 0.2,
+      "trials": 30,
+      "contacts": 30,
+      "topple_successes": 30,
+      "success_rate": 1.0,
+      "median_contact_time_s": 0.3180000000000002,
+      "median_topple_confirmed_s": 1.2500000000000009,
+      "max_tilt_deg": 93.21077696975038
+    },
+    {
+      "distance_m": 1.25,
+      "speed_m_s": 4.2,
+      "pitch_deg": 30.0,
+      "drag_coefficient": 0.35,
+      "trials": 30,
+      "contacts": 30,
+      "topple_successes": 30,
+      "success_rate": 1.0,
+      "median_contact_time_s": 0.32700000000000023,
+      "median_topple_confirmed_s": 1.285000000000001,
+      "max_tilt_deg": 93.19504113628935
+    },
+    {
+      "distance_m": 1.25,
+      "speed_m_s": 4.2,
+      "pitch_deg": 30.0,
+      "drag_coefficient": 0.45,
+      "trials": 30,
+      "contacts": 30,
+      "topple_successes": 30,
+      "success_rate": 1.0,
+      "median_contact_time_s": 0.33100000000000024,
+      "median_topple_confirmed_s": 1.3070000000000008,
+      "max_tilt_deg": 93.16075363389344
+    },
+    {
+      "distance_m": 1.25,
+      "speed_m_s": 4.2,
+      "pitch_deg": 30.0,
+      "drag_coefficient": 0.6,
+      "trials": 30,
+      "contacts": 30,
+      "topple_successes": 30,
+      "success_rate": 1.0,
+      "median_contact_time_s": 0.34000000000000025,
+      "median_topple_confirmed_s": 1.3430000000000009,
+      "max_tilt_deg": 93.18247254601472
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+[INFO] [1794571603.299338719] [fire_manager]: NAVIGATING|ready
+[INFO] [1794572274.267681641] [fire_manager]: SAFE_STOP|Nav2 action failed
+[INFO] [1794572444.324800098] [rclcpp]: signal_handler(SIGINT/SIGTERM)

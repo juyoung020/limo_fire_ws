@@ -1,0 +1,3 @@
+[INFO] [1794574228.763116528] [fire_manager]: NAVIGATING|ready
+[WARN] [1794574367.046973334] [fire_manager]: Fire detected without a usable depth pose; waiting for localization
+[INFO] [1794574648.806011982] [rclcpp]: signal_handler(SIGINT/SIGTERM)

@@ -1,0 +1,57 @@
+{
+  "contact": true,
+  "contact_time_s": 0.32800000000000024,
+  "toppled": true,
+  "toppled_at_s": 1.298000000000001,
+  "max_tilt_deg": 93.08504947974109,
+  "final_tilt_deg": 90.62917555378542,
+  "simulated_s": 6.001999999999561,
+  "completed": true,
+  "termination": "duration",
+  "ground_contact_time_s": 1.260000000000001,
+  "ball_ground_contact_time_s": 0.5820000000000004,
+  "ground_before_target": false,
+  "max_ground_penetration_m": 0.01964770435935545,
+  "impact_position_m": [
+    1.1756657049634942,
+    0.0,
+    0.4321974864765391
+  ],
+  "impact_velocity_m_s": [
+    3.1436322937605126,
+    0.0,
+    -1.1890928088792234
+  ],
+  "ball_final_position_m": [
+    -1.8490970756588527,
+    -7.77525348072503e-17,
+    0.01947507935937901
+  ],
+  "ball_final_velocity_m_s": [
+    -0.48130171044549547,
+    -2.2434535365217924e-17,
+    1.7956211428060455e-16
+  ],
+  "speed_m_s": 4.2,
+  "pitch_deg": 30.0,
+  "yaw_deg": 0.0,
+  "distance_m": 1.25,
+  "duration_s": 6.0,
+  "drag_coefficient": 0.45,
+  "air_density_kg_m3": 1.2044,
+  "projected_area_m2": 0.0012566370614359172,
+  "initial_air_drag_N": 0.006007056403193079,
+  "pivot_height_m": 0.08,
+  "target_mass_kg": 0.14,
+  "principal_inertia_kg_m2": [
+    0.002846666666666667,
+    0.002731166666666667,
+    0.0006405
+  ],
+  "damping": 0.02,
+  "frictionloss": 0.002,
+  "timestep_s": 0.002,
+  "mujoco_version": "3.17.0",
+  "threshold_deg": 45,
+  "hold_seconds": 0.2
+}

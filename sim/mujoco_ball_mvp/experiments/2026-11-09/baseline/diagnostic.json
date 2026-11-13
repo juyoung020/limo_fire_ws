@@ -1,0 +1,41 @@
+{
+  "contact": true,
+  "contact_time_s": 0.22800000000000017,
+  "toppled": false,
+  "toppled_at_s": null,
+  "max_tilt_deg": 19.414712815225766,
+  "final_tilt_deg": 15.528706779798718,
+  "simulated_s": 3.001999999999891,
+  "completed": true,
+  "termination": "duration",
+  "ground_contact_time_s": 0.2700000000000002,
+  "max_ground_penetration_m": 0.0049302496232869475,
+  "impact_position_m": [
+    1.1756247938479665,
+    0.0,
+    0.4326847633912625
+  ],
+  "impact_velocity_m_s": [
+    4.698463103929543,
+    0.0,
+    -0.5265792833716552
+  ],
+  "speed_m_s": 5.0,
+  "pitch_deg": 20.0,
+  "yaw_deg": 0.0,
+  "distance_m": 1.25,
+  "duration_s": 3.0,
+  "pivot_height_m": 0.02,
+  "target_mass_kg": 0.14,
+  "principal_inertia_kg_m2": [
+    0.002846666666666667,
+    0.002731166666666667,
+    0.0006405
+  ],
+  "damping": 0.02,
+  "frictionloss": 0.002,
+  "timestep_s": 0.002,
+  "mujoco_version": "3.17.0",
+  "threshold_deg": 45,
+  "hold_seconds": 0.2
+}

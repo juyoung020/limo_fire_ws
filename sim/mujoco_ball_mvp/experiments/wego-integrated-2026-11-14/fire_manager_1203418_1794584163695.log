@@ -1,0 +1,14 @@
+[INFO] [1794584163.987119997] [fire_manager]: NAVIGATING|ready
+[INFO] [1794584197.582093042] [fire_manager]: NAVIGATING|waiting for Nav2, odometry, and map-to-base TF
+[INFO] [1794584197.582817807] [fire_manager]: NAVIGATING|goal dispatched
+[WARN] [1794584343.052069416] [fire_manager]: Fire detected without a usable depth pose; waiting for localization
+[WARN] [1794584362.652767620] [fire_manager]: Fire detected without a usable depth pose; waiting for localization
+[INFO] [1794584373.196249832] [fire_manager]: FIRE_DETECTED|mapper_fire_0_0
+[INFO] [1794584373.196390829] [fire_manager]: CLASSIFY_FIRE|
+[INFO] [1794584373.196417679] [fire_manager]: SMALL_FIRE|
+[INFO] [1794584373.196434511] [fire_manager]: STOPPING|
+[INFO] [1794584375.296281612] [fire_manager]: EXTINGUISHING|
+[INFO] [1794584387.546224013] [fire_manager]: VERIFY_RESULT|simulator confirmed extinguished
+[INFO] [1794584387.546374835] [fire_manager]: RESUME_NAVIGATION|
+[INFO] [1794584387.546402356] [fire_manager]: NAVIGATING|resumed after extinguishing
+[INFO] [1794584387.546969738] [fire_manager]: NAVIGATING|goal dispatched

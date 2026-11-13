@@ -1,0 +1,104 @@
+{
+  "scene": "scene_cad.xml",
+  "mujoco_version": "3.17.0",
+  "seed": 20261112,
+  "repeats_per_point": 30,
+  "jitter": {
+    "distance_m": 0.1,
+    "speed_m_s": 0.3,
+    "pitch_deg": 2.0,
+    "yaw_deg": 2.0
+  },
+  "threshold_deg": 45,
+  "hold_seconds": 0.2,
+  "trials": 210,
+  "contacts": 197,
+  "topple_successes": 196,
+  "success_rate": 0.9333333333333333,
+  "points": [
+    {
+      "distance_m": 0.8,
+      "speed_m_s": 4.2,
+      "pitch_deg": 20.0,
+      "trials": 30,
+      "contacts": 30,
+      "topple_successes": 30,
+      "success_rate": 1.0,
+      "median_contact_time_s": 0.16200000000000012,
+      "median_topple_confirmed_s": 1.0850000000000009,
+      "max_tilt_deg": 93.21162504353349
+    },
+    {
+      "distance_m": 1.25,
+      "speed_m_s": 4.2,
+      "pitch_deg": 30.0,
+      "trials": 30,
+      "contacts": 30,
+      "topple_successes": 30,
+      "success_rate": 1.0,
+      "median_contact_time_s": 0.3080000000000002,
+      "median_topple_confirmed_s": 1.237000000000001,
+      "max_tilt_deg": 93.19159558516513
+    },
+    {
+      "distance_m": 1.75,
+      "speed_m_s": 5.0,
+      "pitch_deg": 30.0,
+      "trials": 30,
+      "contacts": 27,
+      "topple_successes": 27,
+      "success_rate": 0.9,
+      "median_contact_time_s": 0.3780000000000003,
+      "median_topple_confirmed_s": 1.262000000000001,
+      "max_tilt_deg": 93.1424428369664
+    },
+    {
+      "distance_m": 2.25,
+      "speed_m_s": 6.0,
+      "pitch_deg": 20.0,
+      "trials": 30,
+      "contacts": 30,
+      "topple_successes": 30,
+      "success_rate": 1.0,
+      "median_contact_time_s": 0.3710000000000003,
+      "median_topple_confirmed_s": 1.2260000000000009,
+      "max_tilt_deg": 93.18530876324017
+    },
+    {
+      "distance_m": 2.75,
+      "speed_m_s": 6.0,
+      "pitch_deg": 30.0,
+      "trials": 30,
+      "contacts": 23,
+      "topple_successes": 22,
+      "success_rate": 0.7333333333333333,
+      "median_contact_time_s": 0.5140000000000003,
+      "median_topple_confirmed_s": 1.511000000000001,
+      "max_tilt_deg": 93.20358982719767
+    },
+    {
+      "distance_m": 2.9,
+      "speed_m_s": 6.0,
+      "pitch_deg": 30.0,
+      "trials": 30,
+      "contacts": 28,
+      "topple_successes": 28,
+      "success_rate": 0.9333333333333333,
+      "median_contact_time_s": 0.5360000000000004,
+      "median_topple_confirmed_s": 1.420000000000001,
+      "max_tilt_deg": 93.2034815959214
+    },
+    {
+      "distance_m": 3.0,
+      "speed_m_s": 6.0,
+      "pitch_deg": 30.0,
+      "trials": 30,
+      "contacts": 29,
+      "topple_successes": 29,
+      "success_rate": 0.9666666666666667,
+      "median_contact_time_s": 0.5500000000000004,
+      "median_topple_confirmed_s": 1.438000000000001,
+      "max_tilt_deg": 93.14448496526434
+    }
+  ]
+}

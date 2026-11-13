@@ -1,0 +1,7 @@
+run,code_fix,goal_x_m,goal_y_m,localized_fire,mujoco_action,contact,direct_hit,toppled,nav2_after_shot,result
+pre-fix,none,2.8,0.55,false,false,,,,aborted,unlocalized sentinel aborted mission
+post-fix-1,ignore-unlocalized-sentinel,2.8,0.55,true,true,true,true,true,resumed,successful topple; final nav result not captured
+post-fix-2,ignore-unlocalized-sentinel,2.8,0.55,false,false,,,,aborted,Nav2 failed to make progress before fire localization
+post-fix-3,ignore-unlocalized-sentinel,multiple,multiple,false,false,,,,aborted,Direct and alternate goals stalled at the same obstacle choke; no localized fire or shot
+post-fix-4,ignore-unlocalized-sentinel,-1.0,2.5,false,false,,,,aborted,Alternate waypoint remained near spawn with no cmd_vel; no localized fire or shot; launch stopped
+post-fix-5,ignore-unlocalized-sentinel,2.8,0.55,false,false,,,,aborted,Reached the goal area and emitted unlocalized-fire wait; localization did not follow and Nav2 repeatedly aborted progress control; no shot
