@@ -1,0 +1,909 @@
+# Isaac Sim 교차 검증 — 판별 실행 로그 요약 (results/*.out: nav_benchmark 마지막 줄들 + 요약)
+
+=== rep_office_hold_hard_s1.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794505916.202789479] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_hold_hard_s1' (연기 모드)
+[INFO] [1794505917.732244400] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794505917.734269413] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794505936.435184066] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.4 s, 도착 오차 0.25 m, 추정 오차 0.13 m, 누적 이동 1.8 m
+[INFO] [1794505958.636364740] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 20.8 s, 도착 오차 0.34 m, 추정 오차 0.24 m, 누적 이동 4.1 m
+[INFO] [1794505978.136926477] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 18.2 s, 도착 오차 0.16 m, 추정 오차 0.32 m, 누적 이동 6.1 m
+[INFO] [1794506011.237462182] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 30.9 s, 도착 오차 0.13 m, 추정 오차 0.14 m, 누적 이동 9.2 m
+[INFO] [1794506066.538111543] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 52.3 s, 도착 오차 0.34 m, 추정 오차 0.57 m, 누적 이동 15.5 m
+[INFO] [1794506089.938756541] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 21.9 s, 도착 오차 0.65 m, 추정 오차 0.59 m, 누적 이동 17.6 m
+[INFO] [1794506106.239321237] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 15.1 s, 도착 오차 0.45 m, 추정 오차 0.67 m, 누적 이동 18.9 m
+[INFO] [1794506140.539995022] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 32.4 s, 도착 오차 0.35 m, 추정 오차 0.56 m, 누적 이동 22.2 m
+[INFO] [1794506172.240742444] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 30.1 s, 도착 오차 0.26 m, 추정 오차 0.49 m, 누적 이동 25.5 m
+[INFO] [1794506202.641426711] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 28.7 s, 도착 오차 0.71 m, 추정 오차 0.66 m, 누적 이동 28.5 m
+[INFO] [1794506243.642158234] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 38.2 s, 도착 오차 0.42 m, 추정 오차 0.41 m, 누적 이동 32.2 m
+[INFO] [1794506267.943035742] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 22.3 s, 도착 오차 0.65 m, 추정 오차 0.47 m, 누적 이동 34.5 m
+[INFO] [1794506324.245352864] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 52.8 s, 도착 오차 0.11 m, 추정 오차 0.11 m, 누적 이동 40.9 m
+[INFO] [1794506347.246073187] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.5 s, 도착 오차 0.22 m, 추정 오차 0.04 m, 누적 이동 43.3 m
+[INFO] [1794506347.246294052] [nav_benchmark]: 표: /res/20261112_1759_nav_smoke_hold_hard_s1_limo_fire_office.md (/res/20261112_1759_nav_smoke_hold_hard_s1_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.36 m, 가장 큰 추정 오차 0.67 m
+
+TAG=office_smoke_hold_hard_k1.03_s1
+70
+
+=== rep_office_hold_hard_s2.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794509528.113979883] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_hold_hard_s2' (연기 모드)
+[INFO] [1794509529.716904506] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794509529.719044607] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794509548.920134215] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 16.9 s, 도착 오차 0.24 m, 추정 오차 0.12 m, 누적 이동 1.8 m
+[INFO] [1794509572.021252833] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 20.5 s, 도착 오차 0.33 m, 추정 오차 0.22 m, 누적 이동 4.1 m
+[INFO] [1794509592.322630597] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 17.9 s, 도착 오차 0.11 m, 추정 오차 0.29 m, 누적 이동 6.0 m
+[INFO] [1794509627.723358905] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 31.0 s, 도착 오차 0.15 m, 추정 오차 0.14 m, 누적 이동 9.2 m
+[INFO] [1794509686.224058141] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 51.2 s, 도착 오차 0.34 m, 추정 오차 0.52 m, 누적 이동 15.3 m
+[INFO] [1794509710.024771219] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 21.2 s, 도착 오차 0.59 m, 추정 오차 0.54 m, 누적 이동 17.6 m
+[INFO] [1794509726.325347654] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 14.5 s, 도착 오차 0.36 m, 추정 오차 0.60 m, 누적 이동 18.8 m
+[INFO] [1794509762.626143643] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 32.1 s, 도착 오차 0.31 m, 추정 오차 0.51 m, 누적 이동 22.0 m
+[INFO] [1794509796.727422234] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 30.2 s, 도착 오차 0.21 m, 추정 오차 0.43 m, 누적 이동 25.4 m
+[INFO] [1794509829.828354361] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 28.9 s, 도착 오차 0.66 m, 추정 오차 0.59 m, 누적 이동 28.4 m
+[INFO] [1794509868.029491048] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 33.9 s, 도착 오차 0.40 m, 추정 오차 0.36 m, 누적 이동 32.2 m
+[INFO] [1794509892.930512511] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 22.0 s, 도착 오차 0.58 m, 추정 오차 0.42 m, 누적 이동 34.5 m
+[INFO] [1794509953.231417249] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 53.2 s, 도착 오차 0.14 m, 추정 오차 0.09 m, 누적 이동 40.8 m
+[INFO] [1794509977.432238750] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.3 s, 도착 오차 0.22 m, 추정 오차 0.04 m, 누적 이동 43.2 m
+[INFO] [1794509977.432470826] [nav_benchmark]: 표: /res/20261112_1859_nav_smoke_hold_hard_s2_limo_fire_office.md (/res/20261112_1859_nav_smoke_hold_hard_s2_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.33 m, 가장 큰 추정 오차 0.60 m
+
+TAG=office_smoke_hold_hard_k1.03_s2
+67
+
+=== rep_office_hold_hard_s3.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794513093.144685417] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_hold_hard_s3' (연기 모드)
+[INFO] [1794513094.630917090] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794513094.633092158] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794513113.834910738] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 16.8 s, 도착 오차 0.22 m, 추정 오차 0.09 m, 누적 이동 1.8 m
+[INFO] [1794513137.036275695] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 20.4 s, 도착 오차 0.30 m, 추정 오차 0.19 m, 누적 이동 4.1 m
+[INFO] [1794513157.737505614] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 18.2 s, 도착 오차 0.06 m, 추정 오차 0.25 m, 누적 이동 6.0 m
+[INFO] [1794513192.138896521] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 30.8 s, 도착 오차 0.18 m, 추정 오차 0.13 m, 누적 이동 9.2 m
+[INFO] [1794513249.239925900] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 50.5 s, 도착 오차 0.23 m, 추정 오차 0.42 m, 누적 이동 15.2 m
+[INFO] [1794513272.840500190] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 20.5 s, 도착 오차 0.50 m, 추정 오차 0.44 m, 누적 이동 17.4 m
+[INFO] [1794513286.441078944] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 12.0 s, 도착 오차 0.23 m, 추정 오차 0.48 m, 누적 이동 18.5 m
+[INFO] [1794513320.841953451] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 29.8 s, 도착 오차 0.25 m, 추정 오차 0.41 m, 누적 이동 21.4 m
+[INFO] [1794513354.543261848] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 30.1 s, 도착 오차 0.14 m, 추정 오차 0.35 m, 누적 이동 24.7 m
+[INFO] [1794513382.444163280] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 24.5 s, 도착 오차 0.26 m, 추정 오차 0.47 m, 누적 이동 27.3 m
+[INFO] [1794513419.044938371] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 32.2 s, 도착 오차 0.38 m, 추정 오차 0.29 m, 누적 이동 30.9 m
+[INFO] [1794513444.145854248] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 22.2 s, 도착 오차 0.50 m, 추정 오차 0.35 m, 누적 이동 33.1 m
+[INFO] [1794513502.147088757] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 51.2 s, 도착 오차 0.19 m, 추정 오차 0.08 m, 누적 이동 39.3 m
+[INFO] [1794513526.247805036] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.3 s, 도착 오차 0.24 m, 추정 오차 0.02 m, 누적 이동 41.7 m
+[INFO] [1794513526.248004721] [nav_benchmark]: 표: /res/20261112_1958_nav_smoke_hold_hard_s3_limo_fire_office.md (/res/20261112_1958_nav_smoke_hold_hard_s3_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.26 m, 가장 큰 추정 오차 0.48 m
+
+TAG=office_smoke_hold_hard_k1.03_s3
+68
+
+=== rep_office_hold_hard_s4.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794516660.632027107] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_hold_hard_s4' (연기 모드)
+[INFO] [1794516662.165571563] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794516662.167800442] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794516681.269002594] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.3 s, 도착 오차 0.22 m, 추정 오차 0.09 m, 누적 이동 1.8 m
+[INFO] [1794516704.270077814] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 21.2 s, 도착 오차 0.27 m, 추정 오차 0.18 m, 누적 이동 4.1 m
+[INFO] [1794516724.871011243] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 18.8 s, 도착 오차 0.08 m, 추정 오차 0.24 m, 누적 이동 6.1 m
+[INFO] [1794516759.571744830] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 32.0 s, 도착 오차 0.19 m, 추정 오차 0.12 m, 누적 이동 9.3 m
+[INFO] [1794516815.172684095] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 51.2 s, 도착 오차 0.20 m, 추정 오차 0.40 m, 누적 이동 15.4 m
+[INFO] [1794516837.873354849] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 20.7 s, 도착 오차 0.49 m, 추정 오차 0.42 m, 누적 이동 17.5 m
+[INFO] [1794516851.274130179] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 12.7 s, 도착 오차 0.22 m, 추정 오차 0.46 m, 누적 이동 18.6 m
+[INFO] [1794516884.475374236] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 30.0 s, 도착 오차 0.24 m, 추정 오차 0.40 m, 누적 이동 21.5 m
+[INFO] [1794516916.776236158] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 29.7 s, 도착 오차 0.14 m, 추정 오차 0.33 m, 누적 이동 24.8 m
+[INFO] [1794516943.376869690] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 25.0 s, 도착 오차 0.27 m, 추정 오차 0.45 m, 누적 이동 27.4 m
+[INFO] [1794516977.877412283] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 32.5 s, 도착 오차 0.38 m, 추정 오차 0.28 m, 누적 이동 31.0 m
+[INFO] [1794517002.178067266] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 22.9 s, 도착 오차 0.49 m, 추정 오차 0.33 m, 누적 이동 33.2 m
+[INFO] [1794517056.578718037] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 51.7 s, 도착 오차 0.21 m, 추정 오차 0.06 m, 누적 이동 39.5 m
+[INFO] [1794517079.379328747] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.0 s, 도착 오차 0.22 m, 추정 오차 0.07 m, 누적 이동 41.9 m
+[INFO] [1794517079.379557496] [nav_benchmark]: 표: /res/20261112_2057_nav_smoke_hold_hard_s4_limo_fire_office.md (/res/20261112_2057_nav_smoke_hold_hard_s4_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.26 m, 가장 큰 추정 오차 0.46 m
+
+TAG=office_smoke_hold_hard_k1.03_s4
+69
+
+=== rep_office_sonar_hard_s1.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794506428.235216223] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_hard_s1' (연기 모드)
+[INFO] [1794506429.769338344] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794506429.771841977] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794506448.473036416] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.5 s, 도착 오차 0.25 m, 추정 오차 0.16 m, 누적 이동 1.8 m
+[INFO] [1794506473.273608308] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 23.0 s, 도착 오차 0.53 m, 추정 오차 0.47 m, 누적 이동 4.2 m
+[INFO] [1794506490.474171737] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 16.4 s, 도착 오차 0.10 m, 추정 오차 0.31 m, 누적 이동 5.9 m
+[INFO] [1794506526.774676497] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 34.0 s, 도착 오차 0.14 m, 추정 오차 0.24 m, 누적 이동 9.4 m
+[INFO] [1794506581.075313870] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 50.7 s, 도착 오차 0.11 m, 추정 오차 0.19 m, 누적 이동 15.5 m
+[INFO] [1794506604.275988639] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 21.5 s, 도착 오차 0.22 m, 추정 오차 0.13 m, 누적 이동 17.8 m
+[INFO] [1794506616.876636509] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.7 s, 도착 오차 0.34 m, 추정 오차 0.12 m, 누적 이동 18.7 m
+[INFO] [1794506640.977334576] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 22.6 s, 도착 오차 0.30 m, 추정 오차 0.25 m, 누적 이동 21.0 m
+[INFO] [1794506699.578061107] [nav_benchmark]: 목표 9 (7.00, -2.40): aborted, 55.2 s, 도착 오차 1.78 m, 추정 오차 0.12 m, 누적 이동 23.2 m
+[INFO] [1794506751.579494601] [nav_benchmark]: 목표 10 (9.50, -2.30): aborted, 49.3 s, 도착 오차 3.60 m, 추정 오차 0.13 m, 누적 이동 23.4 m
+[INFO] [1794506823.880048730] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 67.7 s, 도착 오차 0.14 m, 추정 오차 0.34 m, 누적 이동 26.2 m
+[INFO] [1794506849.880576232] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 24.6 s, 도착 오차 0.15 m, 추정 오차 0.17 m, 누적 이동 28.8 m
+[INFO] [1794506906.481277333] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 52.5 s, 도착 오차 0.08 m, 추정 오차 0.27 m, 누적 이동 35.1 m
+[INFO] [1794506928.681890599] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 20.6 s, 도착 오차 0.74 m, 추정 오차 0.62 m, 누적 이동 37.3 m
+[INFO] [1794506928.682101846] [nav_benchmark]: 표: /res/20261112_1808_nav_smoke_sonar_hard_s1_limo_fire_office.md (/res/20261112_1808_nav_smoke_sonar_hard_s1_limo_fire_office.csv)
+**요약**: 성공 12 / 14, 성공한 목표의 평균 도착 오차 0.26 m, 가장 큰 추정 오차 0.62 m
+
+TAG=office_smoke_sonar_hard_k1.03_s1
+70
+
+=== rep_office_sonar_hard_s2.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794510060.523617184] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_hard_s2' (연기 모드)
+[INFO] [1794510062.057282169] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794510062.059540133] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794510081.660401059] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.1 s, 도착 오차 0.28 m, 추정 오차 0.21 m, 누적 이동 1.8 m
+[INFO] [1794510125.361082564] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 38.3 s, 도착 오차 0.29 m, 추정 오차 0.22 m, 누적 이동 4.4 m
+[INFO] [1794510144.161745049] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 16.6 s, 도착 오차 0.10 m, 추정 오차 0.16 m, 누적 이동 6.2 m
+[INFO] [1794510180.662350633] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 32.1 s, 도착 오차 0.17 m, 추정 오차 0.15 m, 누적 이동 9.5 m
+[INFO] [1794510238.463167010] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 50.9 s, 도착 오차 0.07 m, 추정 오차 0.27 m, 누적 이동 15.7 m
+[INFO] [1794510261.363803057] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 20.3 s, 도착 오차 0.20 m, 추정 오차 0.10 m, 누적 이동 17.8 m
+[INFO] [1794510275.065029142] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.8 s, 도착 오차 0.27 m, 추정 오차 0.10 m, 누적 이동 18.8 m
+[INFO] [1794510301.965872968] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 23.5 s, 도착 오차 0.23 m, 추정 오차 0.17 m, 누적 이동 21.2 m
+[INFO] [1794510416.666826968] [nav_benchmark]: 목표 9 (7.00, -2.40): aborted, 100.1 s, 도착 오차 1.46 m, 추정 오차 0.75 m, 누적 이동 24.7 m
+[INFO] [1794510454.167772553] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 33.1 s, 도착 오차 0.79 m, 추정 오차 0.62 m, 누적 이동 27.4 m
+[INFO] [1794510612.068628977] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 137.4 s, 도착 오차 0.21 m, 추정 오차 0.13 m, 누적 이동 32.0 m
+[INFO] [1794510642.069700630] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 26.2 s, 도착 오차 0.15 m, 추정 오차 0.28 m, 누적 이동 34.6 m
+[INFO] [1794510701.270390228] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 52.2 s, 도착 오차 0.09 m, 추정 오차 0.15 m, 누적 이동 40.9 m
+[INFO] [1794510724.671429842] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 20.9 s, 도착 오차 0.59 m, 추정 오차 0.55 m, 누적 이동 43.3 m
+[INFO] [1794510724.671638034] [nav_benchmark]: 표: /res/20261112_1912_nav_smoke_sonar_hard_s2_limo_fire_office.md (/res/20261112_1912_nav_smoke_sonar_hard_s2_limo_fire_office.csv)
+**요약**: 성공 13 / 14, 성공한 목표의 평균 도착 오차 0.27 m, 가장 큰 추정 오차 0.75 m
+
+TAG=office_smoke_sonar_hard_k1.03_s2
+66
+
+=== rep_office_sonar_hard_s3.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794513609.344165418] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_hard_s3' (연기 모드)
+[INFO] [1794513610.865558924] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794513610.867832819] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794513630.768932951] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.1 s, 도착 오차 0.24 m, 추정 오차 0.15 m, 누적 이동 1.8 m
+[INFO] [1794513672.270209502] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 36.8 s, 도착 오차 0.40 m, 추정 오차 0.33 m, 누적 이동 4.4 m
+[INFO] [1794513689.970933943] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 15.6 s, 도착 오차 0.19 m, 추정 오차 0.21 m, 누적 이동 6.0 m
+[INFO] [1794513726.671546505] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 32.5 s, 도착 오차 0.01 m, 추정 오차 0.24 m, 누적 이동 9.3 m
+[INFO] [1794513783.072752898] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 50.0 s, 도착 오차 0.08 m, 추정 오차 0.33 m, 누적 이동 15.4 m
+[INFO] [1794513807.373586608] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 21.5 s, 도착 오차 0.21 m, 추정 오차 0.08 m, 누적 이동 17.5 m
+[INFO] [1794513820.074444809] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.3 s, 도착 오차 0.31 m, 추정 오차 0.12 m, 누적 이동 18.5 m
+[INFO] [1794513846.975005252] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 23.6 s, 도착 오차 0.23 m, 추정 오차 0.19 m, 누적 이동 20.9 m
+[INFO] [1794513936.375595635] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 78.7 s, 도착 오차 0.29 m, 추정 오차 0.39 m, 누적 이동 25.6 m
+[INFO] [1794513960.776342743] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 21.8 s, 도착 오차 0.05 m, 추정 오차 0.22 m, 누적 이동 27.9 m
+[INFO] [1794513997.877916284] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 33.2 s, 도착 오차 0.01 m, 추정 오차 0.24 m, 누적 이동 31.7 m
+[INFO] [1794514131.978777370] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 117.0 s, 도착 오차 0.31 m, 추정 오차 0.28 m, 누적 이동 35.6 m
+[INFO] [1794514192.479448791] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 53.1 s, 도착 오차 0.08 m, 추정 오차 0.24 m, 누적 이동 41.9 m
+[INFO] [1794514216.480051396] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.1 s, 도착 오차 0.46 m, 추정 오차 0.35 m, 누적 이동 44.3 m
+[INFO] [1794514216.480302879] [nav_benchmark]: 표: /res/20261112_2010_nav_smoke_sonar_hard_s3_limo_fire_office.md (/res/20261112_2010_nav_smoke_sonar_hard_s3_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.21 m, 가장 큰 추정 오차 0.39 m
+
+TAG=office_smoke_sonar_hard_k1.03_s3
+67
+
+=== rep_office_sonar_hard_s4.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794517160.359763013] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_hard_s4' (연기 모드)
+[INFO] [1794517161.878964106] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794517161.882863454] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794517180.283745657] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.2 s, 도착 오차 0.24 m, 추정 오차 0.13 m, 누적 이동 1.8 m
+[INFO] [1794517207.184381193] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 25.2 s, 도착 오차 0.40 m, 추정 오차 0.38 m, 누적 이동 4.2 m
+[INFO] [1794517223.985004042] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 16.2 s, 도착 오차 0.08 m, 추정 오차 0.18 m, 누적 이동 5.9 m
+[INFO] [1794517259.085731940] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 33.6 s, 도착 오차 0.12 m, 추정 오차 0.26 m, 누적 이동 9.3 m
+[INFO] [1794517314.386473150] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 52.6 s, 도착 오차 0.08 m, 추정 오차 0.15 m, 누적 이동 15.5 m
+[INFO] [1794517335.687198548] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 19.6 s, 도착 오차 0.21 m, 추정 오차 0.16 m, 누적 이동 17.6 m
+[INFO] [1794517348.087909520] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.8 s, 도착 오차 0.35 m, 추정 오차 0.11 m, 누적 이동 18.5 m
+[INFO] [1794517372.288562733] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 23.0 s, 도착 오차 0.33 m, 추정 오차 0.31 m, 누적 이동 20.9 m
+[INFO] [1794517448.689677250] [nav_benchmark]: 목표 9 (7.00, -2.40): aborted, 72.3 s, 도착 오차 1.76 m, 추정 오차 0.91 m, 누적 이동 22.8 m
+[INFO] [1794517491.690900724] [nav_benchmark]: 목표 10 (9.50, -2.30): aborted, 40.4 s, 도착 오차 3.59 m, 추정 오차 0.98 m, 누적 이동 22.9 m
+[INFO] [1794517561.691601024] [nav_benchmark]: 목표 11 (5.80, -2.20): aborted, 66.3 s, 도착 오차 1.38 m, 추정 오차 1.28 m, 누적 이동 23.5 m
+[INFO] [1794517641.692361682] [nav_benchmark]: 목표 12 (7.00, 0.00): aborted, 75.7 s, 도착 오차 1.25 m, 추정 오차 1.19 m, 누적 이동 23.7 m
+[INFO] [1794517691.693088890] [nav_benchmark]: 목표 13 (1.70, -2.00): aborted, 47.4 s, 도착 오차 4.47 m, 추정 오차 1.34 m, 누적 이동 23.8 m
+[INFO] [1794517729.693718045] [nav_benchmark]: 목표 14 (0.00, 0.00): aborted, 36.0 s, 도착 오차 6.03 m, 추정 오차 1.56 m, 누적 이동 23.9 m
+[INFO] [1794517729.693993593] [nav_benchmark]: 표: /res/20261112_2108_nav_smoke_sonar_hard_s4_limo_fire_office.md (/res/20261112_2108_nav_smoke_sonar_hard_s4_limo_fire_office.csv)
+**요약**: 성공 8 / 14, 성공한 목표의 평균 도착 오차 0.23 m, 가장 큰 추정 오차 1.56 m
+
+TAG=office_smoke_sonar_hard_k1.03_s4
+71
+
+=== rep_office_sonar_soft_s1.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=soft
+[INFO] [1794507009.654768290] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_soft_s1' (연기 모드)
+[INFO] [1794507011.180201387] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794507011.182203839] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794507029.883031118] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.4 s, 도착 오차 0.25 m, 추정 오차 0.17 m, 누적 이동 1.8 m
+[INFO] [1794507052.183755586] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 21.2 s, 도착 오차 0.27 m, 추정 오차 0.14 m, 누적 이동 4.2 m
+[INFO] [1794507070.984440067] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 17.8 s, 도착 오차 0.21 m, 추정 오차 0.08 m, 누적 이동 6.0 m
+[INFO] [1794507104.885105039] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 31.9 s, 도착 오차 0.17 m, 추정 오차 0.06 m, 누적 이동 9.2 m
+[INFO] [1794507160.785996760] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 52.1 s, 도착 오차 0.22 m, 추정 오차 0.41 m, 누적 이동 15.5 m
+[INFO] [1794507189.686511005] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 27.0 s, 도착 오차 0.20 m, 추정 오차 0.07 m, 누적 이동 17.5 m
+[INFO] [1794507201.287049842] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.0 s, 도착 오차 0.32 m, 추정 오차 0.08 m, 누적 이동 18.3 m
+[INFO] [1794507225.387949399] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 22.6 s, 도착 오차 0.33 m, 추정 오차 0.22 m, 누적 이동 20.5 m
+[INFO] [1794507264.488849788] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 37.5 s, 도착 오차 0.50 m, 추정 오차 0.40 m, 누적 이동 23.5 m
+[INFO] [1794507290.090208966] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 24.0 s, 도착 오차 0.33 m, 추정 오차 0.17 m, 누적 이동 26.2 m
+[INFO] [1794507324.490797055] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 32.5 s, 도착 오차 0.12 m, 추정 오차 0.19 m, 누적 이동 29.7 m
+[INFO] [1794507353.791388579] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 27.1 s, 도착 오차 0.32 m, 추정 오차 0.27 m, 누적 이동 32.3 m
+[INFO] [1794507408.992126892] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 51.6 s, 도착 오차 0.14 m, 추정 오차 0.17 m, 누적 이동 38.6 m
+[INFO] [1794507433.392769093] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 22.0 s, 도착 오차 0.12 m, 추정 오차 0.14 m, 누적 이동 41.0 m
+[INFO] [1794507433.393008823] [nav_benchmark]: 표: /res/20261112_1817_nav_smoke_sonar_soft_s1_limo_fire_office.md (/res/20261112_1817_nav_smoke_sonar_soft_s1_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.25 m, 가장 큰 추정 오차 0.41 m
+
+TAG=office_smoke_sonar_soft_k1.03_s1
+67
+
+=== rep_office_sonar_soft_s2.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=soft
+[INFO] [1794510805.758523891] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_soft_s2' (연기 모드)
+[INFO] [1794510807.279114988] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794510807.282541265] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794510827.183563248] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.2 s, 도착 오차 0.24 m, 추정 오차 0.14 m, 누적 이동 1.8 m
+[INFO] [1794510851.084192327] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 21.4 s, 도착 오차 0.26 m, 추정 오차 0.15 m, 누적 이동 4.2 m
+[INFO] [1794510870.385044758] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 17.0 s, 도착 오차 0.18 m, 추정 오차 0.09 m, 누적 이동 6.0 m
+[INFO] [1794510905.885840579] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 31.8 s, 도착 오차 0.20 m, 추정 오차 0.04 m, 누적 이동 9.2 m
+[INFO] [1794510965.187230301] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 52.4 s, 도착 오차 0.15 m, 추정 오차 0.24 m, 누적 이동 15.5 m
+[INFO] [1794510986.688641055] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 18.8 s, 도착 오차 0.28 m, 추정 오차 0.11 m, 누적 이동 17.5 m
+[INFO] [1794511000.289620138] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.9 s, 도착 오차 0.30 m, 추정 오차 0.05 m, 누적 이동 18.5 m
+[INFO] [1794511024.390444103] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 21.3 s, 도착 오차 0.35 m, 추정 오차 0.18 m, 누적 이동 20.6 m
+[INFO] [1794511053.591147860] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 25.8 s, 도착 오차 0.45 m, 추정 오차 0.42 m, 누적 이동 23.6 m
+[INFO] [1794511084.191870263] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 27.0 s, 도착 오차 0.58 m, 추정 오차 0.31 m, 누적 이동 26.6 m
+[INFO] [1794511121.892792336] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 33.2 s, 도착 오차 0.14 m, 추정 오차 0.13 m, 누적 이동 30.2 m
+[INFO] [1794511151.093926822] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 25.8 s, 도착 오차 0.26 m, 추정 오차 0.17 m, 누적 이동 32.7 m
+[INFO] [1794511208.195297692] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 50.8 s, 도착 오차 0.19 m, 추정 오차 0.22 m, 누적 이동 38.9 m
+[INFO] [1794511232.996207954] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.9 s, 도착 오차 0.09 m, 추정 오차 0.17 m, 누적 이동 41.3 m
+[INFO] [1794511232.996423169] [nav_benchmark]: 표: /res/20261112_1920_nav_smoke_sonar_soft_s2_limo_fire_office.md (/res/20261112_1920_nav_smoke_sonar_soft_s2_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.26 m, 가장 큰 추정 오차 0.42 m
+
+TAG=office_smoke_sonar_soft_k1.03_s2
+65
+
+=== rep_office_sonar_soft_s3.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=soft
+[INFO] [1794514299.588510733] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_soft_s3' (연기 모드)
+[INFO] [1794514301.114403397] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794514301.116995720] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794514320.618106271] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.3 s, 도착 오차 0.27 m, 추정 오차 0.23 m, 누적 이동 1.8 m
+[INFO] [1794514345.919249125] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 22.2 s, 도착 오차 0.31 m, 추정 오차 0.19 m, 누적 이동 4.3 m
+[INFO] [1794514364.820298709] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 16.9 s, 도착 오차 0.20 m, 추정 오차 0.10 m, 누적 이동 6.0 m
+[INFO] [1794514401.621161832] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 32.3 s, 도착 오차 0.21 m, 추정 오차 0.05 m, 누적 이동 9.2 m
+[INFO] [1794514459.622505879] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 51.1 s, 도착 오차 0.09 m, 추정 오차 0.31 m, 누적 이동 15.4 m
+[INFO] [1794514482.523752090] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 20.6 s, 도착 오차 0.19 m, 추정 오차 0.08 m, 누적 이동 17.6 m
+[INFO] [1794514494.224501418] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 10.5 s, 도착 오차 0.36 m, 추정 오차 0.15 m, 누적 이동 18.5 m
+[INFO] [1794514520.725048948] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 23.3 s, 도착 오차 0.34 m, 추정 오차 0.18 m, 누적 이동 20.8 m
+[INFO] [1794514550.025700380] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 25.9 s, 도착 오차 0.32 m, 추정 오차 0.20 m, 누적 이동 23.7 m
+[INFO] [1794514576.126267824] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 23.0 s, 도착 오차 0.40 m, 추정 오차 0.24 m, 누적 이동 26.1 m
+[INFO] [1794514611.526974127] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 31.4 s, 도착 오차 0.09 m, 추정 오차 0.13 m, 누적 이동 29.5 m
+[INFO] [1794514640.127862898] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 24.9 s, 도착 오차 0.21 m, 추정 오차 0.14 m, 누적 이동 32.1 m
+[INFO] [1794514697.228456078] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 50.5 s, 도착 오차 0.17 m, 추정 오차 0.24 m, 누적 이동 38.2 m
+[INFO] [1794514721.729090534] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.8 s, 도착 오차 0.04 m, 추정 오차 0.27 m, 누적 이동 40.7 m
+[INFO] [1794514721.729332158] [nav_benchmark]: 표: /res/20261112_2018_nav_smoke_sonar_soft_s3_limo_fire_office.md (/res/20261112_2018_nav_smoke_sonar_soft_s3_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.23 m, 가장 큰 추정 오차 0.31 m
+
+TAG=office_smoke_sonar_soft_k1.03_s3
+67
+
+=== rep_office_sonar_soft_s4.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=soft
+[INFO] [1794517810.667209809] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_soft_s4' (연기 모드)
+[INFO] [1794517812.187754404] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794517812.190656547] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794517831.091529004] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.6 s, 도착 오차 0.24 m, 추정 오차 0.16 m, 누적 이동 1.8 m
+[INFO] [1794517853.492115028] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 21.4 s, 도착 오차 0.37 m, 추정 오차 0.24 m, 누적 이동 4.1 m
+[INFO] [1794517870.893224169] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 16.4 s, 도착 오차 0.17 m, 추정 오차 0.09 m, 누적 이동 5.8 m
+[INFO] [1794517902.694092147] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 30.4 s, 도착 오차 0.24 m, 추정 오차 0.07 m, 누적 이동 9.0 m
+[INFO] [1794517958.894745591] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 52.6 s, 도착 오차 0.10 m, 추정 오차 0.34 m, 누적 이동 15.4 m
+[INFO] [1794517981.095342349] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 21.0 s, 도착 오차 0.24 m, 추정 오차 0.07 m, 누적 이동 17.6 m
+[INFO] [1794517993.495887466] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.7 s, 도착 오차 0.28 m, 추정 오차 0.04 m, 누적 이동 18.5 m
+[INFO] [1794518016.996390807] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 22.1 s, 도착 오차 0.28 m, 추정 오차 0.07 m, 누적 이동 20.7 m
+[INFO] [1794518044.697061894] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 26.1 s, 도착 오차 0.32 m, 추정 오차 0.27 m, 누적 이동 23.6 m
+[INFO] [1794518068.597846502] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 22.4 s, 도착 오차 0.41 m, 추정 오차 0.29 m, 누적 이동 26.0 m
+[INFO] [1794518102.998442952] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 32.7 s, 도착 오차 0.20 m, 추정 오차 0.12 m, 누적 이동 29.6 m
+[INFO] [1794518129.599015140] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 25.1 s, 도착 오차 0.25 m, 추정 오차 0.14 m, 누적 이동 32.2 m
+[INFO] [1794518184.700625100] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 51.9 s, 도착 오차 0.15 m, 추정 오차 0.21 m, 누적 이동 38.5 m
+[INFO] [1794518207.901583128] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.8 s, 도착 오차 0.07 m, 추정 오차 0.26 m, 누적 이동 41.0 m
+[INFO] [1794518207.901874485] [nav_benchmark]: 표: /res/20261112_2116_nav_smoke_sonar_soft_s4_limo_fire_office.md (/res/20261112_2116_nav_smoke_sonar_soft_s4_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.24 m, 가장 큰 추정 오차 0.34 m
+
+TAG=office_smoke_sonar_soft_k1.03_s4
+70
+
+=== rep_warehouse_hold_hard_s1.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794507514.354743508] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_hold_hard_s1' (연기 모드)
+[INFO] [1794507515.880146924] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794507515.881989576] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794507554.382795262] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 36.2 s, 도착 오차 0.08 m, 추정 오차 0.15 m, 누적 이동 4.3 m
+[INFO] [1794507586.583347775] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 29.9 s, 도착 오차 0.05 m, 추정 오차 0.27 m, 누적 이동 8.0 m
+[INFO] [1794507616.584014927] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.8 s, 도착 오차 0.21 m, 추정 오차 0.35 m, 누적 이동 11.4 m
+[INFO] [1794507649.284801492] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.6 s, 도착 오차 0.53 m, 추정 오차 0.27 m, 누적 이동 14.9 m
+[INFO] [1794507681.985491028] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 30.4 s, 도착 오차 0.40 m, 추정 오차 0.18 m, 누적 이동 18.6 m
+[INFO] [1794507714.286482528] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 30.1 s, 도착 오차 0.13 m, 추정 오차 0.27 m, 누적 이동 22.0 m
+[INFO] [1794507747.087140806] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 31.6 s, 도착 오차 0.18 m, 추정 오차 0.36 m, 누적 이동 25.8 m
+[INFO] [1794507782.687805125] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 33.0 s, 도착 오차 0.41 m, 추정 오차 0.31 m, 누적 이동 29.7 m
+[INFO] [1794507847.888318593] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 61.2 s, 도착 오차 0.49 m, 추정 오차 0.46 m, 누적 이동 37.2 m
+[INFO] [1794507858.988836833] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 10.8 s, 도착 오차 0.27 m, 추정 오차 0.48 m, 누적 이동 38.2 m
+[INFO] [1794507911.689453987] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 49.8 s, 도착 오차 0.55 m, 추정 오차 0.31 m, 누적 이동 43.9 m
+[INFO] [1794507943.391065431] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 29.4 s, 도착 오차 0.40 m, 추정 오차 0.26 m, 누적 이동 47.4 m
+[INFO] [1794507981.591717816] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 35.9 s, 도착 오차 0.41 m, 추정 오차 0.13 m, 누적 이동 51.7 m
+[INFO] [1794507981.591916579] [nav_benchmark]: 표: /res/20261112_1826_nav_smoke_hold_hard_s1_limo_fire_warehouse.md (/res/20261112_1826_nav_smoke_hold_hard_s1_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.32 m, 가장 큰 추정 오차 0.48 m
+
+TAG=warehouse_smoke_hold_hard_k1.03_s1
+70
+
+=== rep_warehouse_hold_hard_s2.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794511316.112587774] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_hold_hard_s2' (연기 모드)
+[INFO] [1794511317.656139829] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794511317.658711711] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794511358.659653340] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 36.4 s, 도착 오차 0.08 m, 추정 오차 0.15 m, 누적 이동 4.3 m
+[INFO] [1794511392.460748393] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 30.2 s, 도착 오차 0.07 m, 추정 오차 0.27 m, 누적 이동 8.0 m
+[INFO] [1794511424.062044294] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.9 s, 도착 오차 0.19 m, 추정 오차 0.34 m, 누적 이동 11.4 m
+[INFO] [1794511458.662850257] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.7 s, 도착 오차 0.51 m, 추정 오차 0.26 m, 누적 이동 14.9 m
+[INFO] [1794511492.863993806] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 30.1 s, 도착 오차 0.39 m, 추정 오차 0.17 m, 누적 이동 18.6 m
+[INFO] [1794511526.864857679] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 30.1 s, 도착 오차 0.15 m, 추정 오차 0.25 m, 누적 이동 22.0 m
+[INFO] [1794511562.266006697] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 31.9 s, 도착 오차 0.16 m, 추정 오차 0.36 m, 누적 이동 25.8 m
+[INFO] [1794511598.066722676] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 32.4 s, 도착 오차 0.38 m, 추정 오차 0.31 m, 누적 이동 29.7 m
+[INFO] [1794511667.567398732] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 61.6 s, 도착 오차 0.52 m, 추정 오차 0.44 m, 누적 이동 37.2 m
+[INFO] [1794511682.668311675] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 13.4 s, 도착 오차 0.29 m, 추정 오차 0.46 m, 누적 이동 38.3 m
+[INFO] [1794511754.469150023] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 63.7 s, 도착 오차 0.56 m, 추정 오차 0.29 m, 누적 이동 45.8 m
+[INFO] [1794511786.869945012] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 28.8 s, 도착 오차 0.44 m, 추정 오차 0.24 m, 누적 이동 49.2 m
+[INFO] [1794511827.870665062] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 36.6 s, 도착 오차 0.39 m, 추정 오차 0.12 m, 누적 이동 53.6 m
+[INFO] [1794511827.870879444] [nav_benchmark]: 표: /res/20261112_1930_nav_smoke_hold_hard_s2_limo_fire_warehouse.md (/res/20261112_1930_nav_smoke_hold_hard_s2_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.32 m, 가장 큰 추정 오차 0.46 m
+
+TAG=warehouse_smoke_hold_hard_k1.03_s2
+68
+
+=== rep_warehouse_hold_hard_s3.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794514804.829774174] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_hold_hard_s3' (연기 모드)
+[INFO] [1794514806.342237765] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794514806.345859111] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794514847.546753137] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 36.3 s, 도착 오차 0.07 m, 추정 오차 0.15 m, 누적 이동 4.3 m
+[INFO] [1794514881.547787805] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 29.9 s, 도착 오차 0.07 m, 추정 오차 0.27 m, 누적 이동 8.0 m
+[INFO] [1794514913.349026898] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 28.1 s, 도착 오차 0.17 m, 추정 오차 0.35 m, 누적 이동 11.4 m
+[INFO] [1794514947.649808460] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.5 s, 도착 오차 0.51 m, 추정 오차 0.26 m, 누적 이동 14.9 m
+[INFO] [1794514982.150444718] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 30.5 s, 도착 오차 0.39 m, 추정 오차 0.17 m, 누적 이동 18.6 m
+[INFO] [1794515016.151189231] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 30.2 s, 도착 오차 0.17 m, 추정 오차 0.25 m, 누적 이동 22.0 m
+[INFO] [1794515051.952239596] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 32.1 s, 도착 오차 0.15 m, 추정 오차 0.35 m, 누적 이동 25.8 m
+[INFO] [1794515088.853670509] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 32.5 s, 도착 오차 0.37 m, 추정 오차 0.32 m, 누적 이동 29.6 m
+[INFO] [1794515158.754381575] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 61.9 s, 도착 오차 0.51 m, 추정 오차 0.46 m, 누적 이동 37.2 m
+[INFO] [1794515177.155554944] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 16.3 s, 도착 오차 0.26 m, 추정 오차 0.48 m, 누적 이동 38.5 m
+[INFO] [1794515225.856940275] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 42.9 s, 도착 오차 0.60 m, 추정 오차 0.33 m, 누적 이동 43.7 m
+[INFO] [1794515257.658047339] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 28.4 s, 도착 오차 0.49 m, 추정 오차 0.29 m, 누적 이동 47.0 m
+[INFO] [1794515299.158909885] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 36.8 s, 도착 오차 0.43 m, 추정 오차 0.16 m, 누적 이동 51.5 m
+[INFO] [1794515299.159092458] [nav_benchmark]: 표: /res/20261112_2028_nav_smoke_hold_hard_s3_limo_fire_warehouse.md (/res/20261112_2028_nav_smoke_hold_hard_s3_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.32 m, 가장 큰 추정 오차 0.48 m
+
+TAG=warehouse_smoke_hold_hard_k1.03_s3
+67
+
+=== rep_warehouse_hold_hard_s4.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794518288.894665711] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_hold_hard_s4' (연기 모드)
+[INFO] [1794518291.421858501] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794518291.424117425] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794518328.725079712] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 35.6 s, 도착 오차 0.08 m, 추정 오차 0.15 m, 누적 이동 4.3 m
+[INFO] [1794518361.425756845] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 30.4 s, 도착 오차 0.06 m, 추정 오차 0.27 m, 누적 이동 8.0 m
+[INFO] [1794518391.526250426] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 28.3 s, 도착 오차 0.19 m, 추정 오차 0.35 m, 누적 이동 11.4 m
+[INFO] [1794518424.326745976] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.5 s, 도착 오차 0.52 m, 추정 오차 0.26 m, 누적 이동 14.9 m
+[INFO] [1794518456.127426462] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 30.4 s, 도착 오차 0.36 m, 추정 오차 0.17 m, 누적 이동 18.6 m
+[INFO] [1794518488.828069732] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 30.9 s, 도착 오차 0.13 m, 추정 오차 0.25 m, 누적 이동 22.0 m
+[INFO] [1794518523.528771137] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 32.2 s, 도착 오차 0.17 m, 추정 오차 0.35 m, 누적 이동 25.8 m
+[INFO] [1794518557.629472104] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 32.5 s, 도착 오차 0.39 m, 추정 오차 0.31 m, 누적 이동 29.7 m
+[INFO] [1794518622.930237787] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 61.2 s, 도착 오차 0.54 m, 추정 오차 0.46 m, 누적 이동 37.1 m
+[INFO] [1794518639.130847259] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 15.4 s, 도착 오차 0.27 m, 추정 오차 0.48 m, 누적 이동 38.4 m
+[INFO] [1794518684.931429986] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 43.4 s, 도착 오차 0.58 m, 추정 오차 0.32 m, 누적 이동 43.7 m
+[INFO] [1794518714.331920151] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 27.7 s, 도착 오차 0.50 m, 추정 오차 0.27 m, 누적 이동 47.0 m
+[INFO] [1794518752.932493177] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 36.8 s, 도착 오차 0.41 m, 추정 오차 0.15 m, 누적 이동 51.4 m
+[INFO] [1794518752.932677102] [nav_benchmark]: 표: /res/20261112_2125_nav_smoke_hold_hard_s4_limo_fire_warehouse.md (/res/20261112_2125_nav_smoke_hold_hard_s4_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.32 m, 가장 큰 추정 오차 0.48 m
+
+TAG=warehouse_smoke_hold_hard_k1.03_s4
+71
+
+=== rep_warehouse_sonar_hard_s1.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794508062.527981102] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_hard_s1' (연기 모드)
+[INFO] [1794508064.047719615] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794508064.049979120] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794508101.650741999] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 35.2 s, 도착 오차 0.08 m, 추정 오차 0.22 m, 누적 이동 4.4 m
+[INFO] [1794508132.651299206] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 29.1 s, 도착 오차 0.09 m, 추정 오차 0.21 m, 누적 이동 8.0 m
+[INFO] [1794508162.351870472] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.7 s, 도착 오차 0.07 m, 추정 오차 0.28 m, 누적 이동 11.3 m
+[INFO] [1794508196.952698678] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 32.8 s, 도착 오차 0.29 m, 추정 오차 0.32 m, 누적 이동 15.1 m
+[INFO] [1794508305.053442611] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 102.1 s, 도착 오차 0.26 m, 추정 오차 0.48 m, 누적 이동 19.4 m
+[INFO] [1794508353.854121338] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 46.5 s, 도착 오차 0.23 m, 추정 오차 0.46 m, 누적 이동 23.2 m
+[INFO] [1794508398.055023662] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 41.5 s, 도착 오차 1.16 m, 추정 오차 1.34 m, 누적 이동 27.9 m
+[INFO] [1794508438.655618734] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 37.7 s, 도착 오차 1.14 m, 추정 오차 0.95 m, 누적 이동 31.9 m
+[INFO] [1794508605.956338003] [nav_benchmark]: 목표 9 (7.50, -6.20): aborted, 156.9 s, 도착 오차 2.08 m, 추정 오차 0.97 m, 누적 이동 38.1 m
+[INFO] [1794508652.557061378] [nav_benchmark]: 목표 10 (8.50, -6.20): aborted, 43.4 s, 도착 오차 3.02 m, 추정 오차 0.94 m, 누적 이동 38.2 m
+[INFO] [1794508710.157884890] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 53.8 s, 도착 오차 1.09 m, 추정 오차 1.36 m, 누적 이동 41.7 m
+[INFO] [1794508784.558865632] [nav_benchmark]: 목표 12 (4.40, -0.20): aborted, 66.3 s, 도착 오차 1.16 m, 추정 오차 1.92 m, 누적 이동 45.4 m
+[INFO] [1794508829.959755524] [nav_benchmark]: 목표 13 (0.00, -0.00): aborted, 40.1 s, 도착 오차 5.14 m, 추정 오차 1.87 m, 누적 이동 45.5 m
+[INFO] [1794508829.959988592] [nav_benchmark]: 표: /res/20261112_1840_nav_smoke_sonar_hard_s1_limo_fire_warehouse.md (/res/20261112_1840_nav_smoke_sonar_hard_s1_limo_fire_warehouse.csv)
+**요약**: 성공 9 / 13, 성공한 목표의 평균 도착 오차 0.49 m, 가장 큰 추정 오차 1.92 m
+
+TAG=warehouse_smoke_sonar_hard_k1.03_s1
+68
+
+=== rep_warehouse_sonar_hard_s2.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794511910.921999609] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_hard_s2' (연기 모드)
+[INFO] [1794511912.442380303] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794511912.444492902] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794511955.045578280] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 37.5 s, 도착 오차 0.10 m, 추정 오차 0.31 m, 누적 이동 4.5 m
+[INFO] [1794511987.346194053] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 28.8 s, 도착 오차 0.15 m, 추정 오차 0.24 m, 누적 이동 8.0 m
+[INFO] [1794512017.946896807] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.1 s, 도착 오차 0.07 m, 추정 오차 0.23 m, 누적 이동 11.2 m
+[INFO] [1794512053.947984718] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 32.1 s, 도착 오차 0.25 m, 추정 오차 0.30 m, 누적 이동 14.9 m
+[INFO] [1794512090.248719690] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 32.1 s, 도착 오차 0.54 m, 추정 오차 0.52 m, 누적 이동 18.6 m
+[INFO] [1794512128.850040035] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 34.2 s, 도착 오차 0.21 m, 추정 오차 0.45 m, 누적 이동 22.6 m
+[INFO] [1794512166.051581626] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 32.6 s, 도착 오차 0.53 m, 추정 오차 0.41 m, 누적 이동 26.4 m
+[INFO] [1794512208.252474668] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 36.9 s, 도착 오차 0.19 m, 추정 오차 0.07 m, 누적 이동 30.8 m
+[INFO] [1794512282.353661808] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 65.5 s, 도착 오차 0.14 m, 추정 오차 0.33 m, 누적 이동 38.5 m
+[INFO] [1794512292.154513254] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 8.8 s, 도착 오차 0.17 m, 추정 오차 0.35 m, 누적 이동 39.4 m
+[INFO] [1794512344.755564237] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 46.6 s, 도착 오차 0.23 m, 추정 오차 0.48 m, 누적 이동 45.1 m
+[INFO] [1794512376.756750008] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 28.1 s, 도착 오차 0.34 m, 추정 오차 0.35 m, 누적 이동 48.3 m
+[INFO] [1794512415.657599697] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 34.2 s, 도착 오차 0.26 m, 추정 오차 0.13 m, 누적 이동 52.4 m
+[INFO] [1794512415.657824580] [nav_benchmark]: 표: /res/20261112_1940_nav_smoke_sonar_hard_s2_limo_fire_warehouse.md (/res/20261112_1940_nav_smoke_sonar_hard_s2_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.24 m, 가장 큰 추정 오차 0.52 m
+
+TAG=warehouse_smoke_sonar_hard_k1.03_s2
+68
+
+=== rep_warehouse_sonar_hard_s3.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794515382.327457773] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_hard_s3' (연기 모드)
+[INFO] [1794515383.841388190] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794515383.843587323] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794515425.844402939] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 36.9 s, 도착 오차 0.01 m, 추정 오차 0.24 m, 누적 이동 4.4 m
+[INFO] [1794515458.945071736] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 29.4 s, 도착 오차 0.23 m, 추정 오차 0.21 m, 누적 이동 8.0 m
+[INFO] [1794515490.246104787] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.7 s, 도착 오차 0.15 m, 추정 오차 0.36 m, 누적 이동 11.3 m
+[INFO] [1794515524.946929605] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.9 s, 도착 오차 0.32 m, 추정 오차 0.31 m, 누적 이동 14.8 m
+[INFO] [1794515560.948339411] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 32.1 s, 도착 오차 0.19 m, 추정 오차 0.37 m, 누적 이동 18.8 m
+[INFO] [1794515600.349611065] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 34.8 s, 도착 오차 0.32 m, 추정 오차 0.46 m, 누적 이동 22.8 m
+[INFO] [1794515634.451127753] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 30.3 s, 도착 오차 0.57 m, 추정 오차 0.54 m, 누적 이동 26.3 m
+[INFO] [1794515674.452017939] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 35.4 s, 도착 오차 0.59 m, 추정 오차 0.52 m, 누적 이동 30.6 m
+[INFO] [1794515748.052753347] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 64.8 s, 도착 오차 0.43 m, 추정 오차 0.65 m, 누적 이동 38.4 m
+[INFO] [1794515824.754164803] [nav_benchmark]: 목표 10 (8.50, -6.20): aborted, 68.2 s, 도착 오차 2.07 m, 추정 오차 1.31 m, 누적 이동 41.6 m
+[INFO] [1794515903.754759202] [nav_benchmark]: 목표 11 (4.40, -3.50): aborted, 69.6 s, 도착 오차 2.55 m, 추정 오차 1.23 m, 누적 이동 44.0 m
+[INFO] [1794515941.755471160] [nav_benchmark]: 목표 12 (4.40, -0.20): aborted, 33.5 s, 도착 오차 4.01 m, 추정 오차 1.39 m, 누적 이동 44.0 m
+[INFO] [1794515979.756233883] [nav_benchmark]: 목표 13 (0.00, -0.00): aborted, 33.5 s, 도착 오차 7.68 m, 추정 오차 1.43 m, 누적 이동 44.0 m
+[INFO] [1794515979.756437245] [nav_benchmark]: 표: /res/20261112_2039_nav_smoke_sonar_hard_s3_limo_fire_warehouse.md (/res/20261112_2039_nav_smoke_sonar_hard_s3_limo_fire_warehouse.csv)
+**요약**: 성공 9 / 13, 성공한 목표의 평균 도착 오차 0.31 m, 가장 큰 추정 오차 1.43 m
+
+TAG=warehouse_smoke_sonar_hard_k1.03_s3
+68
+
+=== rep_warehouse_sonar_hard_s4.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794518833.963621319] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_hard_s4' (연기 모드)
+[INFO] [1794518835.486337806] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794518835.489249517] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794518874.490272613] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 36.9 s, 도착 오차 0.06 m, 추정 오차 0.26 m, 누적 이동 4.4 m
+[INFO] [1794518904.391518024] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 28.6 s, 도착 오차 0.19 m, 추정 오차 0.21 m, 누적 이동 8.0 m
+[INFO] [1794518934.192525167] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.9 s, 도착 오차 0.13 m, 추정 오차 0.28 m, 누적 이동 11.2 m
+[INFO] [1794518966.693065149] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 31.0 s, 도착 오차 0.58 m, 추정 오차 0.51 m, 누적 이동 14.8 m
+[INFO] [1794519009.993736857] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 41.0 s, 도착 오차 0.26 m, 추정 오차 0.53 m, 누적 이동 19.6 m
+[INFO] [1794519049.194472184] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 37.4 s, 도착 오차 0.16 m, 추정 오차 0.36 m, 누적 이동 23.6 m
+[INFO] [1794519086.695341586] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 35.0 s, 도착 오차 0.50 m, 추정 오차 0.70 m, 누적 이동 27.7 m
+[INFO] [1794519122.196308764] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 33.7 s, 도착 오차 0.89 m, 추정 오차 0.73 m, 누적 이동 31.7 m
+[INFO] [1794519194.196916401] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 68.1 s, 도착 오차 0.57 m, 추정 오차 0.77 m, 누적 이동 39.2 m
+[INFO] [1794519213.297582518] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 17.9 s, 도착 오차 0.82 m, 추정 오차 1.02 m, 누적 이동 40.6 m
+[INFO] [1794519355.298278453] [nav_benchmark]: 목표 11 (4.40, -3.50): aborted, 133.0 s, 도착 오차 2.27 m, 추정 오차 1.21 m, 누적 이동 45.0 m
+[INFO] [1794519407.298916458] [nav_benchmark]: 목표 12 (4.40, -0.20): aborted, 49.5 s, 도착 오차 3.56 m, 추정 오차 1.21 m, 누적 이동 45.1 m
+[INFO] [1794519489.699664862] [nav_benchmark]: 목표 13 (0.00, -0.00): aborted, 77.6 s, 도착 오차 7.17 m, 추정 오차 1.19 m, 누적 이동 45.5 m
+[INFO] [1794519489.699837977] [nav_benchmark]: 표: /res/20261112_2138_nav_smoke_sonar_hard_s4_limo_fire_warehouse.md (/res/20261112_2138_nav_smoke_sonar_hard_s4_limo_fire_warehouse.csv)
+**요약**: 성공 10 / 13, 성공한 목표의 평균 도착 오차 0.42 m, 가장 큰 추정 오차 1.21 m
+
+TAG=warehouse_smoke_sonar_hard_k1.03_s4
+71
+
+=== rep_warehouse_sonar_soft_s1.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=soft
+[INFO] [1794508913.021497167] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_soft_s1' (연기 모드)
+[INFO] [1794508914.603278634] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794508914.605339877] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794508956.406569177] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 36.7 s, 도착 오차 0.07 m, 추정 오차 0.24 m, 누적 이동 4.4 m
+[INFO] [1794508989.108006633] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 28.9 s, 도착 오차 0.13 m, 추정 오차 0.22 m, 누적 이동 8.0 m
+[INFO] [1794509020.108887059] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.4 s, 도착 오차 0.09 m, 추정 오차 0.28 m, 누적 이동 11.3 m
+[INFO] [1794509054.009633575] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.1 s, 도착 오차 0.14 m, 추정 오차 0.20 m, 누적 이동 14.8 m
+[INFO] [1794509126.410931077] [nav_benchmark]: 목표 5 (0.80, -3.10): aborted, 64.5 s, 도착 오차 3.06 m, 추정 오차 0.12 m, 누적 이동 17.3 m
+[INFO] [1794509166.212205537] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 35.2 s, 도착 오차 0.13 m, 추정 오차 0.29 m, 누적 이동 20.1 m
+[INFO] [1794509209.513379101] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 38.3 s, 도착 오차 0.51 m, 추정 오차 0.81 m, 누적 이동 24.6 m
+[INFO] [1794509247.214291196] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 33.5 s, 도착 오차 0.38 m, 추정 오차 0.13 m, 누적 이동 28.5 m
+[INFO] [1794509316.615142313] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 61.6 s, 도착 오차 0.17 m, 추정 오차 0.36 m, 누적 이동 36.0 m
+[INFO] [1794509327.916088346] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 10.2 s, 도착 오차 0.16 m, 추정 오차 0.30 m, 누적 이동 37.0 m
+[INFO] [1794509379.217049402] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 45.1 s, 도착 오차 0.08 m, 추정 오차 0.31 m, 누적 이동 42.4 m
+[INFO] [1794509409.517971023] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 26.9 s, 도착 오차 0.61 m, 추정 오차 0.61 m, 누적 이동 45.6 m
+[INFO] [1794509445.018812476] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 31.6 s, 도착 오차 0.17 m, 추정 오차 0.09 m, 누적 이동 49.4 m
+[INFO] [1794509445.019002223] [nav_benchmark]: 표: /res/20261112_1850_nav_smoke_sonar_soft_s1_limo_fire_warehouse.md (/res/20261112_1850_nav_smoke_sonar_soft_s1_limo_fire_warehouse.csv)
+**요약**: 성공 12 / 13, 성공한 목표의 평균 도착 오차 0.22 m, 가장 큰 추정 오차 0.81 m
+
+TAG=warehouse_smoke_sonar_soft_k1.03_s1
+68
+
+=== rep_warehouse_sonar_soft_s2.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=soft
+[INFO] [1794512498.820270260] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_soft_s2' (연기 모드)
+[INFO] [1794512500.343651775] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794512500.345415230] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794512542.746307090] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 37.0 s, 도착 오차 0.13 m, 추정 오차 0.30 m, 누적 이동 4.5 m
+[INFO] [1794512574.646992776] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 28.1 s, 도착 오차 0.14 m, 추정 오차 0.23 m, 누적 이동 8.0 m
+[INFO] [1794512605.347620356] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.3 s, 도착 오차 0.11 m, 추정 오차 0.30 m, 누적 이동 11.3 m
+[INFO] [1794512641.348834607] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 31.9 s, 도착 오차 0.23 m, 추정 오차 0.26 m, 누적 이동 14.9 m
+[INFO] [1794512677.149436547] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 31.1 s, 도착 오차 0.19 m, 추정 오차 0.45 m, 누적 이동 18.8 m
+[INFO] [1794512715.849951405] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 34.2 s, 도착 오차 0.57 m, 추정 오차 0.52 m, 누적 이동 22.6 m
+[INFO] [1794512749.650455883] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 30.0 s, 도착 오차 0.19 m, 추정 오차 0.42 m, 누적 이동 26.1 m
+[INFO] [1794512785.351046568] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 31.8 s, 도착 오차 0.17 m, 추정 오차 0.12 m, 누적 이동 29.9 m
+[INFO] [1794512866.451556817] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 71.9 s, 도착 오차 0.18 m, 추정 오차 0.07 m, 누적 이동 37.9 m
+[INFO] [1794512877.952522260] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 10.1 s, 도착 오차 0.12 m, 추정 오차 0.16 m, 누적 이동 38.9 m
+[INFO] [1794512937.853469208] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 53.0 s, 도착 오차 0.52 m, 추정 오차 0.59 m, 누적 이동 45.1 m
+[INFO] [1794512972.254324317] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 30.4 s, 도착 오차 0.11 m, 추정 오차 0.19 m, 누적 이동 48.8 m
+[INFO] [1794513011.955376127] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 35.0 s, 도착 오차 0.34 m, 추정 오차 0.12 m, 누적 이동 53.0 m
+[INFO] [1794513011.955619033] [nav_benchmark]: 표: /res/20261112_1950_nav_smoke_sonar_soft_s2_limo_fire_warehouse.md (/res/20261112_1950_nav_smoke_sonar_soft_s2_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.23 m, 가장 큰 추정 오차 0.59 m
+
+TAG=warehouse_smoke_sonar_soft_k1.03_s2
+68
+
+=== rep_warehouse_sonar_soft_s3.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=soft
+[INFO] [1794516062.819075120] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_soft_s3' (연기 모드)
+[INFO] [1794516064.336063906] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794516064.338415806] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794516105.339507349] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 36.2 s, 도착 오차 0.04 m, 추정 오차 0.20 m, 누적 이동 4.4 m
+[INFO] [1794516137.840541739] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 29.0 s, 도착 오차 0.07 m, 추정 오차 0.18 m, 누적 이동 8.0 m
+[INFO] [1794516169.941339474] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 28.4 s, 도착 오차 0.23 m, 추정 오차 0.32 m, 누적 이동 11.3 m
+[INFO] [1794516203.941940711] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.4 s, 도착 오차 0.26 m, 추정 오차 0.31 m, 누적 이동 14.8 m
+[INFO] [1794516244.943492797] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 36.4 s, 도착 오차 0.42 m, 추정 오차 0.58 m, 누적 이동 18.9 m
+[INFO] [1794516284.844548448] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 35.5 s, 도착 오차 0.23 m, 추정 오차 0.35 m, 누적 이동 23.0 m
+[INFO] [1794516318.845261151] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 30.2 s, 도착 오차 0.15 m, 추정 오차 0.20 m, 누적 이동 26.6 m
+[INFO] [1794516354.945850710] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 33.4 s, 도착 오차 0.18 m, 추정 오차 0.12 m, 누적 이동 30.6 m
+[INFO] [1794516419.346457802] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 59.6 s, 도착 오차 0.27 m, 추정 오차 0.47 m, 누적 이동 38.0 m
+[INFO] [1794516430.447339032] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 10.1 s, 도착 오차 0.31 m, 추정 오차 0.42 m, 누적 이동 39.0 m
+[INFO] [1794516509.947976334] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 72.9 s, 도착 오차 0.21 m, 추정 오차 0.39 m, 누적 이동 47.8 m
+[INFO] [1794516541.748647252] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 29.4 s, 도착 오차 0.16 m, 추정 오차 0.43 m, 누적 이동 51.3 m
+[INFO] [1794516579.649344851] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 34.6 s, 도착 오차 0.36 m, 추정 오차 0.11 m, 누적 이동 55.4 m
+[INFO] [1794516579.649534728] [nav_benchmark]: 표: /res/20261112_2049_nav_smoke_sonar_soft_s3_limo_fire_warehouse.md (/res/20261112_2049_nav_smoke_sonar_soft_s3_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.22 m, 가장 큰 추정 오차 0.58 m
+
+TAG=warehouse_smoke_sonar_soft_k1.03_s3
+69
+
+=== rep_warehouse_sonar_soft_s4.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=soft
+[INFO] [1794519570.645792216] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_soft_s4' (연기 모드)
+[INFO] [1794519572.168931637] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794519572.171108898] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794519612.271886759] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 37.4 s, 도착 오차 0.08 m, 추정 오차 0.28 m, 누적 이동 4.5 m
+[INFO] [1794519643.872464543] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 29.1 s, 도착 오차 0.14 m, 추정 오차 0.23 m, 누적 이동 8.1 m
+[INFO] [1794519674.573117767] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 28.4 s, 도착 오차 0.10 m, 추정 오차 0.28 m, 누적 이동 11.3 m
+[INFO] [1794519706.673841962] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.6 s, 도착 오차 0.24 m, 추정 오차 0.20 m, 누적 이동 14.9 m
+[INFO] [1794519740.074456302] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 31.6 s, 도착 오차 0.18 m, 추정 오차 0.45 m, 누적 이동 18.7 m
+[INFO] [1794519782.574974929] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 40.2 s, 도착 오차 0.23 m, 추정 오차 0.39 m, 누적 이동 22.7 m
+[INFO] [1794519814.675539194] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 30.0 s, 도착 오차 0.46 m, 추정 오차 0.43 m, 누적 이동 26.2 m
+[INFO] [1794519854.176398833] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 37.0 s, 도착 오차 0.18 m, 추정 오차 0.13 m, 누적 이동 30.5 m
+[INFO] [1794519924.576949233] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 66.8 s, 도착 오차 0.43 m, 추정 오차 0.51 m, 누적 이동 38.1 m
+[INFO] [1794519937.977691604] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 12.4 s, 도착 오차 0.45 m, 추정 오차 0.41 m, 누적 이동 39.3 m
+[INFO] [1794519984.178217829] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 43.5 s, 도착 오차 0.35 m, 추정 오차 0.51 m, 누적 이동 44.5 m
+[INFO] [1794520011.278808268] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 25.3 s, 도착 오차 0.36 m, 추정 오차 0.51 m, 누적 이동 47.4 m
+[INFO] [1794520047.079381484] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 33.8 s, 도착 오차 0.21 m, 추정 오차 0.15 m, 누적 이동 51.4 m
+[INFO] [1794520047.079601668] [nav_benchmark]: 표: /res/20261112_2147_nav_smoke_sonar_soft_s4_limo_fire_warehouse.md (/res/20261112_2147_nav_smoke_sonar_soft_s4_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.26 m, 가장 큰 추정 오차 0.51 m
+
+TAG=warehouse_smoke_sonar_soft_k1.03_s4
+71
+
+=== run_maze_hold.out ===
+LIMO_SIM start pose=[-3.3, -2.25, 0.0] map=maze wheel_radius_scale=1.03 model=hard
+[INFO] [1794498919.373613629] [nav_benchmark]: 월드 limo_fire_maze: 출발 (-3.30, -2.25, 0.00 rad), 순찰점 13 개, 조건 'smoke_hold_hard' (연기 모드)
+[INFO] [1794498920.920807697] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794498920.922635771] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794498955.523423711] [nav_benchmark]: 목표 1 (3.80, 0.25): succeeded, 32.4 s, 도착 오차 0.24 m, 추정 오차 0.16 m, 누적 이동 3.8 m
+[INFO] [1794498982.024360005] [nav_benchmark]: 목표 2 (6.70, 0.05): succeeded, 25.2 s, 도착 오차 0.13 m, 추정 오차 0.28 m, 누적 이동 6.8 m
+[INFO] [1794498998.725067328] [nav_benchmark]: 목표 3 (6.70, 1.75): succeeded, 15.4 s, 도착 오차 0.41 m, 추정 오차 0.28 m, 누적 이동 8.3 m
+[INFO] [1794499032.525621298] [nav_benchmark]: 목표 4 (3.80, 1.65): succeeded, 31.5 s, 도착 오차 0.40 m, 추정 오차 0.20 m, 누적 이동 11.4 m
+[INFO] [1794499068.126278458] [nav_benchmark]: 목표 5 (-0.10, 1.75): succeeded, 33.0 s, 도착 오차 0.36 m, 추정 오차 0.14 m, 누적 이동 15.5 m
+[INFO] [1794499085.626871777] [nav_benchmark]: 목표 6 (-0.10, 3.55): succeeded, 16.5 s, 도착 오차 0.14 m, 추정 오차 0.21 m, 누적 이동 17.2 m
+[INFO] [1794499120.228518329] [nav_benchmark]: 목표 7 (3.80, 3.45): succeeded, 32.4 s, 도착 오차 0.05 m, 추정 오차 0.30 m, 누적 이동 21.1 m
+[INFO] [1794499149.029141356] [nav_benchmark]: 목표 8 (6.70, 3.45): succeeded, 26.7 s, 도착 오차 0.14 m, 추정 오차 0.39 m, 누적 이동 24.0 m
+[INFO] [1794499206.529677720] [nav_benchmark]: 목표 9 (-0.10, 3.55): succeeded, 53.5 s, 도착 오차 0.42 m, 추정 오차 0.25 m, 누적 이동 30.6 m
+[INFO] [1794499224.030208030] [nav_benchmark]: 목표 10 (-0.10, 1.75): succeeded, 16.3 s, 도착 오차 0.33 m, 추정 오차 0.19 m, 누적 이동 32.2 m
+[INFO] [1794499287.730740729] [nav_benchmark]: 목표 11 (6.70, 1.75): succeeded, 59.8 s, 도착 오차 0.22 m, 추정 오차 0.39 m, 누적 이동 39.2 m
+[INFO] [1794499303.531423299] [nav_benchmark]: 목표 12 (6.70, 0.05): succeeded, 15.0 s, 도착 오차 0.27 m, 추정 오차 0.37 m, 누적 이동 40.7 m
+[INFO] [1794499362.232088914] [nav_benchmark]: 목표 13 (0.00, 0.00): succeeded, 54.4 s, 도착 오차 0.39 m, 추정 오차 0.17 m, 누적 이동 47.4 m
+[INFO] [1794499362.232275244] [nav_benchmark]: 표: /res/20261112_1602_nav_smoke_hold_hard_limo_fire_maze.md (/res/20261112_1602_nav_smoke_hold_hard_limo_fire_maze.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.27 m, 가장 큰 추정 오차 0.39 m
+
+TAG=maze_smoke_hold_hard_k1.03
+73
+
+=== run_maze_sonar_hard.out ===
+LIMO_SIM start pose=[-3.3, -2.25, 0.0] map=maze wheel_radius_scale=1.03 model=hard
+[INFO] [1794499422.299807309] [nav_benchmark]: 월드 limo_fire_maze: 출발 (-3.30, -2.25, 0.00 rad), 순찰점 13 개, 조건 'smoke_sonar_hard' (연기 모드)
+[INFO] [1794499423.817301155] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794499423.819374580] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794499458.220199925] [nav_benchmark]: 목표 1 (3.80, 0.25): succeeded, 32.1 s, 도착 오차 0.13 m, 추정 오차 0.15 m, 누적 이동 3.7 m
+[INFO] [1794499485.820653494] [nav_benchmark]: 목표 2 (6.70, 0.05): succeeded, 26.0 s, 도착 오차 0.12 m, 추정 오차 0.24 m, 누적 이동 6.7 m
+[INFO] [1794499504.421237648] [nav_benchmark]: 목표 3 (6.70, 1.75): succeeded, 16.9 s, 도착 오차 0.20 m, 추정 오차 0.12 m, 누적 이동 8.4 m
+[INFO] [1794499537.621954218] [nav_benchmark]: 목표 4 (3.80, 1.65): succeeded, 29.9 s, 도착 오차 0.23 m, 추정 오차 0.06 m, 누적 이동 11.2 m
+[INFO] [1794499573.023271221] [nav_benchmark]: 목표 5 (-0.10, 1.75): succeeded, 33.2 s, 도착 오차 0.09 m, 추정 오차 0.16 m, 누적 이동 15.3 m
+[INFO] [1794499590.524196874] [nav_benchmark]: 목표 6 (-0.10, 3.55): succeeded, 16.3 s, 도착 오차 0.13 m, 추정 오차 0.15 m, 누적 이동 17.0 m
+[INFO] [1794499626.424907455] [nav_benchmark]: 목표 7 (3.80, 3.45): succeeded, 33.3 s, 도착 오차 0.07 m, 추정 오차 0.32 m, 누적 이동 20.9 m
+[INFO] [1794499652.625575011] [nav_benchmark]: 목표 8 (6.70, 3.45): succeeded, 24.2 s, 도착 오차 0.14 m, 추정 오차 0.29 m, 누적 이동 23.8 m
+[INFO] [1794499712.926154798] [nav_benchmark]: 목표 9 (-0.10, 3.55): succeeded, 56.3 s, 도착 오차 0.11 m, 추정 오차 0.13 m, 누적 이동 30.6 m
+[INFO] [1794499730.326676304] [nav_benchmark]: 목표 10 (-0.10, 1.75): succeeded, 16.4 s, 도착 오차 0.22 m, 추정 오차 0.03 m, 누적 이동 32.2 m
+[INFO] [1794499792.128162535] [nav_benchmark]: 목표 11 (6.70, 1.75): succeeded, 57.5 s, 도착 오차 0.25 m, 추정 오차 0.17 m, 누적 이동 39.1 m
+[INFO] [1794499807.328734622] [nav_benchmark]: 목표 12 (6.70, 0.05): succeeded, 13.7 s, 도착 오차 0.13 m, 추정 오차 0.11 m, 누적 이동 40.5 m
+[INFO] [1794499867.329406587] [nav_benchmark]: 목표 13 (0.00, 0.00): succeeded, 55.7 s, 도착 오차 0.11 m, 추정 오차 0.10 m, 누적 이동 47.1 m
+[INFO] [1794499867.329588108] [nav_benchmark]: 표: /res/20261112_1611_nav_smoke_sonar_hard_limo_fire_maze.md (/res/20261112_1611_nav_smoke_sonar_hard_limo_fire_maze.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.15 m, 가장 큰 추정 오차 0.32 m
+
+TAG=maze_smoke_sonar_hard_k1.03
+73
+
+=== run_maze_sonar_soft.out ===
+LIMO_SIM start pose=[-3.3, -2.25, 0.0] map=maze wheel_radius_scale=1.03 model=soft
+[INFO] [1794499963.316897116] [nav_benchmark]: 월드 limo_fire_maze: 출발 (-3.30, -2.25, 0.00 rad), 순찰점 13 개, 조건 'smoke_sonar_soft' (연기 모드)
+[INFO] [1794499967.854688686] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794499967.858194723] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794500005.459528492] [nav_benchmark]: 목표 1 (3.80, 0.25): succeeded, 34.7 s, 도착 오차 0.28 m, 추정 오차 0.25 m, 누적 이동 4.0 m
+[INFO] [1794500029.360283364] [nav_benchmark]: 목표 2 (6.70, 0.05): succeeded, 22.8 s, 도착 오차 0.13 m, 추정 오차 0.15 m, 누적 이동 6.7 m
+[INFO] [1794500045.960827783] [nav_benchmark]: 목표 3 (6.70, 1.75): succeeded, 15.2 s, 도착 오차 0.24 m, 추정 오차 0.08 m, 누적 이동 8.3 m
+[INFO] [1794500074.761478000] [nav_benchmark]: 목표 4 (3.80, 1.65): succeeded, 27.1 s, 도착 오차 0.26 m, 추정 오차 0.10 m, 누적 이동 11.1 m
+[INFO] [1794500109.562159337] [nav_benchmark]: 목표 5 (-0.10, 1.75): succeeded, 32.4 s, 도착 오차 0.18 m, 추정 오차 0.10 m, 누적 이동 15.1 m
+[INFO] [1794500127.263263577] [nav_benchmark]: 목표 6 (-0.10, 3.55): succeeded, 16.5 s, 도착 오차 0.17 m, 추정 오차 0.18 m, 누적 이동 16.7 m
+[INFO] [1794500163.664292028] [nav_benchmark]: 목표 7 (3.80, 3.45): succeeded, 33.6 s, 도착 오차 0.13 m, 추정 오차 0.36 m, 누적 이동 20.7 m
+[INFO] [1794500190.364882894] [nav_benchmark]: 목표 8 (6.70, 3.45): succeeded, 24.8 s, 도착 오차 0.20 m, 추정 오차 0.39 m, 누적 이동 23.5 m
+[INFO] [1794500250.365543942] [nav_benchmark]: 목표 9 (-0.10, 3.55): succeeded, 56.1 s, 도착 오차 0.13 m, 추정 오차 0.11 m, 누적 이동 30.3 m
+[INFO] [1794500268.066143936] [nav_benchmark]: 목표 10 (-0.10, 1.75): succeeded, 16.6 s, 도착 오차 0.19 m, 추정 오차 0.04 m, 누적 이동 31.9 m
+[INFO] [1794500332.666711915] [nav_benchmark]: 목표 11 (6.70, 1.75): succeeded, 59.5 s, 도착 오차 0.17 m, 추정 오차 0.19 m, 누적 이동 38.9 m
+[INFO] [1794500347.567406446] [nav_benchmark]: 목표 12 (6.70, 0.05): succeeded, 14.1 s, 도착 오차 0.22 m, 추정 오차 0.03 m, 누적 이동 40.3 m
+[INFO] [1794500418.568396782] [nav_benchmark]: 목표 13 (0.00, 0.00): succeeded, 66.3 s, 도착 오차 0.10 m, 추정 오차 0.14 m, 누적 이동 47.0 m
+[INFO] [1794500418.568623298] [nav_benchmark]: 표: /res/20261112_1620_nav_smoke_sonar_soft_limo_fire_maze.md (/res/20261112_1620_nav_smoke_sonar_soft_limo_fire_maze.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.18 m, 가장 큰 추정 오차 0.39 m
+
+TAG=maze_smoke_sonar_soft_k1.03
+70
+
+=== run_office_hold_hard.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794500514.629061715] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_hold_hard' (연기 모드)
+[INFO] [1794500516.154043398] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794500516.157961357] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794500534.958840466] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.7 s, 도착 오차 0.23 m, 추정 오차 0.11 m, 누적 이동 1.8 m
+[INFO] [1794500557.260272257] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 20.5 s, 도착 오차 0.31 m, 추정 오차 0.20 m, 누적 이동 4.1 m
+[INFO] [1794500577.061222704] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 18.6 s, 도착 오차 0.09 m, 추정 오차 0.26 m, 누적 이동 6.0 m
+[INFO] [1794500610.061795306] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 30.7 s, 도착 오차 0.17 m, 추정 오차 0.14 m, 누적 이동 9.2 m
+[INFO] [1794500664.462470122] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 50.5 s, 도착 오차 0.30 m, 추정 오차 0.48 m, 누적 이동 15.2 m
+[INFO] [1794500687.563128319] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 21.4 s, 도착 오차 0.58 m, 추정 오차 0.50 m, 누적 이동 17.4 m
+[INFO] [1794500701.063741966] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 12.6 s, 도착 오차 0.28 m, 추정 오차 0.55 m, 누적 이동 18.5 m
+[INFO] [1794500732.764742085] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 29.8 s, 도착 오차 0.27 m, 추정 오차 0.47 m, 누적 이동 21.4 m
+[INFO] [1794500764.865278812] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 30.1 s, 도착 오차 0.18 m, 추정 오차 0.40 m, 누적 이동 24.8 m
+[INFO] [1794500793.266157603] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 26.1 s, 도착 오차 0.29 m, 추정 오차 0.54 m, 누적 이동 27.5 m
+[INFO] [1794500828.668775022] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 32.5 s, 도착 오차 0.40 m, 추정 오차 0.34 m, 누적 이동 31.1 m
+[INFO] [1794500853.269873983] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 22.1 s, 도착 오차 0.57 m, 추정 오차 0.40 m, 누적 이동 33.3 m
+[INFO] [1794500909.970873869] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 53.0 s, 도착 오차 0.17 m, 추정 오차 0.09 m, 누적 이동 39.7 m
+[INFO] [1794500932.871539543] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.7 s, 도착 오차 0.24 m, 추정 오차 0.03 m, 누적 이동 42.1 m
+[INFO] [1794500932.871747083] [nav_benchmark]: 표: /res/20261112_1628_nav_smoke_hold_hard_limo_fire_office.md (/res/20261112_1628_nav_smoke_hold_hard_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.29 m, 가장 큰 추정 오차 0.55 m
+
+TAG=office_smoke_hold_hard_k1.03
+72
+
+=== run_office_sonar_hard.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794501028.872541769] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_hard' (연기 모드)
+[INFO] [1794501030.394568302] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794501030.397852109] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794501047.998648584] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 16.8 s, 도착 오차 0.25 m, 추정 오차 0.13 m, 누적 이동 1.8 m
+[INFO] [1794501087.699335615] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 37.2 s, 도착 오차 0.29 m, 추정 오차 0.23 m, 누적 이동 4.3 m
+[INFO] [1794501106.699881621] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 17.4 s, 도착 오차 0.14 m, 추정 오차 0.13 m, 누적 이동 6.1 m
+[INFO] [1794501140.900500264] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 32.1 s, 도착 오차 0.14 m, 추정 오차 0.17 m, 누적 이동 9.4 m
+[INFO] [1794501195.801428717] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 50.7 s, 도착 오차 0.07 m, 추정 오차 0.26 m, 누적 이동 15.6 m
+[INFO] [1794501218.601998495] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 20.6 s, 도착 오차 0.14 m, 추정 오차 0.14 m, 누적 이동 17.7 m
+[INFO] [1794501230.902550549] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.6 s, 도착 오차 0.30 m, 추정 오차 0.08 m, 누적 이동 18.6 m
+[INFO] [1794501256.803251150] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 23.9 s, 도착 오차 0.32 m, 추정 오차 0.26 m, 누적 이동 21.0 m
+[INFO] [1794501404.603988173] [nav_benchmark]: 목표 9 (7.00, -2.40): aborted, 136.2 s, 도착 오차 1.41 m, 추정 오차 0.99 m, 누적 이동 23.9 m
+[INFO] [1794501552.904583802] [nav_benchmark]: 목표 10 (9.50, -2.30): aborted, 136.4 s, 도착 오차 0.99 m, 추정 오차 0.64 m, 누적 이동 27.4 m
+[INFO] [1794501746.973539594] [nav_benchmark]: 목표 11 (5.80, -2.20): timeout, 180.1 s, 도착 오차 2.85 m, 추정 오차 0.41 m, 누적 이동 28.8 m
+[INFO] [1794501814.605317862] [nav_benchmark]: 목표 12 (7.00, 0.00): aborted, 62.8 s, 도착 오차 3.04 m, 추정 오차 0.68 m, 누적 이동 29.1 m
+[INFO] [1794502008.475807167] [nav_benchmark]: 목표 13 (1.70, -2.00): timeout, 180.1 s, 도착 오차 7.03 m, 추정 오차 1.50 m, 누적 이동 30.2 m
+[INFO] [1794502169.406357435] [nav_benchmark]: 목표 14 (0.00, 0.00): aborted, 144.7 s, 도착 오차 9.09 m, 추정 오차 2.08 m, 누적 이동 31.1 m
+[INFO] [1794502169.406675693] [nav_benchmark]: 표: /res/20261112_1649_nav_smoke_sonar_hard_limo_fire_office.md (/res/20261112_1649_nav_smoke_sonar_hard_limo_fire_office.csv)
+**요약**: 성공 8 / 14, 성공한 목표의 평균 도착 오차 0.21 m, 가장 큰 추정 오차 2.08 m
+
+TAG=office_smoke_sonar_hard_k1.03
+73
+
+=== run_office_sonar_soft.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=soft
+[INFO] [1794502267.556805878] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'smoke_sonar_soft' (연기 모드)
+[INFO] [1794502269.071636362] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794502269.074638440] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794502288.475530272] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.2 s, 도착 오차 0.28 m, 추정 오차 0.22 m, 누적 이동 1.8 m
+[INFO] [1794502313.076115812] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 21.9 s, 도착 오차 0.30 m, 추정 오차 0.23 m, 누적 이동 4.3 m
+[INFO] [1794502331.776736358] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 17.0 s, 도착 오차 0.12 m, 추정 오차 0.14 m, 누적 이동 6.1 m
+[INFO] [1794502367.677363636] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 32.0 s, 도착 오차 0.19 m, 추정 오차 0.06 m, 누적 이동 9.3 m
+[INFO] [1794502428.178172173] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 53.5 s, 도착 오차 0.13 m, 추정 오차 0.34 m, 누적 이동 15.7 m
+[INFO] [1794502451.779025380] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 20.9 s, 도착 오차 0.20 m, 추정 오차 0.10 m, 누적 이동 17.8 m
+[INFO] [1794502463.479853834] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 10.6 s, 도착 오차 0.26 m, 추정 오차 0.05 m, 누적 이동 18.7 m
+[INFO] [1794502491.480697831] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 24.8 s, 도착 오차 0.27 m, 추정 오차 0.07 m, 누적 이동 21.1 m
+[INFO] [1794502520.781269539] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 26.6 s, 도착 오차 0.25 m, 추정 오차 0.02 m, 누적 이동 24.0 m
+[INFO] [1794502546.081941416] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 22.6 s, 도착 오차 0.25 m, 추정 오차 0.04 m, 누적 이동 26.4 m
+[INFO] [1794502581.782652392] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 31.5 s, 도착 오차 0.25 m, 추정 오차 0.25 m, 누적 이동 29.8 m
+[INFO] [1794502611.083470873] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 26.6 s, 도착 오차 0.27 m, 추정 오차 0.08 m, 누적 이동 32.4 m
+[INFO] [1794502667.384191977] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 50.8 s, 도착 오차 0.16 m, 추정 오차 0.21 m, 누적 이동 38.5 m
+[INFO] [1794502691.584941055] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.5 s, 도착 오차 0.04 m, 추정 오차 0.23 m, 누적 이동 40.9 m
+[INFO] [1794502691.585170476] [nav_benchmark]: 표: /res/20261112_1658_nav_smoke_sonar_soft_limo_fire_office.md (/res/20261112_1658_nav_smoke_sonar_soft_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.21 m, 가장 큰 추정 오차 0.34 m
+
+TAG=office_smoke_sonar_soft_k1.03
+73
+
+=== run_warehouse_hold_hard.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794502787.721467317] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_hold_hard' (연기 모드)
+[INFO] [1794502789.242399590] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794502789.244578932] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794502829.145367552] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 36.0 s, 도착 오차 0.09 m, 추정 오차 0.15 m, 누적 이동 4.3 m
+[INFO] [1794502862.346205616] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 29.8 s, 도착 오차 0.05 m, 추정 오차 0.26 m, 누적 이동 8.0 m
+[INFO] [1794502893.947242716] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.9 s, 도착 오차 0.19 m, 추정 오차 0.33 m, 누적 이동 11.4 m
+[INFO] [1794502928.948197984] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 31.3 s, 도착 오차 0.52 m, 추정 오차 0.26 m, 누적 이동 14.9 m
+[INFO] [1794502962.549820241] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 30.6 s, 도착 오차 0.37 m, 추정 오차 0.18 m, 누적 이동 18.7 m
+[INFO] [1794502996.650383798] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 30.4 s, 도착 오차 0.14 m, 추정 오차 0.26 m, 누적 이동 22.0 m
+[INFO] [1794503032.151162763] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 32.2 s, 도착 오차 0.17 m, 추정 오차 0.36 m, 누적 이동 25.8 m
+[INFO] [1794503070.151805468] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 32.9 s, 도착 오차 0.40 m, 추정 오차 0.32 m, 누적 이동 29.7 m
+[INFO] [1794503138.252662383] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 61.3 s, 도착 오차 0.49 m, 추정 오차 0.44 m, 누적 이동 37.2 m
+[INFO] [1794503153.353773477] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 13.1 s, 도착 오차 0.21 m, 추정 오차 0.46 m, 누적 이동 38.3 m
+[INFO] [1794503210.854711289] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 51.4 s, 도착 오차 0.54 m, 추정 오차 0.29 m, 누적 이동 44.1 m
+[INFO] [1794503243.055601386] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 28.7 s, 도착 오차 0.41 m, 추정 오차 0.23 m, 누적 이동 47.6 m
+[INFO] [1794503282.556168722] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 36.5 s, 도착 오차 0.39 m, 추정 오차 0.12 m, 누적 이동 51.9 m
+[INFO] [1794503282.556363267] [nav_benchmark]: 표: /res/20261112_1708_nav_smoke_hold_hard_limo_fire_warehouse.md (/res/20261112_1708_nav_smoke_hold_hard_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.31 m, 가장 큰 추정 오차 0.46 m
+
+TAG=warehouse_smoke_hold_hard_k1.03
+74
+
+=== run_warehouse_sonar_hard.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=hard
+[INFO] [1794503380.630809437] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_hard' (연기 모드)
+[INFO] [1794503382.151369392] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794503382.155012126] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794503423.856016562] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 37.0 s, 도착 오차 0.07 m, 추정 오차 0.27 m, 누적 이동 4.5 m
+[INFO] [1794503455.857243219] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 28.4 s, 도착 오차 0.10 m, 추정 오차 0.22 m, 누적 이동 8.0 m
+[INFO] [1794503486.458658327] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.1 s, 도착 오차 0.04 m, 추정 오차 0.22 m, 누적 이동 11.2 m
+[INFO] [1794503522.159661697] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 31.6 s, 도착 오차 0.03 m, 추정 오차 0.29 m, 누적 이동 14.9 m
+[INFO] [1794503631.860338694] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 98.3 s, 도착 오차 0.20 m, 추정 오차 0.11 m, 누적 이동 25.0 m
+[INFO] [1794503679.860904215] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 44.9 s, 도착 오차 0.31 m, 추정 오차 0.55 m, 누적 이동 29.8 m
+[INFO] [1794503720.361436562] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 38.0 s, 도착 오차 1.04 m, 추정 오차 1.26 m, 누적 이동 34.1 m
+[INFO] [1794503800.462101441] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 74.6 s, 도착 오차 1.84 m, 추정 오차 1.83 m, 누적 이동 38.7 m
+[INFO] [1794503993.129310888] [nav_benchmark]: 목표 9 (7.50, -6.20): timeout, 180.2 s, 도착 오차 2.00 m, 추정 오차 1.75 m, 누적 이동 45.2 m
+[INFO] [1794504060.364030481] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 62.7 s, 도착 오차 3.03 m, 추정 오차 2.92 m, 누적 이동 45.6 m
+[INFO] [1794504062.464654400] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 1.8 s, 도착 오차 2.47 m, 추정 오차 2.92 m, 누적 이동 45.6 m
+[INFO] [1794504253.934610774] [nav_benchmark]: 목표 12 (4.40, -0.20): timeout, 180.1 s, 도착 오차 2.42 m, 추정 오차 4.87 m, 누적 이동 50.7 m
+[INFO] [1794504283.765268377] [nav_benchmark]: 목표 13 (0.00, -0.00): aborted, 27.8 s, 도착 오차 3.64 m, 추정 오차 4.86 m, 누적 이동 50.7 m
+[INFO] [1794504283.765487518] [nav_benchmark]: 표: /res/20261112_1724_nav_smoke_sonar_hard_limo_fire_warehouse.md (/res/20261112_1724_nav_smoke_sonar_hard_limo_fire_warehouse.csv)
+**요약**: 성공 10 / 13, 성공한 목표의 평균 도착 오차 0.91 m, 가장 큰 추정 오차 4.87 m
+
+TAG=warehouse_smoke_sonar_hard_k1.03
+75
+
+=== run_warehouse_sonar_soft.out ===
+LIMO_SIM start pose=[-4.0, -4.2, 90.00021045914971] map=warehouse wheel_radius_scale=1.03 model=soft
+[INFO] [1794504379.726703587] [nav_benchmark]: 월드 limo_fire_warehouse: 출발 (-4.00, -4.20, 1.57 rad), 순찰점 13 개, 조건 'smoke_sonar_soft' (연기 모드)
+[INFO] [1794504381.246586570] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794504381.249364228] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794504421.350346891] [nav_benchmark]: 목표 1 (4.40, -0.20): succeeded, 37.0 s, 도착 오차 0.09 m, 추정 오차 0.27 m, 누적 이동 4.4 m
+[INFO] [1794504452.051382135] [nav_benchmark]: 목표 2 (8.00, -0.20): succeeded, 29.0 s, 도착 오차 0.12 m, 추정 오차 0.27 m, 누적 이동 8.0 m
+[INFO] [1794504480.852165037] [nav_benchmark]: 목표 3 (8.00, -3.50): succeeded, 27.4 s, 도착 오차 0.03 m, 추정 오차 0.24 m, 누적 이동 11.3 m
+[INFO] [1794504513.852728252] [nav_benchmark]: 목표 4 (4.40, -3.50): succeeded, 30.6 s, 도착 오차 0.09 m, 추정 오차 0.25 m, 누적 이동 14.9 m
+[INFO] [1794504608.853396060] [nav_benchmark]: 목표 5 (0.80, -3.10): succeeded, 88.5 s, 도착 오차 0.16 m, 추정 오차 0.11 m, 누적 이동 24.0 m
+[INFO] [1794504648.054088415] [nav_benchmark]: 목표 6 (4.40, -3.50): succeeded, 36.8 s, 도착 오차 0.05 m, 추정 오차 0.28 m, 누적 이동 28.2 m
+[INFO] [1794504680.655503288] [nav_benchmark]: 목표 7 (4.40, -7.30): succeeded, 30.5 s, 도착 오차 0.69 m, 추정 오차 0.53 m, 누적 이동 31.8 m
+[INFO] [1794504720.956197365] [nav_benchmark]: 목표 8 (0.40, -7.30): succeeded, 37.8 s, 도착 오차 0.20 m, 추정 오차 0.09 m, 누적 이동 36.2 m
+[INFO] [1794504855.056742144] [nav_benchmark]: 목표 9 (7.50, -6.20): succeeded, 123.7 s, 도착 오차 0.25 m, 추정 오차 0.07 m, 누적 이동 44.3 m
+[INFO] [1794504866.657328326] [nav_benchmark]: 목표 10 (8.50, -6.20): succeeded, 10.2 s, 도착 오차 0.14 m, 추정 오차 0.11 m, 누적 이동 45.4 m
+[INFO] [1794504917.558001100] [nav_benchmark]: 목표 11 (4.40, -3.50): succeeded, 47.0 s, 도착 오차 0.14 m, 추정 오차 0.33 m, 누적 이동 51.0 m
+[INFO] [1794504944.658655538] [nav_benchmark]: 목표 12 (4.40, -0.20): succeeded, 25.3 s, 도착 오차 0.54 m, 추정 오차 0.47 m, 누적 이동 53.9 m
+[INFO] [1794504980.459267464] [nav_benchmark]: 목표 13 (0.00, -0.00): succeeded, 33.3 s, 도착 오차 0.22 m, 추정 오차 0.10 m, 누적 이동 57.9 m
+[INFO] [1794504980.459470315] [nav_benchmark]: 표: /res/20261112_1736_nav_smoke_sonar_soft_limo_fire_warehouse.md (/res/20261112_1736_nav_smoke_sonar_soft_limo_fire_warehouse.csv)
+**요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.21 m, 가장 큰 추정 오차 0.53 m
+
+TAG=warehouse_smoke_sonar_soft_k1.03
+76
+
+=== run_world_hold_hard.out ===
+LIMO_SIM start pose=[6.36, 0.0, 0.0] map=world wheel_radius_scale=1.03 model=hard
+[INFO] [1794505078.542623515] [nav_benchmark]: 월드 limo_fire_world: 출발 (6.36, 0.00, 0.00 rad), 순찰점 6 개, 조건 'smoke_hold_hard' (연기 모드)
+[INFO] [1794505080.068912030] [nav_benchmark]: 연기 속 위치: hold
+[INFO] [1794505080.073225413] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794505103.374233379] [nav_benchmark]: 목표 1 (0.04, 2.20): succeeded, 21.1 s, 도착 오차 0.13 m, 추정 오차 0.10 m, 누적 이동 2.1 m
+[INFO] [1794505132.674860200] [nav_benchmark]: 목표 2 (1.44, 4.00): succeeded, 26.5 s, 도착 오차 0.04 m, 추정 오차 0.22 m, 누적 이동 4.7 m
+[INFO] [1794505154.875530668] [nav_benchmark]: 목표 3 (2.64, 1.90): succeeded, 20.7 s, 도착 오차 0.46 m, 추정 오차 0.20 m, 누적 이동 6.9 m
+[INFO] [1794505210.076184759] [nav_benchmark]: 목표 4 (0.24, -1.50): succeeded, 48.4 s, 도착 오차 0.29 m, 추정 오차 0.05 m, 누적 이동 12.5 m
+[INFO] [1794505232.176832507] [nav_benchmark]: 목표 5 (1.04, -3.20): succeeded, 18.3 s, 도착 오차 0.23 m, 추정 오차 0.11 m, 누적 이동 14.5 m
+[INFO] [1794505263.577354800] [nav_benchmark]: 목표 6 (0.00, 0.00): succeeded, 28.3 s, 도착 오차 0.20 m, 추정 오차 0.04 m, 누적 이동 17.5 m
+[INFO] [1794505263.577548995] [nav_benchmark]: 표: /res/20261112_1741_nav_smoke_hold_hard_limo_fire_world.md (/res/20261112_1741_nav_smoke_hold_hard_limo_fire_world.csv)
+**요약**: 성공 6 / 6, 성공한 목표의 평균 도착 오차 0.22 m, 가장 큰 추정 오차 0.22 m
+
+TAG=world_smoke_hold_hard_k1.03
+72
+
+=== run_world_sonar_hard.out ===
+LIMO_SIM start pose=[6.36, 0.0, 0.0] map=world wheel_radius_scale=1.03 model=hard
+[INFO] [1794505359.596778258] [nav_benchmark]: 월드 limo_fire_world: 출발 (6.36, 0.00, 0.00 rad), 순찰점 6 개, 조건 'smoke_sonar_hard' (연기 모드)
+[INFO] [1794505361.124191123] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794505361.126869173] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794505383.727799186] [nav_benchmark]: 목표 1 (0.04, 2.20): succeeded, 21.4 s, 도착 오차 0.18 m, 추정 오차 0.15 m, 누적 이동 2.1 m
+[INFO] [1794505411.628527101] [nav_benchmark]: 목표 2 (1.44, 4.00): succeeded, 26.2 s, 도착 오차 0.38 m, 추정 오차 0.59 m, 누적 이동 5.0 m
+[INFO] [1794505435.929182541] [nav_benchmark]: 목표 3 (2.64, 1.90): succeeded, 22.9 s, 도착 오차 0.38 m, 추정 오차 0.48 m, 누적 이동 7.5 m
+[INFO] [1794505489.929744387] [nav_benchmark]: 목표 4 (0.24, -1.50): succeeded, 50.7 s, 도착 오차 0.15 m, 추정 오차 0.31 m, 누적 이동 13.5 m
+[INFO] [1794505509.030362996] [nav_benchmark]: 목표 5 (1.04, -3.20): succeeded, 18.1 s, 도착 오차 0.10 m, 추정 오차 0.51 m, 누적 이동 15.5 m
+[INFO] [1794505537.630987958] [nav_benchmark]: 목표 6 (0.00, 0.00): succeeded, 27.2 s, 도착 오차 0.66 m, 추정 오차 0.46 m, 누적 이동 18.4 m
+[INFO] [1794505537.631153579] [nav_benchmark]: 표: /res/20261112_1745_nav_smoke_sonar_hard_limo_fire_world.md (/res/20261112_1745_nav_smoke_sonar_hard_limo_fire_world.csv)
+**요약**: 성공 6 / 6, 성공한 목표의 평균 도착 오차 0.31 m, 가장 큰 추정 오차 0.59 m
+
+TAG=world_smoke_sonar_hard_k1.03
+67
+
+=== run_world_sonar_soft.out ===
+LIMO_SIM start pose=[6.36, 0.0, 0.0] map=world wheel_radius_scale=1.03 model=soft
+[INFO] [1794505633.551320486] [nav_benchmark]: 월드 limo_fire_world: 출발 (6.36, 0.00, 0.00 rad), 순찰점 6 개, 조건 'smoke_sonar_soft' (연기 모드)
+[INFO] [1794505635.105448931] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794505635.107587237] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794505657.308435918] [nav_benchmark]: 목표 1 (0.04, 2.20): succeeded, 21.0 s, 도착 오차 0.12 m, 추정 오차 0.11 m, 누적 이동 2.1 m
+[INFO] [1794505680.509445851] [nav_benchmark]: 목표 2 (1.44, 4.00): succeeded, 21.8 s, 도착 오차 0.04 m, 추정 오차 0.25 m, 누적 이동 4.5 m
+[INFO] [1794505705.110016809] [nav_benchmark]: 목표 3 (2.64, 1.90): succeeded, 22.6 s, 도착 오차 0.16 m, 추정 오차 0.22 m, 누적 이동 7.0 m
+[INFO] [1794505758.610597392] [nav_benchmark]: 목표 4 (0.24, -1.50): succeeded, 49.7 s, 도착 오차 0.30 m, 추정 오차 0.10 m, 누적 이동 12.8 m
+[INFO] [1794505777.911274593] [nav_benchmark]: 목표 5 (1.04, -3.20): succeeded, 18.0 s, 도착 오차 0.19 m, 추정 오차 0.08 m, 누적 이동 14.7 m
+[INFO] [1794505808.811835720] [nav_benchmark]: 목표 6 (0.00, 0.00): succeeded, 28.7 s, 도착 오차 0.16 m, 추정 오차 0.20 m, 누적 이동 17.9 m
+[INFO] [1794505808.812010358] [nav_benchmark]: 표: /res/20261112_1750_nav_smoke_sonar_soft_limo_fire_world.md (/res/20261112_1750_nav_smoke_sonar_soft_limo_fire_world.csv)
+**요약**: 성공 6 / 6, 성공한 목표의 평균 도착 오차 0.16 m, 가장 큰 추정 오차 0.25 m
+
+TAG=world_smoke_sonar_soft_k1.03
+68
+
+=== video_office_sonar_hard.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=hard
+[INFO] [1794542923.080617773] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'video_sonar_hard_s0' (연기 모드)
+[INFO] [1794542925.119211815] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794542925.121655739] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794542950.322550784] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 17.0 s, 도착 오차 0.31 m, 추정 오차 0.22 m, 누적 이동 1.8 m
+[INFO] [1794543008.623301269] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 39.1 s, 도착 오차 0.26 m, 추정 오차 0.16 m, 누적 이동 4.4 m
+[INFO] [1794543034.124016121] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 16.9 s, 도착 오차 0.17 m, 추정 오차 0.14 m, 누적 이동 6.3 m
+[INFO] [1794543084.524634963] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 33.4 s, 도착 오차 0.14 m, 추정 오차 0.20 m, 누적 이동 9.6 m
+[INFO] [1794543161.925435078] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 51.7 s, 도착 오차 0.05 m, 추정 오차 0.29 m, 누적 이동 15.8 m
+[INFO] [1794543192.126209379] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 20.0 s, 도착 오차 0.08 m, 추정 오차 0.16 m, 누적 이동 18.0 m
+[INFO] [1794543209.627300698] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.6 s, 도착 오차 0.25 m, 추정 오차 0.11 m, 누적 이동 19.0 m
+[INFO] [1794543247.828058078] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 25.3 s, 도착 오차 0.31 m, 추정 오차 0.20 m, 누적 이동 21.4 m
+[INFO] [1794543415.328888748] [nav_benchmark]: 목표 9 (7.00, -2.40): aborted, 106.7 s, 도착 오차 1.47 m, 추정 오차 0.66 m, 누적 이동 25.6 m
+[INFO] [1794543479.829781864] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 41.2 s, 도착 오차 0.98 m, 추정 오차 1.15 m, 누적 이동 29.1 m
+[INFO] [1794543572.430630017] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 59.1 s, 도착 오차 0.89 m, 추정 오차 1.14 m, 누적 이동 34.2 m
+[INFO] [1794543662.231556798] [nav_benchmark]: 목표 12 (7.00, 0.00): aborted, 57.7 s, 도착 오차 1.65 m, 추정 오차 0.47 m, 누적 이동 35.8 m
+[INFO] [1794543764.132329437] [nav_benchmark]: 목표 13 (1.70, -2.00): aborted, 64.8 s, 도착 오차 5.03 m, 추정 오차 0.07 m, 누적 이동 36.7 m
+[INFO] [1794543890.333186197] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 80.0 s, 도착 오차 0.17 m, 추정 오차 0.14 m, 누적 이동 44.8 m
+[INFO] [1794543890.333423101] [nav_benchmark]: 표: /res/20261113_0424_nav_video_sonar_hard_s0_limo_fire_office.md (/res/20261113_0424_nav_video_sonar_hard_s0_limo_fire_office.csv)
+**요약**: 성공 11 / 14, 성공한 목표의 평균 도착 오차 0.33 m, 가장 큰 추정 오차 1.15 m
+
+TAG=office_video_sonar_hard_k1.03_s0
+64
+
+=== video_office_sonar_soft.out ===
+LIMO_SIM start pose=[-5.0, 0.0, 0.0] map=office wheel_radius_scale=1.03 model=soft
+[INFO] [1794543975.551893938] [nav_benchmark]: 월드 limo_fire_office: 출발 (-5.00, 0.00, 0.00 rad), 순찰점 14 개, 조건 'video_sonar_soft_s0' (연기 모드)
+[INFO] [1794543977.586887845] [nav_benchmark]: 연기 속 위치: sonar
+[INFO] [1794543977.589455896] [nav_benchmark]: 연기 모드: 연기 모드 켬
+[INFO] [1794544002.690376526] [nav_benchmark]: 목표 1 (2.00, 0.00): succeeded, 16.6 s, 도착 오차 0.32 m, 추정 오차 0.23 m, 누적 이동 1.8 m
+[INFO] [1794544037.390990278] [nav_benchmark]: 목표 2 (2.00, 2.40): succeeded, 22.2 s, 도착 오차 0.33 m, 추정 오차 0.28 m, 누적 이동 4.3 m
+[INFO] [1794544062.491756048] [nav_benchmark]: 목표 3 (4.00, 1.90): succeeded, 15.9 s, 도착 오차 0.15 m, 추정 오차 0.10 m, 누적 이동 6.0 m
+[INFO] [1794544111.292560051] [nav_benchmark]: 목표 4 (2.00, 0.00): succeeded, 31.2 s, 도착 오차 0.20 m, 추정 오차 0.12 m, 누적 이동 9.1 m
+[INFO] [1794544192.393458900] [nav_benchmark]: 목표 5 (8.00, 0.00): succeeded, 51.6 s, 도착 오차 0.02 m, 추정 오차 0.23 m, 누적 이동 15.3 m
+[INFO] [1794544224.094250898] [nav_benchmark]: 목표 6 (8.00, 2.30): succeeded, 20.0 s, 도착 오차 0.21 m, 추정 오차 0.10 m, 누적 이동 17.4 m
+[INFO] [1794544241.795015660] [nav_benchmark]: 목표 7 (9.00, 1.80): succeeded, 11.1 s, 도착 오차 0.31 m, 추정 오차 0.07 m, 누적 이동 18.3 m
+[INFO] [1794544278.895682515] [nav_benchmark]: 목표 8 (8.00, 0.00): succeeded, 23.2 s, 도착 오차 0.26 m, 추정 오차 0.07 m, 누적 이동 20.5 m
+[INFO] [1794544318.296393092] [nav_benchmark]: 목표 9 (7.00, -2.40): succeeded, 25.0 s, 도착 오차 0.28 m, 추정 오차 0.24 m, 누적 이동 23.5 m
+[INFO] [1794544355.697267980] [nav_benchmark]: 목표 10 (9.50, -2.30): succeeded, 23.5 s, 도착 오차 0.40 m, 추정 오차 0.28 m, 누적 이동 25.9 m
+[INFO] [1794544405.498158821] [nav_benchmark]: 목표 11 (5.80, -2.20): succeeded, 31.6 s, 도착 오차 0.17 m, 추정 오차 0.07 m, 누적 이동 29.4 m
+[INFO] [1794544447.799541897] [nav_benchmark]: 목표 12 (7.00, 0.00): succeeded, 26.1 s, 도착 오차 0.17 m, 추정 오차 0.17 m, 누적 이동 32.0 m
+[INFO] [1794544526.300402602] [nav_benchmark]: 목표 13 (1.70, -2.00): succeeded, 50.7 s, 도착 오차 0.12 m, 추정 오차 0.15 m, 누적 이동 38.0 m
+[INFO] [1794544559.401224504] [nav_benchmark]: 목표 14 (0.00, 0.00): succeeded, 21.7 s, 도착 오차 0.11 m, 추정 오차 0.15 m, 누적 이동 40.5 m
+[INFO] [1794544559.401430120] [nav_benchmark]: 표: /res/20261113_0435_nav_video_sonar_soft_s0_limo_fire_office.md (/res/20261113_0435_nav_video_sonar_soft_s0_limo_fire_office.csv)
+**요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.22 m, 가장 큰 추정 오차 0.28 m
+
+TAG=office_video_sonar_soft_k1.03_s0
+65
