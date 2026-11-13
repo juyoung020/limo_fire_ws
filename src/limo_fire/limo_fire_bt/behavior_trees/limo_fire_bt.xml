@@ -134,7 +134,11 @@
               <GetNextWaypoint route="{patrol_route}" goal="{patrol_goal}"/>
               <Fallback name="NavigateOrSkip">
                 <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
-                <LogPatrolIssue goal="{patrol_goal}"/>
+                <!-- 못 가면 알리고 잠깐 쉰 뒤 다음 순찰점 (Nav2 가 바로 실패하면 순찰점을 몇 초 만에 다 넘기지 않게) -->
+                <Sequence name="SkipPoint">
+                  <LogPatrolIssue goal="{patrol_goal}"/>
+                  <Sleep msec="3000"/>
+                </Sequence>
               </Fallback>
             </Sequence>
           </Repeat>
@@ -533,7 +537,7 @@
     </Action>
     <Action ID="StopRobot">
       <input_port name="action_name" type="std::string" default="/navigate_to_pose">목표를 취소할 Nav2 액션</input_port>
-      <input_port name="cmd_vel_topic" type="std::string" default="/cmd_vel">geometry_msgs/Twist 0 발행</input_port>
+      <input_port name="cmd_vel_topic" type="std::string" default="/cmd_vel">0 속도 발행 (Twist·TwistStamped 는 그래프에서 고름)</input_port>
     </Action>
     <Action ID="SweepSmokeZone">
       <input_port name="action_name" type="std::string" default="/navigate_to_pose"/>

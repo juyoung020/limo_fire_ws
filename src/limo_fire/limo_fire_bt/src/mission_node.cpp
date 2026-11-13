@@ -130,10 +130,15 @@ int main(int argc, char ** argv)
   while (!g_stop && rclcpp::ok() && status == BT::NodeStatus::RUNNING) {
     const auto next = std::chrono::steady_clock::now() + period;
     exec.spin_some();
-    // 시뮬 시계(/clock)가 안 들어오면 시간이 0 에 멈춰 기다리는 노드가 끝나지 않는다: 말없이 멈추지 않게 알린다
-    if (sim_time && node->now().nanoseconds() == 0 && std::chrono::steady_clock::now() > clock_warn_at) {
-      RCLCPP_WARN(log, "use_sim_time 인데 /clock 이 안 들어옴 — 시뮬(Webots)을 먼저 띄우거나 sim:=false 로 실행");
-      clock_warn_at = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    // 시뮬 시계(/clock)가 들어오기 전에는 틱하지 않는다: 시각 0 에서 시작한 기다림(깊이 10 s 등)이
+    // 첫 /clock 에 수십 초를 건너뛰어 바로 시간 초과가 된다. 안 들어오면 말없이 멈추지 않게 알린다
+    if (sim_time && node->now().nanoseconds() == 0) {
+      if (std::chrono::steady_clock::now() > clock_warn_at) {
+        RCLCPP_WARN(log, "use_sim_time 인데 /clock 이 안 들어옴 — 시뮬(Webots)을 먼저 띄우거나 sim:=false 로 실행");
+        clock_warn_at = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      }
+      std::this_thread::sleep_until(next);
+      continue;
     }
     try {
       status = tree.tickOnce();

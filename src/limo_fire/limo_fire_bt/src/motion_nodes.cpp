@@ -4,7 +4,9 @@
 #include <string>
 
 #include <behaviortree_cpp/action_node.h>
+#include <algorithm>
 #include <geometry_msgs/msg/twist.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <sensor_msgs/msg/range.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <yaml-cpp/yaml.h>
@@ -166,18 +168,35 @@ public:
   : BT::SyncActionNode(name, cfg), ctx_(std::move(ctx)) {}
   static PortsList providedPorts()
   {
-    return {InputPort<std::string>("cmd_vel_topic", "/cmd_vel", "geometry_msgs/Twist 0 발행"),
+    return {InputPort<std::string>("cmd_vel_topic", "/cmd_vel", "0 속도 발행 (Twist·TwistStamped 는 그래프에서 고름)"),
       InputPort<std::string>("action_name", "/navigate_to_pose", "목표를 취소할 Nav2 액션")};
   }
   NodeStatus tick() override
   {
-    if (!nav_) {
-      nav_ = std::make_unique<NavGoal>(*ctx_, need<std::string>(*this, "action_name"));
-      pub_ = ctx_->node()->create_publisher<geometry_msgs::msg::Twist>(
-        ctx_->resolve(need<std::string>(*this, "cmd_vel_topic")), 10);
-    }
+    if (!nav_) {nav_ = std::make_unique<NavGoal>(*ctx_, need<std::string>(*this, "action_name"));}
     nav_->cancel_all();
-    pub_->publish(geometry_msgs::msg::Twist());
+    // 속도 토픽 타입은 그래프에서 고른다: 실물 섀시·Humble 시뮬은 Twist, Jazzy 시뮬 바퀴 제어기는 TwistStamped.
+    // 아직 받는 쪽이 없으면 이번에는 0 속도를 건너뛴다 (Nav2 목표 취소만으로도 멈춘다)
+    const std::string topic = ctx_->resolve(need<std::string>(*this, "cmd_vel_topic"));
+    if (!pub_ && !stamped_pub_) {
+      const auto all = ctx_->node()->get_topic_names_and_types();
+      const auto it = all.find(topic);
+      if (it != all.end()) {
+        const auto & types = it->second;
+        if (std::find(types.begin(), types.end(), "geometry_msgs/msg/TwistStamped") != types.end()) {
+          stamped_pub_ = ctx_->node()->create_publisher<geometry_msgs::msg::TwistStamped>(topic, 10);
+        } else {
+          pub_ = ctx_->node()->create_publisher<geometry_msgs::msg::Twist>(topic, 10);
+        }
+      }
+    }
+    if (pub_) {pub_->publish(geometry_msgs::msg::Twist());}
+    if (stamped_pub_) {
+      geometry_msgs::msg::TwistStamped m;
+      m.header.stamp = ctx_->now();
+      m.header.frame_id = ctx_->param<std::string>("robot_frame");
+      stamped_pub_->publish(m);
+    }
     return NodeStatus::SUCCESS;
   }
 
@@ -185,6 +204,7 @@ private:
   std::shared_ptr<RosContext> ctx_;
   std::unique_ptr<NavGoal> nav_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_;
+  rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr stamped_pub_;
 };
 
 // 불에서 safe_distance_m 떨어진 곳(지금 로봇 쪽)으로 가서 불을 보며 머문다. 멈추게 하는 건 위의 Timeout
