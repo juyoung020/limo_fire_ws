@@ -179,3 +179,4 @@ Webots 정답 자세(`limo_fire_sim GroundTruthPose`)와 비교한다. 표는 `<
 - 이 영상 판 결과(시드 0, 다시 돌림): `hard` 11/14 · 추정 오차 최대 1.15 m, `soft` 14/14 · 최대 0.28 m. 위 표의 시드 0 판(`hard` 8/14)과 숫자가 다르다 — 같은 시드라도 Nav2 처리 시점이 판마다 조금씩 달라 완전히 같게 재현되지는 않는다. 방향(`hard` 에서 위치를 잃고 `soft` 에서는 안 잃음)은 같다. 판별 값은 [20261113_0424_nav_video_sonar_hard_s0_limo_fire_office.csv](20261113_0424_nav_video_sonar_hard_s0_limo_fire_office.csv)·[20261113_0435_nav_video_sonar_soft_s0_limo_fire_office.csv](20261113_0435_nav_video_sonar_soft_s0_limo_fire_office.csv).
 - 시험 전체 실행 기록: [20261113_isaac_chain_status.txt](20261113_isaac_chain_status.txt)(판 시작·끝·온도), [20261113_isaac_run_logs.txt](20261113_isaac_run_logs.txt)(판별 마지막 출력과 요약).
 - 영상 장면은 위 한계와 같은 장면이다(지도 박스 장면·운동학 구동). 영상 녹화용 코드도 Python 이라 저장소에 올리지 않았다.
+- 왜 Isaac Sim 인지·환경·교차 방법·한계를 자세히 적은 문서: [isaac_sim_cross_check.md](../isaac_sim_cross_check.md).
