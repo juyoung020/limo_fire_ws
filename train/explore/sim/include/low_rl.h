@@ -643,7 +643,7 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
       }
     }
   }
-  if (e.done && b.low[env].end == kLowEndStall) {   // 위층에 알리는 막힘 신호 (정책·규칙 추종 모두)
+  if ((e.done || b.cfg.low_explore) && b.low[env].end == kLowEndStall) {   // 위층에 알리는 막힘 신호 (정책·규칙 추종 모두 — 합친 탐사는 판을 안 끝내고 신호만)
     R.stall = 1;
     R.stall_tgt = b.lowcmd[env].follow != 0 ? b.lowcmd[env].target : e.goal_cell;
   }

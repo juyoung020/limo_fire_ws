@@ -10,6 +10,9 @@
 //      통과 반경(low_pass_r) 안에 들면 그 결정을 거기서 끝내고(남은 걸음은 쉼 — 그래프 모드 gdec 과 같은 꼴) 다음 결정이 새 목표를 받는다.
 //      판 끝: 벽·사람 충돌(기존 규칙) · 정체(low_idle_steps 동안 low_idle_d 를 못 벗어남) · 시간(low_time_steps) · 목표 low_goals 개.
 //      탐사 판 끝 규칙(지도 닫힘 성공·지도 진행 없음)은 low_task 면 끈다 (env.h finish_step).
+//  (3) 합친 탐사 (EnvCfg::low_explore, 2026-11-13 — mdp/README "아래층 RL — 위층 규칙과 합친 탐사", 도구 scripts/combine_run.cpp): (2) 위에서
+//      위층 규칙이 고른 후보 칸을 아래층(정책·규칙 추종기)이 몰아 탐사를 끝까지 한다. 탐사 판 끝 규칙을 안 끄고, 정체·통과·경로 끝은 판을 안 끝낸다:
+//      통과·경로 끝이 목표 밖은 LowEp 에 적기만(reached·off·hold), 정체는 막힘 신호(LowRl::stall)만 세우고 기준점을 새로 잡는다 (low_step.h low_finish).
 #pragma once
 
 namespace sim {

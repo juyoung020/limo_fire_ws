@@ -147,7 +147,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       const YAML::Node fo = ap["follow"];
       const auto num = [&](const char* k, float d) { return fo && fo[k] ? fo[k].as<float>() : d; };
       c.low_stat = c.low_task = 0;
-      c.low_rl = c.low_auto = c.low_period = c.low_act_w = 0;   // 아래층 RL (include/low_rl.h) — 도구·학습기가 켠다
+      c.low_rl = c.low_auto = c.low_period = c.low_act_w = c.low_explore = 0;   // 아래층 RL (include/low_rl.h) — 도구·학습기가 켠다
       c.low_pass_r = num("pass_radius", 0.5f);
       c.low_idle_d = num("stall_dist", 0.3f);
       c.low_idle_steps = (int)std::lround(num("stall_time", 10.f) / pv);

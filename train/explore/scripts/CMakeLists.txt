@@ -40,3 +40,8 @@ add_executable(low_policy_run low_run.cpp)
 set_source_files_properties(low_run.cpp PROPERTIES LANGUAGE CUDA)   # ppo.h 머리글
 target_compile_definitions(low_policy_run PRIVATE LOW_RUN_POLICY=1)
 target_link_libraries(low_policy_run frontier_explorer_h explore_ppo)
+
+# 두 층 합친 탐사 측정(combine_run): 위층 0 번 후보 규칙 + 아래층 RL 정책(또는 규칙 추종기)으로 탐사를 끝까지 — 평가 전용
+add_executable(combine_run combine_run.cpp)
+set_source_files_properties(combine_run.cpp PROPERTIES LANGUAGE CUDA)   # ppo.h 머리글
+target_link_libraries(combine_run frontier_explorer_h explore_ppo)

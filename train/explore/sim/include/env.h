@@ -168,6 +168,8 @@ struct EnvCfg {
   int low_rl;                      // 1 = env.step 한 번이 걸음 하나, follow 2 인 환경은 행동 줄 (v, ω) 로 (EnvBatch::lowrl)
   int low_auto;                    // 1 = 환경이 목표를 스스로 뽑고 모든 환경이 follow 2 (학습) · 0 = 호스트가 LowCmd 를 넣고 Env::low_prepare (평가·두 층 같이)
   int low_period;                  // 경로를 다시 살피는 주기 (걸음 — 목표가 바뀌면 바로). 0 이면 decide_steps
+  int low_explore;                 // 1 = 두 층을 합친 탐사 (low_rl 위 스위치 — low_task.h "합친 탐사"): 탐사 판 끝 규칙(닫힘 성공·진행 없음)을 그대로 두고,
+                                   //     단독 과제의 정체·시간·목표 수는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
   int low_act_w;                   // 행동 줄 한 환경 칸 수 (정책 환경은 a[0] = v, a[1] = ω 만 읽음). 0 이면 mdp::act::DIM
 };
 
@@ -1362,7 +1364,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   in.closed = c.success_closed && !e.collided && (float)e.since_occ * dt_act >= c.close_idle_s && (e.step + 1) % c.close_every == 0 && e.map_closed ? 1 : 0;
   const bool gterm = c.graph_on && c.graph_term;   // 그래프 모드 전작 방식: 닫힘 성공·진행 없음 규칙 없음 (끝 = 유틸리티 합 0 — graph_env.h graph_finish)
   if (gterm) in.closed = 0;
-  if (b.lowcmd) in.closed = 0;   // 아래층 단독 과제: 탐사 판 끝 규칙(닫힘 성공·진행 없음) 없음 (low_task.h)
+  if (b.lowcmd && !c.low_explore) in.closed = 0;   // 아래층 단독 과제: 탐사 판 끝 규칙(닫힘 성공·진행 없음) 없음 (low_task.h) — 합친 탐사(low_explore)는 그대로 둠
   // 덮음 보상 자리: 로봇 지도에서 이번 행동 동안 판 처음 막힘이 된 칸 수 (map_progress 가 이 걸음 칸에 막 넣은 값 — 진행 없음 시계와 같은 셈)
   // 진행 없음 시계와 같은 문턱: 한 행동에 kIdleOccMin 개 미만이면 0 — 멈춰 있어도 자세 오차·빔 잡음으로 드문드문 생기는 막힘 칸을 보상하지 않는다
   {
@@ -1397,7 +1399,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   e.since_wall = new_wall > 0 ? 0 : e.since_wall + 1;
   in.idle = !e.collided && !in.declared && !in.closed && (float)e.since_occ * dt_act >= mdp::cur::kIdleTime;
   if (gterm) in.idle = false;
-  if (b.lowcmd) in.idle = false;
+  if (b.lowcmd && !c.low_explore) in.idle = false;
   float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
   e.reward = mdp::rew::terms(in, T);
   e.slip_acc = 0.f;

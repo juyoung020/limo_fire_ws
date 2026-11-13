@@ -58,9 +58,11 @@ DEV void low_begin(const EnvBatch& b, const EnvState& e, int env, const PathWhy&
     L.left = 0.f;
     L.goal_prev = e.goal_cell;
     L.plans_prev = e.p_plans;
-    L.a_step = e.step;   // 정체 닻: 새 목적지부터 다시
-    L.ax = e.x;
-    L.ay = e.y;
+    if (!c.low_explore) {   // 정체 닻: 새 목적지부터 다시 (합친 탐사는 목적지가 1 s 마다 바뀌어도 닻을 그대로 — 자리로만 잼)
+      L.a_step = e.step;
+      L.ax = e.x;
+      L.ay = e.y;
+    }
   } else if (e.p_plans != L.plans_prev) {
     if (L.ctx == 0) L.ctx = 2;
     L.plans_prev = e.p_plans;
@@ -121,6 +123,33 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
         }
       }
       L.hit_dir = dm::absf(bear) <= c.low_front ? 1 : 2;
+    }
+    return false;
+  }
+  if (c.low_explore) {   // 합친 탐사 (low_task.h): 판은 탐사 규칙이 끝낸다. 통과·경로 끝은 표시만(위층이 바로 다시 고름), 정체는 신호만 올리고 닻을 새로
+    const int tgt = b.lowcmd && b.lowcmd[env].follow != 0 ? b.lowcmd[env].target : -1;
+    const float px = e.x + e.ex, py = e.y + e.ey;
+    if (tgt >= 0 && e.goal_cell == tgt) {
+      const float tx = m.ox + ((float)(tgt % m.gw) + 0.5f) * c.res - px, ty = m.oy + ((float)(tgt / m.gw) + 0.5f) * c.res - py;
+      if (tx * tx + ty * ty <= c.low_pass_r * c.low_pass_r) {
+        L.reached += 1;
+        L.reach_step = e.step;
+        L.hold = e.step - L.d_step;
+      } else if (e.p_n > 0 && !e.p_trunc) {
+        const float ex = m.ox + ((float)e.wp[2 * (e.p_n - 1)] + 0.5f) * c.res - px, ey = m.oy + ((float)e.wp[2 * (e.p_n - 1) + 1] + 0.5f) * c.res - py;
+        if (ex * ex + ey * ey <= c.goal_tol * c.goal_tol) {
+          L.off += 1;
+          L.hold = e.step - L.d_step;
+        }
+      }
+    }
+    L.end = 0;
+    const float ax = e.x - L.ax, ay = e.y - L.ay;
+    if (ax * ax + ay * ay >= c.low_idle_d * c.low_idle_d || e.step - L.a_step >= c.low_idle_steps) {
+      if (ax * ax + ay * ay < c.low_idle_d * c.low_idle_d) L.end = kLowEndStall;   // 이 걸음에 정체 (lowrl_finish 가 신호로 옮김)
+      L.a_step = e.step;
+      L.ax = e.x;
+      L.ay = e.y;
     }
     return false;
   }

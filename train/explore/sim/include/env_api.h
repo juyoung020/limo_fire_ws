@@ -96,6 +96,7 @@ class Env {
   void get_trail(std::vector<uint32_t>& out) const;
   void get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d, std::vector<float>& priv) const;
   void get_cand(std::vector<int32_t>& out) const;   // 계층형 후보 목표 칸 [N][mdp::hier::K] (−1 빈 슬롯) — 도구용
+  void get_cand_cur(std::vector<int32_t>& out) const;   // 후보마다 "그 덩어리가 지금 목표 칸을 품음" 비트 [N] (hier_path.h act_same — 합친 탐사 도구가 목표를 이어 갈 때)
   void get_graph(std::vector<uint8_t>& feat, std::vector<uint32_t>& edge, std::vector<int32_t>& cur, std::vector<float>& glob, std::vector<int32_t>& cand) const;
   void get_gdec(std::vector<GraphDec>& out) const;   // 그래프 모드: 방금 끝난 결정의 결과 [N] (env.h GraphDec — 걸음 수·이동 거리·끝난 사유·전작 방식 보상 조각)
   // 아래층 계측·단독 과제 (include/low_task.h — cfg.low_stat·low_task 일 때만): 판 누적 [N] (끄면 빈 벡터) · 환경마다 목표 칸·모드 넣기 (결정 앞) ·

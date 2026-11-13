@@ -7,6 +7,7 @@
 | `frontier_run.cpp` | 프론티어 탐사 기준선을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) · `--modes slot0`(·`slot0_nosafe`) 는 계층형 규칙 정책(늘 0 번 후보)을 같은 판으로 |
 | `oracle_run.cpp` | **측정 도구 — 정답을 씀.** 학습 맵 단계마다 정답 격자 경로·참 자세·정답 사람 위치로 모는 oracle(`--policy oracle`, 목표는 로봇 지도 굵은 프론티어, 성공 정의 그대로)과 slot0 규칙 정책을 같은 판으로 돌려 성공 상한을 잰다(`--stage 0..3 --people on\|off --out 판.tsv`). 시뮬은 env_api 로만 몰고 정답은 러너 안에서만 — 학습 환경·관측과 무관. 빌드는 baselines/frontier, 결과는 [mdp/README](../mdp/README.md) "커리큘럼" |
 | `low_run.cpp` | 아래층 기준선(mdp/README "아래층 계측·단독 과제") — 빌드는 baselines/frontier 의 `low_run`. 여기 `CMakeLists.txt` 의 `low_policy_run` 은 같은 파일에 정책 걸음 루프를 넣은 것: `low_policy_run --mode follow --policy <체크포인트> --scenes …` 가 `train --low` 정책을 기준선과 같은 단독 과제(예열 탐사 → 경로 3~15 m 목표, 사람 0·2 차례로)로 재고 ROADMAP "2 단계 통과 조건" 줄마다 통과·불통과를 낸다. `--policy` 대신 `--step` 이면 같은 걸음 루프에서 규칙 추종기(대조) |
+| `combine_run.cpp` | 두 층을 한 판에서 합쳐 탐사를 끝까지: 위층 0 번 후보 규칙(1 Hz) + 아래층 RL 정책(10 Hz, `--policy <체크포인트>`) 또는 규칙 추종기(`--policy` 없음 — 같은 걸음 루프의 대조). 막힘 신호(`LowRl::stall`)를 받아 그 칸을 한동안 피한다. `combine_run --scenes a.scene b.scene [--policy …] --episodes 256 --seed 1 --people 0 [--rule-near 2]` — 결과·원인 분석은 mdp/README "아래층 RL — 위층 규칙과 합친 탐사" |
 
 ## train (`train.cpp`, 빌드 `CMakeLists.txt`)
 

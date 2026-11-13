@@ -15,6 +15,7 @@
 //            판 시작·결정마다 GPU == CPU 인지, 정답 격자를 바꾼 묶음에서 그래프 관측이 같은지 (--negative 는 유효 이웃 번호 하나를 다른 유효 이웃으로)
 //   --low: 아래층 RL 모드(include/low_rl.h — 걸음 하나 = 행동 하나, 정책 자리에 무작위·경로 쫓기 행동). 상태·보상·관측에 더해 아래층 관측(그림·숫자)·
 //          걸음 사이 값·목표·누적이 걸음마다 GPU == CPU 인지. --low-host: 목표를 호스트가 넣는 길(Env::low_prepare — 정책·규칙 추종·예열 탐사 환경을 섞음)
+//          --low-explore: 그 위에 합친 탐사(EnvCfg::low_explore — 탐사 판 끝 규칙 그대로, 정체는 막힘 신호만. scripts/combine_run.cpp 가 쓰는 길)
 //   --hier: 계층형 행동 모드(kActPath — 결정 하나 = 속도 행동 10 걸음 묶음, 후보 번호 무작위). 덧붙여 정답 격자를 쓰지 않는지:
 //           CPU 묶음의 정답 격자(MapDev::grid)를 모두 막힘·모두 빈 칸으로 바꾼 사본에서 경로 계획·추종기 명령이 같은지 (--negative 는 후보 번호 하나를 바꿈)
 #include <algorithm>
@@ -60,12 +61,13 @@ void range_1d(int i, float* lo, float* hi) {
 }  // namespace
 
 // ---- 아래층 RL (--low) ----
-int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const sim::LidarModel& lidar, int n_env, int n_steps, int people, bool negative, bool host) {
+int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const sim::LidarModel& lidar, int n_env, int n_steps, int people, bool negative, bool host, bool explore) {
   using sim::LowRl; using sim::LowCmd; using sim::LowRlStat; using sim::LowEp;
   hc.cfg.action_mode = sim::kActPath;
   hc.cfg.curriculum = 0;
   hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
   hc.cfg.low_auto = host ? 0 : 1;
+  hc.cfg.low_explore = explore ? 1 : 0;   // 합친 탐사 (--low-explore): 탐사 판 끝 규칙 그대로 · 정체는 신호만
   hc.cfg.low_act_w = host ? 0 : 3;   // 자동: 학습기와 같은 폭 (v, ω, 선언 자리). 호스트: 규칙 추종 환경이 후보 번호를 읽게 mdp::act::DIM
   const sim::EnvCfg& c = hc.cfg;
   const int A = c.low_act_w > 0 ? c.low_act_w : mdp::act::DIM, K = mdp::rew::kTerms;
@@ -140,6 +142,8 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   };
   cmp_low(-1);
   std::vector<float> act((size_t)A * n_env);
+  std::vector<int> sig_prev(n_env, 0);
+  size_t n_sig = 0, n_ok = 0, n_idle = 0;   // 합친 탐사: 막힘 신호가 선 횟수 · 닫힘 성공 · 진행 없음으로 끝난 판
   for (int t = 0; t < n_steps; ++t) {
     cpu.get_state(sc);
     if (host) {   // 목표를 호스트가: 환경 번호 % 3 = 0 정책 · 1 규칙 추종(단독 과제) · 2 예열 탐사. 목표 = 로봇 둘레 ±4 m 안 아는 빈 칸
@@ -229,6 +233,8 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     mark(bo, bad_obs, t);
     cmp_low(t);
     for (int i = 0; i < n_env; ++i) n_pol += Rc[i].pol != 0;
+    if (explore)
+      for (int i = 0; i < n_env; ++i) { n_sig += Rc[i].stall && !sig_prev[i]; sig_prev[i] = Rc[i].stall; n_ok += dc[i] == mdp::cur::kDeclareOk; n_idle += dc[i] == mdp::cur::kNoProgress; }
     if (t % 50 == 49 || t == n_steps - 1) {   // 누적 (가져가며 0 으로 — 학습기와 같은 쓰임)
       gpu.take_low_stat(Sg);
       cpu.take_low_stat(Sc);
@@ -265,6 +271,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   std::printf("목표: 경로 짜인 것 %d · 통과 %d · 포기(경로 없음·끝이 밖) %d · 통과한 목표 평균 경로 %.2f m · 과제 구간 속도 %.3f m/s | 안전층 걸음 %d · 후진 걸음 %d · 이동 %.1f m\n",
               tot.goals, tot.reached, tot.giveup, tot.reached ? tot.reach_len / tot.reached : 0.f,
               tot.reach_steps ? tot.reach_len / (tot.reach_steps * c.substeps * c.dt) : 0.f, tot.safe_steps, tot.back_steps, tot.dist);
+  if (explore) std::printf("합친 탐사(low_explore): 막힘 신호 %zu 번 · 닫힘 성공 %zu 판 · 진행 없음 %zu 판 (정체·시간·목표 수는 판을 안 끝냄)\n", n_sig, n_ok, n_idle);
   std::printf("보상 항 합:");
   for (int k = 0; k < sim::kLrTerms; ++k) std::printf(" %s %.3f", tn[k], tot.term[k]);
   std::printf(" (걸음 보상 합 %.3f)\n", rew_sum);
@@ -297,7 +304,7 @@ int main(int argc, char** argv) {
   bool eval = false;    // --eval: 평가 도구와 같은 조건 (머리 주석)
   uint64_t seed = 7;
   bool slot0 = false;   // --slot0 (계층형): 늘 후보 0 번 — 같은 목표가 이어져 복구(hier_path.h "복구")·목표 허용 길을 GPU == CPU 로 지나가게
-  bool low = false, low_host = false;   // --low · --low-host (아래층 RL)
+  bool low = false, low_host = false, low_explore = false;   // --low · --low-host · --low-explore (아래층 RL)
   bool hier = false;   // --spin: 행동을 제자리 돌기(ω 0.5 정규)로 — 작은 방에서 지도 닫힘 성공(판 끝 1) 길을 GPU == CPU 로 지나가게
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -314,6 +321,7 @@ int main(int argc, char** argv) {
     else if (a == "--hier") hier = true;
     else if (a == "--low") low = true;
     else if (a == "--low-host") low = low_host = true;
+    else if (a == "--low-explore") low = low_host = low_explore = true;
     else if (a == "--graph") hier = graph = true;
     else if (i + 1 < argc && sim::graph_arg(gargs, a, argv[i + 1])) ++i;
     else if (a == "--graph-stand") graph_stand = std::atoi(argv[++i]);
@@ -450,7 +458,7 @@ int main(int argc, char** argv) {
                 (w.stage >= 0 ? w.stage : mdp::cur::stage_of_area(w.n_floor * hc.cfg.res * hc.cfg.res)), mdp::rew::t_ref(w.n_wall), w.spawn.size(), w.closed ? "닫힘" : w.leak.c_str());
   std::printf("안전층 %s: 문턱 %.3f m (앞 범퍼에서, 제동 거리 %.3f m + 판단 지연 0.2 s × %.1f m/s)\n", hc.cfg.safety ? "켬" : "끔", hc.cfg.safety_dist,
               hc.brake_dist, mdp::act::V_FWD);
-  if (low) return verify_low(hc, worlds, lidar, n_env, n_steps, people, negative, low_host);
+  if (low) return verify_low(hc, worlds, lidar, n_env, n_steps, people, negative, low_host, low_explore);
   sim::Env gpu(hc, worlds, lidar, n_env, seed, true), cpu(hc, worlds, lidar, n_env, seed, false);
   gpu.set_people_max(std::vector<int>(n_env, people));
   cpu.set_people_max(std::vector<int>(n_env, people));

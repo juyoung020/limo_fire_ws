@@ -432,6 +432,10 @@ void Env::get_cand(std::vector<int32_t>& out) const {
   if (!b_.cand) throw std::runtime_error("get_cand: 계층형 모드가 아님");
   fetch(gpu_, b_.cand, (size_t)b_.n_env * mdp::hier::K, out);
 }
+void Env::get_cand_cur(std::vector<int32_t>& out) const {
+  if (!b_.cand_cur) throw std::runtime_error("get_cand_cur: 계층형 모드가 아님");
+  fetch(gpu_, b_.cand_cur, (size_t)b_.n_env, out);
+}
 void Env::graph_refresh() {
   if (gpu_) env_graph_gpu(b_);
   else env_graph_cpu(b_);
