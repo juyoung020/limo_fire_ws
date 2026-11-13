@@ -173,3 +173,9 @@ Webots 정답 자세(`limo_fire_sim GroundTruthPose`)와 비교한다. 표는 `<
 - 초음파 사양(0.02~4 m, 15°, 광선 5 개, 잡음 1 %, 10 Hz)은 Webots 판과 같은 잠정값. Isaac 에는 초음파 센서가 없어 거리는 PhysX 광선으로 계산했다.
 - 절대 수치는 Webots 와 다르다(예: `hard` warehouse 추정 오차 최대 4.87 m vs 결과 3 의 1.70 m). 두 시뮬의 차이는 위 한계 때문이니 **맵·조건 사이의 순서만 비교**한다.
 - 시험 스크립트(Isaac 실행·지도 변환·집계)는 Python 이라 저장소에 올리지 않았다(이 저장소는 C++/Rust 만). 재현하려면 위 조건으로 새로 만들어야 한다.
+
+결과 4 영상·로그 (2026-11-13):
+- 영상: [../assets/office_sonar_hard_vs_soft.mp4](../assets/office_sonar_hard_vs_soft.mp4) · [GIF](../assets/office_sonar_hard_vs_soft.gif). office 맵 순찰 14 개를 `sonar` `hard`(왼쪽)·`soft`(오른쪽)로 한 판씩 돈 Isaac Sim 장면을 위에서 내려다본 것(24 배속). 파란 원 = 순찰점, 주황 선 = 실제 이동 궤적, 빨간 원 = 로봇.
+- 이 영상 판 결과(시드 0, 다시 돌림): `hard` 11/14 · 추정 오차 최대 1.15 m, `soft` 14/14 · 최대 0.28 m. 위 표의 시드 0 판(`hard` 8/14)과 숫자가 다르다 — 같은 시드라도 Nav2 처리 시점이 판마다 조금씩 달라 완전히 같게 재현되지는 않는다. 방향(`hard` 에서 위치를 잃고 `soft` 에서는 안 잃음)은 같다. 판별 값은 [20261113_0424_nav_video_sonar_hard_s0_limo_fire_office.csv](20261113_0424_nav_video_sonar_hard_s0_limo_fire_office.csv)·[20261113_0435_nav_video_sonar_soft_s0_limo_fire_office.csv](20261113_0435_nav_video_sonar_soft_s0_limo_fire_office.csv).
+- 시험 전체 실행 기록: [20261113_isaac_chain_status.txt](20261113_isaac_chain_status.txt)(판 시작·끝·온도), [20261113_isaac_run_logs.txt](20261113_isaac_run_logs.txt)(판별 마지막 출력과 요약).
+- 영상 장면은 위 한계와 같은 장면이다(지도 박스 장면·운동학 구동). 영상 녹화용 코드도 Python 이라 저장소에 올리지 않았다.
