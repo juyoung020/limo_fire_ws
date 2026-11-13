@@ -118,3 +118,9 @@ Nav2 값(`nav2_params.yaml`): 전역 `robot_radius` 0.20 m, 지역 발자국 0.3
 | Cartographer 지도 (`slam:=true`) | 두 줄 모두 끊김 없는 벽(바깥 면 두 줄 + 안은 모름). 이 지도로 `maps/sim/limo_fire_maze` 를 다시 저장 |
 | 순찰 `nav_benchmark` (`slam:=true`) | **13 / 13**, 평균 도착 오차 0.25 m (전역 막힘 문턱 100 · 65 둘 다). 프론티어 탐사를 끝낸 자리(북 통로)에서 바로 돌린 판은 첫 목표만 시간 초과로 12 / 13 — 가운데 통로 서쪽 라바콘 근처에서 진척 없음, 원인은 안 쟀다 |
 | 순찰 `nav_benchmark` (새 저장 지도 + AMCL) | **13 / 13**, 평균 도착 오차 0.25 m, 가장 큰 추정 오차 0.22 m |
+
+## 독립 MuJoCo 발사·표적 데모
+
+[sim/mujoco_ball_mvp](../sim/mujoco_ball_mvp/)에는 공 발사와 힌지 표적 전도 장면 및 GUI 녹화가 있다. sim/은 COLCON_IGNORE 대상이며, 이 데모는 ROS 2 토픽·Nav2·임무 BT에 연결되지 않은 독립 실행 프로그램이다. LIMO는 현재 시각 메시일 뿐 이동 베이스나 센서 시뮬레이션은 아니다. 따라서 ROS 2 주행·탐지 통합 검증에는 계속 Webots를 사용한다.
+
+전도 성공 판정은 표적 기울기 45° 이상을 0.20초 유지하는 조건이다. 설치와 실행은 [데모 README](../sim/mujoco_ball_mvp/README.md)를 따른다.

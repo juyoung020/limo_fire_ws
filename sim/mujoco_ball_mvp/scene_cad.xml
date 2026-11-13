@@ -1,0 +1,37 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="ball_topple_mvp_cad">
+  <compiler angle="degree" />
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast" />
+  <visual>
+    <global azimuth="135" elevation="-22" />
+    <scale contactwidth="0.08" contactheight="0.05" />
+  </visual>
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1="0.84 0.85 0.86" rgb2="0.67 0.70 0.74" />
+    <material name="floor" texture="grid" texrepeat="6 6" reflectance="0.05" />
+    <mesh name="cad_container_tube" file="cad_assets/container_tube_1.obj" />
+    <mesh name="cad_feeder_roller" file="cad_assets/feeder_roller_1.obj" />
+    <mesh name="cad_tt_motor" file="cad_assets/tt_motor_v2_1.obj" />
+    <mesh name="cad_flywheel_motors" file="cad_assets/two_motor_flywheel_v42_1.obj" />
+  </asset>
+  <worldbody>
+    <light pos="0 -2 3" dir="0 0 -1" diffuse="0.9 0.9 0.9" />
+    <geom name="ground" type="plane" size="5 5 0.1" material="floor" friction="1.2 0.1 0.01" />
+    <body name="ball" pos="0 0 0.3">
+      <freejoint name="ball_free" />
+      <geom name="ball_geom" type="sphere" size="0.020" mass="0.0027" rgba="0.98 0.27 0.035 1" friction="0.8 0.01 0.001" />
+    </body>
+    <body name="fire_target" pos="1.25 0 0.08">
+      <joint name="target_hinge" type="hinge" axis="0 1 0" limited="true" range="-115 115" damping="0.02" frictionloss="0.002" />
+      <geom name="target_hitbox" type="box" pos="0 0 0.23" size="0.075 0.09 0.23" mass="0.14" rgba="0.91 0.20 0.12 1" friction="1 0.1 0.01" />
+      <geom name="flame_visual" type="ellipsoid" pos="0 0 0.38" size="0.065 0.075 0.10" density="0" contype="0" conaffinity="0" rgba="1 0.72 0.07 0.9" />
+    </body>
+    <camera name="overview" pos="1.0 -3.5 1.8" xyaxes="0.83 0.55 0 -0.16 0.25 0.95" />
+    <body name="cad_launcher" pos="-0.0124 0 0.30394">
+      <geom name="cad_launcher_part_0" type="mesh" mesh="cad_container_tube" rgba="0.24 0.30 0.36 1" contype="0" conaffinity="0" />
+      <geom name="cad_launcher_part_1" type="mesh" mesh="cad_feeder_roller" rgba="0.95 0.65 0.12 1" contype="0" conaffinity="0" />
+      <geom name="cad_launcher_part_2" type="mesh" mesh="cad_tt_motor" rgba="0.15 0.17 0.19 1" contype="0" conaffinity="0" />
+      <geom name="cad_launcher_part_3" type="mesh" mesh="cad_flywheel_motors" rgba="0.22 0.26 0.29 1" contype="0" conaffinity="0" />
+    </body>
+  </worldbody>
+</mujoco>

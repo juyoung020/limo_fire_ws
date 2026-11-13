@@ -1,0 +1,5 @@
+[INFO] [1794568066.783394688] [mujoco_extinguisher]: MuJoCo ball shot action server ready
+[INFO] [1794568329.838884215] [mujoco_extinguisher]: Printed launcher pitch set to 16.54 deg; chassis heading controls yaw
+[INFO] [1794568329.842003727] [mujoco_extinguisher]: MuJoCo shot for mapper_fire_0_0: relative=(1.778,0.911) m, range=1.997 m, gui=True
+[INFO] [1794568342.109591330] [mujoco_extinguisher]: MuJoCo result frame is open; it closes when the mission launch shuts down or another shot starts
+[INFO] [1794568342.110667051] [mujoco_extinguisher]: MuJoCo contact=True, direct_hit=True, toppled=True; failure=success

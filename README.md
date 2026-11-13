@@ -156,7 +156,7 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 | 강화학습 (탐사·조준) | 직접 만드는 2.5D GPU 환경 — 수천 개 병렬 | `train/` |
 | 실제와 비슷한 검증 (센서·물리) | Isaac Sim 4.5 + WeGo LIMO USD | `sim/wego_LimoIsaacSIM` |
 | (공통) 맵 | AWS 병원·창고·서점·집, ProcTHOR-10K, HouseExpo | `sim/maps` ([목록](sim/maps/README.md)) |
-| Nav2·SLAM·BT 통합 검증 | Webots (교수님 LIMO 모델, 실제 LIMO 와 같은 토픽·프레임) + 우리 맵 4 개 | `sim/webots` ([맵·실행](sim/webots/README.md)) |
+| Nav2·SLAM·BT 통합 검증 | Webots (교수님 LIMO 모델, 실제 LIMO 와 같은 토픽·프레임) + 우리 맵 4 개 | `sim/webots` ([맵·실행](sim/webots/README.md)) |`r`n| 공 발사·표적 전도 물리 데모 | MuJoCo 3.17 (독립 실행) | `sim/mujoco_ball_mvp` — ROS 2/Nav2 주행과는 아직 연결되지 않음 |
 
 ```bash
 source ~/limo_fire_ws/env.sh

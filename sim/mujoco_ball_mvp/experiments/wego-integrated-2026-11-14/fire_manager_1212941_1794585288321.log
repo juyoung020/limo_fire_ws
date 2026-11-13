@@ -1,0 +1,19 @@
+[INFO] [1794585288.766537258] [fire_manager]: NAVIGATING|ready
+[INFO] [1794585322.112478896] [fire_manager]: NAVIGATING|waiting for Nav2, odometry, and map-to-base TF
+[INFO] [1794585322.113227341] [fire_manager]: NAVIGATING|goal dispatched
+[WARN] [1794585434.282106306] [fire_manager]: Fire detected without a usable depth pose; waiting for localization
+[WARN] [1794585472.574727622] [fire_manager]: Fire detected without a usable depth pose; waiting for localization
+[INFO] [1794585478.224156432] [fire_manager]: FIRE_DETECTED|mapper_fire_0_0
+[INFO] [1794585478.224275029] [fire_manager]: CLASSIFY_FIRE|
+[INFO] [1794585478.224301942] [fire_manager]: SMALL_FIRE|
+[INFO] [1794585478.224320374] [fire_manager]: STOPPING|
+[INFO] [1794585479.775141126] [fire_manager]: EXTINGUISHING|
+[INFO] [1794585491.975335597] [fire_manager]: VERIFY_RESULT|simulator confirmed extinguished
+[INFO] [1794585491.975467890] [fire_manager]: RESUME_NAVIGATION|
+[INFO] [1794585491.975495091] [fire_manager]: NAVIGATING|resumed after extinguishing
+[INFO] [1794585491.976350484] [fire_manager]: NAVIGATING|goal dispatched
+[WARN] [1794585492.475605079] [fire_manager]: Fire detected without a usable depth pose; waiting for localization
+[WARN] [1794585589.479812080] [fire_manager]: Fire detected without a usable depth pose; waiting for localization
+[INFO] [1794585605.586241206] [fire_manager]: STOPPING|client canceled mission
+[INFO] [1794585606.329449007] [fire_manager]: NAVIGATING|mission canceled
+[INFO] [1794585608.953377019] [rclcpp]: signal_handler(SIGINT/SIGTERM)

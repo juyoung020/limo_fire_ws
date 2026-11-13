@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "C:\Users\choej\git\robot-programming\simulation\mujoco_ball_mvp\experiments\2026-11-09\baseline\launch.py", line 123, in <module>
+    main()
+  File "C:\Users\choej\git\robot-programming\simulation\mujoco_ball_mvp\experiments\2026-11-09\baseline\launch.py", line 64, in main
+    model = mujoco.MjModel.from_xml_path(str(ROOT / "scene.xml"))
+            ^^^^^^
+UnboundLocalError: cannot access local variable 'mujoco' where it is not associated with a value

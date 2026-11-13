@@ -1,0 +1,8 @@
+{
+  "exit_code": 0,
+  "wall_seconds": 12.413872900011484,
+  "simulated_s": 6.001999999999561,
+  "view_hold_s": 5,
+  "visual_inspection": false,
+  "reason": "Computer Use access to Python window denied"
+}

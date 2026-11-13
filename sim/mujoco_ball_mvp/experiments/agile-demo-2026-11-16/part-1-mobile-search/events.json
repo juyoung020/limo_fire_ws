@@ -1,0 +1,26 @@
+{
+  "events": [
+    {
+      "event": "truth_fov_detected",
+      "time_s": 5.55,
+      "range_m": 2.247801323966634
+    },
+    {
+      "event": "stopped",
+      "time_s": 9.95
+    },
+    {
+      "event": "fired",
+      "time_s": 12.45,
+      "speed_m_s": 4.2,
+      "pitch_deg": 15.0
+    },
+    {
+      "event": "topple_confirmed",
+      "time_s": 14.466
+    }
+  ],
+  "movement": "prescribed kinematic waypoint patrol; no wheel dynamics or obstacle avoidance",
+  "detection": "truth position + 2.3 m range + 50 degree FOV + 0.25 second hold; YOLO image inference is not connected",
+  "shot": "elastic-launcher MuJoCo physics, documented mechanism animation, unchanged 45 degree / 0.20 second detector"
+}

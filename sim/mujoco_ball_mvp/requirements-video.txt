@@ -1,0 +1,3 @@
+-r experiments/2026-11-09/requirements-lock.txt
+imageio-ffmpeg==0.8.1
+Pillow==13.0.0

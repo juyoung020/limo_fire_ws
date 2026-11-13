@@ -1,0 +1,95 @@
+{
+  "all_identical": true,
+  "run_environment": {
+    "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "seed": 20261109,
+    "baseline_commit": "6cfdb08d5164c694605235083d3f11b7942d80de",
+    "grid_trials": 180,
+    "grid_successes": 141,
+    "grid_direct_successes": 99,
+    "grid_ground_first_successes": 42,
+    "perturbation_trials": 100,
+    "perturbation_successes": 100
+  },
+  "files": [
+    {
+      "file": "ablations.csv",
+      "rows": 36,
+      "sha256": "daa055e911ac1f7d1d3e9d080c1b52820ef26c981287068fb6b05eca8a138d94",
+      "identical": true
+    },
+    {
+      "file": "checks.csv",
+      "rows": 6,
+      "sha256": "2c8138424bf177c513e06a9ad6aeb96472f0b71ba889748abcefd722d6b5de9e",
+      "identical": true
+    },
+    {
+      "file": "grid.csv",
+      "rows": 180,
+      "sha256": "23b15edd66be688f5d8c47846afafcc75ce5b9bb7c43bd7b397333e12c08cde6",
+      "identical": true
+    },
+    {
+      "file": "perturbations.csv",
+      "rows": 100,
+      "sha256": "2837978f9f7efd9400b5f83d163f9e8ac2e161daa237cdc3e07ee404e0cf00e5",
+      "identical": true
+    },
+    {
+      "file": "success_rates.csv",
+      "rows": 60,
+      "sha256": "4d2eb68ae0915165e2d1c456e43cb83a01474f0d07abbfcc44da6588b829f263",
+      "identical": true
+    },
+    {
+      "file": "traces/ablation_pivot_0.02_default.csv",
+      "rows": 3001,
+      "sha256": "87ad4de103efc06b810252f993be31a0db175e21d18351090a7e2c826f795e6b",
+      "identical": true
+    },
+    {
+      "file": "traces/ablation_pivot_0.08_default.csv",
+      "rows": 3001,
+      "sha256": "23d4d2d826745e3d905b8cd3a349e4914bdfebf1e90a791ec55528f59dff0d4b",
+      "identical": true
+    },
+    {
+      "file": "traces/control_miss.csv",
+      "rows": 3001,
+      "sha256": "e955702212cbd72d1748fbc6af0c18cc1eeb72a8660b4fa14de9be222cbf255a",
+      "identical": true
+    },
+    {
+      "file": "traces/control_no_launch.csv",
+      "rows": 3001,
+      "sha256": "da7f62fea5e88404d67123f777493df9dc9105d98e71d070325b65b6bbe6265c",
+      "identical": true
+    },
+    {
+      "file": "traces/control_short_duration.csv",
+      "rows": 150,
+      "sha256": "a587bb96abdc2add01e13f85ed4b36c502ee76e7fac94fea95cd2ddba508b6ee",
+      "identical": true
+    },
+    {
+      "file": "traces/timestep_0.0005.csv",
+      "rows": 12001,
+      "sha256": "8c04c22e0455c3506bf28c087a273af444d9892a42a3eebe6d8e5d0088c16c7b",
+      "identical": true
+    },
+    {
+      "file": "traces/timestep_0.001.csv",
+      "rows": 6000,
+      "sha256": "0565de4239f6ca3ad5c0b9b993ccc1d50b7fedb37835393622b38200c99a85e3",
+      "identical": true
+    },
+    {
+      "file": "traces/timestep_0.002.csv",
+      "rows": 3001,
+      "sha256": "23d4d2d826745e3d905b8cd3a349e4914bdfebf1e90a791ec55528f59dff0d4b",
+      "identical": true
+    }
+  ]
+}

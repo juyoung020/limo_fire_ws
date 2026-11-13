@@ -1,0 +1,32 @@
+{
+  "video": "C:\\Users\\choej\\Videos\\MuJoCo\\mobile_demo\\mobile_search_aim_fire.mp4",
+  "frames": 647,
+  "duration_s": 21.566666666666666,
+  "fps": 30,
+  "shot_time_s": 11.75,
+  "detected_at_s": 5.55,
+  "stopped_at_s": 9.95,
+  "toppled": true,
+  "confirmed_at_s": 13.048000000000002,
+  "slow_motion_factor": 0.1,
+  "cad_source": "ping-pong-ball-shooter-v29.step",
+  "cad_parts": [
+    "Container Tube:1",
+    "Feeder Roller:1",
+    "TT Motor v2:1",
+    "Two Motor Flywheel v42:1"
+  ],
+  "cad_scale": "STEP millimetres converted to metres",
+  "ball_diameter_m": 0.04,
+  "ball_mass_kg": 0.0027,
+  "launcher_elevation_deg": 30,
+  "launcher_speed_m_s": 4.2,
+  "drag_coefficient": 0.45,
+  "air_density_kg_m3": 1.2044,
+  "drag_model": "constant Cd quadratic drag, unspun sphere; sensitivity assumption, not calibrated",
+  "video_ball_color": "orange for contrast; visual color only",
+  "trajectory": "orange 3D line segments from recorded MuJoCo states; render-only",
+  "attribution": "Tyler Jacques, https://www.printables.com/model/951454-xrp-ping-pong-ball-shooter (CC BY 4.0)",
+  "moving_base_model": "prescribed kinematic waypoint patrol",
+  "detector": "truth position + 2.3m range + 50 degree FOV; not image recognition"
+}

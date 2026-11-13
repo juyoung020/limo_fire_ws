@@ -1,0 +1,74 @@
+{
+  "contact": true,
+  "contact_time_s": 1.5740000000000012,
+  "toppled": true,
+  "toppled_at_s": 1.9220000000000015,
+  "max_tilt_deg": 114.67625982128986,
+  "final_tilt_deg": 5.590760501399326,
+  "simulated_s": 12.000000000000677,
+  "completed": true,
+  "termination": "duration",
+  "ground_contact_time_s": 2.0080000000000005,
+  "ball_ground_contact_time_s": 1.6540000000000012,
+  "ground_before_target": false,
+  "max_ground_penetration_m": 0.003296567760672324,
+  "impact_position_m": [
+    1.249072748342629,
+    0.0,
+    0.19388205041114498
+  ],
+  "impact_velocity_m_s": [
+    4.056888470414087,
+    0.0,
+    -1.83634001056941
+  ],
+  "ball_final_position_m": [
+    11.977945829686298,
+    -4.685279280133785e-13,
+    0.019475079359378998
+  ],
+  "ball_final_velocity_m_s": [
+    1.025339459557402,
+    -3.193953284080903e-11,
+    6.389556588173504e-16
+  ],
+  "speed_m_s": 4.2,
+  "pitch_deg": 15.0,
+  "yaw_deg": 0.0,
+  "distance_m": 1.25,
+  "duration_s": 12.0,
+  "drag_coefficient": 0.0,
+  "air_density_kg_m3": 1.2044,
+  "projected_area_m2": 0.0012566370614359172,
+  "initial_air_drag_N": 0.0,
+  "pivot_height_m": 0.07,
+  "target_mass_kg": 0.04,
+  "principal_inertia_kg_m2": [
+    0.00013293325041666674,
+    0.0001271461183126255,
+    1.2327132104041267e-05
+  ],
+  "damping": 0.00015,
+  "frictionloss": 1e-06,
+  "timestep_s": 0.002,
+  "mujoco_version": "3.17.0",
+  "threshold_deg": 45,
+  "hold_seconds": 0.2,
+  "launch_delay_s": 1.275,
+  "launcher_sequence": {
+    "lever_load_deg": 66,
+    "load_dwell_s": 0.6,
+    "return_to_rest_s": 0.33,
+    "load_travel_s": 0.12,
+    "catch_dwell_s": 0.1,
+    "release_travel_s": 0.07,
+    "lever_release_deg": -18,
+    "ball_exit_lag_s": 0.055,
+    "release_speed_source": "Notion launcher MuJoCo v4, 15-degree three-shot series",
+    "release_speed_samples_m_s": [
+      4.26,
+      4.06,
+      4.28
+    ]
+  }
+}

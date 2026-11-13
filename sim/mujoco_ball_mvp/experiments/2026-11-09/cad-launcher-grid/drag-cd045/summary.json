@@ -1,0 +1,46 @@
+{
+  "scene": "scene_cad.xml",
+  "mujoco_version": "3.17.0",
+  "drag_coefficient": 0.45,
+  "air_density_kg_m3": 1.2044,
+  "seed": 20261110,
+  "repeat_jitter": {
+    "distance_m": 0.025,
+    "speed_m_s": 0.1,
+    "pitch_deg": 0.75,
+    "yaw_deg": 0.5
+  },
+  "threshold_deg": 45,
+  "hold_seconds": 0.2,
+  "duration_s": 6,
+  "conditions": 150,
+  "trials": 450,
+  "contacts": 135,
+  "topple_successes": 116,
+  "direct_topple_successes": 116,
+  "success_rate": 0.2577777777777778,
+  "condition_grid": {
+    "distances_m": [
+      0.8,
+      1.25,
+      1.75,
+      2.25,
+      2.75,
+      3.0
+    ],
+    "speeds_m_s": [
+      3.0,
+      4.0,
+      4.2,
+      5.0,
+      6.0
+    ],
+    "pitches_deg": [
+      0.0,
+      10.0,
+      20.0,
+      30.0,
+      40.0
+    ]
+  }
+}

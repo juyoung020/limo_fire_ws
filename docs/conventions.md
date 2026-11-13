@@ -24,7 +24,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 │       ├── limo_fire_rl/            탐사 노드: RL 정책 · 프론티어 탐사 (Nav2 목표를 보냄)
 │       ├── limo_fire_rviz/          운용 화면 RViz 패널 플러그인 (탐사 켜기·끄기)
 │       └── limo_fire_report/        웹 앱(rosbridge)·음성 안내
-├── sim/                       Isaac Sim 확장·USD, Webots 월드, maps/  [COLCON_IGNORE]
+├── sim/                       Isaac Sim 확장·USD, Webots 월드, maps/, 독립 MuJoCo 데모  [COLCON_IGNORE]
 ├── train/                     학습 (C++/CUDA/Rust, ROS 아님)  [COLCON_IGNORE]
 │   ├── maps/                  맵 변환기 — 탐사·조준 공용
 │   ├── explore/               탐사 RL: sim/ mdp/ network/ ppo/ scripts/ viewer/ runs/(git 제외)
