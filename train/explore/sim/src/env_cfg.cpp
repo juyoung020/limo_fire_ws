@@ -316,6 +316,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lg_h = envf("SIM_LOW_GUARD_H", kLrGuardH);
       c.lg_margin = envf("SIM_LOW_GUARD_MARGIN", kLrGuardMargin);
       c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
+      c.lg_touch = (int)envf("SIM_LOW_GUARD_TOUCH", (float)kLrGuardTouch);
       c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
       // 사람 충돌·속도 대책 (mdp/README "아래층 RL — 사람 충돌·속도"). 보상만 바꾼다 — 정책 행동·관측은 그대로
@@ -330,6 +331,16 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.ps_margin = envf("SIM_LOW_YIELD_MARGIN", kLrYieldMargin);
       c.ps_hold = (int)envf("SIM_LOW_YIELD_HOLD", (float)kLrYieldHold);
       c.ps_mem = (int)envf("SIM_LOW_YIELD_MEM", (float)kLrYieldMem);
+      c.ps_trk = (int)envf("SIM_LOW_TRACK", (float)kLrTrkOn);
+      c.tk_gate = envf("SIM_LOW_TRACK_GATE", kLrTrkGate);
+      c.tk_sz = envf("SIM_LOW_TRACK_SZ", kLrTrkSz);
+      c.tk_qa = envf("SIM_LOW_TRACK_QA", kLrTrkQa);
+      c.tk_miss = (int)envf("SIM_LOW_TRACK_MISS", (float)kLrTrkMiss);
+      c.tk_conf = (int)envf("SIM_LOW_TRACK_CONF", (float)kLrTrkConf);
+      c.tk_disp = envf("SIM_LOW_TRACK_DISP", kLrTrkDisp);
+      c.lo_mov = (int)envf("SIM_LOW_OBS_MOV", 0.f);
+      c.tk_sag = envf("SIM_LOW_TRACK_SAG", kLrClusSag);
+      c.tk_w0 = envf("SIM_LOW_TRACK_W0", kLrClusRound0);
       c.lr_w0 = (c.wheel_max - c.act_v_fwd) / c.wheel_k;   // 이 아래 ω 는 바퀴 한도가 v 를 안 깎는다 (1.11 − 1.0) / 0.2 = 0.55 rad/s
     }
     {

@@ -108,6 +108,8 @@ struct LowEp {
 // 규칙 추종기 대신 행동 줄의 (v, ω) 가 로봇을 몬다 (경로 계획·안전층·단독 과제 판 끝 규칙은 그대로). follow 0·1 은 규칙 추종 그대로(예열 탐사).
 // 끄면(EnvBatch::lowrl = nullptr) 관련 함수는 첫 줄에서 돌아가고 환경은 한 비트도 안 바뀐다.
 
+constexpr int kLrTrk = 16;   // 사람 추적(low_rl.h lowrl_trk)이 들고 가는 덩어리 수 상한 — 선 물체(의자 다리·기둥)도 한 칸씩 쓴다
+
 // 환경마다 걸음 사이에 들고 가는 값
 struct LowRl {
   uint64_t rng;        // 자동 목표(low_auto) 난수 — 환경 난수(EnvState::rng)와 따로 (판 흐름을 안 바꿈)
@@ -130,6 +132,18 @@ struct LowRl {
   float ps_res;        //   진단: 이번 걸음 판정 — 1 안 닿음 · 0.5 · 0 줄임 · 2 서도 닿음(못 가림)
   float ps_m[5];       //   기억한 사람: 마지막으로 닿을 것으로 본 사람의 지도 자리·속도·반지름 (x, y, vx, vy, r) — 안 보이는 걸음엔 같은 속도로 옮김
   int32_t ps_age;      //   그 기억을 더 쓸 걸음 수 (0 = 없음)
+  int32_t lg_st;               // 진단: 마지막 몸통 지킴이 판정 (판이 끝나도 그대로) — 0 안 봄 · 1 그대로 · 2 ½ · 3 ¼ · 4 세움, +10 = 이미 여유 안(여유 0 으로 봄), 20 = 지도로는 이미 닿음(lg_touch 끄면 안 막음), 21 ~ 24 = 이미 닿은 채 그대로 · ½ · ¼ · 세움(닿은 둘레 점이 느는 명령만 줄임)
+  // 사람 추적 (low_rl.h lowrl_trk, EnvCfg::ps_trk): 라이다 덩어리를 장마다 이어 가는 등속 칼만 필터. 지도 좌표. tk_hit == 0 이 빈 칸
+  int32_t tk_head;             //   마지막으로 본 라이다 링 칸 (−1 = 아직 없음) — 새 장이 없는 걸음은 예측만
+  int32_t tk_n;                //   진단: 지금 추적 중인 덩어리 수
+  int32_t tk_hit[kLrTrk];      //   덩어리와 이어진 장 수
+  int32_t tk_miss[kLrTrk];     //   마지막으로 이어진 뒤 못 이은 장 수
+  int32_t tk_mov[kLrTrk];      //   "걷는 사람" 판정을 이어 받은 장 수 (문턱을 넘으면 사람, 느려지면 0)
+  float tk_x[kLrTrk], tk_y[kLrTrk], tk_vx[kLrTrk], tk_vy[kLrTrk];   //   자리 (m) · 속도 (m/s)
+  float tk_pp[kLrTrk], tk_pv[kLrTrk], tk_vv[kLrTrk];                //   공분산 (두 축 같음): 자리·자리-속도·속도
+  float tk_r[kLrTrk];          //   반지름 (m)
+  float tk_x0[kLrTrk], tk_y0[kLrTrk];   //   처음 잡힌 자리 — 거기서 벗어난 거리가 사람 판정 조건
+
 };
 
 // 보상 항 (차례 = LowRlStat::term 칸 번호 — 도구·학습기가 이름표를 같은 차례로 가짐)
@@ -168,6 +182,7 @@ enum : int32_t {
   kLoHasPath = 22,     // 경로 있음 0·1
   kLoRem = 23,         // 남은 경로 길이 / kLrGoalNorm
   kLoHasGoal = 24,     // 목적지 있음 0·1
+  kLoMov = 25,         // (EnvCfg::lo_mov, 기본 꺼짐 = 0) 가장 가까운 움직이는 것: 있음 0·1, 거리 / 4 m, sin, cos, 속도 앞·왼쪽 성분 / 1.6 m/s
   kLow1d = mdp::low::N1D          // 뒤는 예약 (0)
 };
 

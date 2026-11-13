@@ -92,6 +92,15 @@ struct EnvCfg {
   float ps_h, ps_margin;         //   내다보는 시간 (s) · 사람 둘레 여유 (m)
   int ps_mem;                    //   닿을 것으로 본 사람을 기억하는 걸음 수
   int ps_hold;                   //   줄인 뒤 이 걸음 수 동안 그 배율을 붙듦
+  int ps_trk;                    //   1: 걸음마다 이어 가는 칼만 필터 추적 (lowrl_trk) · 0: 세 장 잇기 (lowrl_movers)
+  float tk_gate, tk_sz, tk_qa;   //   추적: 연결 문 (m) · 덩어리 자리 잡음 σ (m) · 가속 잡음 σ (m/s²)
+  int tk_miss, tk_conf;          //   추적: 못 이어도 들고 가는 장 수 · 사람 판정까지 이어 받을 장 수
+  float tk_disp;                 //   추적: 처음 자리에서 이만큼 벗어나야 사람 (m)
+  int lg_touch;                  //   몸통 지킴이: 지도로는 이미 닿은 때 닿은 둘레 점이 느는 명령을 줄임 (0 = 그때는 안 막음)
+  int lo_mov;                    //   아래층 숫자 관측의 예약 칸(kLoMov)에 추적 결과를 넣음 (0 = 0 으로 둠 — 기존 체크포인트 그대로)
+  float tk_sag;                  //   추적: 둥근 덩어리만 — 활꼴 높이 / 현 길이 하한 (0 이면 모양을 안 봄)
+  float tk_w0;                   //   추적: 둥근 덩어리의 현 길이 하한 (m)
+
   float lr_pcol_k;               // 사람 충돌 보상 (벽 충돌은 kLrCollisionK 그대로)
   float lr_w_k, lr_w0;           // 회전 벌점: × max(0, |정책 ω| − lr_w0) (rad/s). 0 = 끔
   int curriculum;           // 1: 환경마다 단계(맵 묶음·오차 배율), 0: 모든 맵 고르게·오차 배율 1 (기준선·도구)

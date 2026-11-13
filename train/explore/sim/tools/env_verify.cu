@@ -124,6 +124,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
         if (k < sim::kLoSub) { lo = -4.f; hi = 4.f; }   // 자기 상태 (obs_1d 칸 그대로)
         else if (k < sim::kLoAct) { if ((k - sim::kLoSub) % 3 == 0) lo = 0.f; }
         else if (k >= sim::kLoHasPath && k <= sim::kLoHasGoal) lo = 0.f;
+        else if (k >= sim::kLoMov && k < sim::kLoMov + 6) { if (k <= sim::kLoMov + 1) lo = 0.f; }   // 움직이는 것 (EnvCfg::lo_mov — 끄면 0): 있음·거리는 0 ~ 1
         else if (k > sim::kLoHasGoal) lo = hi = 0.f;
         if (v < lo || v > hi) {
           if (!bad_range) std::printf("범위 밖: 걸음 %d 환경 %d 숫자 칸 %d 값 %g (허용 %g~%g)\n", t, i, k, v, lo, hi);

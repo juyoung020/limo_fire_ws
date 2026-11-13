@@ -732,13 +732,21 @@ void diag_row(Diag& D, const char* kind, const sim::EnvCfg& c, const sim::World&
   if (hn > 5) v5 = h(5).v;
   if (hn > 10) v10 = h(10).v;
   const DiagHist& now = h(0);
-  std::fprintf(D.f, "%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\n",
+  // 사람 추적 진단 (SIM_LOW_YIELD=3 일 때만 뜻이 있다): 로봇에 가장 가까운 "움직이는 것"까지 거리 · 그 속도 · 그것과 가장 가까운 참값 사람 사이 거리 (없으면 99)
+  const sim::LowRl& RP = D.rl_post[i];
+  float m_rng = 99.f, m_spd = 0.f, m_gt = 99.f;
+  if (RP.ps_n > 0) {
+    m_rng = std::hypot(RP.ps_m[0] - (e.x + e.ex), RP.ps_m[1] - (e.y + e.ey));
+    m_spd = std::hypot(RP.ps_m[2], RP.ps_m[3]);
+    for (int k = 0; k < e.people.n; ++k) m_gt = std::min(m_gt, std::hypot(RP.ps_m[0] - e.ex - e.people.cyl[k].x, RP.ps_m[1] - e.ey - e.people.cyl[k].y));
+  }
+  std::fprintf(D.f, "%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%d\t%d\t%.3f\t%.3f\t%.3f\n",
                kind, W.name.c_str(), people, i, e.step - L.f_start, goal_age, e.x, e.y, e.th, e.v, e.w, now.a0, now.a1, safe_now, v5, v10, wmax5, k5 ? a0m5 / k5 : 0.f, safe10,
                hu, hv, hd, reg, near0, near0m, cam, fov, geom, lr[0], lr[1], lr[2], lr[3], gap, clr, gd, O[sim::kLoRem] * sim::kLrGoalNorm, O[sim::kLoSub] * sim::kLrSubNorm,
-               O[sim::kLoSub + 1], O[sim::kLoSub + 2], (int)O[sim::kLoHasPath], e.step - D.rl[i].p_step, e.delay);
+               O[sim::kLoSub + 1], O[sim::kLoSub + 2], (int)O[sim::kLoHasPath], e.step - D.rl[i].p_step, e.delay, D.rl_post[i].lg_st, std::hypot(e.ex, e.ey), e.eth, RP.ps_n, RP.tk_n, m_rng, m_spd, m_gt);
   if (kind[0] != 'r') std::fflush(D.f);
 }
-const char* kDiagHead = "kind\tscene\tpeople\tenv\ttask_step\tgoal_age\tx\ty\tth\tv\tw\ta_v\ta_w\tsafe\tv5\tv10\twmax5\ta_v_mean5\tsafe10\thu\thv\thd\treg\tnear0\tnear0max\tcam\tfov\tgeom\tlid0\tlid1\tlid2\tlid3\tgap\tclr_cm\tgoal_d\trem\tsub_d\tsub_sin\tsub_cos\thas_path\tplan_age\tdelay\n";
+const char* kDiagHead = "kind\tscene\tpeople\tenv\ttask_step\tgoal_age\tx\ty\tth\tv\tw\ta_v\ta_w\tsafe\tv5\tv10\twmax5\ta_v_mean5\tsafe10\thu\thv\thd\treg\tnear0\tnear0max\tcam\tfov\tgeom\tlid0\tlid1\tlid2\tlid3\tgap\tclr_cm\tgoal_d\trem\tsub_d\tsub_sin\tsub_cos\thas_path\tplan_age\tdelay\tguard\tperr_xy\tperr_th\ttrk\ttk_n\tm_rng\tm_spd\tm_gt\n";
 
 // ---------- 사람 충돌·속도 진단 (--diag 를 주면 <파일>.ppl.tsv 와 표준 출력의 "시간 손실" 표. 끄면 아무것도 안 함) ----------
 // 사람 충돌마다 닿기 전 kPplH 걸음의 로봇·그 사람 궤적을 걸음마다 한 줄씩: 누가 누구에게 다가갔나, 언제부터 라이다·지도에 보였나, 안전층이 언제 개입했나를 뒤에서 센다
@@ -749,6 +757,8 @@ struct PplStep {
   int trk; float yres, m[4];   // 사람 비켜 주기 진단 (LowRl::ps_n · ps_res · ps_m — 그 걸음 뒤 값)
   float px[sim::kMaxPeople], py[sim::kMaxPeople], lid[sim::kMaxPeople];   // 사람 자리, 그 방위 라이다 최신 장의 가장 짧은 값 (m, 시야 밖 −1)
   int occ[sim::kMaxPeople], cam[sim::kMaxPeople];                         // 사람 겉(로봇 쪽) 점의 가까운 지도 막힘 채널·깊이 층 채널 (3 × 3 최댓값, 창 밖 −1)
+  float tkd[sim::kMaxPeople], tkspd[sim::kMaxPeople], tkdisp[sim::kMaxPeople];   // 그 사람에 가장 가까운 추적 칸(LowRl::tk_*)까지 거리(없으면 99) · 그 칸 속도 · 움직인 거리
+  int tkhit[sim::kMaxPeople], tkmov[sim::kMaxPeople];                           // 그 칸이 이어진 장 수 · 움직임으로 본 연속 장 수
 };
 struct PplDiag {
   std::FILE* f = nullptr;
@@ -778,6 +788,12 @@ void ppl_push(PplDiag& P, const sim::EnvCfg& c, int i, const sim::EnvState& e, c
   for (int k = 0; k < e.people.n; ++k) {
     const sim::Cyl& C = e.people.cyl[k];
     s.px[k] = C.x; s.py[k] = C.y;
+    s.tkd[k] = 99.f; s.tkspd[k] = s.tkdisp[k] = 0.f; s.tkhit[k] = s.tkmov[k] = 0;
+    for (int t = 0; t < sim::kLrTrk; ++t) {
+      if (rl.tk_hit[t] <= 0) continue;
+      const float dd = std::hypot(rl.tk_x[t] - C.x, rl.tk_y[t] - C.y);
+      if (dd < s.tkd[k]) { s.tkd[k] = dd; s.tkspd[k] = std::hypot(rl.tk_vx[t], rl.tk_vy[t]); s.tkdisp[k] = std::hypot(rl.tk_x[t] - rl.tk_x0[t], rl.tk_y[t] - rl.tk_y0[t]); s.tkhit[k] = rl.tk_hit[t]; s.tkmov[k] = rl.tk_mov[t]; }
+    }
     const float u = c0 * (C.x - e.x) + s0 * (C.y - e.y), v = c0 * (C.y - e.y) - s0 * (C.x - e.x);
     const float lx = u - c.mount_x, d = std::hypot(lx, v), ang = std::atan2(v, lx);
     const float half = d > C.r ? std::asin(C.r / d) : 1.5f;
@@ -817,12 +833,12 @@ void ppl_dump(PplDiag& P, const sim::EnvCfg& c, const char* scene, int people, i
     const float ss = std::sin(s.th), cc = std::cos(s.th);
     sim::Cyl C = pre.people.cyl[j];
     C.x = s.px[j]; C.y = s.py[j];
-    std::fprintf(P.f, "%ld\t%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.4f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\t%d\t%d\t%d\t%.1f\t%.3f\t%.3f\t%.3f\t%.3f\n", id, scene, people, i, hit_dir, goal_age, back, s.x, s.y,
-                 s.th, s.v, s.w, s.a0, s.a1, s.cv, s.cw, s.safe, C.x, C.y, C.r, pre.people.mode[j], pre.people.speed[j], sim::body_cyl_gap(c, C, s.x, s.y, ss, cc), s.lid[j], s.occ[j], s.cam[j], s.trk, s.yres, s.m[0], s.m[1], s.m[2], s.m[3]);
+    std::fprintf(P.f, "%ld\t%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.4f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\t%d\t%d\t%d\t%.1f\t%.3f\t%.3f\t%.3f\t%.3f\t%.2f\t%d\t%d\t%.2f\t%.2f\n", id, scene, people, i, hit_dir, goal_age, back, s.x, s.y,
+                 s.th, s.v, s.w, s.a0, s.a1, s.cv, s.cw, s.safe, C.x, C.y, C.r, pre.people.mode[j], pre.people.speed[j], sim::body_cyl_gap(c, C, s.x, s.y, ss, cc), s.lid[j], s.occ[j], s.cam[j], s.trk, s.yres, s.m[0], s.m[1], s.m[2], s.m[3], s.tkd[j], s.tkhit[j], s.tkmov[j], s.tkspd[j], s.tkdisp[j]);
   }
   std::fflush(P.f);
 }
-const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\tpx\tpy\tpr\tmode\tpspeed\tgap\tlid\tocc\tcam\ttrk\tyres\tmx\tmy\tmvx\tmvy\n";
+const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\tpx\tpy\tpr\tmode\tpspeed\tgap\tlid\tocc\tcam\ttrk\tyres\tmx\tmy\tmvx\tmvy\ttk_d\ttk_hit\ttk_mov\ttk_spd\ttk_disp\n";
 
 struct PolRes {
   std::string scene;
