@@ -10,7 +10,7 @@
 | 트리 XML | 노드 포트를 코드에 맞춤 (`<TreeNodesModel>` 은 `mission --model` 로 뽑음) |
 | BT 노드 구현 | 2026-11-11 전부 C++ 로 (limo_fire_bt README). Jazzy 에서 가짜 센서로 S2·S3·S4 분기 확인 |
 | 실행 파일·launch | `mission`, `bt.launch.xml [sim:=true]`, `limo_fire_bt.yaml` + `limo_fire_bt_sim.yaml` |
-| 시뮬 실행 | 안 해 봄 |
+| 시뮬 실행 | 2026-11-13~14 Jazzy PC 에서 S1(순찰)·S2(큰 불 → 신고 → 베이직 복귀 → 순찰 재개)·S3(같은 불 = 같은 사건) 확인. S4~S7 은 아직 (limo_fire_bt README "시뮬에서 확인한 것") |
 
 ## 2. 먼저 정할 것
 

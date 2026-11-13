@@ -52,7 +52,14 @@ RViz 운용 화면(`limo_fire_description` `viewer.launch.xml`) 왼쪽 아래 **
 - 센서가 없으면 `SENSOR_FAULT` 알림 후 5 초마다 다시 점검. 다 들어오면 순찰 시작, Nav2 가 없으면 순찰점마다 `PATROL_POINT_SKIPPED`.
 - 불 탐지를 켜면 순찰 멈춤 → 사건 1 → `HAZARD_DETECTED` 한 번, 119 는 막힘 로그 → 고급 모드 없음 → `FALLBACK_TO_BASIC` → 다시 봐도 같은 사건(신고 되풀이 없음).
 - 라이다를 끊으면 `SENSOR_FAULT` `LIDAR_TOPIC_LOST`.
-- Webots·Nav2 위에서는 아직 안 돌려 봄. 로봇 Jetson(Humble)에 BehaviorTree.CPP 4.x 가 있는지도 아직 확인 안 함.
+- 로봇 Jetson(Humble)에 BehaviorTree.CPP 4.x 가 있는지 아직 확인 안 함 (Humble apt 는 4.6.x 로 알려짐 — 이 코드는 4.10 에서만 빌드해 봄).
+
+## 시뮬에서 확인한 것 (2026-11-13~14, Jazzy PC, Webots `limo_fire_maze` + Nav2, YOLO 대신 정답 카메라)
+
+- 순찰점을 따라 돌고, 불을 보면 순찰 멈춤 → 새 사건 → 신고 한 번 → 고를 고급 모드 없음 → 베이직 복귀(안전거리 감시 60 s) → 순찰 재개 (S2).
+- 같은 불을 다시 보면 같은 사건으로 판별, 신고를 되풀이하지 않고 처리 뒤 300 s 동안 순찰을 멈추지 않음 (S3, 아래 "이미 처리한 불").
+- 불 위치는 물체 지도가 없는 PC(CUDA 없음)라 깊이 영상으로 잰다. 시뮬 불·연기는 반투명 그림판이라 깊이를 자주 못 읽어 2 m 로 대신하는 일이 많고, 그때 같은 불이 사건 둘로 갈리기도 한다. 실물(깊이 정렬 + 물체 지도)에서 다시 볼 것.
+- 시작 직후 라이다 점검이 한 번 실패(`LIDAR_TOPIC_LOST`)하고 5 s 뒤 통과 — 2 s 창을 채우기 전에 잰다. 고칠 것.
 
 ## 이미 처리한 불
 
