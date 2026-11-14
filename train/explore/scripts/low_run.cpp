@@ -902,6 +902,64 @@ void trace_row(std::FILE* f, const sim::EnvCfg& c, const sim::World& W, const ch
                e.s_pgap, e.s_stall, e.s_kind, e.contact, e.collided, e.people.hit_person, hd, hu, hv, e.people.near_d, goal_d, pm, pb, e.s_dir, e.s_close, e.p_mode, e.p_n, p_lat, p_here, p_min, sub_blk);
 }
 
+// 도착 효율 (2026-11-15, 평가 전용 — 학습에 안 씀): 정답 격자에서 몸통 외접 반경으로 설 수 있는 칸 위 목표까지 최단 길이(8 이웃 Dijkstra, 목표에서 퍼짐)와
+// 로봇이 처음 가야 할 방향. 로봇 칸이 설 수 없으면(벽 곁) 3 칸 안 가장 가까운 설 수 있는 칸에서. 못 닿으면 −1
+struct OptGoal { float L = -1.f, dth = 0.f; };
+OptGoal opt_goal(const sim::EnvCfg& c, const sim::World& W, const std::vector<uint8_t>& ok, int goal, float x, float y, float th) {
+  OptGoal o;
+  const int n = W.gw * W.gh;
+  if (goal < 0 || goal >= n || !ok[goal]) return o;
+  std::vector<float> d((size_t)n, 1e30f);
+  using Q = std::pair<float, int>;
+  std::priority_queue<Q, std::vector<Q>, std::greater<Q>> q;
+  d[goal] = 0.f;
+  q.push({0.f, goal});
+  while (!q.empty()) {
+    const auto [dv, u] = q.top();
+    q.pop();
+    if (dv > d[u]) continue;
+    const int ux = u % W.gw, uy = u / W.gw;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        if (!dx && !dy) continue;
+        const int vx = ux + dx, vy = uy + dy;
+        if (vx < 0 || vy < 0 || vx >= W.gw || vy >= W.gh) continue;
+        const int v = vy * W.gw + vx;
+        if (!ok[v]) continue;
+        const float nd = dv + c.res * (dx && dy ? 1.41421356f : 1.f);
+        if (nd < d[v]) { d[v] = nd; q.push({nd, v}); }
+      }
+  }
+  const int rx = (int)std::floor((x - W.ox) / c.res), ry = (int)std::floor((y - W.oy) / c.res);
+  int r = -1;
+  float best = 1e30f;
+  for (int dy = -3; dy <= 3; ++dy)
+    for (int dx = -3; dx <= 3; ++dx) {
+      const int vx = rx + dx, vy = ry + dy;
+      if (vx < 0 || vy < 0 || vx >= W.gw || vy >= W.gh) continue;
+      const int v = vy * W.gw + vx;
+      if (d[v] < 1e29f && dx * dx + dy * dy < best) { best = (float)(dx * dx + dy * dy); r = v; }
+    }
+  if (r < 0) return o;
+  o.L = d[r] + std::sqrt(best) * c.res;
+  int u = r;   // 내리막 10 칸 (0.5 m) 으로 처음 방향
+  for (int k = 0; k < 10 && d[u] > 0.f; ++k) {
+    int bu = u;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        const int vx = u % W.gw + dx, vy = u / W.gw + dy;
+        if (vx < 0 || vy < 0 || vx >= W.gw || vy >= W.gh) continue;
+        const int v = vy * W.gw + vx;
+        if (d[v] < d[bu]) bu = v;
+      }
+    if (bu == u) break;
+    u = bu;
+  }
+  const float tx = (float)(u % W.gw - r % W.gw), ty = (float)(u / W.gw - r / W.gw);
+  if (tx != 0.f || ty != 0.f) o.dth = std::fabs(std::remainder(std::atan2(ty, tx) - th, 6.2831853f));
+  return o;
+}
+
 struct PolRes {
   std::string scene;
   int people;
@@ -982,6 +1040,15 @@ int run_policy(const Args& a) {
     const auto warm_draw = [&]() { return DS * std::max(1, (int)std::lround((a.warm_lo + urand(rng) * (a.warm_hi - a.warm_lo)) / dec_s)); };
     std::vector<int> phase(N, 0), warm(N), eps(N, 0), gstate(N, 0), bin(N, 0), step0(N, 0), reached0(N, 0), off0(N, 0);
     std::vector<float> plen(N, 0.f), est(N, 0.f), dist0(N, 0.f);
+    // 도착 효율 (평가 전용): 정답 격자 설 수 있는 칸 (막힌 칸까지 몸통 외접 반경 넘게) · 목표마다 최단 길이·처음 방향 바꿈 · 목표별 결과
+    std::vector<uint8_t> opt_ok((size_t)W.gw * W.gh, 0);
+    {
+      const float rf = std::sqrt(c.half_len * c.half_len + c.half_wid * c.half_wid);
+      for (size_t k = 0; k < opt_ok.size(); ++k) opt_ok[k] = (W.grid[k] & sim::kCellFloor) && (float)W.clear[k] * 0.01f > rf;
+    }
+    std::vector<OptGoal> gopt(N);
+    std::vector<float> eff_v, sct_v, eff_L;   // 도달한 목표의 실효 속도·그 최단 길이 · 모든 유효 목표의 SCT
+    std::vector<float> sct_L, spl_v;   // SPL (Anderson et al. arXiv 1807.06757): 도달이면 최단 길이 / max(간 거리, 최단 길이), 아니면 0
     std::vector<sim::LowCmd> cmd(N, sim::LowCmd{-1, 0});
     for (int i = 0; i < N; ++i) warm[i] = warm_draw();
     std::vector<sim::EnvState> st;
@@ -1006,10 +1073,19 @@ int run_policy(const Args& a) {
       if (cell < 0) no_sample += 1;
       else n_assign += 1;
       step0[i] = st[i].step;
+      gopt[i] = opt_goal(c, W, opt_ok, cell, st[i].x, st[i].y, st[i].th);   // 평가 전용 (정답 격자·참 자세)
     };
     const auto record = [&](int i, int out, float t, float d) {
       BinAgg& b = B[bin[i]];
       b.out[out] += 1;
+      if (gopt[i].L > 0.f) {   // 도착 효율 (SCT: Yokoyama et al. arXiv 2103.08022 — T_opt ≈ 최단 길이 / 최고 속도 + 처음 방향 바꿈 / 최고 ω)
+        const float topt = gopt[i].L / c.act_v_fwd + gopt[i].dth / c.act_w_max;
+        const float sct = out == kOutReach && t > 0.f ? topt / std::max(t, topt) : 0.f;
+        sct_v.push_back(sct);
+        spl_v.push_back(out == kOutReach ? gopt[i].L / std::max(d, gopt[i].L) : 0.f);
+        sct_L.push_back(gopt[i].L);
+        if (out == kOutReach && t > 0.f) { eff_v.push_back(gopt[i].L / t); eff_L.push_back(gopt[i].L); }
+      }
       if (out == kOutReach) {
         b.t += t;
         b.plen += plen[i];
@@ -1174,6 +1250,26 @@ int run_policy(const Args& a) {
     const double T = agg.steps * dt, D = agg.dist_all;
     std::printf("\n#### 단독 과제(%s) %s · 사람 상한 %d · 환경 %d × 판 %d = %.0f 판 (지문 %016llx)\n", use_pol ? "정책" : "규칙 추종기·걸음 루프", W.name.c_str(), people, N, M, n_ep,
                 (unsigned long long)h);
+    {   // 도착 효율 (평가 전용 — 정답 격자 최단 길이, 학습에 안 씀)
+      std::vector<float> ev = eff_v;
+      std::sort(ev.begin(), ev.end());
+      double se = 0, ss = 0, sm = 0, sp = 0;
+      for (float x : eff_v) { se += x; sm += 1.0 / x; }
+      for (float x : sct_v) ss += x;
+      for (float x : spl_v) sp += x;
+      std::printf("도착 효율: 유효 목표 %zu (도달 %zu) · 실효 속도 평균 %.3f · 중앙 %.3f m/s · 1 m 당 %.2f s · SCT %.3f · SPL %.3f |", sct_v.size(), eff_v.size(),
+                  eff_v.empty() ? 0.0 : se / eff_v.size(), ev.empty() ? 0.0 : ev[ev.size() / 2], eff_v.empty() ? 0.0 : sm / eff_v.size(), sct_v.empty() ? 0.0 : ss / sct_v.size(),
+                  spl_v.empty() ? 0.0 : sp / spl_v.size());
+      const float edges[5] = {0.75f, 1.5f, 3.f, 6.f, 15.f};
+      for (int k = 0; k < 4; ++k) {
+        double a2 = 0, b2 = 0;
+        int na = 0, nb = 0;
+        for (size_t j = 0; j < eff_v.size(); ++j) if (eff_L[j] >= edges[k] && eff_L[j] < edges[k + 1]) { a2 += eff_v[j]; ++na; }
+        for (size_t j = 0; j < sct_v.size(); ++j) if (sct_L[j] >= edges[k] && sct_L[j] < edges[k + 1]) { b2 += sct_v[j]; ++nb; }
+        std::printf(" %.2g~%.2g m: 실효 %.3f · SCT %.3f (%d)", edges[k], edges[k + 1], na ? a2 / na : 0.0, nb ? b2 / nb : 0.0, nb);
+      }
+      std::printf("\n");
+    }
     std::printf("판 끝: 목표 %d 개 %.3f · 시간 %.3f · 정체 %.3f · 벽 충돌 %.3f · 사람 충돌 %.3f\n", c.low_goals, end_n[sim::kLowEndGoals] / n_ep, end_n[sim::kLowEndTime] / n_ep,
                 end_n[sim::kLowEndStall] / n_ep, end_n[sim::kLowEndWall] / n_ep, end_n[sim::kLowEndPerson] / n_ep);
     std::printf("과제 구간 전체: 시간 %.0f s · 거리 %.0f m · 평균 속도 %.3f m/s | 100 m 당: 벽 충돌 %.3f · 사람 충돌 앞 %.3f · 밖 %.3f · 정체 %.3f\n", T, D, T > 0 ? D / T : 0.0,
