@@ -60,7 +60,7 @@
 //   지도 자세(참값 + 오차)로 칸. 0(구멍)·255(3 m 넘음)는 점 없음 (Nav2 inf_is_valid 기본 false).
 //   차례: 모든 픽셀 지우기(띠 안 점까지 3 차원 광선이 지나는 높이 칸, 끝 칸 빼고) → 표시 → 몸통 밑 칸 지우기 (ObstacleLayer footprint_clearing_enabled).
 //   높이 칸으로 지우므로 낮은 상자 위를 지나는 광선은 상자 높이 칸을 못 지운다 — 가까이 와서 상자가 시야 아래로 빠져도 층에 남는다 (2 차원 층이면 지워짐).
-//   로봇 지도(lmap)에 안 넣는 까닭: lmap 은 정책 관측(가까운·먼 지도)·닫힘 성공·프론티어 후보·reward_occ 가 쓰는 Cartographer 꼴 점유 지도라 넣으면
+//   로봇 지도(lmap)에 안 넣는 까닭: lmap 은 정책 관측(가까운·먼 지도)·닫힘 성공·프론티어 후보·덮음 보상(kOccCell)이 쓰는 Cartographer 꼴 점유 지도라 넣으면
 //   관측 분포·닫힘·보상이 바뀐다 (닫힘·후보는 다른 작업 몫). Nav2 도 SLAM 지도(static layer)와 장애물 층을 따로 두고 costmap 에서만 합친다.
 //   쓰는 곳: 경로 계획(엄격·느슨 둘 다 막힘 — 지금 스캔과 같은 몫), RPP 충돌 검사(path_lethal), 장애물 근접 감속(path_obstacle_dist),
 //   collision_monitor (마지막 깊이 장 열마다 가장 가까운 띠 안 점 cpts — pointcloud_to_laserscan 꼴 scan 출처, 1 s 묵은 장은 Nav2 source_timeout 안).

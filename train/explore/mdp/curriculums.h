@@ -1,21 +1,19 @@
 // 탐사 RL 커리큘럼 + 판 끝 코드 (값은 코드 안, mdp/README "커리큘럼"·"판 끝"). 호스트·장치 공용.
 //
 // 판 끝 (done 코드, 러너는 terminal() 로 "종료(뒤 가치 0)" 와 "끊김(가치로 메움)" 을 가른다)
-//   0 진행 · 1 선언 성공(선언 때 벽 덮음 ≥ 95 %) · 2 벽 충돌 · 3 끊김(안전 시간) · 4 선언 실패(기준 미달) · 5 사람 충돌
+//   0 진행 · 1 성공(지도 닫힘) · 2 닿음(센서 — sim contact.h) · 3 끊김(안전 시간) · 4 선언 실패(2026-11-14 부터 안 나옴 — 선언 규칙 없앰) · 5 닿음(사람 곁)
 //   · 6 진행 없음(지도에서 판 처음 막힘이 된 칸이 한 행동에 kIdleOccMin 개 이상인 걸음이 kIdleTime 동안 없음 — 종료, rewards.h '진행 없음')
 //   1·2·4·5·6 = 종료, 3 = 끊김 (rsl_rl time_outs, IsaacLab is_finite_horizon=False 와 같은 쓰임).
 //   한 걸음에 충돌과 선언이 같이 오면 충돌.
 //
 // 단계 (환경마다 하나, legged_gym terrain curriculum 꼴: legged_gym/envs/base/legged_robot.py _update_terrain_curriculum —
-//   환경마다 지형 단계를 두고 판 끝에 잘했으면 올리고 못했으면 내림. 여기선 "잘함" = 최근 kWindow 판의 끝 벽 덮음 평균 — 진행량)
+//   환경마다 지형 단계를 두고 판 끝에 잘했으면 올리고 못했으면 내림. 여기선 "잘함" = 최근 판의 성공 비율)
 //   단계 s 의 맵 = 갈 수 있는 바닥 넓이가 kStages[s].max_area 이하이고 kStages[s−1].max_area 보다 큰 맵 (없으면 아래 단계 맵으로 내려감).
 //   오차 배율 = 지도 자세 오차(OU σ)·자이로 잡음에 곱함. 사람 수 = 판마다 0 ~ max_people 명(people.h k_max, 커리큘럼이 켜져 있으면
 //   Env::set_people_max 대신 이 값).
-//   오르내림(진행량, legged_gym/envs/base/legged_robot.py:421-440 _update_terrain_curriculum 꼴 — 거기선 판마다 걸어간 거리가 지형 길이의
-//   절반을 넘으면 올리고, 요구 거리의 절반 아래면 내림): 판 끝마다 끝 벽 덮음을 환경의 최근 kWindow 판 기록에 더하고, kWindow 판이 차면
-//   덮음 평균 ≥ kProgUp 이면 올림, < kProgDown(= kProgUp 의 절반) 이면 내림, 그리고 기록을 비움. 한 판 운으로 오르지 않게 창으로 본다.
-//   값(2026-11-04 비교, ppo/README "커리큘럼 비교"): kWindow 8 · kProgUp 0.8 · kProgDown 0.4. 옛 규칙(최근 8 판 성공 6 이상 올림)은 학습 성공률
-//   0.4 근처에서 거의 못 올라 단계 0 에 갇혔고(시험 맵 성공 0), 판마다 바로 올리는 진행량 규칙은 씨앗에 따라 판을 끝내지 않는 쪽으로 무너졌다.
+//   오르내림: 최근 window 판(미끄러지는 창)의 성공(지도 닫힘) 비율 — 아래 on_episode_end_success, 값은 env.yaml curriculum.success.
+//   (옛 진행량 규칙 — 최근 8 판 끝 정답 벽 덮음 평균 ≥ 0.8 올림 · < 0.4 내림 — 은 2026-11-14 에 없앰: 실물이 못 재는 정답 덮음이 단계를 정해서.
+//    2026-11-04 비교·근거는 ppo/README "커리큘럼 비교")
 //   넓이 경계 30·80·150 m² = 학습 맵 묶음(S2, scenes/train/list.tsv grade 열)의 등급 경계와 같게 (등급별 143·143·142·92 맵).
 //   목록 파일에 등급 열이 있으면 그 값을 단계로 쓴다(env_host.cpp load_scene_list).
 #pragma once
@@ -69,8 +67,6 @@ DEV float err_scale_of(int s) {
 DEV int people_of(int s) {
   return s <= 0 ? kStages[0].max_people : (s == 1 ? kStages[1].max_people : (s == 2 ? kStages[2].max_people : kStages[3].max_people));
 }
-constexpr int kWindow = 8;
-constexpr float kProgUp = 0.8f, kProgDown = 0.4f;   // 창 평균 끝 덮음 문턱 (위 머리말)
 
 // 넓이 → 맵 단계 (호스트)
 inline int stage_of_area(float area_m2) {
@@ -79,30 +75,11 @@ inline int stage_of_area(float area_m2) {
   return kNumStages - 1;
 }
 
-// 오르내림 규칙 (EnvCfg::cur_rule — env.yaml curriculum.rule)
-enum CurRule : int32_t { kCurCoverage = 0, kCurSuccess = 1 };
 constexpr int kCurWindowMax = 32;   // 성공 규칙 창 상한 (창 = cur_hist 비트)
 
-// 판 끝 (덮음 규칙, 옛 규칙 그대로): 끝 덮음 cov 를 기록에 더하고(hist = 덮음×1000 합, n = 기록 수) window 판이 차면 단계를 고침. max_stage = 맵이 있는 가장 높은 단계
 // top_random (기본 켬 — EnvCfg::cur_top_random, SIM_CUR_TOPRAND=0 이면 끔): 맨 위 단계에서 또 올림 조건을 넘으면 단계를 rnd % (max_stage + 1) 로 —
-//   legged_gym/envs/base/legged_robot.py _update_terrain_curriculum "Robots that solve the last level are sent to a random one"
-//   (torch.where(levels >= max_level, randint_like(levels, max_level), clip(levels, 0))). 근거: explore_v7 은 반복 ~5000 부터 단계 평균 2.9+ 로
-//   거의 큰 맵(단계 3, 92 개)만 보고, 결정적 평가에서 단계 3 학습 맵 성공은 0.50 → 0.54 → 0.56(반복 3900 → 7000 → 14000)로 오르는데
-//   시험 맵과 같은 크기의 단계 2 학습 맵은 0.37 → 0.37 → 0.34, 충돌 0.34 → 0.41 → 0.52 로 나빠졌다(맵 8 개 × 32 판, ppo/README "explore_v8 A/B").
-// window·up·down 기본 = kWindow·kProgUp·kProgDown (env.yaml curriculum.coverage 가 같은 값이면 옛 빌드와 비트 같음)
-DEV void on_episode_end(int32_t* stage, uint32_t* hist, int32_t* n, float cov, int max_stage, bool top_random = false, uint32_t rnd = 0u,
-                        int window = kWindow, float up = kProgUp, float down = kProgDown) {
-  *hist += (uint32_t)(cov * 1000.f + 0.5f);
-  *n += 1;
-  if (*n < window) return;
-  const float avg = (float)*hist / (1000.f * (float)window);
-  if (avg >= up && *stage < max_stage) *stage += 1;
-  else if (avg >= up && top_random) *stage = (int32_t)(rnd % (uint32_t)(max_stage + 1));
-  else if (avg < down && *stage > 0) *stage -= 1;
-  *hist = 0u;
-  *n = 0;
-}
-
+//   legged_gym/envs/base/legged_robot.py _update_terrain_curriculum "Robots that solve the last level are sent to a random one".
+//   근거: explore_v7 은 큰 맵(단계 3)만 보며 시험 맵 크기의 단계 2 학습 맵을 잊었다(ppo/README "explore_v8 A/B").
 // 판 끝 (성공 규칙, 2026-11-09 — mdp/README "커리큘럼"): 최근 window 판(미끄러지는 창)의 성공(판 끝 코드 kDeclareOk = 지도 닫힘 성공) 비율.
 //   hist = 최근 판 성공 비트(비트 0 이 가장 최근, window ≤ kCurWindowMax), n = 창에 든 판 수(≤ window).
 //   창이 차면 판마다: 비율 ≥ up → 올림(맨 위면 top_random 규칙), 비율 < down → 내림, 단계가 바뀌면 창을 비움(새 단계 판만 셈). 그 사이면 그대로(창은 계속 미끄러짐).

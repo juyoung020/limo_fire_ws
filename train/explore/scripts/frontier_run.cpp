@@ -285,14 +285,9 @@ int run_mode(const Args& a, const std::string& mode) {
           e.rw->scan(ranges.data());
         }
         if (end) {
-          if (c.success_closed) {
-            // 닫힘 성공 규칙: 성공은 시뮬이 지도 닫힘으로 판을 끝낼 때만. 기준선이 스스로 끝냄(남은 덩어리 모두 포기 등) = 실패("포기", 진행 없음으로 셈)
-            e.declared = false;
-            finish(e, rf::outcome::NO_PROGRESS);
-          } else {
-            e.success = e.declared && s.coverage >= kSuccessCov;
-            finish(e, e.declared ? (s.coverage >= kSuccessCov ? rf::outcome::SUCCESS : rf::outcome::DECLARED_SHORT) : rf::outcome::TRUNCATED);
-          }
+          // 성공은 시뮬이 지도 닫힘으로 판을 끝낼 때만. 기준선이 스스로 끝냄(남은 덩어리 모두 포기 등) = 실패("포기", 진행 없음으로 셈)
+          e.declared = false;
+          finish(e, rf::outcome::NO_PROGRESS);
         }
       }
       if (n_active == 0) break;
@@ -318,7 +313,7 @@ int run_mode(const Args& a, const std::string& mode) {
                        act[mdp::act::DIM * i], act[mdp::act::DIM * i + 2], s.drive.wv, s.drive.ww, ex[i].goal_x(), ex[i].goal_y(), bd, (int)Li[(size_t)(bk / W.gw) * S + bk % W.gw]);
         }
         if (done[i] == 2) { e.collided = true; e.reason = "collision"; finish(e, rf::outcome::COLLISION); }
-        else if (done[i] == mdp::cur::kDeclareOk && c.success_closed) {   // 지도 닫힘 = 성공 (직전 걸음 덮음)
+        else if (done[i] == mdp::cur::kDeclareOk) {   // 지도 닫힘 = 성공 (직전 걸음 덮음)
           e.success = true;
           e.reason = "map_closed";
           finish(e, rf::outcome::SUCCESS);

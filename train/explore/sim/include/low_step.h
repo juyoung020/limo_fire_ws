@@ -37,8 +37,8 @@ DEV void low_begin(const EnvBatch& b, const EnvState& e, int env, const PathWhy&
     L.following = fol ? 1 : 0;
     L.f_start = e.step;
     L.a_step = e.step;
-    L.ax = e.x;
-    L.ay = e.y;
+    L.ax = e.x + e.ex;
+    L.ay = e.y + e.ey;
     L.d_step = e.step;   // 0 으로 만드는 걸음은 늘 결정 첫 걸음
   }
   // 목적지 바뀜 · 다시 계획
@@ -64,8 +64,8 @@ DEV void low_begin(const EnvBatch& b, const EnvState& e, int env, const PathWhy&
     L.plans_prev = e.p_plans;
     if (!low_xenv(b, env)) {   // 정체 닻: 새 목적지부터 다시 (합친 탐사는 목적지가 1 s 마다 바뀌어도 닻을 그대로 — 자리로만 잼)
       L.a_step = e.step;
-      L.ax = e.x;
-      L.ay = e.y;
+      L.ax = e.x + e.ex;
+      L.ay = e.y + e.ey;
     }
   } else if (e.p_plans != L.plans_prev) {
     if (L.ctx == 0) L.ctx = 2;
@@ -113,9 +113,9 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
     L.dist_all += d;
     L.seg_dist += d;
   }
-  if (e.collided) {
-    L.end = e.people.hit_person ? kLowEndPerson : kLowEndWall;
-    if (e.people.hit_person) {   // 가장 깊이 겹친 사람의 방위 (로봇 기준) — 앞 ±low_front 안인가
+  if (e.contact && c.con_end) {   // 닿음 (센서 — contact.h). 사람인지는 라이다 추적 (kConPerson)
+    L.end = (e.s_kind & kConPerson) ? kLowEndPerson : kLowEndWall;
+    if (L.end == kLowEndPerson) {   // 기록 전용(정답 사람 자리): 가장 깊이 겹친 사람의 방위 (로봇 기준) — 앞 ±low_front 안인가
       float s, co;
       dm::sincosf_d(e.th, &s, &co);
       float g = 1e9f, bear = 0.f;
@@ -148,12 +148,12 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
       }
     }
     L.end = 0;
-    const float ax = e.x - L.ax, ay = e.y - L.ay;
+    const float ax = e.x + e.ex - L.ax, ay = e.y + e.ey - L.ay;   // 정체: 지도 자세
     if (ax * ax + ay * ay >= c.low_idle_d * c.low_idle_d || e.step - L.a_step >= c.low_idle_steps) {
       if (ax * ax + ay * ay < c.low_idle_d * c.low_idle_d) L.end = kLowEndStall;   // 이 걸음에 정체 (lowrl_finish 가 신호로 옮김)
       L.a_step = e.step;
-      L.ax = e.x;
-      L.ay = e.y;
+      L.ax = e.x + e.ex;
+      L.ay = e.y + e.ey;
     }
     return false;
   }
@@ -176,11 +176,11 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
     }
   }
   if (!L.hold) {
-    const float ax = e.x - L.ax, ay = e.y - L.ay;
+    const float ax = e.x + e.ex - L.ax, ay = e.y + e.ey - L.ay;   // 정체: 지도 자세
     if (ax * ax + ay * ay >= c.low_idle_d * c.low_idle_d) {
       L.a_step = e.step;
-      L.ax = e.x;
-      L.ay = e.y;
+      L.ax = e.x + e.ex;
+      L.ay = e.y + e.ey;
     } else if (e.step - L.a_step >= c.low_idle_steps) {
       L.end = kLowEndStall;
       return true;

@@ -347,33 +347,6 @@ int main(int argc, char** argv) {
     else scenes.push_back(a);
   }
   if (scenes.empty() && list.empty()) { std::fprintf(stderr, "env_verify <장면.scene> [장면 …] [--list 목록] [--envs 8] [--steps 80] [--negative]\n"); return 2; }
-  // 커리큘럼 오르내림 규칙 (curriculums.h on_episode_end): 최근 8 판 끝 덮음 평균 ≥ 0.8 → 올림, < 0.4 → 내림, 그 사이 → 그대로,
-  // 7 판까지는 안 바뀜, 최고·최저 단계에서 멈춤
-  {
-    auto run = [](int stage, std::vector<float> covs, int max_stage) {
-      int32_t s = stage, n = 0;
-      uint32_t h = 0;
-      for (float c : covs) mdp::cur::on_episode_end(&s, &h, &n, c, max_stage);
-      return s;
-    };
-    const std::vector<float> hi(8, 0.85f), lo(8, 0.3f), mid(8, 0.6f), edge(8, 0.8f), seven(7, 1.0f);
-    std::vector<float> mixed = {1.f, 1.f, 1.f, 1.f, 0.6f, 0.6f, 0.6f, 0.6f};   // 평균 0.8 → 올림
-    const bool ok = run(1, hi, 3) == 2 && run(1, lo, 3) == 0 && run(1, mid, 3) == 1 && run(1, edge, 3) == 2 && run(1, mixed, 3) == 2 &&
-                    run(1, seven, 3) == 1 && run(3, hi, 3) == 3 && run(0, lo, 3) == 0;
-    std::printf("커리큘럼 덮음 규칙(옛, curriculum.rule: coverage) %s (8 판 덮음 평균 ≥ 0.8 → 올림, < 0.4 → 내림, 그 사이·7 판까지 → 그대로, 끝 단계에서 멈춤)\n", ok ? "통과" : "실패");
-    if (!ok) return 1;
-    // 맨 위 단계 무작위 (실험 top_random): 맨 위에서 올림 조건 → rnd % (max + 1), 끄면 그대로, 맨 위 아니면 보통 올림, 내림은 그대로
-    auto run_r = [](int stage, std::vector<float> covs, int max_stage, bool tr, uint32_t rnd) {
-      int32_t s = stage, n = 0;
-      uint32_t h = 0;
-      for (float c : covs) mdp::cur::on_episode_end(&s, &h, &n, c, max_stage, tr, rnd);
-      return s;
-    };
-    const bool ok2 = run_r(3, hi, 3, true, 5u) == 1 && run_r(3, hi, 3, true, 7u) == 3 && run_r(3, hi, 3, false, 5u) == 3 &&
-                     run_r(1, hi, 3, true, 5u) == 2 && run_r(3, lo, 3, true, 5u) == 2 && run_r(3, mid, 3, true, 5u) == 3;
-    std::printf("커리큘럼 맨 위 무작위 규칙 %s\n", ok2 ? "통과" : "실패");
-    if (!ok2) return 1;
-  }
   sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
   // 성공 규칙 (curriculums.h on_episode_end_success, env.yaml curriculum.success): 덱(deque)으로 따로 짠 참조 규칙과 무작위 판 열 4 만 판에서
   // 단계·창이 판마다 같은지 (창 크기·문턱 여러 벌 + 지금 설정 값), 그리고 손으로 정한 경우
@@ -442,7 +415,7 @@ int main(int argc, char** argv) {
     std::printf("커리큘럼 성공 규칙 %s (최근 N 판 성공 비율 ≥ 올림 문턱 → 올림, < 내림 문턱 → 내림, 단계 바뀌면 창 비움, 미끄러지는 창 — 참조 구현과 판 %d 벌 × 4 만 판 같음 "
                 "(올림 %ld · 내림 %ld · 맨 위 무작위 %ld), 손 경우 %s; 지금 설정: %s 규칙, 창 %d · 올림 %.2f · 내림 %.2f)\n",
                 ok ? "통과" : "실패", (int)(sizeof(ps) / sizeof(ps[0])) * 2, n_up, n_down, n_top, hand ? "같음" : "다름",
-                c0.cur_rule == mdp::cur::kCurSuccess ? "성공" : "덮음", c0.cur_window, c0.cur_up, c0.cur_down);
+                "성공", c0.cur_window, c0.cur_up, c0.cur_down);
     if (!ok) return 1;
   }
   if (hier) hc.cfg.action_mode = sim::kActPath;
@@ -466,9 +439,9 @@ int main(int argc, char** argv) {
   }
   int n_print = 0;
   for (const auto& w : worlds)
-    if (++n_print <= 6 || n_print == (int)worlds.size()) std::printf("맵 %s: %d×%d 칸, 벽 면 칸(덮음 분모) %d (%.2f m²), 갈 수 있는 바닥 %d (%.1f m², 단계 %d), T_ref %.0f s, 시작 후보 %zu, %s\n",
+    if (++n_print <= 6 || n_print == (int)worlds.size()) std::printf("맵 %s: %d×%d 칸, 벽 면 칸(덮음 분모) %d (%.2f m²), 갈 수 있는 바닥 %d (%.1f m², 단계 %d), 시작 후보 %zu, %s\n",
                 w.name.c_str(), w.gw, w.gh, w.n_wall, w.n_wall * hc.cfg.res * hc.cfg.res, w.n_floor, w.n_floor * hc.cfg.res * hc.cfg.res,
-                (w.stage >= 0 ? w.stage : mdp::cur::stage_of_area(w.n_floor * hc.cfg.res * hc.cfg.res)), mdp::rew::t_ref(w.n_wall), w.spawn.size(), w.closed ? "닫힘" : w.leak.c_str());
+                (w.stage >= 0 ? w.stage : mdp::cur::stage_of_area(w.n_floor * hc.cfg.res * hc.cfg.res)), w.spawn.size(), w.closed ? "닫힘" : w.leak.c_str());
   std::printf("안전층 %s: 문턱 %.3f m (앞 범퍼에서, 제동 거리 %.3f m + 판단 지연 0.2 s × %.1f m/s)\n", hc.cfg.safety ? "켬" : "끔", hc.cfg.safety_dist,
               hc.brake_dist, mdp::act::V_FWD);
   if (low) return verify_low(hc, worlds, lidar, n_env, n_steps, people, negative, low_host, low_explore);

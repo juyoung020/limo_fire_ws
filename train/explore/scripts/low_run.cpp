@@ -11,6 +11,7 @@
 //   low_policy_run --mode follow --policy <체크포인트> --scenes a.scene [...] [--people 0,2] (그 밖은 follow 와 같음)   ← scripts/CMakeLists.txt 의 다른 타깃
 //       같은 단독 과제를 아래층 RL 정책(train --low 의 체크포인트)으로: 걸음(0.1 s)마다 정책이 (v, ω) 를 낸다. 같은 표 + ROADMAP "2 단계 통과 조건" 판정.
 //       --policy 대신 --step 이면 같은 걸음 루프에서 규칙 추종기 (기준선이 다시 나오는지 보는 대조)
+//       --trace 파일: 정책 걸음마다 한 줄 TSV (닿음 센서·시뮬 정답 충돌 나란히 — sim/tools/contact_eval 이 읽음. SIM_CON_END=0 이면 닿아도 판이 안 끝나 센서 일치도를 잼)
 //   공통: [--env sim/config/env.yaml] [--model sim/config/sensor_model.yaml] [--frontier baselines/frontier/config/frontier.yaml] [--cpu]
 //         [--time-limit S] [--max-goals G] (단독 과제 판 끝 규칙을 설정 파일 대신)
 //
@@ -62,6 +63,7 @@ struct Args {
   bool step = false;              // low_policy_run: 정책 없이 걸음 루프(규칙 추종기)
   std::vector<int> people_list;   // --people 에 쉼표로 여럿 (low_policy_run 이 차례로 돈다)
   std::string diag;               // low_policy_run: 충돌 진단 TSV 를 쓸 파일 (없으면 끔 — 판·표·지문은 그대로)
+  std::string trace;              // low_policy_run: 정책 걸음마다 한 줄 TSV (닿음 센서 · 정답 충돌 — tools/contact_eval 이 읽음). 없으면 끔
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
 };
 
@@ -839,6 +841,18 @@ void ppl_dump(PplDiag& P, const sim::EnvCfg& c, const char* scene, int people, i
 }
 const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\tpx\tpy\tpr\tmode\tpspeed\tgap\tlid\tocc\tcam\ttrk\tyres\tmx\tmy\tmvx\tmvy\ttk_d\ttk_hit\ttk_mov\ttk_spd\ttk_disp\n";
 
+// 걸음 자취 (--trace): 정책이 몬 걸음마다 한 줄 — 닿음 센서 값(contact.h)과 시뮬 정답(충돌·간격)을 나란히. 정답 칸은 기록 전용
+const char* kTraceHead = "scene\tpeople\tenv\tep\tt\tend\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\twv\tgyro\t"
+                         "s_lid\ts_map\ts_cam\ts_pgap\ts_stall\ts_kind\tcontact\tgt_touch\tgt_person\tgt_gap\tgt_u\tgt_v\tgt_pgap\tgoal_d\n";
+void trace_row(std::FILE* f, const sim::EnvCfg& c, const sim::World& W, const char* scene, int people, int i, int ep, int t, int end, const sim::EnvState& e,
+               float a0, float a1, int safe, float goal_d) {
+  float hu = 0.f, hv = 0.f, hd = 9.f;
+  diag_nearest(c, W, e, &hu, &hv, &hd);
+  std::fprintf(f, "%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.3f\t%.3f\t%.4f\t%.3f\n",
+               scene, people, i, ep, t, end, e.x, e.y, e.th, e.v, e.w, a0, a1, e.cmd_v, e.cmd_w, safe, e.drive.wv, e.gyro, e.s_lid, e.s_map, e.s_cam,
+               e.s_pgap, e.s_stall, e.s_kind, e.contact, e.collided, e.people.hit_person, hd, hu, hv, e.people.near_d, goal_d);
+}
+
 struct PolRes {
   std::string scene;
   int people;
@@ -888,6 +902,12 @@ int run_policy(const Args& a) {
     dg.f = std::fopen(a.diag.c_str(), "w");
     if (!dg.f) throw std::runtime_error("--diag 파일을 못 엶: " + a.diag);
     std::fputs(kDiagHead, dg.f);
+  }
+  std::FILE* tr = nullptr;
+  if (!a.trace.empty()) {
+    tr = std::fopen(a.trace.c_str(), "w");
+    if (!tr) throw std::runtime_error("--trace 파일을 못 엶: " + a.trace);
+    std::fputs(kTraceHead, tr);
   }
   PplDiag pd;
   if (dg.f) {
@@ -1008,6 +1028,14 @@ int run_policy(const Args& a) {
             pd.pw[i] = w_now;
           }
           if (done[i]) pd.hn[i] = 0;
+        }
+        if (tr && phase[i] == 1 && cmd[i].follow == fol) {   // 걸음 자취: 판이 끝난 걸음은 상태가 이미 새 판이라 끝 표시만
+          const float a0 = use_pol ? pol[(size_t)PW * i] : 0.f, a1 = use_pol ? pol[(size_t)PW * i + 1] : 0.f;
+          float gd = -1.f;
+          if (cmd[i].target >= 0)
+            gd = std::hypot(W.ox + ((float)(cmd[i].target % W.gw) + 0.5f) * c.res - (st[i].x + st[i].ex), W.oy + ((float)(cmd[i].target / W.gw) + 0.5f) * c.res - (st[i].y + st[i].ey));
+          if (done[i]) std::fprintf(tr, "%s\t%d\t%d\t%d\t%d\t%d\n", W.name.c_str(), people, i, eps[i], st[i].step, L.end == sim::kLowEndNone ? sim::kLowEndTime : L.end);
+          else trace_row(tr, c, W, W.name.c_str(), people, i, eps[i], st[i].step - step0[i], 0, st[i], a0, a1, L.kind == sim::kLowSafety, gd);
         }
         if (dg.f && phase[i] == 1 && cmd[i].follow == 2) {   // 진단: 정책이 몬 걸음
           const int safe_now = done[i] ? (L.kind == sim::kLowSafety) : dg.rl_post[i].safe;
@@ -1142,6 +1170,7 @@ int run_policy(const Args& a) {
   }
   if (dg.f) std::fclose(dg.f);
   if (pd.f) std::fclose(pd.f);
+  if (tr) std::fclose(tr);
   cudaFree(d_act);
   cudaFree(d_zero);
   cudaFree(d_pol);
@@ -1193,6 +1222,7 @@ int main(int argc, char** argv) {
     else if (k == "--policy") a.policy = val();
     else if (k == "--step") a.step = true;
     else if (k == "--diag") a.diag = val();
+    else if (k == "--trace") a.trace = val();
     else if (k == "--warm") { const auto v = split(val(), ','); if (v.size() == 2) { a.warm_lo = std::stof(v[0]); a.warm_hi = std::stof(v[1]); } }
     else if (k == "--len") { const auto v = split(val(), ','); if (v.size() == 4) for (int j = 0; j < 4; ++j) a.len[j] = std::stof(v[j]); }
     else if (k == "--time-limit") a.time_limit = std::stof(val());

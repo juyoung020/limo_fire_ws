@@ -243,7 +243,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     m.n_floor = w.n_floor;
     m.ox = w.ox;
     m.oy = w.oy;
-    m.t_ref = mdp::rew::t_ref(w.n_wall);
     m.stage = w.stage >= 0 ? w.stage : mdp::cur::stage_of_area(w.n_floor * hc.cfg.res * hc.cfg.res);
     maps.push_back(m);
   }

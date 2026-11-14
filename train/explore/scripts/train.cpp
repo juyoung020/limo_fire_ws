@@ -238,13 +238,15 @@ const char* const kLowTermName[sim::kLrTerms] = {"progress", "time", "reach", "c
 
 struct LowSum {   // LowRlStat 여러 환경 합
   double term[sim::kLrTerms] = {}, steps = 0, episodes = 0, goals = 0, reached = 0, hit_wall = 0, hit_person = 0, stall = 0, timeout = 0, giveup = 0,
-         safe = 0, back = 0, reach_steps = 0, dist = 0, reach_len = 0, x_eps = 0, x_ok = 0, x_wall = 0, x_person = 0, x_idle = 0, x_ok_steps = 0, x_rule = 0;
+         safe = 0, back = 0, reach_steps = 0, dist = 0, reach_len = 0, x_eps = 0, x_ok = 0, x_wall = 0, x_person = 0, x_idle = 0, x_ok_steps = 0, x_rule = 0,
+         gt_wall = 0, gt_person = 0;   // 판 동안 시뮬 정답 충돌이 있었던 판 (기록 전용 — hit_* 는 센서 닿음으로 끝난 판)
   void add(const sim::LowRlStat& s) {
     for (int k = 0; k < sim::kLrTerms; ++k) term[k] += s.term[k];
     steps += s.steps; episodes += s.episodes; goals += s.goals; reached += s.reached; hit_wall += s.hit_wall; hit_person += s.hit_person;
     stall += s.stall; timeout += s.timeout; giveup += s.giveup; safe += s.safe_steps; back += s.back_steps; reach_steps += s.reach_steps;
     dist += s.dist; reach_len += s.reach_len;
     x_eps += s.x_eps; x_ok += s.x_ok; x_wall += s.x_wall; x_person += s.x_person; x_idle += s.x_idle; x_ok_steps += s.x_ok_steps; x_rule += s.x_rule_steps;
+    gt_wall += s.gt_wall; gt_person += s.gt_person;
   }
   // 도달률 = 통과 ÷ 경로가 짜인 목표 (아직 가는 중인 목표도 분모 — 긴 구간에서는 시작·끝 수가 같아져 치우침이 사라진다)
   double reach_rate() const { return goals > 0 ? reached / goals : 0; }
@@ -252,6 +254,8 @@ struct LowSum {   // LowRlStat 여러 환경 합
   double speed(double dt) const { return reach_steps > 0 ? reach_len / (reach_steps * dt) : 0; }
   double wall100() const { return dist > 0 ? hit_wall / dist * 100 : 0; }
   double person100() const { return dist > 0 ? hit_person / dist * 100 : 0; }
+  double gt_wall100() const { return dist > 0 ? gt_wall / dist * 100 : 0; }
+  double gt_person100() const { return dist > 0 ? gt_person / dist * 100 : 0; }
 };
 
 int run_low(Args a) {
@@ -338,7 +342,7 @@ int run_low(Args a) {
   // 기준선과 같은 조건의 측정(경로 길이 구간별 목표)은 따로 low_policy_run — 이 평가는 학습 곡선용
   constexpr int kEvalSteps = 600;   // 60 s
   auto put_low = [&](rf::Json& j, const LowSum& s) {
-    j.set("goals", s.goals).set("reach_rate", s.reach_rate()).set("speed", s.speed(dt_act)).set("wall_per_100m", s.wall100()).set("person_per_100m", s.person100())
+    j.set("goals", s.goals).set("reach_rate", s.reach_rate()).set("speed", s.speed(dt_act)).set("wall_per_100m", s.wall100()).set("person_per_100m", s.person100()).set("gt_wall_per_100m", s.gt_wall100()).set("gt_person_per_100m", s.gt_person100())
         .set("stall", s.stall).set("timeout", s.timeout).set("giveup", s.giveup).set("safety_frac", s.steps > 0 ? s.safe / s.steps : 0.0)
         .set("back_frac", s.steps > 0 ? s.back / s.steps : 0.0).set("dist", s.dist);
   };
@@ -388,6 +392,8 @@ int run_low(Args a) {
     r.last(pre + "speed", all.speed(dt_act));
     r.last(pre + "wall_per_100m", all.wall100());
     r.last(pre + "person_per_100m", all.person100());
+    r.last(pre + "gt_wall_per_100m", all.gt_wall100());   // 시뮬 정답 충돌 (기록 전용)
+    r.last(pre + "gt_person_per_100m", all.gt_person100());
     r.last(pre + "goals", all.goals);
     std::fprintf(stderr, "  평가%s 반복 %d: 도달률 %.3f 속도 %.3f m/s (%.1f s)\n", sample ? "(샘플)" : "", it, all.reach_rate(), all.speed(dt_act), ms_since(t0) / 1000);
   };
@@ -535,6 +541,8 @@ int run_low(Args a) {
     r.last("low/reach_len_mean", s.reached > 0 ? s.reach_len / s.reached : 0.0);
     r.last("low/wall_per_100m", s.wall100());
     r.last("low/person_per_100m", s.person100());
+    r.last("low/gt_wall_per_100m", s.gt_wall100());   // 시뮬 정답 충돌 (기록 전용)
+    r.last("low/gt_person_per_100m", s.gt_person100());
     r.last("low/stall_per_goal", s.goals > 0 ? s.stall / s.goals : 0.0);
     r.last("low/timeout_per_goal", s.goals > 0 ? s.timeout / s.goals : 0.0);
     r.last("low/giveup_per_goal", s.goals > 0 ? s.giveup / s.goals : 0.0);
@@ -772,7 +780,7 @@ int main(int argc, char** argv) {
           std::ifstream f(ckdir + "/cur_window_latest.bin", std::ios::binary);
           int32_t hd[5] = {0, 0, 0, 0, 0};
           if (f && f.read(reinterpret_cast<char*>(hd), sizeof(hd))) {
-            if (std::memcmp(hd, "CURW", 4) == 0 && hd[1] == 1 && hd[2] == hc.cfg.cur_rule && hd[3] == hc.cfg.cur_window && hd[4] == N) {
+            if (std::memcmp(hd, "CURW", 4) == 0 && hd[1] == 1 && hd[2] == 1 && hd[3] == hc.cfg.cur_window && hd[4] == N) {
               wh.resize(N);
               wn.resize(N);
               f.read(reinterpret_cast<char*>(wh.data()), sizeof(uint32_t) * N);
@@ -841,7 +849,7 @@ int main(int argc, char** argv) {
     meta.set("kind", "explore_ppo").set("group", a.name).set("seed", (unsigned long long)a.seed).set("n_envs", N)
         .set("ctrl_hz", 1.0 / (dt_act * dec)).set("hier", a.hier).set("graph", a.graph).set("decide_steps", dec).set("success_coverage", mdp::cur::kSuccessCov).set("action_limits", limits)
         .set("reward_terms", terms).set("n_train_maps", (unsigned long long)worlds.size()).set("test_maps", tests_meta)
-        .set("sweep_guard", c.sweep_guard).set("cur_top_random", c.cur_top_random).set("success_closed", c.success_closed).set("reward_occ", c.reward_occ).set("scene_list", a.list).set("steps_per_env", pc.steps_per_env).set("lr_max", a.lr_max)
+        .set("sweep_guard", c.sweep_guard).set("cur_top_random", c.cur_top_random).set("con_mask", c.con_mask).set("con_end", c.con_end).set("scene_list", a.list).set("steps_per_env", pc.steps_per_env).set("lr_max", a.lr_max)
         .set("n_params", (long long)ppo.ac().n_params)
         .set("ppo", rf::Json::object().set("epochs", pc.epochs).set("minibatches", pc.minibatches).set("clip", pc.clip)
                         .set("gamma", pc.gamma).set("lam", pc.lam).set("entropy_coef", pc.entropy_coef).set("lr", pc.lr)
@@ -1098,19 +1106,11 @@ int main(int argc, char** argv) {
         row.set("eval", tests[ti].name).set("split", sample ? "test_sample" : "test").set("n", n).set("success", succ / n).set("collision", coll / n)
             .set("truncation", trunc / n).set("no_progress", idle / n).set("pass", coll == 0 && succ == n);
         if (succ > 0) row.set("t_success", tcl / succ);   // 닫힘(성공)까지 시간 (s)
-        if (!hc_eval.cfg.success_closed) {   // 정답 덮음 지표는 옛 규칙(SIM_SUCCESS_CLOSED=0)에서만 — 보관 (mdp/README "판 끝")
-          row.set("declare_short", shrt / n).set("coverage", cov / n).set("t95_reached", t95n / n);
-          if (t95n > 0) row.set("t95", t95 / t95n);
-        }
         rows.push(row);
         s_n += n; s_succ += succ; s_coll += coll; s_trunc += trunc; s_short += shrt; s_cov += cov; s_t95 += t95; s_t95n += t95n;
         s_len += len; s_cad += cad; s_decl += decl; s_rew += rws;
-        if (hc_eval.cfg.success_closed)
-          std::fprintf(stderr, "  평가%s %s: 성공(닫힘) %.0f/%d 충돌 %.0f 진행 없음 %.0f 끊김 %.0f 닫힘까지 %.1f s\n", sample ? "(샘플)" : "", tests[ti].name.c_str(), succ, E,
-                       coll, idle, trunc, succ > 0 ? tcl / succ : 0.0);
-        else
-          std::fprintf(stderr, "  평가%s %s: 성공 %.0f/%d 충돌 %.0f 끊김 %.0f 선언 미달 %.0f 끝 덮음 %.3f t95 %s\n", sample ? "(샘플)" : "", tests[ti].name.c_str(), succ, E, coll,
-                       trunc, shrt, cov / n, t95n > 0 ? std::to_string(t95 / t95n).c_str() : "—");
+        std::fprintf(stderr, "  평가%s %s: 성공(닫힘) %.0f/%d 충돌 %.0f 진행 없음 %.0f 끊김 %.0f 닫힘까지 %.1f s\n", sample ? "(샘플)" : "", tests[ti].name.c_str(), succ, E,
+                     coll, idle, trunc, succ > 0 ? tcl / succ : 0.0);
       }
       rf::Json evj = rf::Json::object();
       evj.set("iter", it).set("ckpt", "model_" + std::to_string(it)).set("rows", rows);
@@ -1156,7 +1156,7 @@ int main(int argc, char** argv) {
         std::vector<uint32_t> wh(N);
         std::vector<int32_t> wn(N);
         for (int i = 0; i < N; ++i) { wh[i] = es[i].cur_hist; wn[i] = es[i].cur_n; }
-        const int32_t hd[5] = {0x57525543 /* "CURW" */, 1, hc.cfg.cur_rule, hc.cfg.cur_window, N};
+        const int32_t hd[5] = {0x57525543 /* "CURW" */, 1, 1 /* 규칙 번호: 성공 (옛 덮음 0 은 없앰) */, hc.cfg.cur_window, N};
         const std::string pw = ckdir + "/cur_window_latest.bin";
         std::ofstream fw(pw + ".tmp", std::ios::binary);
         fw.write(reinterpret_cast<const char*>(hd), sizeof(hd));

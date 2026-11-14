@@ -165,7 +165,8 @@ struct LowRlStat {
   int32_t episodes;         // 끝난 판
   int32_t goals;            // 경로가 짜인 목표 (과제 구간 분모)
   int32_t reached;          // 통과 반경에 든 목표
-  int32_t hit_wall, hit_person, stall, timeout;   // 판 끝 까닭 (나머지 = 목표 수를 채움)
+  int32_t hit_wall, hit_person, stall, timeout;   // 판 끝 까닭 (나머지 = 목표 수를 채움). hit_* = 닿음(센서, sim contact.h)으로 끝
+  int32_t gt_wall, gt_person;   // 판 동안 시뮬 정답 충돌이 있었던 판 수 (기록 전용 — 센서 닿음과 견줌)
   int32_t giveup;           // 경로를 못 짰거나 경로 끝이 통과 반경 밖 (새 목표를 받음)
   int32_t safe_steps;       // 안전층이 명령을 고친 걸음
   int32_t back_steps;       // 후진 명령 걸음

@@ -19,7 +19,6 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
   m_.grid = grid_.data();
   m_.gw = m_.gh = c.size;
   m_.n_wall = m_.n_floor = 1;   // 덮음 분모 (실물엔 정답 벽이 없어 덮음은 0 — 보상·덮음 칸은 안 씀)
-  m_.t_ref = 1.f;
   m_.spawn = nullptr;
   m_.clear = nullptr;
   m_.n_spawn = 0;
@@ -158,6 +157,7 @@ void RobotEnv::step(const Proprio& p, const Scan& s) {
   sim::known_box(b_, e_, sh_);
   // 3. 판 끝·진행 (시뮬 step_env 끝과 같은 차례)
   sim::map_progress(e_, a.occ);
+  sim::sense_step(b_, e_, 0, sh_);   // 간격·닿음 (센서 — 시뮬 contact.h 와 같은 함수)
   sim::finish_step(b_, e_, 0, a.wall, a.floor, a.known, a.fresh);
   done_ = e_.done;
   sim::ring_advance(e_);

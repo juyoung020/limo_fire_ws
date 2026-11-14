@@ -17,38 +17,34 @@ namespace mdp::rew {
 // 1. 보상 값 (점수) — 잠정, 학습 곡선을 보고 바꾸면 맨 아래 근거에 적는다
 // ============================================================================================================
 //                                          항 이름(로그)        언제·무엇에 곱하나
-constexpr float kCov = 20.f;              // coverage          벽 덮음 비율 1.0 당 (이번 걸음에 새로 본 벽 몫) — 10 → 20 (2026-11-05, 아래 근거)
 constexpr float kOccCell = 20.f / 1600.f;   // coverage (로봇 지도, 2026-11-08) 판 처음 막힘이 된 지도 칸 하나에 — 한 행동에 kIdleOccMin(10) 개 이상 생긴
                                             // 걸음의 칸만 셈(진행 없음 시계와 같은 셈, env.h finish_step — 멈춰 있어도 잡음으로 드문드문 생기는 칸은 0).
                                             // 1600 = 시험 맵 크기(145~150 m²)를 끝까지 탐사했을 때 그렇게 센 칸 수 중앙(explore_v9 정책 64 판씩: bookstore 1507,
                                             // small-house 1712) → 그런 맵 다 훑으면 ≈ +20 (옛 정답 덮음 보상과 같은 크기). 정답 없이 셀 수 있게 맵마다 나누지 않고
                                             // 칸마다 고정 — 큰 맵일수록 합이 큼 (학습 맵 24 개 중앙: 단계 0 0.2~0.6 k, 1 0.5~1.4 k, 2 1.0~2.3 k, 3 1.5~4.2 k)
-constexpr float kTime = 0.2f;             // time              기준선 속도로 다 덮을 시간(T_ref) 동안 합 (초당 −kTime/T_ref)
-constexpr float kCollWall = -6.f;         // collision_wall    벽·물체에 부딪혀 판 끝
-constexpr float kCollPerson = -9.f;       // collision_person  사람과 부딪혀 판 끝 (벽보다 크게)
-constexpr float kPersonNear = -0.5f;      // person_near       사람 근처(kNearDist 안)에서 움직인 거리 m 당
-constexpr float kDeclareSuccess = 10.f;   // declare           끝 선언 때 덮음 ≥ 성공 기준(curriculums.h kSuccessCov)
-constexpr float kFast = 10.f;             // declare           성공 때 더: kFast × max(0, 1 − 걸린 시간 / T_ref) — 빨리 끝낼수록 큼 (2026-11-10, 잠정, 아래 근거 "빠르기")
-constexpr float kDeclareFail = -3.f;      // declare           끝 선언 때 덮음이 0 에 가까울 때 (기준 근처로 갈수록 kDeclareNear 로)
-constexpr float kSlip = -0.05f;           // slip              바퀴가 몸통보다 더 돈 각도 rad 당
-constexpr float kTurn = -0.001f;          // turn              몸통이 돈 각도 rad 당 (|ω|·걸음 길이) — 작게: 사각(라이다 220°)을 메우는 회전은 남기고 늘 최대로 도는 것만 줄이게
+constexpr float kTime = 0.2f;             // time              기준 시간 kTRef 동안 합 (초당 −kTime/kTRef)
+constexpr float kCollWall = -6.f;         // collision_wall    닿음(센서 — sim contact.h)으로 판 끝
+constexpr float kCollPerson = -9.f;       // collision_person  닿음 때 라이다 추적 사람이 몸통 곁 (벽보다 크게 — 추적은 아래층 RL 만, 없으면 벽으로 셈)
+constexpr float kPersonNear = -0.5f;      // person_near       라이다 추적 사람 근처(kNearDist 안)에서 움직인 거리 m 당 (바퀴 오도메트리)
+constexpr float kDeclareSuccess = 10.f;   // declare           지도 닫힘 성공 (항 이름은 옛 끝 선언 자리)
+constexpr float kFast = 10.f;             // declare           성공 때 더: kFast × max(0, 1 − 걸린 시간 / kTRef) — 빨리 끝낼수록 큼 (2026-11-10, 잠정, 아래 근거 "빠르기")
+constexpr float kSlip = -0.05f;           // slip              바퀴 오도메트리 ω 와 자이로가 어긋난 각도 rad 당
+constexpr float kTurn = -0.001f;          // turn              자이로로 잰 돈 각도 rad 당 (|ω|·걸음 길이) — 작게: 사각(라이다 220°)을 메우는 회전은 남기고 늘 최대로 도는 것만 줄이게
 constexpr float kIdlePenalty = -4.f;      // no_progress       지도 진척(새 막힘 칸 ≥ kIdleOccMin / 행동)이 kIdleTime 동안 없어 판 끝
 // 아래 넷은 속도 행동(직접 제어) 모드에만 — 계층형(StepIn::hier)에서는 늘 0. 2026-11-11, 모두 잠정 (맨 아래 근거 "직접 제어 촘촘한 항")
 constexpr float kApproach = 0.1f;         // approach          가장 가까운 프론티어 덩어리까지 BFS 길 거리가 줄어든 m 당 (늘면 −, 걸음마다 ±kApproachClip 걸음 폭에서 자름)
 constexpr float kFrontCells = 1.f / 4000.f;  // front_cells    번진 곳 안 프론티어 칸 수가 한 칸 줄 때마다 (늘면 −): −kFrontCells × (지금 − 직전)
-constexpr float kProx = -0.5f;            // proximity         벽·물체 가까이(몸통 간격 < kProxDist)에서 움직인 거리 m 당, 간격 0 에서 온 값·kProxDist 에서 0 (곧게)
+constexpr float kProx = -0.5f;            // proximity         센서 간격(sim contact.h s_clear) < kProxDist 에서 움직인 거리 m 당
 constexpr float kSmooth = 1.5e-4f;        // smooth            −kSmooth × 이번·직전 행동 (v, vy, ω 정규 단위) 차이 제곱 합
 
 // ============================================================================================================
 // 2. 항 모양 (점수 아님)
 // ============================================================================================================
-constexpr float kRefCellsPerSec = 10.f;   // time: 기준선이 벽 칸을 덮는 속도 (칸/s) → T_ref = 벽 칸 수 / 이 값
-constexpr float kTRefMin = cur::kSafeTime / 10.f;   // time: T_ref 하한 (s) — 작은 맵에서 시간 감점이 너무 세지 않게
-constexpr float kNearDist = 0.5f;         // person_near: 몸통~사람 간격 이 안이면 감점 (m)
-constexpr float kDeclareNear = 0.f;       // declare: 덮음이 성공 기준 바로 아래일 때 다가가는 값
-constexpr float kDeclareRampFrom = 0.5f;  // declare: 덮음 이것부터 성공 기준까지 kDeclareFail → kDeclareNear 로 곧게 오름 (11-05, 전엔 기준 아래 0.02 폭 지수)
+constexpr float kTRef = 290.f;            // time·빠르기의 기준 시간 (s) — 잠정. 옛 맵별 T_ref(정답 벽 칸 ÷ 10 칸/s: small-house 259 s, bookstore 321 s)의 가운데.
+                                          // 맵마다 두려면 정답 벽 칸 수가 들어서 2026-11-14 에 상수로 (실물이 못 재는 값)
+constexpr float kNearDist = 0.5f;         // person_near: 몸통~추적 사람 간격 이 안이면 감점 (m)
 constexpr float kApproachClip = 1.5f;     // approach: 한 걸음 거리 변화를 ±(앞 최고 속도 act::V_FWD × 걸음 길이) × 이 값에서 자름 (0.1 s 걸음이면 ±0.15 m) — 잠정
-constexpr float kProxDist = 0.2f;         // proximity: 몸통~막힌 칸 간격 이 안이면 감점 (m) — 잠정
+constexpr float kProxDist = 0.2f;         // proximity: 몸통~센서 간격 이 안이면 감점 (m) — 잠정
 
 // ============================================================================================================
 // 아래는 식 — 값을 바꿀 때는 건드릴 필요 없음
@@ -67,45 +63,26 @@ inline const char* term_name(int k) {
   return n[k];
 }
 
-// 맵 하나의 T_ref (호스트, 맵 만들 때 한 번)
-inline float t_ref(int n_wall) {
-  const float t = (float)n_wall / kRefCellsPerSec;
-  return t < kTRefMin ? kTRefMin : t;
-}
-
-// 선언 보상 (덮음 c)
-DEV float declare_reward(float c) {
-  if (c >= cur::kSuccessCov) return kDeclareSuccess;
-  if (c <= kDeclareRampFrom) return kDeclareFail;
-  // kDeclareRampFrom → 성공 기준 사이 곧은 오름: 더 덮고 선언할수록 덜 나쁘게
-  return kDeclareFail + (kDeclareNear - kDeclareFail) * (c - kDeclareRampFrom) / (cur::kSuccessCov - kDeclareRampFrom);
-}
-
-// 성공 빠르기 보너스 (성공 판에만): T_ref(기준선 속도로 다 덮는 시간) 안에 끝내면 0 ~ kFast, 넘으면 0
-DEV float fast_bonus(float t, float t_ref) {
-  const float f = 1.f - t / t_ref;
+// 성공 빠르기 보너스 (성공 판에만): kTRef 안에 끝내면 0 ~ kFast, 넘으면 0
+DEV float fast_bonus(float t) {
+  const float f = 1.f - t / kTRef;
   return f > 0.f ? kFast * f : 0.f;
 }
 
 // 한 걸음 항 입력
 struct StepIn {
-  float cov_gain;       // 이번 걸음 벽 덮음 증가 (첫 걸음은 0)
   float dt;             // 걸음 길이 (s)
-  float t_ref;          // 이 맵 T_ref
-  int collided_wall, collided_person;
-  float near_person;    // 사람 근접 몫: 몸통~사람 간격 < kNearDist 이면 이번 걸음 이동 거리 (m) — 속도 × 시간
-  int declared;         // 이번 걸음 선언 (충돌이면 선언 안 셈)
-  float cov;            // 선언 때 덮음
-  float slip;           // 헛돈 각도 합 (rad)
-  int idle;             // 이번 걸음 진행 없음으로 끝 (충돌·선언이 아닐 때만)
+  int collided_wall, collided_person;   // 닿음 (센서) — 사람 곁이면 사람
+  float near_person;    // 사람 근접 몫: 몸통~추적 사람 간격 < kNearDist 이면 이번 걸음 이동 거리 (m, 바퀴 오도메트리)
+  float slip;           // 바퀴 오도메트리 ω − 자이로 어긋난 각도 합 (rad)
+  int idle;             // 이번 걸음 진행 없음으로 끝 (닿음·성공이 아닐 때만)
   int closed;           // 이번 걸음 지도 닫힘으로 성공 → 성공 보너스 kDeclareSuccess (declare 항 자리)
   int new_occ;          // 이번 걸음 로봇 지도에서 판 처음 막힘이 된 칸 수 (첫 걸음 0)
-  int reward_occ;       // 1: 덮음 항 = kOccCell × new_occ (로봇 지도), 0: kCov × cov_gain (정답 벽 — 보관)
-  float turn;           // 이번 걸음 몸통이 돈 각도 (rad, ≥ 0)
+  float turn;           // 이번 걸음 돈 각도 (rad, ≥ 0 — 자이로)
   float t;              // 판 시작부터 이번 걸음 끝까지 시간 (s) — 성공 빠르기 보너스 kFast
   int hier;             // 1: 계층형 행동(sim kActPath) — 헛돎·회전 항 0 (아래 근거 "계층형", 상위 정책이 못 고르는 하위 걸음 항)
-  float move;           // 이번 걸음 이동 거리 (m) — 속도 × 시간 (near_person 과 같은 셈). proximity
-  float clearance;      // 몸통~가장 가까운 막힌 칸 간격 (m, env.h body_clearance — 정답 격자). 모르면 kProxDist 이상을 넣어 0. proximity
+  float move;           // 이번 걸음 이동 거리 (m) — 바퀴 오도메트리 속도 × 시간 (near_person 과 같은 셈). proximity
+  float clearance;      // 몸통 센서 간격 (m, sim contact.h s_clear — 라이다 점·로봇 지도 막힘·깊이 층). 모르면 kProxDist 이상을 넣어 0. proximity
   float act_d2;         // 이번·직전 행동 (v, vy, ω 정규 단위, 자른 값) 차이 제곱 합 (판 첫 걸음 0). smooth
 };
 
@@ -130,16 +107,12 @@ DEV float front_cells_reward(int f_prev, int f_now) { return -kFrontCells * (flo
 
 // 항마다 값 → out[kTerms], 합을 돌려줌 (더하는 순서 고정 — 결정적)
 DEV float terms(const StepIn& in, float* out) {
-  out[kTermCov] = in.reward_occ ? kOccCell * (float)in.new_occ : kCov * in.cov_gain;
-  out[kTermTime] = -kTime * in.dt / in.t_ref;
+  out[kTermCov] = kOccCell * (float)in.new_occ;
+  out[kTermTime] = -kTime * in.dt / kTRef;
   out[kTermCollWall] = in.collided_wall ? kCollWall : 0.f;
   out[kTermCollPerson] = in.collided_person ? kCollPerson : 0.f;
   out[kTermPersonNear] = kPersonNear * in.near_person;
-  {
-    const bool success = in.closed || (in.declared && in.cov >= cur::kSuccessCov);
-    out[kTermDeclare] = in.closed ? kDeclareSuccess : (in.declared ? declare_reward(in.cov) : 0.f);
-    if (success) out[kTermDeclare] += fast_bonus(in.t, in.t_ref);
-  }
+  out[kTermDeclare] = in.closed ? kDeclareSuccess + fast_bonus(in.t) : 0.f;
   out[kTermSlip] = in.hier ? 0.f : kSlip * in.slip;
   out[kTermIdle] = in.idle ? kIdlePenalty : 0.f;
   out[kTermTurn] = in.hier ? 0.f : kTurn * in.turn;
@@ -227,3 +200,10 @@ DEV float terms(const StepIn& in, float* out) {
 //   충돌 부등식: 판을 끝내는 걸음엔 approach·front_cells 가 0 이고 proximity·smooth ≤ 0 이라 박는 걸음이 더 받는 것은 없다. 박는 대신 선언하는 쪽이
 //     더 잃을 수 있는 것은 smooth 한 걸음 최대 kSmooth × 3 × 2² = 0.0018 뿐 → kCollWall −6 < kDeclareFail − kTime · 10 − 0.0018 = −5.0018 그대로.
 //     박으러 가는 길에 버는 approach 는 박지 않고 가도 똑같이 번다(프론티어로 가는 길이면). 벽으로 다가가는 길은 proximity 감점.
+//   정답 입력 뺌 (2026-11-14, 사용자 결정 — "실물이 못 재는 것은 판단·학습 신호를 못 만든다"). 위 근거 가운데 바뀐 것:
+//     덮음은 로봇 지도 칸만(정답 벽 덮음 kCov 없앰), 성공은 지도 닫힘만(끝 선언 + 정답 덮음 규칙·선언 보상 kDeclareFail·Near·RampFrom 없앰),
+//     시간·빠르기의 기준 T_ref(정답 벽 칸 수) → 상수 kTRef 290 s, 충돌 → 센서 닿음(sim contact.h — 라이다·깊이 층·명령 대비 안 움직임),
+//     사람(충돌·근접) → 아래층 RL 의 라이다 덩어리 추적, 근접 간격 → 센서 간격(라이다 점·로봇 지도 막힘·깊이 층, 지도 자세),
+//     이동 거리 → 바퀴 오도메트리, 회전 → 자이로, 헛돎 → |바퀴 오도메트리 ω − 자이로|. 정답 값은 기록(EpInfo·통계)에만 남는다.
+//     충돌 부등식 (선언 실패가 없어져 다시 셈): 박기 < 진행 없음 끝 − 안전 시간까지의 시간 감점 = kIdlePenalty − kTime · kSafeTime / kTRef
+//     = −4 − 0.2 · 1200 / 290 = −4.83 → kCollWall −6 (여유 1.2). 일부러 박아 시간 감점을 아끼는 것 < 끝까지 버티다 진행 없음으로 끝나는 것.

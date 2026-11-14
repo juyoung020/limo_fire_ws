@@ -344,11 +344,35 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lr_w0 = (c.wheel_max - c.act_v_fwd) / c.wheel_k;   // 이 아래 ω 는 바퀴 한도가 v 를 안 깎는다 (1.11 − 1.0) / 0.2 = 0.55 rad/s
     }
     {
+      // 닿음 (2026-11-14, contact.h — 센서로 정한 부딪힘이 충돌 보상·판 끝. 시뮬 정답 충돌은 물리·기록만). 값은 low_e0 정책 자취의 정답 충돌과 견줘 골랐다
+      // (mdp/README "닿음 — 센서": 학습 맵 8 + 시험 맵 2 × 64 판, 사람 2, 안전층 켬/끔 — 켬 57/66 · 끔 310/337 판을 1 s 앞 ~ 2 s 뒤 안에 잡음,
+      //  닿기 1 s 넘게 앞서 판을 끝냈을 헛닿음 0.050 · 0.027 /100 m. 처음 잡은 값 라이다 0.02 | 깊이 0.02 | 멈춤 3 은 깊이 층 헛닿음이 0.39~0.52 /100 m)
+      //   con_lid 0.01 m: 라이다 거리 σ 4.2 mm (sensor_model.yaml lidar sigma) 의 2 배 남짓 — 0.02·0.03·0.05 는 헛닿음이 1.2~4 배
+      //   con_cam −0.02 m: 깊이 층 칸이 몸통 안으로 2 cm 넘게 든 때만. 층은 몸통 밑을 지우고(hier_path.h) 깊이 최소 거리 0.3 m(sensor_model.yaml depth range)
+      //         안은 못 봐서, 0 이상 문턱은 잡음 없이 헛닿음만 늘었다(0.00: 0.16~0.35 /100 m). 낮은 물체에 박는 것은 멈춤이 잡는다 — 간격(근접 항)에는 그대로 씀
+      //   멈춤: 명령 |v| ≥ 0.05 m/s 또는 |ω| ≥ 0.2 rad/s 인데 바퀴 오도메트리 |v| < 0.01 m/s (단위 1 mm/s 의 10 배 — imu.h kImuMoveV),
+      //         |ω|·자이로 < 0.03 rad/s (자이로 σ 0.003 rad/s 의 10 배 — env.yaml gyro_sigma) 인 걸음이 2 번(0.2 s) 이어짐 — 구동 지연 80 ms·시간상수 40 ms
+      //         (env.yaml drive) 뒤라 출발 걸음은 안 걸림(헛닿음 0 ~ 0.034 /100 m). 시뮬은 부딪히면 바퀴를 멈추므로(physics_step drive_reset) 잘 맞는다 —
+      //         실물 모터가 벽을 밀 때 바퀴가 서는지 헛도는지는 📏 (헛돌면 오도메트리는 움직이고 자이로·IMU 만 0)
+      //   con_map: 로봇 지도 막힘 칸 간격 — 닿음에 안 넣음(기록만): 0.00 이 헛닿음 0.14 /100 m, 정답 충돌 잡음은 멈춤보다 적음
+      const auto envf = [](const char* k, float d) { const char* s = std::getenv(k); return s && s[0] ? (float)std::atof(s) : d; };
+      c.con_lid = envf("SIM_CON_LID", 0.01f);
+      c.con_cam = envf("SIM_CON_CAM", -0.02f);
+      c.con_map = envf("SIM_CON_MAP", 0.0f);
+      c.con_cmd_v = 0.05f;
+      c.con_cmd_w = 0.2f;
+      c.con_odo_v = 0.01f;
+      c.con_odo_w = 0.03f;
+      c.con_stall = (int)envf("SIM_CON_STALL", 2.f);
+      c.con_mask = (int)envf("SIM_CON_MASK", (float)(kConLidar | kConCam | kConStall));
+      c.con_end = (int)envf("SIM_CON_END", 1.f);
+      // 안전층 (앞 범퍼 정지) 끄기 — 진단 전용 (안전층 끈 충돌 재기). 몸통 지킴이·비켜 주기는 SIM_LOW_GUARD=0·SIM_LOW_YIELD=0
+      if (const char* g = std::getenv("SIM_SAFETY")) c.safety = g[0] == '0' ? 0 : c.safety;
+    }
+    {
       // 판 끝·성공 (2026-11-08, 닫힘 정의는 2026-11-10 고침 — mdp/README "판 끝"·"닫힘"): 성공 = 로봇 지도 닫힘(아래 닫힘 규칙) + 지도 진행 없음
-      // 시계 ≥ 10 s, 1 s(10 걸음)마다 판정. SIM_SUCCESS_CLOSED=0 이면 옛 규칙(선언 + 정답 덮음 ≥ 0.95, 보관).
+      // 시계 ≥ 10 s, 1 s(10 걸음)마다 판정. (옛 규칙 선언 + 정답 덮음 ≥ 0.95 는 2026-11-14 에 없앰 — 실물이 못 재는 값)
       // 옛 굵은 격자(20 cm) 닫힘은 로봇이 문틀에 서면 번지기가 둘레 주머니에 갇혀 거짓 닫힘(oracle 성공의 7~14 % 가 정답 덮음 < 0.8)이라 바꿈
-      const char* g = std::getenv("SIM_SUCCESS_CLOSED");
-      c.success_closed = (g && g[0] == '0') ? 0 : 1;
       c.close_every = 10;
       c.close_idle_s = 10.f;
       // 닫힘 규칙 (2026-11-10, mdp/README "닫힘" — 값의 근거는 그 절의 oracle 측정): 로봇 시작 칸 + 지나간 칸에서 번진 프론티어 덩어리 중
@@ -365,29 +389,22 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       if (const char* v = std::getenv("SIM_CLOSE_LOOK")) c.close_look = (float)std::atof(v);
       if (const char* v = std::getenv("SIM_CLOSE_RADIUS")) c.close_radius = (float)std::atof(v);
       if (mdp::robot_cells(c.close_radius, c.res).r > 12) throw std::runtime_error("닫힘 반경 close_radius 는 0.6 m 이하");   // GPU stand_word 낱말 밀기 < 32
-      // 덮음 보상: 로봇 지도 처음 막힘 칸 (rewards.h kOccCell) — 기본. SIM_REWARD_GT=1 이면 옛 정답 벽 덮음 보상 (보관)
-      const char* r = std::getenv("SIM_REWARD_GT");
-      c.reward_occ = (r && r[0] == '1') ? 0 : 1;
     }
     {
       const char* g = std::getenv("SIM_CUR_TOPRAND");   // 커리큘럼 맨 위 단계 무작위 (curriculums.h on_episode_end) — 기본 켬, SIM_CUR_TOPRAND=0 으로 끔
       c.cur_top_random = (g && g[0] == '0') ? 0 : 1;      // explore_v8_cur A/B: 맨 위 단계에 고여 중간 크기 맵을 잊던 것
     }
     {
-      // 오르내림 규칙 (env.yaml curriculum, curriculums.h). 절이 없으면 옛 덮음 규칙(8 판 · 0.8 · 0.4) — 옛 설정 파일과 같은 동작
-      c.cur_rule = mdp::cur::kCurCoverage;
-      c.cur_window = mdp::cur::kWindow;
-      c.cur_up = mdp::cur::kProgUp;
-      c.cur_down = mdp::cur::kProgDown;
-      if (const YAML::Node cu = y["curriculum"]) {
+      // 오르내림 규칙 (env.yaml curriculum, curriculums.h): 성공 규칙만 (옛 덮음 규칙은 정답 덮음이라 2026-11-14 에 없앰)
+      const YAML::Node cu = need(y, "curriculum", path);
+      {
         const std::string rule = need(cu, "rule", path).as<std::string>();
-        if (rule != "success" && rule != "coverage") throw std::runtime_error(path + ": curriculum.rule 은 success · coverage");
-        c.cur_rule = rule == "success" ? mdp::cur::kCurSuccess : mdp::cur::kCurCoverage;
+        if (rule != "success") throw std::runtime_error(path + ": curriculum.rule 은 success (정답 덮음 규칙 coverage 는 없앰)");
         const YAML::Node r = need(cu, rule.c_str(), path);
         c.cur_window = need(r, "window", path).as<int>();
         c.cur_up = need(r, "up", path).as<float>();
         c.cur_down = need(r, "down", path).as<float>();
-        if (c.cur_window < 1 || (c.cur_rule == mdp::cur::kCurSuccess && c.cur_window > mdp::cur::kCurWindowMax))
+        if (c.cur_window < 1 || c.cur_window > mdp::cur::kCurWindowMax)
           throw std::runtime_error(path + ": curriculum." + rule + ".window 는 1 ~ " + std::to_string(mdp::cur::kCurWindowMax));
         if (!(c.cur_down <= c.cur_up)) throw std::runtime_error(path + ": curriculum." + rule + " down ≤ up 이어야 함");
       }

@@ -1,11 +1,11 @@
 // 보상 해킹 시험 (mdp/README "보상 항", archive/explore_roadmap_1104 ROADMAP S4): 정해진 행동으로 판 하나씩 끝까지 돌려 판 합 보상·끝 코드·항마다 합을 잰다.
 //   still      : 제자리(행동 0) → 안전 시간 끊김까지. 기대: 판 합 < 0
 //   spin       : 제자리 돌기(ω = 0.5 정규 = 1.57 rad/s) → 끊김까지. 참고(해킹 아님 — 돌기도 탐사의 일부)
-//   declare0   : 첫 걸음에 선언. 옛 규칙: done 4(선언 실패)·판 합 < 0. 닫힘 성공 규칙(기본): 선언은 무시 — done 4 가 없어야 함
+//   declare0   : 첫 걸음에 선언 출력. 선언은 무시(성공 = 지도 닫힘) — done 4 가 없어야 함
 //   crash      : 안전층 끄고 앞으로 최고 속도 직진 → 벽에 박음. 기대: 판 합 < frontier 판 합(정상 선언)
 //   crash_safe : 안전층 켜고 같은 직진 → 안전층이 막아 박지 않는지(충돌 수)
 //   frontier   : 프론티어 기준선(baselines/frontier, --mode)이 모는 대로(물리 → 정규 단위), 기준선이 끝나면 그 걸음에 선언. 기대: 판 합 > 0
-// 닫힘 성공 규칙(sim EnvCfg::success_closed)에서는 덧붙여: 지도 닫힘으로 성공한 판의 정답 덮음(이 도구 안에서만 쓰는 확인값)이 0.8 아래인 판 = 0
+// 덧붙여: 지도 닫힘으로 성공한 판의 정답 덮음(이 도구 안에서만 쓰는 확인값)이 0.8 아래인 판 = 0
 // (거짓 닫힘), 제자리·제자리 돌기의 덮음 항(로봇 지도 처음 막힘 칸 보상) < 기준선 따라가기의 1/4 (잡음·자세 흐름으로 칸을 키우지 못함)
 // 속도 행동 모드의 촘촘한 항(rewards.h "직접 제어 촘촘한 항": approach·front_cells·proximity·smooth)을 노리는 행동 — 기대: 넷 다 판 합 평균 < frontier
 //   osc        : 앞뒤 왕복 (앞 0.3 m/s 1 s ↔ 뒤 0.3 m/s 1 s) — approach 를 왕복으로 못 범
@@ -74,12 +74,11 @@ int main(int argc, char** argv) {
   const int dec = hier ? hc0.cfg.decide_steps : 1;   // 행동 하나 = 시뮬 걸음 dec 개
   constexpr int A = mdp::act::DIM, K = mdp::rew::kTerms;
   bool all_ok = true;
-  std::printf("가중치: 덮음 %.1f · 시간 %.2f/T_ref(초당) · 벽 충돌 %.1f · 선언 성공 %+.1f / 실패 %.1f~%.1f · 헛돎 %.2f/rad · 안전 시간 %.0f s\n",
-              mdp::rew::kCov, mdp::rew::kTime, mdp::rew::kCollWall, mdp::rew::kDeclareSuccess, mdp::rew::kDeclareFail, mdp::rew::kDeclareNear,
-              mdp::rew::kSlip, mdp::cur::kSafeTime);
+  std::printf("가중치: 덮음 %.4f/칸 · 시간 %.2f/%.0f s · 벽 닿음 %.1f · 닫힘 성공 %+.1f · 헛돎 %.2f/rad · 안전 시간 %.0f s\n",
+              mdp::rew::kOccCell, mdp::rew::kTime, mdp::rew::kTRef, mdp::rew::kCollWall, mdp::rew::kDeclareSuccess, mdp::rew::kSlip, mdp::cur::kSafeTime);
   for (const auto& path : scenes) {
     const sim::World W = sim::build_world(path, sim::load_scene(path), hc0);
-    std::printf("== 맵 %s: 벽 면 칸 %d, T_ref %.0f s, 환경 %d\n", path.c_str(), W.n_wall, mdp::rew::t_ref(W.n_wall), n_env);
+    std::printf("== 맵 %s: 벽 면 칸 %d, 환경 %d\n", path.c_str(), W.n_wall, n_env);
     std::map<std::string, Result> res;
     for (const auto& nm : names) {
       if (!only.empty() && ("," + only + ",").find("," + nm + ",") == std::string::npos) continue;
@@ -168,7 +167,7 @@ int main(int argc, char** argv) {
           R.n_dec += 1;
           if (std::fabs(tsum - rew[i]) > 1e-4 * std::max(1.0, std::fabs((double)rew[i]))) R.bad_sum += 1;
           if (hier) {   // 시간 항 / 걸음당 시간 항 = 이 결정에 더한 시뮬 걸음 수: 판이 안 끝났으면 decide_steps, 끝났으면 1 ~ decide_steps
-            const double per = -(double)mdp::rew::kTime * hc.cfg.substeps * hc.cfg.dt / mdp::rew::t_ref(W.n_wall);
+            const double per = -(double)mdp::rew::kTime * hc.cfg.substeps * hc.cfg.dt / mdp::rew::kTRef;
             const double ns = terms[(size_t)K * i + mdp::rew::kTermTime] / per;
             const int ni = (int)std::lround(ns);
             if (std::fabs(ns - ni) > 1e-3 || (done[i] == 0 ? ni != dec : (ni < 1 || ni > dec))) R.bad_steps += 1;
@@ -223,15 +222,10 @@ int main(int argc, char** argv) {
     }
     if (has("declare0")) {
       bool ok = true;
-      if (hc0.cfg.success_closed) {
-        for (int i = 0; i < n_env; ++i) ok = ok && res["declare0"].done[i] != mdp::cur::kDeclareShort;
-        check(ok, "닫힘 성공 규칙: 선언은 무시 → 선언 실패(done 4) 판 0");
-      } else {
-        for (int i = 0; i < n_env; ++i) ok = ok && res["declare0"].done[i] == mdp::cur::kDeclareShort && res["declare0"].ret[i] < 0;
-        check(ok, "0 걸음 선언 → 모든 판 done 4·판 합 < 0");
-      }
+      for (int i = 0; i < n_env; ++i) ok = ok && res["declare0"].done[i] != mdp::cur::kDeclareShort;
+      check(ok, "선언은 무시 → 선언 실패(done 4) 판 0");
     }
-    if (hc0.cfg.success_closed) {
+    {
       int n_cl = 0, n_low = 0;
       for (auto& kv : res)
         for (int i = 0; i < n_env; ++i)
