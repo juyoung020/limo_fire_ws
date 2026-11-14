@@ -1,0 +1,19 @@
+map,localization,reflection_model,seed,succeeded,goals_attempted,goals_total,arrive_err_mean_m,est_err_max_m,note
+office,hold,-,0,14,14,14,0.271,0.56,
+office,sonar,hard,0,11,14,14,0.423,1.24,
+office,sonar,soft,0,14,14,14,0.285,0.59,
+office,hold,-,1,14,14,14,0.300,0.55,
+office,sonar,hard,1,12,14,14,0.783,3.87,
+office,sonar,soft,1,14,14,14,0.464,1.95,
+office,hold,-,2,14,14,14,0.306,0.56,
+office,sonar,hard,2,9,14,14,0.254,2.10,
+office,sonar,soft,2,12,14,14,0.588,1.79,
+warehouse,hold,-,0,13,13,13,0.327,0.45,
+warehouse,sonar,hard,0,3,13,13,1.847,3.35,
+warehouse,sonar,soft,0,3,13,13,1.847,5.38,
+warehouse,hold,-,1,13,13,13,0.340,0.48,
+warehouse,sonar,hard,1,5,13,13,0.728,1.73,
+warehouse,sonar,soft,1,3,13,13,0.757,3.74,
+warehouse,hold,-,2,13,13,13,0.319,0.46,
+warehouse,sonar,hard,2,4,11,13,1.660,3.07,시뮬 시간(1500 s) 끝나 일부 목표만 시도
+warehouse,sonar,soft,2,2,12,13,0.655,5.55,시뮬 시간(1500 s) 끝나 일부 목표만 시도
