@@ -1,4 +1,4 @@
-// V0·V1 (환경): 같은 맵·씨앗·행동열이면 GPU 커널과 CPU 참조판의 상태·보상(항마다)·끝·판 끝 정보·지도·덮음 표시·관측(2D·1D·가치 전용)이
+// V0·V1 (환경): 같은 맵·씨앗·행동열이면 GPU 커널과 CPU 참조판의 상태·보상(항마다)·끝·판 끝 정보·지도·덮음 표시·관측(2D·1D)이
 // 걸음마다 비트까지 같은지. 그리고 관측 값 범위(NaN 없음, 정규화 범위 — mdp/observations.h 머리 주석).
 // env_verify <장면.scene> [장면 …] [--list 목록] [--envs 8] [--steps 80] [--declare 0.01] [--negative] [--env config/env.yaml]
 //            [--model config/sensor_model.yaml] [--dump 지도.pgm]   (env 0 의 마지막 지도: 0 모름 128, 빈 칸 흼, 막힘 검음)
@@ -87,7 +87,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   size_t bad_state = 0, bad_reward = 0, bad_obs = 0, bad_low = 0, bad_rl = 0, bad_cmd = 0, bad_ep = 0, bad_stat = 0, n_nan = 0, bad_range = 0;
   int first_bad = -1, ends[mdp::cur::kNumDone] = {};
   std::vector<sim::EnvState> sg, sc;
-  std::vector<float> rg, rc, tg, tc, og1, oc1, pg, pc, lg1, lc1;
+  std::vector<float> rg, rc, tg, tc, og1, oc1, lg1, lc1;
   std::vector<int32_t> dg, dc;
   std::vector<sim::EpInfo> eg, ec;
   std::vector<uint8_t> ig, ic, lgi, lci;
@@ -213,8 +213,8 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     cpu.get_terms(tc);
     gpu.get_ep(eg);
     cpu.get_ep(ec);
-    gpu.get_obs(ig, og1, pg);
-    cpu.get_obs(ic, oc1, pc);
+    gpu.get_obs(ig, og1);
+    cpu.get_obs(ic, oc1);
     gpu.get_low(Lg);
     cpu.get_low(Lc);
     size_t bs = 0, brw = 0, bep = 0;
@@ -234,7 +234,6 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     size_t bo = 0;
     for (size_t i = 0; i < ig.size(); ++i) bo += ig[i] != ic[i];
     for (size_t i = 0; i < og1.size(); ++i) bo += std::memcmp(&og1[i], &oc1[i], 4) != 0;
-    for (size_t i = 0; i < pg.size(); ++i) bo += std::memcmp(&pg[i], &pc[i], 4) != 0;
     mark(bo, bad_obs, t);
     cmp_low(t);
     for (int i = 0; i < n_env; ++i) n_pol += Rc[i].pol != 0;
@@ -488,7 +487,7 @@ int main(int argc, char** argv) {
   double reward_sum = 0, term_sum[K] = {};
   long people_sum = 0, hit_person = 0;
   std::vector<sim::EnvState> sg, sc;
-  std::vector<float> rg, rc, tg, tc, og1, oc1, pg, pc;
+  std::vector<float> rg, rc, tg, tc, og1, oc1;
   std::vector<int32_t> dg, dc;
   std::vector<sim::EpInfo> eg, ec;
   std::vector<uint8_t> ig, ic;
@@ -586,8 +585,8 @@ int main(int argc, char** argv) {
     cpu.get_terms(tc);
     gpu.get_ep(eg);
     cpu.get_ep(ec);
-    gpu.get_obs(ig, og1, pg);
-    cpu.get_obs(ic, oc1, pc);
+    gpu.get_obs(ig, og1);
+    cpu.get_obs(ic, oc1);
     graph_cmp(t);
     if (graph) {
       for (int i = 0; i < n_env; ++i) g_moved += dc[i] == 0 && gcc[i] != cur_prev[i];
@@ -611,7 +610,6 @@ int main(int argc, char** argv) {
     size_t bo = 0;
     for (size_t i = 0; i < ig.size(); ++i) bo += ig[i] != ic[i];
     for (size_t i = 0; i < og1.size(); ++i) bo += std::memcmp(&og1[i], &oc1[i], 4) != 0;
-    for (size_t i = 0; i < pg.size(); ++i) bo += std::memcmp(&pg[i], &pc[i], 4) != 0;
     bad_obs += bo;
     if (bo && first_bad < 0) first_bad = t;
     // 범위
@@ -628,7 +626,6 @@ int main(int argc, char** argv) {
         ++bad_range;
       }
     }
-    for (size_t i = 0; i < pc.size(); ++i) n_nan += !std::isfinite(pc[i]);
     for (float v : tc) n_nan += !std::isfinite(v);
   }
   std::vector<int16_t> mg, mc;

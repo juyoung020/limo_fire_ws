@@ -39,7 +39,6 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
 struct StepOut {
   const uint8_t* obs_img;       // [N][mdp::obs::IMG_SIZE]
   const float* obs_1d;          // [N][o1d] — o1d = mdp::obs::POLICY_1D (기본), mdp::hier::POLICY_1D (계층형: 뒤에 후보 칸)
-  const float* priv;            // [N][mdp::obs::PRIV]
   const float* reward;          // [N]
   const float* reward_terms;    // [N][mdp::rew::kTerms]
   const int32_t* done;          // [N] mdp::cur::Done — 종료 여부는 mdp::cur::terminal(done), 끊김 = 3
@@ -94,7 +93,7 @@ class Env {
   void get_camlayer(std::vector<uint8_t>& vox, std::vector<float>& pts) const;
   // 닫힘 규칙의 지나간 길 비트 판 [env · 2 · size · fmap_row] (env.h EnvBatch::trail: 0 지나간 칸 · 1 본 칸) — 도구가 닫힘을 호스트에서 다시 셀 때
   void get_trail(std::vector<uint32_t>& out) const;
-  void get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d, std::vector<float>& priv) const;
+  void get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
   void get_cand(std::vector<int32_t>& out) const;   // 계층형 후보 목표 칸 [N][mdp::hier::K] (−1 빈 슬롯) — 도구용
   void get_cand_cur(std::vector<int32_t>& out) const;   // 후보마다 "그 덩어리가 지금 목표 칸을 품음" 비트 [N] (hier_path.h act_same — 합친 탐사 도구가 목표를 이어 갈 때)
   void get_graph(std::vector<uint8_t>& feat, std::vector<uint32_t>& edge, std::vector<int32_t>& cur, std::vector<float>& glob, std::vector<int32_t>& cand) const;

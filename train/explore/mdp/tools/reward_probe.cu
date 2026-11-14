@@ -109,11 +109,11 @@ int main(int argc, char** argv) {
       std::vector<char> active(n_env, 1), stopped(n_env, 0);
       int n_active = n_env;
       std::vector<uint8_t> h_img;
-      std::vector<float> h_o1, h_pv;
+      std::vector<float> h_o1;
       uint64_t hrng = 12345;
       for (int t = 0; n_active > 0 && t <= hc.cfg.max_steps / dec + 1; ++t) {
         std::fill(act.begin(), act.end(), 0.f);
-        if (hier) env.get_obs(h_img, h_o1, h_pv);
+        if (hier) env.get_obs(h_img, h_o1);
         if (nm == "frontier") {
           env.get_state(st);
           env.get_map(L);

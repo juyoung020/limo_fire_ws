@@ -1,4 +1,4 @@
-// 탐사 RL 관측 만들기: 시뮬 상태 → 정책 입력 (mdp/obs_layout.h 배치 그대로) + 가치 전용 참값. 호스트·장치 공용.
+// 탐사 RL 관측 만들기: 시뮬 상태 → 정책 입력 (mdp/obs_layout.h 배치 그대로). 가치도 같은 입력만 본다 (참값 입력 없음 — 실물에서 이어 학습). 호스트·장치 공용.
 // sim/include/env.h 끝에서 include 된다(EnvState·EnvBatch·Shared 를 씀). GPU 커널(env_kernel.cu)과 CPU 참조판(env_ref.cpp)이
 // 같은 두 단계를 부른다 — obs_cells(모든 스레드: 칸마다 따로) → obs_finish(스레드 0: 합치기·숫자). 합치기는 정수만(결정적).
 //
@@ -14,9 +14,6 @@
 //   새로 안 칸(최근 2 s) 넓이 / 20 m² (자름 2) — 1 m/s 로 8 m 시야가 새 곳을 쓸면 2 s 에 수십 m².
 //   진행 없음 시계 / kIdleTime 60 s (자름 1) — 판 끝 진행 없음과 같은 시계 (env.h since_occ: 새 막힘 칸 ≥ kIdleOccMin 인 마지막 행동 뒤).
 //   새 막힘 칸(최근 2 s) 수 / kOccGainNorm (자름 2).
-//   가치 전용: 자세 오차 / (0.1 m, 0.1 m, 0.05 rad) — env.yaml pose_error σ(0.03 m, 0.017 rad)의 약 3 배 → 대개 [−1, 1].
-//              남은 벽 면 칸 / 5000 (작은 집 2594·서점 3206 칸).
-//              정답 벽 진척 시계 (마지막 새 벽 면 칸 뒤 시간 / kIdleTime, 자름 1) — 정답 벽이라 가치에만 (판 끝은 지도 시계).
 // 프론티어 덩어리 요약 = mdp/frontier.h reach_summary (기준선 frontier_search: 로봇 반경 kRobotRadius 로 막힘 팽창, 크기 문턱 kFrontMinSize).
 //   CPU 참조판은 env_ref.cpp 가 그대로 부르고, GPU 는 env_kernel.cu reach_block 이 같은 값을 블록 병렬로 — 둘 다 sh.reach 에 넣는다.
 //
@@ -42,7 +39,6 @@ constexpr float kFrontSizeNorm = 10.f, kFrontNumNorm = 10.f, kOccGainNorm = 100.
 constexpr float kFrontMinSize = 0.75f, kRobotRadius = 0.2f;
 DEV mdp::Robot reach_robot(const sim::EnvCfg& c) { return mdp::robot_cells(kRobotRadius, c.res); }
 DEV int reach_min_cells(const sim::EnvCfg& c) { return (int)ceilf(kFrontMinSize / c.res - 1e-4f); }   // frontier_explorer.cpp make_plan 과 같은 식
-constexpr float kErrXyNorm = 0.1f, kErrThNorm = 0.05f, kRemainNorm = 5000.f;
 // IMU·세기 (S1 실측 맞춤, sensor_model.yaml imu·lidar.intensity)
 //   가속도 / 10 m/s²: 몸통 가속 ≲ 5 m/s²(구동 가속 한도) + 주행 진동 σ ≤ 1.3 m/s² → 대개 ±0.6. az 는 중력 9.81 을 빼고 (실측 g 10.03 이라 +0.02 치우침)
 //   roll·pitch / 0.1 rad: 실측 바닥 기울기 σ 0.0025, 주행 몫 ≲ 0.03 rad → 대개 ±0.3
@@ -305,7 +301,7 @@ DEV void reach_vec(const sim::EnvCfg& c, const sim::MapDev& m, float px, float p
   V[FRONT_CELLS] = dm::minf(1.f, (float)R.n_cells / kFrontCountNorm);
 }
 
-// 스레드 0: 숫자 관측(지연 반영)·가치 전용 참값
+// 스레드 0: 숫자 관측(지연 반영)
 // with_reach = false: 프론티어 덩어리 칸(reach_slot)은 안 쓴다 — GPU 는 env_reach_kernel 이 obs_reach 로 따로 (같은 값·같은 지연 규칙)
 DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh, bool with_reach = true) {
   using namespace mdp::obs;
@@ -374,26 +370,6 @@ DEV void obs_finish(const EnvBatch& b, EnvState& e, int env, Shared& sh, bool wi
   }
   for (int i = 0; i < mdp::act::DIM * 4; ++i) O[LAST_ACT + i] = e.last_act[i];
   O[ELAPSED] = (float)e.step * dt_act / mdp::cur::kSafeTime;
-  // 가치 전용 참값
-  float* Q = b.priv + (size_t)env * PRIV;
-  for (int i = 0; i < PRIV; ++i) Q[i] = 0.f;
-  {
-    const float tx = e.x - e.x0, ty = e.y - e.y0;
-    Q[PRIV_TRUE_POSE + 0] = (c0 * tx + s0 * ty) / kPosNorm;
-    Q[PRIV_TRUE_POSE + 1] = (-s0 * tx + c0 * ty) / kPosNorm;
-    float a, b2;
-    dm::sincosf_d(e.th - e.th0, &a, &b2);
-    Q[PRIV_TRUE_POSE + 2] = a;
-    Q[PRIV_TRUE_POSE + 3] = b2;
-    Q[PRIV_POSE_ERR + 0] = e.ex / kErrXyNorm;
-    Q[PRIV_POSE_ERR + 1] = e.ey / kErrXyNorm;
-    Q[PRIV_POSE_ERR + 2] = e.eth / kErrThNorm;
-    Q[PRIV_COVERAGE] = e.coverage;
-    Q[PRIV_REMAIN] = (float)(m.n_wall - e.seen_wall) / kRemainNorm;
-    // PRIV_RESERVED: 몸통~가장 가까운 사람 간격 / 5 m (자름 1, 사람 없으면 1, 겹치면 음수 그대로) — people.h near_d
-    Q[PRIV_RESERVED] = dm::minf(1.f, e.people.near_d / 5.f);
-    Q[PRIV_IDLE] = dm::minf(1.f, (float)e.since_wall * dt_act / mdp::cur::kIdleTime);   // 정답 벽 진척 시계 (가치에만, 판 끝엔 안 씀)
-  }
 }
 
 // 프론티어 덩어리 칸만 (GPU env_reach_kernel): obs_finish(with_reach = false) 뒤 같은 상태로 — 지연 규칙도 obs_finish 와 같다

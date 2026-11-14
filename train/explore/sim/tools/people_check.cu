@@ -72,9 +72,9 @@ int test_visible(const sim::EnvHostCfg& hc, const std::vector<sim::World>& world
       if (r > 0.f) { ++valid; beams += ray.obj == sim::kObjPerson; }
     }
     std::vector<uint8_t> d1, d2;
-    std::vector<float> n1, n2, q1, q2;
-    with.get_obs(d1, n1, q1);
-    without.get_obs(d2, n2, q2);
+    std::vector<float> n1, n2;
+    with.get_obs(d1, n1);
+    without.get_obs(d2, n2);
     const size_t D = (size_t)mdp::obs::DEPTH_SIZE, off = (size_t)mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE;   // 깊이 = 2D 관측 끝 칸
     long dd = 0;
     for (size_t k = 0; k < D; ++k) dd += d1[pick * mdp::obs::IMG_SIZE + off + k] != d2[pick * mdp::obs::IMG_SIZE + off + k];

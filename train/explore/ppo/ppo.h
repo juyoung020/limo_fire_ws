@@ -4,11 +4,11 @@
 //   xppo::PPO ppo(xppo::PPOConfig{.num_envs = N}, xnet::explore_spec(), seed);   (본 학습은 cfg.lr_max = 1e-3 권장 — README)
 //   for (;;) {                                   // 반복 하나
 //     for (int t = 0; t < cfg.steps_per_env; ++t) {
-//       ppo.act(obs_img, obs_1d, priv, actions);  // 샘플·기록 (정규화 통계도 갱신)
+//       ppo.act(obs_img, obs_1d, actions);  // 샘플·기록 (정규화 통계도 갱신)
 //       env.step(actions) → reward, done, 새 obs
 //       ppo.store(reward, done);                 // done: 0 진행, 1 종료(선언·충돌), 3 끊김(time-out)
 //     }
-//     auto st = ppo.update(obs_img, obs_1d, priv); // 마지막 관측으로 가치 메움 → GAE → PPO
+//     auto st = ppo.update(obs_img, obs_1d); // 마지막 관측으로 가치 메움 → GAE → PPO
 //     if (...) ppo.save(path);
 //   }
 //   평가: ppo.act_inference(obs_img, obs_1d, actions)  // 평균 행동, 선언 = 확률 > 0.5
@@ -100,17 +100,17 @@ struct UpdateStats {
   float mean_value = 0, mean_return = 0;
   // 진단: kl0 = 첫 미니배치(걸음 전) KL — 0 이 아니면 롤아웃·갱신 정방향이 다름(수치). 계층형 롤아웃 로짓: 공통 성분 |l̄|·있는 칸 표준편차·max |l| 의 샘플 평균
   float kl0 = 0, logit_cm = 0, logit_spread = 0, logit_absmax = 0;
+  float value0 = 0;   // 첫 미니배치(걸음 전) 가치 손실 — 롤아웃을 만든 가치가 그 수익에서 얼마나 틀렸나 (가치만 맞추기 전후 비교용)
 };
 
 // 그래프 어텐션 정책(ACSpec::graph)의 관측 한 묶음 (모두 GPU, 환경 n 개 — mdp/obs_layout.h mdp::graph):
-// 노드 특징 u8 [n][N][FEAT], 간선 u32 [n][N], 현재 노드 int [n], 전역 float [n][graph_glob] (graph_glob = 0 이면 안 읽음), 참값 float [n][norm_dim] (nullptr = 0).
+// 노드 특징 u8 [n][N][FEAT], 간선 u32 [n][N], 현재 노드 int [n], 전역 float [n][graph_glob] (graph_glob = 0 이면 안 읽음).
 // 모든 환경의 현재 노드는 유효해야 한다(아니면 예외).
 struct GraphObs {
   const uint8_t* feat = nullptr;
   const uint32_t* edge = nullptr;
   const int* cur = nullptr;
   const real* glob = nullptr;
-  const real* priv = nullptr;
 };
 
 class PPO {
@@ -120,17 +120,20 @@ class PPO {
   PPO(const PPO&) = delete;
   PPO& operator=(const PPO&) = delete;
 
-  // 학습 행동. img u8 [N][img_stride], obs1d float [N][actor.in1d], priv float [N][norm_dim − actor.in1d] (nullptr = 0),
+  // 학습 행동. img u8 [N][img_stride], obs1d float [N][actor.in1d] (가치도 같은 관측만 본다),
   // actions float [N][n_cont+1] (연속 = 샘플 원값, 선언 = 0/1). 계층형(n_slots > 0)이면 actions [N][mdp::act::DIM], a[0] = 고른 슬롯 (가린 범주 분포). 롤아웃 칸이 가득 차 있으면 예외.
-  void act(const uint8_t* img, const real* obs1d, const real* priv, real* actions);
+  void act(const uint8_t* img, const real* obs1d, real* actions);
   // reward float [N], done int [N]. 끊김(3)이면 rsl_rl 처럼 r += γ·V(s_t).
   void store(const real* reward, const int* done);
   // 바로 앞 act 의 환경 0 … n−1 선언 로짓·가치를 호스트로 (뷰어 재생용 — store 전에 부른다)
   void last_act_info(int n, real* logit, real* value) const;
   // 롤아웃이 가득 찬 뒤 마지막 관측으로 가치를 메워 GAE (update 가 부른다; 검사 도구도 따로 부른다)
-  void compute_returns(const uint8_t* img, const real* obs1d, const real* priv);
+  void compute_returns(const uint8_t* img, const real* obs1d);
   // 롤아웃이 가득 찬 뒤. 마지막 관측(다음 걸음 관측)으로 가치를 메워 GAE·PPO 갱신. 반복 수 +1.
-  UpdateStats update(const uint8_t* img, const real* obs1d, const real* priv);
+  UpdateStats update(const uint8_t* img, const real* obs1d);
+  // 가치만 맞추기: 켜면 update 가 가치 쪽 변수(가치 인코더·가치 MLP)만 Adam 으로 고친다 — 정책 변수·그 Adam 상태·학습률은 그대로.
+  // 가치 입력이 바뀐 체크포인트(ckpt_drop_priv)에서 이어 학습할 때 처음 몇 반복: 틀린 가치로 만든 이점이 정책을 흔들지 않게. 인코더를 같이 쓰는 구조에선 못 씀
+  void set_critic_only(bool on);
   // 평가 (정규화 통계·학습 난수 안 바꿈). actions 는 [N][n_cont+1]. sample_call < 0: 결정적(평균 행동, 선언 = 확률 > 0.5).
   // sample_call ≥ 0: 정책 분포에서 샘플(학습과 같은 분포, 다른 난수 계열 — 걸음마다 다른 값을 넘긴다). 학습 성공과 평가 성공의 차이를 가르려고.
   void act_inference(const uint8_t* img, const real* obs1d, real* actions, int n = -1, int64_t sample_call = -1);
@@ -142,7 +145,7 @@ class PPO {
   void act(const GraphObs& o, real* actions);
   void compute_returns(const GraphObs& o);
   UpdateStats update(const GraphObs& o);
-  // 가치·참값은 안 쓴다 (o.priv 무시). 직전 호출의 로짓은 last_logits() — n 이 한 묶음 안일 때
+  // 가치는 안 쓴다. 직전 호출의 로짓은 last_logits() — n 이 한 묶음 안일 때
   void act_inference(const GraphObs& o, real* actions, int n = -1, int64_t sample_call = -1);
 
   // 체크포인트: 가중치·Adam(m, v, 걸음)·정규화 통계·반복 수·학습률·난수 계수. 롤아웃 도중 저장은 안 됨.
@@ -172,7 +175,7 @@ class PPO {
 
  private:
   void clamp_std();  // log σ 변수를 [ln std_min, ln std_max] 로 (Adam 걸음·불러오기 뒤)
-  void concat_norm(const real* obs1d, const real* priv, int n, bool upd, real* out_norm);
+  void normalize(const real* obs1d, int n, bool upd, real* out_norm);   // 1D 관측 정규화 (upd 면 통계도 갱신)
   void encode(int n, const uint8_t* img, const int* idx, const real* x1d);
   // 인코더 나눔(split): critic 인코더 정방향 → c_xc_ = [F_c | x1d] (stream2). x1d = nullptr 이면 1D 열은 이미 c_xc_ 에
   void encode_c(int n, const uint8_t* img, const int* idx, const real* x1d);
@@ -184,8 +187,8 @@ class PPO {
   UpdateStats finish_update();   // compute_returns 뒤: 미니배치 갱신
   // 그래프 판. 묶음 = 샘플 수 ≤ chunk 이고 유효 노드 합 ≤ graph_rows 인 연속 구간 (cnt = 샘플마다 유효 노드 수)
   std::vector<int> graph_segments(const int* cnt, int n_all) const;
-  // 묶음 하나 정방향: 정책 몸통(+ 로짓 → c_logits_, 가림 → c_maskt_) · 가치(→ v_out, nullptr 이면 안 함). glob·privn 은 [n][ld] 버퍼의 열
-  void graph_forward(int n, const XNET_NS::GraphIn& in, const int* cnt, const real* glob, const real* privn, long ld, bool policy, real* v_out);
+  // 묶음 하나 정방향: 정책 몸통(+ 로짓 → c_logits_, 가림 → c_maskt_) · 가치(→ v_out, nullptr 이면 안 함). glob 은 [n][ld]
+  void graph_forward(int n, const XNET_NS::GraphIn& in, const int* cnt, const real* glob, long ld, bool policy, real* v_out);
   double minibatch_graph(const int* d_idx, int n, int mb_size, bool backward, double stats[5]);
 
   PPOConfig cfg_;
@@ -196,9 +199,9 @@ class PPO {
   bool disc_ = false;
   int K_ = 0, AO_ = 0, ADIM_ = 0, SOFF_ = 0, SF_ = 0;
   real *s_mask_ = nullptr, *s_lstat_ = nullptr, *c_logits_ = nullptr, *c_G_ = nullptr, *c_feat_ = nullptr, *c_maskt_ = nullptr;
-  // 그래프 (spec.graph): 범주 행동 K_ = 24. 노드 GN_ 자리 × GF_ 칸, 전역 GG_ 칸, 참값 GP_ 칸. 롤아웃 1D 행 s_obs_ = [전역 원값 GG_ | 정규화 참값 GP_] (D_ 칸)
+  // 그래프 (spec.graph): 범주 행동 K_ = 24. 노드 GN_ 자리 × GF_ 칸, 전역 GG_ 칸. 롤아웃 1D 행 s_obs_ = 전역 원값 (D_ = GG_ 칸, 정규화 없음)
   bool graph_ = false;
-  int GN_ = 0, GF_ = 0, GG_ = 0, GP_ = 0;
+  int GN_ = 0, GF_ = 0, GG_ = 0;
   uint8_t* s_gfeat_ = nullptr;    // [S][GN_][GF_]
   uint32_t* s_gedge_ = nullptr;   // [S][GN_]
   int *s_gcur_ = nullptr, *d_cnt_ = nullptr;   // [S], 유효 노드 세기 작업 버퍼 [N]
@@ -215,6 +218,7 @@ class PPO {
   real *s_obs_, *s_act_, *s_logp_, *s_val_, *s_mu_, *s_logit_, *s_sd_, *s_rew_, *s_done_, *s_ret_, *s_adv_;
   // 작업 공간 (chunk)
   real *raw_, *last_obs_, *last_val_;
+  bool critic_only_ = false;
   uint8_t* c_img_;
   real *c_aout_, *c_v_, *c_da_, *c_dv_, *c_dls_, *c_stat_, *c_red_, *c_gat_;
   real* c_x_ = nullptr;  // MLP 입력 [F | 1D] (인코더가 F 열을, 모으기·act 가 1D 열을 바로 씀)| 1D], 인코더 특징 기울기

@@ -321,7 +321,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.low_1d = alloc<float>((size_t)kLow1d * n_env);
     }
   }
-  b_.priv = alloc<float>((size_t)mdp::obs::PRIV * n_env);
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
   b_.vec_prev = alloc<float>((size_t)mdp::obs::VEC * n_env);
   b_.lidar_int = alloc<float>((size_t)mdp::obs::LIDAR_BINS * n_env);
@@ -394,7 +393,7 @@ void Env::step(const float* actions, cudaStream_t st) {
 }
 
 StepOut Env::outputs() const {
-  return StepOut{b_.obs_img, b_.obs_1d, b_.priv, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d};
+  return StepOut{b_.obs_img, b_.obs_1d, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d};
 }
 
 void Env::low_prepare(const float* actions, cudaStream_t st) {
@@ -496,10 +495,9 @@ void Env::get_seen(std::vector<uint8_t>& out) const {
 void Env::get_trail(std::vector<uint32_t>& out) const {
   fetch(gpu_, b_.trail, (size_t)b_.n_env * 2 * b_.cfg.size * ((b_.cfg.size + 31) / 32), out);
 }
-void Env::get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d, std::vector<float>& priv) const {
+void Env::get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const {
   fetch(gpu_, b_.obs_img, (size_t)mdp::obs::IMG_SIZE * b_.n_env, img);
   fetch(gpu_, b_.obs_1d, (size_t)b_.o1d * b_.n_env, o1d);
-  fetch(gpu_, b_.priv, (size_t)mdp::obs::PRIV * b_.n_env, priv);
 }
 void Env::get_terms(std::vector<float>& terms) const { fetch(gpu_, b_.reward_terms, (size_t)mdp::rew::kTerms * b_.n_env, terms); }
 void Env::get_ep(std::vector<EpInfo>& ep) const { fetch(gpu_, b_.ep, (size_t)b_.n_env, ep); }

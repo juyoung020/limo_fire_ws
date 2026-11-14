@@ -739,12 +739,10 @@ ACSpec explore_spec() {
   a.hidden = {512, 256, 128};
   a.out = mdp::act::DIM;
   NetSpec c = a;
-  c.in1d = o::CRITIC_1D;
   c.out = 1;
   s.actor = a;
   s.critic = c;
   s.n_cont = mdp::act::CONT;
-  s.norm_dim = o::CRITIC_1D;
   s.split_enc = true;   // 2026-11-08: actor·critic 인코더 따로 (체크포인트 형식 3)
   return s;
 }
@@ -754,8 +752,7 @@ ACSpec explore_spec_hier() {
   ACSpec s = explore_spec();
   s.actor.in1d = h::POLICY_1D;
   s.actor.out = 64;   // 상태 임베딩 (잠정 — 마지막 은닉 128 의 반)
-  s.critic.in1d = h::CRITIC_1D;
-  s.norm_dim = h::CRITIC_1D;
+  s.critic.in1d = h::POLICY_1D;
   s.n_cont = 0;
   s.n_slots = h::K;
   s.slot_feat = h::FEAT;
@@ -780,12 +777,10 @@ ACSpec explore_spec_low() {
   a.hidden = {256, 128, 64};   // 잠정 — 위층 MLP 의 반 (10 Hz 로 도는 쪽, network/README "아래층")
   a.out = l::ACT;
   NetSpec c = a;
-  c.in1d = l::N1D + o::PRIV;
   c.out = 1;
   s.actor = a;
   s.critic = c;
   s.n_cont = l::CONT;
-  s.norm_dim = l::N1D + o::PRIV;
   s.split_enc = true;
   return s;
 }
@@ -799,12 +794,10 @@ ACSpec explore_spec_graph() {
   s.gspec.feat = g::FEAT;
   s.graph_glob = 0;   // 전역 벡터는 논문에 없어 기본 끔 (켜려면 g::GLOB — README "논문·model.py 와 다른 곳")
   NetSpec c;
-  c.in1d = mdp::obs::PRIV;
   c.hidden = {128};   // 잠정 (전작의 Q 머리는 선형 한 층 — README "논문과 다른 곳")
   c.out = 1;
   s.critic = c;
   s.n_cont = 0;
-  s.norm_dim = mdp::obs::PRIV;
   return s;
 }
 
@@ -827,16 +820,16 @@ void ActorCritic::alloc_common() {
 // 그래프 어텐션 정책: 정책 몸통 + 포인터 머리, 가치 몸통(따로 또는 공유) + 가치 머리 MLP. 계산은 한 스트림에서 차례로 (stream2 안 씀)
 void ActorCritic::init_graph(uint64_t seed) {
   const ACSpec& sp = spec;
-  if (sp.n_cont != 0 || sp.n_slots != 0 || sp.critic.out != 1 || !sp.critic.imgs.empty() || sp.critic.in1d != sp.norm_dim || sp.norm_dim < 1 ||
+  if (sp.n_cont != 0 || sp.n_slots != 0 || sp.critic.out != 1 || !sp.critic.imgs.empty() || sp.critic.in1d != 0 ||
       sp.graph_glob < 0)
-    throw std::runtime_error("ACSpec(그래프): n_cont 0, critic = 참값 MLP (in1d = norm_dim ≥ 1, out 1)");
+    throw std::runtime_error("ACSpec(그래프): n_cont 0, critic = 가치 머리 MLP (in1d 0 — 입력은 몸통 출력뿐, out 1)");
   if (sp.graph_rows < (long)sp.gspec.gw * sp.gspec.gh) throw std::runtime_error("ACSpec(그래프): graph_rows 가 그래프 하나(gw·gh)보다 작음");
   const int d = sp.gspec.d;
   long cur = 0;
   gbody.build(sp.gspec, blocks, cur, "gactor");
   ptr.build(d, sp.graph_glob, blocks, cur, "gactor");
   if (!sp.graph_share) gbody_c.build(sp.gspec, blocks, cur, "gcritic");
-  NetSpec cs = sp.critic;   // 입력 = [E | Hc | 참값], 앞 2d 열 기울기를 몸통으로
+  NetSpec cs = sp.critic;   // 입력 = [E | Hc], 기울기를 몸통으로
   cs.in1d += 2 * d;
   cs.grad_cols = 2 * d;
   critic.build(cs, blocks, cur, "gcritic.v");
@@ -856,7 +849,6 @@ void ActorCritic::init_graph(uint64_t seed) {
   critic.init(rng, host);
   CK(cudaMemcpy(d_params, host.data(), n_params * sizeof(real), cudaMemcpyHostToDevice));
   zero_grad();
-  norm.init(sp.norm_dim);
 }
 
 ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), max_chunk(mc) {
@@ -868,7 +860,7 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
                      : sp.actor.out != sp.n_cont + 1)
     throw std::runtime_error("ACSpec 출력 크기");
   if (sp.critic.out != 1) throw std::runtime_error("ACSpec 출력 크기");
-  if (sp.actor.in1d > sp.norm_dim || sp.critic.in1d != sp.norm_dim) throw std::runtime_error("ACSpec 1D 크기");
+  if (sp.critic.in1d != sp.actor.in1d) throw std::runtime_error("ACSpec 1D 크기: actor·critic 은 같은 1D 를 본다");
   if (!sp.actor.imgs.empty() || !sp.critic.imgs.empty() || sp.enc.in1d != 0 || sp.enc.out != 0 || !sp.enc.hidden.empty())
     throw std::runtime_error("ACSpec: 합성곱은 enc 에만, actor·critic 은 MLP 만");
   long cur = 0;
@@ -926,7 +918,7 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   CK(cudaMemcpy(d_params, host.data(), n_params * sizeof(real), cudaMemcpyHostToDevice));
   zero_grad();
   if (sp.n_slots > 0) head.alloc(mc);
-  norm.init(sp.norm_dim);
+  norm.init(sp.actor.in1d);
 #ifndef XNET_FP64
   for (Net* m : {&actor, &critic}) {  // bf16 사본은 망마다 따로 (첫 층 W 가 cudaMalloc 정렬 = 16 B 정렬)
     m->mlp_range(m->wh_lo_, m->wh_n_);

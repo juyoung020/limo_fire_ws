@@ -22,12 +22,10 @@ GkOut gk_run(const GkSpec& gs, const GkCase& c, const std::vector<double>& coef,
   spec.graph_share = true;   // 가치 쪽은 안 돌린다 (가치 몸통은 같은 GraphBody 코드, 가치 머리는 기존 MLP — 기울기 검사가 본다)
   spec.graph_rows = (long)n * N;
   NetSpec cr;
-  cr.in1d = 1;
   cr.hidden = {4};
   cr.out = 1;
   spec.critic = cr;
   spec.n_cont = 0;
-  spec.norm_dim = 1;
   ActorCritic ac(spec, 4321, n);
   const long NP = ac.n_params;
   std::vector<real> params(NP);

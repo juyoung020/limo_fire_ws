@@ -232,7 +232,6 @@ struct EnvState {
   float last_act[mdp::act::DIM * 4];   // 직전 행동 4 걸음 (정규 단위로 자른 값, 최근 것 먼저)
   float ekf_v, ekf_w;          // EKF 속도 자리: 바퀴 v·자이로 ω 의 1 차 필터 (잠정 — 실물 robot_localization 은 📏)
   int32_t known_free, prog[kProgRing], prog_sum;   // 지도에서 갈 수 있음 칸 수, 걸음마다 새로 안 칸 수 링·합
-  int32_t since_wall;   // 마지막 새 벽 면 칸(덮음 증가) 뒤 걸음 — 정답 벽 기준이라 가치 전용 참값(PRIV_IDLE)만. 판 끝은 since_occ
   // 지도 기준 진척 (실물에서도 셈 — 정답 벽 대신 로봇 지도): 판 동안 처음 막힘(mdp::kOccL)이 된 칸 = marks bit6.
   // since_occ = 새 막힘 칸이 kIdleOccMin 개 이상 생긴 마지막 행동 뒤 걸음 = 진행 없음 판 끝 시계(연기 속엔 멈춤),
   // occ 링·합 = 걸음마다 새 막힘 칸 수 최근 kProgRing 걸음 (map_progress). since_new 자리를 써서 구조체 크기는 8 의 배수 그대로
@@ -337,7 +336,6 @@ struct EnvBatch {
   // 관측 (mdp/obs_layout.h, mdp/observations.h)
   uint8_t* obs_img;            // [env · IMG_SIZE]  가까운 지도 · 먼 지도 · 깊이 (uint8)
   float* obs_1d;               // [env · POLICY_1D]  라이다 4 장 · 세기 · 숫자
-  float* priv;                 // [env · PRIV]  가치 전용 참값
   float* lidar_ring;           // [env · kLidarRing · LIDAR_BINS]  각도 칸 거리 (m, 없음 = map_max_range)
   float* vec_prev;             // [env · VEC]  직전 걸음 숫자 관측 (지연용)
   float* lidar_int;            // [env · LIDAR_BINS]  지금 장 칸 세기 (가장 가까운 빔, 점 없음 = 0)
@@ -547,7 +545,6 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.known_free = 0;
   for (int i = 0; i < kProgRing; ++i) e.prog[i] = 0;
   e.prog_sum = 0;
-  e.since_wall = 0;
   e.since_occ = 0;
   for (int i = 0; i < kProgRing; ++i) e.occ[i] = 0;
   e.occ_sum = 0;
@@ -1244,7 +1241,7 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
 
 // 스레드 0, finish_step 바로 앞: 지도 기준 진척 — 이번 행동에 판 처음 막힘이 된 칸 수 n_occ.
 // since_occ = 판 끝 진행 없음 시계(finish_step in.idle, curriculums.h kIdleTime·kIdleOccMin) == 관측 PROGRESS+1 시계.
-// 정답 벽을 모르는 실물도 자기 지도(막힘 p > 0.65)로 똑같이 센다. 연기 속에서는 지도가 안 쌓여 멈춰 둔다(since_wall 과 같은 규칙)
+// 정답 벽을 모르는 실물도 자기 지도(막힘 p > 0.65)로 똑같이 센다. 연기 속에서는 지도가 안 쌓여 멈춰 둔다
 DEV void map_progress(EnvState& e, int n_occ) {
   e.since_occ = n_occ >= mdp::cur::kIdleOccMin ? 0 : e.since_occ + 1;
   const int slot = e.step % kProgRing;
@@ -1406,8 +1403,6 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   }
   // 진행 없음 (curriculums.h kIdleTime·kIdleOccMin): 지도 시계 since_occ(map_progress, 이 함수 앞에서 갱신) — 충돌·선언이 먼저.
   // 막힘 칸 아무 하나가 아니라 한 행동에 kIdleOccMin 개 이상일 때만 되돌림: 멈춰 있어도 자세 오차·빔 잡음으로 막힘 칸이 드문드문 생기므로.
-  // since_wall(정답 벽 면 칸 첫 관측 뒤 걸음)은 가치 전용 참값(PRIV_IDLE)으로만.
-  e.since_wall = new_wall > 0 ? 0 : e.since_wall + 1;
   in.idle = !e.collided && !in.declared && !in.closed && (float)e.since_occ * dt_act >= mdp::cur::kIdleTime;
   if (gterm) in.idle = false;
   if (b.lowcmd && !low_xenv(b, env)) in.idle = false;

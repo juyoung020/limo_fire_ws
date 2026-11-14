@@ -24,14 +24,6 @@ namespace XPPO_NS {
 namespace {
 constexpr int MAXC = 8;  // 연속 성분 최대 수 (커널 안 고정 배열)
 
-__global__ void k_concat(const real* a, int da, const real* b, int db, int n, real* out) {
-  long idx = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  int D = da + db;
-  if (idx >= (long)n * D) return;
-  int i = (int)(idx / D), j = (int)(idx % D);
-  out[idx] = j < da ? a[(long)i * da + j] : (b ? b[(long)i * db + (j - da)] : 0.f);
-}
-
 // 샘플: a = μ + σ·ε (자르지 않음), 선언 = u < sigmoid(로짓). Philox(씨앗, 환경, 호출 수) → 재현 가능
 __global__ void k_sample(const real* aout, const real* log_std, int n, int nc, uint64_t seed, uint64_t call,
                          int env0, real* act_out, real* s_act, real* s_logp, real* s_mu, real* s_logit,
@@ -424,21 +416,13 @@ __global__ void k_nb_mask(const int* nbrow, long n, real* mask) {
   long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
   if (t < n) mask[t] = nbrow[t] >= 0 ? (real)1 : (real)0;
 }
-// 가치 머리 입력 [E | Hc | 정규화 참값]: dst [n][2d + p]
-__global__ void k_vcat(const real* E, const real* Hc, const real* priv, long ldp, int n, int d, int p, real* dst) {
+// 가치 머리 입력 [E | Hc]: dst [n][2d]
+__global__ void k_vcat(const real* E, const real* Hc, int n, int d, real* dst) {
   long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  const int C = 2 * d + p;
+  const int C = 2 * d;
   if (t >= (long)n * C) return;
   const int i = (int)(t / C), j = (int)(t % C);
-  dst[t] = j < d ? E[(long)i * d + j] : j < 2 * d ? Hc[(long)i * d + j - d] : priv[(long)i * ldp + j - 2 * d];
-}
-// 롤아웃 1D 행 [전역 원값 g | 참값 p (정규화 전 — 뒤에 제자리 정규화)]: 없는 쪽(nullptr)은 0
-__global__ void k_gobs(const real* glob, int g, const real* priv, int p, int n, real* dst) {
-  long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
-  const int D = g + p;
-  if (t >= (long)n * D) return;
-  const int i = (int)(t / D), j = (int)(t % D);
-  dst[t] = j < g ? (glob ? glob[(long)i * g + j] : (real)0) : (priv ? priv[(long)i * p + j - g] : (real)0);
+  dst[t] = j < d ? E[(long)i * d + j] : Hc[(long)i * d + j - d];
 }
 
 // MLP 입력 [F | 1D] 의 1D 열: dst[i·ldd + j] = x[i·ldx + j] (j < d), dst_h 면 bf16 만. F 열은 인코더가 바로 쓴다
@@ -506,7 +490,7 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   N_ = cfg.num_envs;
   T_ = cfg.steps_per_env;
   S_ = N_ * T_;
-  D_ = spec.norm_dim;
+  D_ = spec.actor.in1d;
   IMG_ = spec.enc.img_stride;
   NF_ = ac_->nf;
   NC_ = spec.n_cont;
@@ -531,8 +515,7 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
     GN_ = spec.gspec.gw * spec.gspec.gh;
     GF_ = spec.gspec.feat;
     GG_ = spec.graph_glob;
-    GP_ = spec.norm_dim;
-    D_ = GG_ + GP_;
+    D_ = GG_;
     IMG_ = NF_ = 0;
   }
   if (IMG_ % 4) throw std::runtime_error("img_stride 는 4 의 배수여야 함");
@@ -580,7 +563,7 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   if (sizeof(real) == 4 && cfg_.mlp == 2 && !graph_) c_xh_ = dmalloc<uint16_t>((long)C * (NF_ + D_), b);
   if (graph_) {
     const int d = spec.gspec.d;
-    c_xc_ = dmalloc<real>((long)C * (2 * d + GP_), b);   // 가치 머리 입력 [E | Hc | 참값]
+    c_xc_ = dmalloc<real>((long)C * 2 * d, b);   // 가치 머리 입력 [E | Hc]
     s_gfeat_ = dmalloc<uint8_t>((long)S_ * GN_ * GF_, b);
     s_gedge_ = dmalloc<uint32_t>((long)S_ * GN_, b);
     s_gcur_ = dmalloc<int>(S_, b);
@@ -607,7 +590,7 @@ PPO::~PPO() {
   delete ac_;
 }
 
-// 공유 인코더 정방향 → c_x_ = [F | x1d (D_ 열)] (actor 는 앞 nf + 정책 1D 열, critic 은 전부).
+// 공유 인코더 정방향 → c_x_ = [F | x1d (D_ 열)].
 // x1d = nullptr 이면 1D 열은 이미 c_x_ 에 있음 (미니배치 모으기가 바로 씀)
 void PPO::encode(int n, const uint8_t* img, const int* idx, const real* x1d) {
   auto st = ac_->stream;
@@ -623,21 +606,19 @@ void PPO::encode_c(int n, const uint8_t* img, const int* idx, const real* x1d) {
     k_put_1d<<<nblk((long)n * D_), 256, 0, st>>>(x1d, D_, D_, n, c_xc_ + NF_, c_xch_ ? (__nv_bfloat16*)c_xch_ + NF_ : nullptr, NF_ + D_);
 }
 
-void PPO::concat_norm(const real* obs1d, const real* priv, int n, bool upd, real* out) {
+void PPO::normalize(const real* obs1d, int n, bool upd, real* out) {
   auto st = ac_->stream;
-  int da = ac_->spec.actor.in1d, db = D_ - da;
-  k_concat<<<nblk((long)n * D_), 256, 0, st>>>(obs1d, da, priv, db, n, raw_);
-  if (upd) ac_->norm.update(raw_, n, D_, st);
-  ac_->norm.apply(raw_, n, D_, out, D_, st);
+  if (upd) ac_->norm.update(obs1d, n, D_, st);
+  ac_->norm.apply(obs1d, n, D_, out, D_, st);
 }
 
-void PPO::act(const uint8_t* img, const real* obs1d, const real* priv, real* actions) {
+void PPO::act(const uint8_t* img, const real* obs1d, real* actions) {
   if (graph_) throw std::runtime_error("PPO::act: 그래프 구조는 GraphObs 판을 쓴다");
   if (step_ >= T_) throw std::runtime_error("PPO::act: 롤아웃이 가득 참 — update 먼저");
   auto st = ac_->stream;
   long k0 = (long)step_ * N_;
   real* obs = s_obs_ + k0 * D_;
-  concat_norm(obs1d, priv, N_, true, obs);
+  normalize(obs1d, N_, true, obs);
   CK(cudaMemcpyAsync(s_img_ + k0 * IMG_, img, (size_t)N_ * IMG_, cudaMemcpyDeviceToDevice, st));
   for (int c0 = 0; c0 < N_; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, N_ - c0);
@@ -687,8 +668,7 @@ void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, in
   if (graph_) throw std::runtime_error("PPO::act_inference: 그래프 구조는 GraphObs 판을 쓴다");
   auto st = ac_->stream;
   int da = ac_->spec.actor.in1d;
-  // 정책 1D 만 정규화 (같은 통계의 앞 da 차원)
-  ac_->norm.apply(obs1d, n_all, da, raw_, D_, st, da);
+  normalize(obs1d, n_all, false, raw_);
   for (int c0 = 0; c0 < n_all; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, n_all - c0);
     encode(n, img + (long)c0 * IMG_, nullptr, raw_ + (long)c0 * D_);
@@ -708,11 +688,11 @@ void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, in
   }
 }
 
-void PPO::compute_returns(const uint8_t* img, const real* obs1d, const real* priv) {
+void PPO::compute_returns(const uint8_t* img, const real* obs1d) {
   if (graph_) throw std::runtime_error("PPO::compute_returns: 그래프 구조는 GraphObs 판을 쓴다");
   if (step_ != T_) throw std::runtime_error("PPO::compute_returns: 롤아웃이 덜 참");
   auto st = ac_->stream;
-  concat_norm(obs1d, priv, N_, false, last_obs_);
+  normalize(obs1d, N_, false, last_obs_);
   for (int c0 = 0; c0 < N_; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, N_ - c0);
     if (ac_->split) {   // critic 인코더만 (stream2 → stream 에 합침)
@@ -832,14 +812,24 @@ double PPO::loss_and_grad(const int* d_idx, int n, bool backward) {
   return minibatch(d_idx, n, n, backward, st);
 }
 
-UpdateStats PPO::update(const uint8_t* img, const real* obs1d, const real* priv) {
-  compute_returns(img, obs1d, priv);
+UpdateStats PPO::update(const uint8_t* img, const real* obs1d) {
+  compute_returns(img, obs1d);
   return finish_update();
 }
 
 UpdateStats PPO::update(const GraphObs& o) {
   compute_returns(o);
   return finish_update();
+}
+
+namespace {
+bool is_critic_block(const std::string& nm) { return nm.rfind("enc_c.", 0) == 0 || nm.rfind("critic.", 0) == 0 || nm.rfind("gcritic.", 0) == 0; }
+}  // namespace
+
+void PPO::set_critic_only(bool on) {
+  // 인코더(그래프는 몸통)를 정책과 같이 쓰면 가치만 고쳐도 정책이 바뀐다
+  if (on && (ac_->spec.graph ? ac_->spec.graph_share : !ac_->split)) throw std::runtime_error("set_critic_only: actor·critic 이 인코더를 같이 쓰는 구조");
+  critic_only_ = on;
 }
 
 UpdateStats PPO::finish_update() {
@@ -875,21 +865,31 @@ UpdateStats PPO::finish_update() {
       double s[5];
       minibatch(d_perm_ + (long)b * mb, mb, mb, true, s);
       double kl = s[2] / mb;
-      if (ep == 0 && b == 0) out.kl0 = (real)kl;   // 아직 걸음 전: 롤아웃과 같은 변수라 0 이어야 (아니면 수치 문제 — 학습률 탓 아님)
-      // KL 적응 학습률 — rsl_rl algorithms/ppo.py:269-293 (미니배치마다, 이번 걸음부터 적용)
-      if (cfg_.desired_kl > 0) {
+      if (ep == 0 && b == 0) out.kl0 = (real)kl, out.value0 = (real)(s[1] / mb);   // 아직 걸음 전: kl0 은 롤아웃과 같은 변수라 0 이어야 (아니면 수치 문제 — 학습률 탓 아님)
+      // KL 적응 학습률 — rsl_rl algorithms/ppo.py:269-293 (미니배치마다, 이번 걸음부터 적용) 가치만 맞출 땐 정책이 안 움직이므로 건드리지 않는다
+      if (cfg_.desired_kl > 0 && !critic_only_) {
         if (kl > cfg_.desired_kl * 2.0)
           lr_ = std::max(cfg_.lr_min, lr_ / 1.5f);
         else if (kl < cfg_.desired_kl / 2.0 && kl > 0.0)
           lr_ = std::min(cfg_.lr_max, lr_ * 1.5f);
       }
       // 기울기 노름 자르기 — torch clip_grad_norm_ (clip_coef = max/(norm+1e-6), 1 로 상한)
-      double gn = std::sqrt(sumsq_all(ac_->d_grads, ac_->n_params, st));
+      // 고칠 변수 구간 (자리, 개수): 전부. 가치만 맞출 땐 가치 쪽 블록(가치 인코더 · 가치 MLP)만 — 기울기 노름도 그 구간으로 센다
+      std::vector<std::pair<long, long>> rng;
+      if (critic_only_) {
+        for (auto& bl : ac_->blocks)
+          if (is_critic_block(bl.name)) rng.push_back({bl.off, bl.n});
+      } else {
+        rng.push_back({0, ac_->n_params});
+      }
+      double g2 = 0;
+      for (auto [p0, pn] : rng) g2 += sumsq_all(ac_->d_grads + p0, pn, st);
+      double gn = std::sqrt(g2);
       real gscale = (real)std::min(1.0, cfg_.max_grad_norm / (gn + 1e-6));
       ++adam_t_;
       real bc1 = 1.f - std::pow(cfg_.adam_b1, (real)adam_t_), bc2 = 1.f - std::pow(cfg_.adam_b2, (real)adam_t_);
-      k_adam<<<nblk(ac_->n_params), 256, 0, st>>>(ac_->d_params, ac_->d_grads, m_, v_, ac_->n_params, lr_,
-                                                  cfg_.adam_b1, cfg_.adam_b2, cfg_.adam_eps, bc1, bc2, gscale);
+      for (auto [p0, pn] : rng)
+        k_adam<<<nblk(pn), 256, 0, st>>>(ac_->d_params + p0, ac_->d_grads + p0, m_ + p0, v_ + p0, pn, lr_, cfg_.adam_b1, cfg_.adam_b2, cfg_.adam_eps, bc1, bc2, gscale);
       clamp_std();  // σ 범위 투영 (params_changed 가 bf16 사본을 만들기 전에)
       ac_->params_changed();
       acc_s += s[0] / mb;
@@ -932,7 +932,7 @@ std::vector<int> PPO::graph_segments(const int* cnt, int n_all) const {
   return seg;
 }
 
-void PPO::graph_forward(int n, const GraphIn& in, const int* cnt, const real* glob, const real* privn, long ld, bool policy, real* v_out) {
+void PPO::graph_forward(int n, const GraphIn& in, const int* cnt, const real* glob, long ld, bool policy, real* v_out) {
   auto& ac = *ac_;
   auto st = ac.stream;
   const int d = ac.spec.gspec.d;
@@ -945,8 +945,8 @@ void PPO::graph_forward(int n, const GraphIn& in, const int* cnt, const real* gl
   if (v_out) {
     if (!share) ac.gbody_c.forward(ac.cublas, st, n, in, cnt);
     GraphBody& vb = ac.vbody();
-    k_vcat<<<nblk((long)n * (2 * d + GP_)), 256, 0, st>>>(vb.E(), vb.Hc(), privn, ld, n, d, GP_, c_xc_);
-    ac.critic.forward(ac.cublas, st, n, nullptr, c_xc_, 2 * d + GP_, v_out);
+    k_vcat<<<nblk((long)n * 2 * d), 256, 0, st>>>(vb.E(), vb.Hc(), n, d, c_xc_);
+    ac.critic.forward(ac.cublas, st, n, nullptr, c_xc_, 2 * d, v_out);
   }
 }
 
@@ -961,11 +961,9 @@ void PPO::act(const GraphObs& o, real* actions) {
   CK(cudaMemcpyAsync(gf, o.feat, (size_t)N_ * GN_ * GF_, cudaMemcpyDeviceToDevice, st));
   CK(cudaMemcpyAsync(ge, o.edge, (size_t)N_ * GN_ * sizeof(uint32_t), cudaMemcpyDeviceToDevice, st));
   CK(cudaMemcpyAsync(gc, o.cur, (size_t)N_ * sizeof(int), cudaMemcpyDeviceToDevice, st));
-  // 롤아웃 1D 행 = [전역 원값 | 정규화 참값] (정규화 통계는 참값만)
+  // 롤아웃 1D 행 = 전역 원값 (GG_ = 0 이면 없음)
   real* obs = s_obs_ + k0 * D_;
-  k_gobs<<<nblk((long)N_ * D_), 256, 0, st>>>(GG_ ? o.glob : nullptr, GG_, o.priv, GP_, N_, obs);
-  if (o.priv) ac_->norm.update(obs + GG_, N_, D_, st);
-  ac_->norm.apply(obs + GG_, N_, D_, obs + GG_, D_, st);
+  if (GG_) CK(cudaMemcpyAsync(obs, o.glob, (size_t)N_ * GG_ * sizeof(real), cudaMemcpyDeviceToDevice, st));
   int* cnt = h_cnt_.data() + k0;
   graph_count(ac_->spec.gspec, st, N_, GraphIn{gf, ge, gc, nullptr}, d_cnt_, cnt);
   const std::vector<int> seg = graph_segments(cnt, N_);
@@ -973,7 +971,7 @@ void PPO::act(const GraphObs& o, real* actions) {
     const int c0 = seg[s], n = seg[s + 1] - c0;
     const long k = k0 + c0;
     const real* ob = obs + (long)c0 * D_;
-    graph_forward(n, GraphIn{gf + (long)c0 * GN_ * GF_, ge + (long)c0 * GN_, gc + c0, nullptr}, cnt + c0, ob, ob + GG_, D_, true, s_val_ + k);
+    graph_forward(n, GraphIn{gf + (long)c0 * GN_ * GF_, ge + (long)c0 * GN_, gc + c0, nullptr}, cnt + c0, GG_ ? ob : nullptr, D_, true, s_val_ + k);
     k_sample_cat<<<nblk(n, 128), 128, 0, st>>>(c_logits_, c_maskt_, n, K_, seed_, act_calls_, c0, ADIM_, actions + (long)c0 * ADIM_, s_act_ + k,
                                                 s_logp_ + k, s_logit_ + k * K_, s_mask_ + k * K_);
   }
@@ -991,7 +989,7 @@ void PPO::act_inference(const GraphObs& o, real* actions, int n_all, int64_t sam
   for (size_t s = 0; s + 1 < seg.size(); ++s) {
     const int c0 = seg[s], n = seg[s + 1] - c0;
     graph_forward(n, GraphIn{o.feat + (long)c0 * GN_ * GF_, o.edge + (long)c0 * GN_, o.cur + c0, nullptr}, cnt.data() + c0,
-                  GG_ ? o.glob + (long)c0 * GG_ : nullptr, nullptr, GG_, true, nullptr);
+                  GG_ ? o.glob + (long)c0 * GG_ : nullptr, GG_, true, nullptr);
     k_cat_act<<<nblk(n, 128), 128, 0, st>>>(c_logits_, c_maskt_, n, K_, seed_ ^ 0x9E3779B97F4A7C15ull, sample_call, c0, ADIM_,
                                              actions + (long)c0 * ADIM_);
   }
@@ -1001,15 +999,13 @@ void PPO::compute_returns(const GraphObs& o) {
   if (!graph_) throw std::runtime_error("PPO::compute_returns(GraphObs): 그래프 구조가 아님");
   if (step_ != T_) throw std::runtime_error("PPO::compute_returns: 롤아웃이 덜 참");
   auto st = ac_->stream;
-  k_gobs<<<nblk((long)N_ * D_), 256, 0, st>>>(nullptr, GG_, o.priv, GP_, N_, last_obs_);
-  ac_->norm.apply(last_obs_ + GG_, N_, D_, last_obs_ + GG_, D_, st);
   std::vector<int> cnt(N_);
   graph_count(ac_->spec.gspec, st, N_, GraphIn{o.feat, o.edge, o.cur, nullptr}, d_cnt_, cnt.data());
   const std::vector<int> seg = graph_segments(cnt.data(), N_);
   for (size_t s = 0; s + 1 < seg.size(); ++s) {
     const int c0 = seg[s], n = seg[s + 1] - c0;
-    graph_forward(n, GraphIn{o.feat + (long)c0 * GN_ * GF_, o.edge + (long)c0 * GN_, o.cur + c0, nullptr}, cnt.data() + c0, nullptr,
-                  last_obs_ + (long)c0 * D_ + GG_, D_, false, last_val_ + c0);
+    graph_forward(n, GraphIn{o.feat + (long)c0 * GN_ * GF_, o.edge + (long)c0 * GN_, o.cur + c0, nullptr}, cnt.data() + c0, nullptr, 0,
+                  false, last_val_ + c0);
   }
   gae();
 }
@@ -1035,7 +1031,7 @@ double PPO::minibatch_graph(const int* d_idx, int n_all, int mb, bool backward, 
   for (size_t s = 0; s + 1 < seg.size(); ++s) {
     const int c0 = seg[s], n = seg[s + 1] - c0;
     const int* ix = d_idx + c0;
-    // 1D 행 [전역 | 참값] 과 롤아웃 값(행동·옛 log π·가림·옛 로짓·이점·수익·옛 가치)을 커널 하나로 모은다
+    // 1D 행(전역)과 롤아웃 값(행동·옛 log π·가림·옛 로짓·이점·수익·옛 가치)을 커널 하나로 모은다
     GatherSet gs{{s_act_, s_logp_, s_mask_, s_logit_, s_sd_, s_adv_, s_ret_, s_val_}, {}, {A_, 1, K_, K_, 0, 1, 1, 1}, 0};
     real* off[8];
     real* cur = c_gat_;
@@ -1045,7 +1041,7 @@ double PPO::minibatch_graph(const int* d_idx, int n_all, int mb, bool backward, 
       gs.W += gs.w[g];
     }
     k_gather_mb<<<nblk((long)n * (D_ + gs.W)), 256, 0, st>>>(s_obs_, D_, ix, n, c_x_, D_, nullptr, gs);
-    graph_forward(n, GraphIn{s_gfeat_, s_gedge_, s_gcur_, ix}, cnt.data() + c0, c_x_, c_x_ + GG_, D_, true, c_v_);
+    graph_forward(n, GraphIn{s_gfeat_, s_gedge_, s_gcur_, ix}, cnt.data() + c0, GG_ ? c_x_ : nullptr, D_, true, c_v_);
     CatLossArgs q{c_logits_, off[2], off[3], off[0], off[1], off[5], off[6], off[7], c_v_, n, K_, cfg_.clip, cfg_.value_coef, (real)1 / mb,
                   cfg_.entropy_coef, (real)0, cfg_.clipped_value, c_G_, c_dv_, c_stat_};
     k_loss_cat<<<nblk(n, 128), 128, 0, st>>>(q);
@@ -1156,7 +1152,9 @@ void PPO::load(const std::string& path) {
     r(nm.data(), ln);
     int64_t n;
     r(&n, 8);
-    if (nm != b.name || n != b.n) throw std::runtime_error("체크포인트 층 다름: " + nm + " vs " + b.name);
+    if (nm != b.name) throw std::runtime_error("체크포인트 층 다름: " + nm + " vs " + b.name);
+    if (n != b.n)   // 가치 첫 층이 32 열 큰 것은 가치 전용 참값 입력이 있던 옛 체크포인트 — ppo/tools/ckpt_drop_priv 로 바꿔 쓴다
+      throw std::runtime_error("체크포인트 층 크기 다름: " + nm + " " + std::to_string(n) + " vs " + std::to_string(b.n) + " (옛 체크포인트의 가치 참값 입력은 ckpt_drop_priv 로 뺀다)");
   }
   int64_t P;
   r(&P, 8);

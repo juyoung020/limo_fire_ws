@@ -38,13 +38,12 @@ int main(int argc, char** argv) {
   uint8_t* df;
   uint32_t* de;
   int *dc, *done;
-  float *dg, *dp, *act, *rew;
+  float *dg, *act, *rew;
   CK(cudaMalloc(&df, (size_t)N * GN * F));
   CK(cudaMalloc(&de, (size_t)N * GN * 4));
   CK(cudaMalloc(&dc, (size_t)N * 4));
   CK(cudaMalloc(&done, (size_t)N * 4));
   CK(cudaMalloc(&dg, (size_t)N * g::GLOB * 4));
-  CK(cudaMalloc(&dp, (size_t)N * mdp::obs::PRIV * 4));
   CK(cudaMalloc(&act, (size_t)N * mdp::act::DIM * 4));
   CK(cudaMalloc(&rew, (size_t)N * 4));
   double mean_nodes = 0, mean_deg = 0;
@@ -87,19 +86,17 @@ int main(int argc, char** argv) {
     mean_deg /= mean_nodes;
     mean_nodes /= N;
     std::normal_distribution<float> G;
-    std::vector<float> hg((size_t)N * g::GLOB), hp((size_t)N * mdp::obs::PRIV), hr(N);
+    std::vector<float> hg((size_t)N * g::GLOB), hr(N);
     for (auto& v : hg) v = G(rng);
-    for (auto& v : hp) v = G(rng);
     for (auto& v : hr) v = G(rng);
     CK(cudaMemcpy(df, hf.data(), hf.size(), cudaMemcpyHostToDevice));
     CK(cudaMemcpy(de, he.data(), he.size() * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(dc, hc.data(), hc.size() * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(dg, hg.data(), hg.size() * 4, cudaMemcpyHostToDevice));
-    CK(cudaMemcpy(dp, hp.data(), hp.size() * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(rew, hr.data(), N * 4, cudaMemcpyHostToDevice));
     CK(cudaMemset(done, 0, N * 4));
   }
-  const xppo::GraphObs obs{df, de, dc, dg, dp};
+  const xppo::GraphObs obs{df, de, dc, dg};
   auto now = [] { return std::chrono::steady_clock::now(); };
   auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
   ppo.act_inference(obs, act);   // 데우기
@@ -136,6 +133,6 @@ int main(int argc, char** argv) {
               (double)S * cfg.epochs / (t_upd / 1000));
   std::printf("GPU 메모리: 이 프로세스가 더 쓴 양 %.2f GB (롤아웃·Adam·작업 버퍼 %.2f GB, 몸통 작업 공간 정책 %.2f + 가치 %.2f GB, 환경 쪽 관측 버퍼 %.2f GB, 나머지 cuBLAS·CUDA 문맥)\n",
               (free0 - free1) / 1e9, ppo.storage_bytes() / 1e9, ac.gbody.ws_bytes() / 1e9, ac.spec.graph_share ? 0.0 : ac.gbody_c.ws_bytes() / 1e9,
-              ((size_t)N * (GN * (F + 4) + 4 * (g::GLOB + mdp::obs::PRIV + mdp::act::DIM + 3))) / 1e9);
+              ((size_t)N * (GN * (F + 4) + 4 * (g::GLOB + mdp::act::DIM + 3))) / 1e9);
   return 0;
 }

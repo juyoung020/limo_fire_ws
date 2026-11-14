@@ -31,11 +31,9 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
     a.hidden = {6, 5};
     a.out = 4;
     NetSpec c = a;
-    c.in1d = 7;
     c.out = 1;
     spec.actor = a;
     spec.critic = c;
-    spec.norm_dim = 7;
   }
   // 계층형 (GC_HIER=1, gradcheck --hier): 슬롯 머리 + 가린 범주 분포 — 작은 구조는 슬롯 3 개 × 특징 7 (1D 앞 5 칸 뒤), 임베딩 4, 은닉 5
   const bool hier = std::getenv("GC_HIER") != nullptr;
@@ -43,8 +41,7 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   if (hier && !full) {
     spec.actor.in1d = 5 + 3 * 7;
     spec.actor.out = 4;
-    spec.critic.in1d = spec.actor.in1d + 2;
-    spec.norm_dim = spec.critic.in1d;
+    spec.critic.in1d = spec.actor.in1d;
     spec.n_cont = 0;
     spec.n_slots = 3;
     spec.slot_feat = 7;
@@ -72,20 +69,19 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   if (const char* e = std::getenv("GC_SLOT_CM")) cfg.slot_cm_coef = (float)std::atof(e);
   PPO ppo(cfg, spec, 1234);
   auto& ac = ppo.ac();
-  int N = cfg.num_envs, IMG = spec.enc.img_stride, P1 = spec.actor.in1d, PR = spec.norm_dim - P1, A = std::max(spec.n_cont + 1, 4);
+  int N = cfg.num_envs, IMG = spec.enc.img_stride, P1 = spec.actor.in1d, A = std::max(spec.n_cont + 1, 4);
 
   std::mt19937 rng(7);
   std::uniform_int_distribution<int> U8(0, 255);
   std::normal_distribution<float> G(0.f, 1.f);
   std::vector<uint8_t> himg((size_t)N * IMG);
-  std::vector<real> h1((size_t)N * P1), hp((size_t)N * PR), hr(N);
+  std::vector<real> h1((size_t)N * P1), hr(N);
   std::vector<int> hd(N);
   uint8_t* d_img;
-  real *d1, *dp, *dact, *dr;
+  real *d1, *dact, *dr;
   int* dd;
   CK(cudaMalloc(&d_img, himg.size()));
   CK(cudaMalloc(&d1, h1.size() * sizeof(real)));
-  CK(cudaMalloc(&dp, std::max<size_t>(1, hp.size()) * sizeof(real)));
   CK(cudaMalloc(&dact, (size_t)N * A * sizeof(real)));
   CK(cudaMalloc(&dr, N * sizeof(real)));
   CK(cudaMalloc(&dd, N * sizeof(int)));
@@ -98,14 +94,12 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
       for (int i = 0; i < N; ++i)
         for (int k = 0; k < spec.n_slots; ++k)
           h1[(size_t)i * P1 + spec.slot_off + k * spec.slot_feat + spec.slot_feat - 1] = (i % 5 != 4 && (i + k + fill_t) % 3 != 0) ? 1.f : 0.f;
-    for (auto& v : hp) v = G(rng);
     CK(cudaMemcpy(d_img, himg.data(), himg.size(), cudaMemcpyHostToDevice));
     CK(cudaMemcpy(d1, h1.data(), h1.size() * sizeof(real), cudaMemcpyHostToDevice));
-    CK(cudaMemcpy(dp, hp.data(), hp.size() * sizeof(real), cudaMemcpyHostToDevice));
   };
   for (int t = 0; t < cfg.steps_per_env; ++t) {
     fill_obs();
-    ppo.act(d_img, d1, dp, dact);
+    ppo.act(d_img, d1, dact);
     for (int i = 0; i < N; ++i) {
       hr[i] = G(rng);
       hd[i] = (i % 5 == 1) ? 1 : (i % 5 == 3 ? 3 : 0);  // 진행·종료·끊김 섞기
@@ -115,7 +109,7 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
     ppo.store(dr, dd);
   }
   fill_obs();
-  ppo.compute_returns(d_img, d1, dp);
+  ppo.compute_returns(d_img, d1);
 
   // 롤아웃 때와 다른 정책으로 → ratio ≠ 1, 일부 샘플이 자르기 쪽, 가치도 자르기 쪽에 걸리게.
   // 변형은 float 로 계산해 두 정밀도에서 같은 값이 되게 한다.
@@ -176,7 +170,7 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
     for (int j = 0; j < spec.n_cont; ++j) params[ac.logstd_off + j] = bad[j % 4];
     CK(cudaMemcpy(ac.d_params, params.data(), NP * sizeof(real), cudaMemcpyHostToDevice));
     ac.params_changed();
-    ppo.update(d_img, d1, dp);
+    ppo.update(d_img, d1);
     std::vector<real> ls(spec.n_cont);
     CK(cudaMemcpy(ls.data(), ac.log_std(), spec.n_cont * sizeof(real), cudaMemcpyDeviceToHost));
     const double lo = std::log((double)cfg.std_min), hi = std::log((double)cfg.std_max);
@@ -190,7 +184,6 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   }
   cudaFree(d_img);
   cudaFree(d1);
-  cudaFree(dp);
   cudaFree(dact);
   cudaFree(dr);
   cudaFree(dd);

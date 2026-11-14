@@ -32,7 +32,6 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
   trail_.assign((size_t)2 * nf, 0u);
   img_.assign((size_t)mdp::obs::IMG_SIZE, 0);
   o1d_.assign((size_t)mdp::hier::POLICY_1D, 0.f);
-  priv_.assign((size_t)mdp::obs::PRIV, 0.f);
   ring_.assign((size_t)sim::kLidarRing * mdp::obs::LIDAR_BINS, 0.f);
   vprev_.assign((size_t)mdp::obs::VEC, 0.f);
   lint_.assign((size_t)mdp::obs::LIDAR_BINS, 0.f);
@@ -48,7 +47,6 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
   b_.obs_img = img_.data();
   b_.obs_1d = o1d_.data();
   b_.o1d = mdp::hier::POLICY_1D;
-  b_.priv = priv_.data();
   b_.lidar_ring = ring_.data();
   b_.vec_prev = vprev_.data();
   b_.lidar_int = lint_.data();

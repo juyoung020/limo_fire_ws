@@ -1,5 +1,5 @@
 // 그래프 어텐션 정책(ACSpec::graph)의 기울기 검사 한 벌 — gc_impl.cuh 와 같은 틀(fp32·fp64 가 같은 소스, 같은 씨앗 → 같은 입력·가중치).
-// 작은 구조(같은 코드 길): 격자 6×5, d 8, 머리 2, 인코더 2 층, FF 12, 전역 3 칸, 참값 4 칸. 유효 노드·간선은 무작위(간선은 한쪽 방향만 있는 것도 섞임),
+// 작은 구조(같은 코드 길): 격자 6×5, d 8, 머리 2, 인코더 2 층, FF 12, 전역 3 칸. 유효 노드·간선은 무작위(간선은 한쪽 방향만 있는 것도 섞임),
 // 무효 노드엔 쓰레기 특징, 이웃이 하나도 없는 샘플(고를 것 없음) 하나. 묶음: 샘플 4 개 또는 유효 노드 합 60 → 행 상한으로 나뉘는 길도 지난다.
 #pragma once
 
@@ -24,12 +24,10 @@ GcOut gc_run_graph(bool share, bool negative, bool do_fd, int K) {
   spec.graph_share = share;
   spec.graph_rows = 60;
   NetSpec c;
-  c.in1d = 4;
   c.hidden = {6};
   c.out = 1;
   spec.critic = c;
   spec.n_cont = 0;
-  spec.norm_dim = 4;
   PPOConfig cfg;
   cfg.num_envs = 6;
   cfg.steps_per_env = 2;
@@ -38,7 +36,7 @@ GcOut gc_run_graph(bool share, bool negative, bool do_fd, int K) {
   cfg.tf32 = false;
   PPO ppo(cfg, spec, 1234);
   auto& ac = ppo.ac();
-  const int N = cfg.num_envs, GN = spec.gspec.gw * spec.gspec.gh, F = spec.gspec.feat, GG = spec.graph_glob, GP = spec.norm_dim;
+  const int N = cfg.num_envs, GN = spec.gspec.gw * spec.gspec.gh, F = spec.gspec.feat, GG = spec.graph_glob;
 
   std::mt19937 rng(7);
   std::uniform_int_distribution<int> U8(0, 255);
@@ -46,17 +44,16 @@ GcOut gc_run_graph(bool share, bool negative, bool do_fd, int K) {
   std::vector<uint8_t> hf((size_t)N * GN * F);
   std::vector<uint32_t> he((size_t)N * GN);
   std::vector<int> hc(N), hd(N);
-  std::vector<real> hg((size_t)N * GG), hp((size_t)N * GP), hr(N);
+  std::vector<real> hg((size_t)N * GG), hr(N);
   uint8_t* df;
   uint32_t* de;
   int *dc, *dd;
-  real *dg, *dp, *dact, *dr;
+  real *dg, *dact, *dr;
   CK(cudaMalloc(&df, hf.size()));
   CK(cudaMalloc(&de, he.size() * 4));
   CK(cudaMalloc(&dc, N * 4));
   CK(cudaMalloc(&dd, N * 4));
   CK(cudaMalloc(&dg, hg.size() * sizeof(real)));
-  CK(cudaMalloc(&dp, hp.size() * sizeof(real)));
   CK(cudaMalloc(&dact, (size_t)N * mdp::act::DIM * sizeof(real)));
   CK(cudaMalloc(&dr, N * sizeof(real)));
   int fill_t = 0;
@@ -80,14 +77,12 @@ GcOut gc_run_graph(bool share, bool negative, bool do_fd, int K) {
       if (i == 4 && fill_t == 1) he[(size_t)i * GN + hc[i]] = 0;   // 고를 이웃이 없는 샘플
     }
     for (auto& v : hg) v = G(rng);
-    for (auto& v : hp) v = 2.f * G(rng) + 0.5f;
     CK(cudaMemcpy(df, hf.data(), hf.size(), cudaMemcpyHostToDevice));
     CK(cudaMemcpy(de, he.data(), he.size() * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(dc, hc.data(), N * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(dg, hg.data(), hg.size() * sizeof(real), cudaMemcpyHostToDevice));
-    CK(cudaMemcpy(dp, hp.data(), hp.size() * sizeof(real), cudaMemcpyHostToDevice));
   };
-  const GraphObs obs{df, de, dc, dg, dp};
+  const GraphObs obs{df, de, dc, dg};
   for (int t = 0; t < cfg.steps_per_env; ++t) {
     fill_obs();
     ppo.act(obs, dact);
@@ -151,7 +146,7 @@ GcOut gc_run_graph(bool share, bool negative, bool do_fd, int K) {
     }
   }
   out.proj_ok = true;   // σ 없음
-  for (void* p : std::initializer_list<void*>{df, de, dc, dd, dg, dp, dact, dr, didx}) cudaFree(p);
+  for (void* p : std::initializer_list<void*>{df, de, dc, dd, dg, dact, dr, didx}) cudaFree(p);
   return out;
 }
 

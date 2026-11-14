@@ -48,7 +48,7 @@ struct People {
   int32_t k_max;                       // 판 시작 인자: 다음 판 사람 수 상한 (Env::set_people_max). 리셋이 안 지움
   int32_t hit_person;                  // 이번 행동 중 로봇 몸통이 사람과 겹침 (collided 도 1). 다음 행동 시작에 지움 —
                                        //   판 끝 리셋 뒤에도 남아 끝 종류를 밖에서 볼 수 있다
-  float near_d;                        // 로봇 몸통(사각형) ~ 가장 가까운 사람 원기둥 간격 (m, 겹치면 음수, 없으면 kNoPerson). 가치 참값·보상용
+  float near_d;                        // 로봇 몸통(사각형) ~ 가장 가까운 사람 원기둥 간격 (m, 겹치면 음수, 없으면 kNoPerson). 보상용
   uint64_t rng;                        // 사람 난수 줄기
 };
 

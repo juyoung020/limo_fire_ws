@@ -212,25 +212,18 @@ int main(int argc, char** argv) {
       const auto& im = sp.enc.imgs[b];
       G.input(img_name[b], F::DT_UINT8, {-1, im.c, im.h, im.w}, img_doc[b]);
     }
-    G.input("obs_1d", F::DT_FLOAT, {-1, sp.norm_dim},
-            "1D 관측 원값: 정책 " + std::to_string(o::POLICY_1D) + " (라이다 4 장·세기·숫자) + 가치 전용 참값 " + std::to_string(o::PRIV));
+    G.input("obs_1d", F::DT_FLOAT, {-1, sp.actor.in1d}, "1D 관측 원값 " + std::to_string(o::POLICY_1D) + " (라이다 4 장·세기·숫자) — actor·critic 이 같이 본다");
     // ---- 공통 상수
     G.init("inv255", F::DT_FLOAT, {}, raw_f32({1.f / 255.f}));
     // ---- 정규화 (Normalizer: (x − μ)/(√σ² + ε))
     {
-      std::vector<float> mu(sp.norm_dim, 0.f), sd(sp.norm_dim, 1.f + xnet::Normalizer::kEps);
+      std::vector<float> mu(sp.actor.in1d, 0.f), sd(sp.actor.in1d, 1.f + xnet::Normalizer::kEps);
       if (has)
-        for (int j = 0; j < sp.norm_dim; ++j) mu[j] = ck.mean[j], sd[j] = std::sqrt(ck.var[j]) + xnet::Normalizer::kEps;
-      G.init("norm_mean", F::DT_FLOAT, {sp.norm_dim}, has ? raw_f32(mu) : "");
-      G.init("norm_std_eps", F::DT_FLOAT, {sp.norm_dim}, has ? raw_f32(sd) : "", "√σ² + 1e-2 (rsl_rl EmpiricalNormalization)");
+        for (int j = 0; j < sp.actor.in1d; ++j) mu[j] = ck.mean[j], sd[j] = std::sqrt(ck.var[j]) + xnet::Normalizer::kEps;
+      G.init("norm_mean", F::DT_FLOAT, {sp.actor.in1d}, has ? raw_f32(mu) : "");
+      G.init("norm_std_eps", F::DT_FLOAT, {sp.actor.in1d}, has ? raw_f32(sd) : "", "√σ² + 1e-2 (rsl_rl EmpiricalNormalization)");
       G.node("Sub", "norm/sub", {"obs_1d", "norm_mean"}, {"obs_1d_c"});
       G.node("Div", "norm/div", {"obs_1d_c", "norm_std_eps"}, {"obs_1d_n"}, {}, "실행 평균·분산 정규화 (롤아웃 중 갱신, network/README)");
-      G.init("slice_starts", F::DT_INT64, {1}, raw_i64({0}));
-      G.init("slice_ends", F::DT_INT64, {1}, raw_i64({sp.actor.in1d}));
-      G.init("slice_axes", F::DT_INT64, {1}, raw_i64({1}));
-      G.node("Slice", "norm/policy_part", {"obs_1d_n", "slice_starts", "slice_ends", "slice_axes"}, {"policy_1d_n"}, {},
-             "actor 는 앞 정책 1D 만");
-      G.shape("policy_1d_n", {-1, sp.actor.in1d});
     }
     // ---- 공유 인코더: 가지마다 합성곱
     std::vector<std::string> feats;
@@ -307,7 +300,7 @@ int main(int argc, char** argv) {
         k = dims[l];
       }
     };
-    mlp("actor", sp.actor, "policy_1d_n", "actor_out");
+    mlp("actor", sp.actor, "obs_1d_n", "actor_out");
     const bool split = ck.blk.count("enc_c.cnn0.conv0.w") > 0;   // 형식 3: critic 은 따로 인코더라 이 그래프(actor 특징)로는 못 냄 — 안 내보냄
     if (!split) mlp("critic", sp.critic, "obs_1d_n", "value");
     // log σ: 상태 무관 변수 — 출력으로 그대로

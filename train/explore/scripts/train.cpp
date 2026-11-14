@@ -14,6 +14,8 @@
 //         [--low-explore] (--low 와) 탐사 판 학습: 판 = 탐사 판(위층 0 번 후보 규칙을 환경이 1 Hz 로 돌려 목표를 줌 — EnvCfg::low_auto 2 + low_explore, low_rl.h
 //                   lowrl_goal_explore. 평가 도구 combine_run 과 같은 규칙). [--low-solo P] 환경의 P % 는 단독 과제 그대로 (섞어 학습 — 단독 과제 성능을 지킴).
 //                   진행 로그 lowx/*, 평가에 탐사 판(사람 0 · 결정적 · 환경마다 첫 판 · 상한 --low-eval-steps 3000 걸음)이 더해짐 (mdp/README "아래층 RL — 탐사 판 학습")
+//         [--critic-warmup N]  이번 실행의 처음 N 반복은 가치만 맞춘다 (PPO::set_critic_only — 정책·학습률 그대로). 가치 입력이 바뀐 체크포인트
+//                   (ppo/tools/ckpt_drop_priv)에서 --resume 할 때 쓴다 (ppo/README "가치 참값 입력 뺌"). 로그 train/value0 = 걸음 전 가치 손실
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
 //
 // 반복 하나 = 24 걸음 롤아웃(act → env.step → store) → update. done 매핑: mdp::cur::terminal(1·2·4·5) → 1 종료, 3 → 3 끊김.
@@ -70,6 +72,7 @@ struct Args {
   int mlp = 2, chunk = 0;  // chunk 0 = PPOConfig 기본 (미니배치 하나)
   bool resume = false;
   bool hier = false;   // --hier: 계층형 행동 (1 s 마다 프론티어 후보 하나 — sim kActPath, PPO 가린 범주 분포)
+  int critic_warmup = 0;   // --critic-warmup: 처음 이만큼 반복은 가치만 맞춤
   bool low = false;    // --low: 아래층 RL (단독 과제를 정책이 10 Hz 로 — run_low)
   int low_people = 2;  // --people: 아래층 RL 판마다 사람 0 ~ 이 수
   bool low_explore = false;   // --low-explore: 탐사 판 학습 (위층 규칙을 환경이 돌림)
@@ -476,7 +479,7 @@ int run_low(Args a) {
     for (int t = 0; t < pc.steps_per_env; ++t) {
       auto t0 = std::chrono::steady_clock::now();
       const sim::StepOut o = env.outputs();
-      ppo.act(o.low_img, o.low_1d, o.priv, d_act);
+      ppo.act(o.low_img, o.low_1d, d_act);
       cudaDeviceSynchronize();
       t_act += ms_since(t0);
       t0 = std::chrono::steady_clock::now();
@@ -492,7 +495,8 @@ int run_low(Args a) {
     total_steps += iter_steps;
     const auto tu = std::chrono::steady_clock::now();
     const sim::StepOut o = env.outputs();
-    const xppo::UpdateStats us = ppo.update(o.low_img, o.low_1d, o.priv);
+    ppo.set_critic_only(it - it0 < a.critic_warmup);
+    const xppo::UpdateStats us = ppo.update(o.low_img, o.low_1d);
     const double t_upd = ms_since(tu), t_iter = ms_since(t_it);
     if (!std::isfinite(us.value) || !std::isfinite(us.surrogate) || !std::isfinite(us.kl)) {
       run.event("NaN at iteration " + std::to_string(it) + " — stop");
@@ -554,6 +558,7 @@ int run_low(Args a) {
     r.last(rf::key::ENTROPY_LOSS, -us.entropy);
     r.last(rf::key::APPROX_KL, us.kl);
     r.last("train/kl0", us.kl0);
+    r.last("train/value0", us.value0);
     r.last(rf::key::GRAD_NORM, us.grad_norm);
     r.last(rf::key::LEARNING_RATE, us.lr);
     r.last(rf::key::VALUE_MEAN, us.mean_value);
@@ -612,6 +617,7 @@ int main(int argc, char** argv) {
       else if (k == "--replay-every") a.replay_every = std::stoi(nx());
       else if (k == "--eval-episodes") a.eval_eps = std::stoi(nx());
       else if (k == "--resume") a.resume = true;
+      else if (k == "--critic-warmup") a.critic_warmup = std::stoi(nx());
       else if (k == "--hier") a.hier = true;
       else if (k == "--graph") a.graph = true;
       else if (k == "--low") a.low = true;
@@ -1009,7 +1015,7 @@ int main(int argc, char** argv) {
           const int64_t sc = sample ? (int64_t)step * (int64_t)NT + (int64_t)ti : -1;
           if (a.graph) {
             const sim::GraphOut g = evs[ti]->graph();
-            ppo.act_inference(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob, nullptr}, act, E, sc);
+            ppo.act_inference(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob}, act, E, sc);
           } else {
             ppo.act_inference(o.obs_img, o.obs_1d, act, E, sc);
           }
@@ -1195,10 +1201,10 @@ int main(int argc, char** argv) {
         const sim::StepOut o = env.outputs();
         if (a.graph) {
           const sim::GraphOut g = env.graph();
-          ppo.act(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob, o.priv}, d_act);
+          ppo.act(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob}, d_act);
           k_graph_pick_check<<<(N + 255) / 256, 256>>>(d_act, g.cand, N, d_pick);
         } else {
-          ppo.act(o.obs_img, o.obs_1d, o.priv, d_act);
+          ppo.act(o.obs_img, o.obs_1d, d_act);
         }
         cudaDeviceSynchronize();
         t_act += ms_since(t0);
@@ -1308,11 +1314,12 @@ int main(int argc, char** argv) {
       auto tu = std::chrono::steady_clock::now();
       const sim::StepOut o = env.outputs();
       xppo::UpdateStats us;
+      ppo.set_critic_only(it - it0 < a.critic_warmup);
       if (a.graph) {
         const sim::GraphOut g = env.graph();
-        us = ppo.update(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob, o.priv});
+        us = ppo.update(xppo::GraphObs{g.feat, g.edge, g.cur, g.glob});
       } else {
-        us = ppo.update(o.obs_img, o.obs_1d, o.priv);
+        us = ppo.update(o.obs_img, o.obs_1d);
       }
       const double t_upd = ms_since(tu);
       const double t_iter = ms_since(t_it);
@@ -1380,6 +1387,7 @@ int main(int argc, char** argv) {
       r.last(rf::key::APPROX_KL, us.kl);
       r.last(rf::key::GRAD_NORM, us.grad_norm);
       r.last("train/kl0", us.kl0);
+      r.last("train/value0", us.value0);
       if (cat) {
         r.last("train/logit_cm", us.logit_cm);
         r.last("train/logit_spread", us.logit_spread);

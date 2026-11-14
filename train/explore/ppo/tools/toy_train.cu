@@ -2,7 +2,7 @@
 //
 // 환경: 관측 크기는 obs_layout.h 그대로(대부분 0). 로봇은 옆으로도 가는 점(v → x, vy → y, ω 무시), 0.1 s 걸음, 최고 1 m/s.
 //   목표는 시작점에서 0.5~2.5 m. 1D 의 FRONTIER 칸에 목표 상대 위치 (dx, dy, 거리), 가까운 지도 0 번 채널에 목표 점 3×3.
-//   가치 전용(priv) 앞 칸에 같은 참값. 보상 = 2·(가까워진 거리) − 0.01/걸음.
+//   보상 = 2·(가까워진 거리) − 0.01/걸음.
 //   선언: 목표 0.25 m 안이면 +5·성공·종료(done=1), 밖이면 −1·실패·종료(done=1). 100 걸음이면 끊김(done=3, 실패로 셈).
 //
 //   toy_train [--envs N] [--iters I] [--seed S]               학습, 반복마다 곡선 한 줄, 끝에 결정적 평가
@@ -89,7 +89,7 @@ __global__ void k_step(int n, uint64_t seed, EnvState s, const float* act, float
 }
 
 // 관측: 이미지는 미리 0 으로 지운 뒤 목표 점만
-__global__ void k_obs(int n, EnvState s, uint8_t* img, float* o1, float* priv) {
+__global__ void k_obs(int n, EnvState s, uint8_t* img, float* o1) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) return;
   float dx = s.gx[i] - s.x[i], dy = s.gy[i] - s.y[i];
@@ -98,9 +98,6 @@ __global__ void k_obs(int n, EnvState s, uint8_t* img, float* o1, float* priv) {
   v[o::FRONTIER + 0] = dx;
   v[o::FRONTIER + 1] = dy;
   v[o::FRONTIER + 2] = dist;
-  float* p = priv + (long)i * o::PRIV;
-  p[o::PRIV_TRUE_POSE + 0] = dx;
-  p[o::PRIV_TRUE_POSE + 1] = dy;
   int cx = (int)floorf(dx / 0.1f) + o::NEAR_W / 2, cy = (int)floorf(dy / 0.1f) + o::NEAR_H / 2;
   uint8_t* im = img + (long)i * o::IMG_SIZE;  // 가까운 지도 0 번 채널
   for (int yy = cy - 1; yy <= cy + 1; ++yy)
@@ -113,7 +110,7 @@ struct ToyEnv {
   uint64_t seed;
   EnvState s;
   uint8_t* img;
-  float *o1, *priv, *rew;
+  float *o1, *rew;
   int* done;
   std::vector<void*> all;
   template <typename T>
@@ -129,7 +126,6 @@ struct ToyEnv {
     s.t = mk<int>(n), s.resets = mk<int>(n), s.n_done = mk<int>(n), s.n_succ = mk<int>(n), s.sum_len = mk<int>(n);
     img = mk<uint8_t>((long)n * o::IMG_SIZE);
     o1 = mk<float>((long)n * o::POLICY_1D);
-    priv = mk<float>((long)n * o::PRIV);
     rew = mk<float>(n);
     done = mk<int>(n);
     k_reset_all<<<nblk(n, 128), 128>>>(n, seed, s);
@@ -140,7 +136,7 @@ struct ToyEnv {
   }
   void observe() {
     CK(cudaMemset(img, 0, (size_t)n * o::IMG_SIZE));
-    k_obs<<<nblk(n, 128), 128>>>(n, s, img, o1, priv);
+    k_obs<<<nblk(n, 128), 128>>>(n, s, img, o1);
   }
   void step(const float* act) {
     k_step<<<nblk(n, 128), 128>>>(n, seed, s, act, rew, done);
@@ -204,14 +200,14 @@ IterLog one_iter(xppo::PPO& ppo, ToyEnv& env, float* d_act) {
   int T = ppo.config().steps_per_env;
   double rsum = 0;
   for (int t = 0; t < T; ++t) {
-    ppo.act(env.img, env.o1, env.priv, d_act);
+    ppo.act(env.img, env.o1, d_act);
     env.step(d_act);
     ppo.store(env.rew, env.done);
     rsum += sum_all(env.rew, env.n, 0);
   }
   IterLog L;
   L.it = ppo.iteration();
-  L.st = ppo.update(env.img, env.o1, env.priv);
+  L.st = ppo.update(env.img, env.o1);
   long nd, ns, len;
   env.take_stats(nd, ns, len);
   L.n_ep = nd;

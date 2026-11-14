@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
     const auto& c = hc.cfg;
     const size_t n = (size_t)c.size * c.size;
     std::vector<uint8_t> img;
-    std::vector<float> o1d, pv;
+    std::vector<float> o1d;
     std::vector<int16_t> lm;
     std::vector<uint32_t> tr;
     double st_cm = 0, st_sp = 0, st_mx = 0;
@@ -149,7 +149,7 @@ int main(int argc, char** argv) {
     uint64_t rng = 12345 + seed;
     int done = 0;
     for (int k = 0; k < decisions; ++k) {
-      env.get_obs(img, o1d, pv);
+      env.get_obs(img, o1d);
       env.get_state(st);
       const sim::EnvState& e = st[0];
       robot.set_depth(img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE);   // 깊이 = 센서 입력

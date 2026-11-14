@@ -1,7 +1,7 @@
 // 그래프 어텐션 정책 + PPO 검증: 장난감 환경 "미로 그래프에서 목표 쪽 이웃 고르기" — 여러 홉 떨어진 정보를 간선을 따라 모아야 풀린다.
 //   환경(판 길이 1, 문맥 띠): 8×8 격자, 노드는 0.8 확률로 유효, 간선은 상하좌우 이웃끼리 0.6 확률(양방향) → 미로. 현재 노드(이웃 ≥ 2)와 같은 연결 성분에서
 //   2 홉 이상 떨어진 목표 노드 하나(특징 3 번 칸 = 255). 고른 이웃이 목표까지의 그래프 거리(BFS)를 줄이면 보상 1, 아니면 0.
-//   노드 특징: 유효, dx·dy(현재 노드 기준, 128 + 8·칸), 목표 표시. 전역 2 칸·참값 2 칸(거리/8, 0)은 잡음·보조.
+//   노드 특징: 유효, dx·dy(현재 노드 기준, 128 + 8·칸), 목표 표시. 전역 2 칸은 잡음.
 //   기준 둘: 무작위(줄이는 이웃 수 / 이웃 수의 평균), 기하(목표와 직선 거리가 가장 가까운 이웃 — 간선 구조를 안 봄).
 //   toy_graph [--iters 300] [--envs 256] [--seed 1] [--share]   학습 → 결정 정확도(새 그래프 4096) > 0.9 이고 가린 칸 고름 0 이면 통과
 //   toy_graph --check-determinism [--iters 20]                  같은 씨앗 두 번 → 반복마다 손실 통계·체크포인트(가중치·Adam) 비트 같음
@@ -20,7 +20,7 @@
 using namespace xnet;
 
 namespace {
-constexpr int G = 8, N = G * G, F = 8, NB = 24, GLOB = 2, PR = 2, ADIM = 4;
+constexpr int G = 8, N = G * G, F = 8, NB = 24, GLOB = 2, ADIM = 4;
 
 ACSpec toy_spec(bool share) {
   ACSpec s;
@@ -30,12 +30,10 @@ ACSpec toy_spec(bool share) {
   s.graph_share = share;
   s.graph_rows = 16384;
   NetSpec c;
-  c.in1d = PR;
   c.hidden = {32};
   c.out = 1;
   s.critic = c;
   s.n_cont = 0;
-  s.norm_dim = PR;
   return s;
 }
 
@@ -50,10 +48,10 @@ struct Toy {
   std::vector<uint8_t> feat;
   std::vector<uint32_t> edge;
   std::vector<int> cur, hops, geo;
-  std::vector<float> glob, priv, p_rand;
+  std::vector<float> glob, p_rand;
   std::vector<uint32_t> good;   // 거리를 줄이는 이웃 비트
   explicit Toy(int n_, uint64_t seed)
-      : n(n_), rng((uint32_t)seed), feat((size_t)n_ * N * F), edge((size_t)n_ * N), cur(n_), hops(n_), geo(n_), glob((size_t)n_ * GLOB), priv((size_t)n_ * PR),
+      : n(n_), rng((uint32_t)seed), feat((size_t)n_ * N * F), edge((size_t)n_ * N), cur(n_), hops(n_), geo(n_), glob((size_t)n_ * GLOB),
         p_rand(n_), good(n_) {}
   void sample() {
     std::uniform_real_distribution<float> U(0.f, 1.f);
@@ -145,8 +143,6 @@ struct Toy {
       }
       glob[(size_t)i * GLOB] = Gn(rng);
       glob[(size_t)i * GLOB + 1] = Gn(rng);
-      priv[(size_t)i * PR] = (float)hops[i] / 8.f;
-      priv[(size_t)i * PR + 1] = 0.f;
     }
   }
 };
@@ -155,28 +151,26 @@ struct Dev {
   uint8_t* feat;
   uint32_t* edge;
   int *cur, *done;
-  float *glob, *priv, *act, *rew;
+  float *glob, *act, *rew;
   explicit Dev(int n) {
     CK(cudaMalloc(&feat, (size_t)n * N * F));
     CK(cudaMalloc(&edge, (size_t)n * N * 4));
     CK(cudaMalloc(&cur, (size_t)n * 4));
     CK(cudaMalloc(&done, (size_t)n * 4));
     CK(cudaMalloc(&glob, sizeof(float) * n * GLOB));
-    CK(cudaMalloc(&priv, sizeof(float) * n * PR));
     CK(cudaMalloc(&act, sizeof(float) * n * ADIM));
     CK(cudaMalloc(&rew, sizeof(float) * n));
   }
   ~Dev() {
-    for (void* p : std::initializer_list<void*>{feat, edge, cur, done, glob, priv, act, rew}) cudaFree(p);
+    for (void* p : std::initializer_list<void*>{feat, edge, cur, done, glob, act, rew}) cudaFree(p);
   }
   void up(const Toy& t) {
     CK(cudaMemcpy(feat, t.feat.data(), t.feat.size(), cudaMemcpyHostToDevice));
     CK(cudaMemcpy(edge, t.edge.data(), t.edge.size() * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(cur, t.cur.data(), t.cur.size() * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(glob, t.glob.data(), sizeof(float) * t.glob.size(), cudaMemcpyHostToDevice));
-    CK(cudaMemcpy(priv, t.priv.data(), sizeof(float) * t.priv.size(), cudaMemcpyHostToDevice));
   }
-  xppo::GraphObs obs() const { return {feat, edge, cur, glob, priv}; }
+  xppo::GraphObs obs() const { return {feat, edge, cur, glob}; }
 };
 
 struct Result {

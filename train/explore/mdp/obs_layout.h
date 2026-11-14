@@ -55,16 +55,6 @@ constexpr int RESERVED = 63;     // 나중 값(레이더 사람 등)용 0 칸
 constexpr int VEC = 64;
 constexpr int POLICY_1D = LIDAR + INTENSITY + VEC;   // 1304
 
-// ---- 가치에만 (참값, 시뮬 전용) — 정책 1D 뒤에 붙인다
-constexpr int PRIV_TRUE_POSE = 0;   // x, y, sin, cos — 4
-constexpr int PRIV_POSE_ERR = 4;    // ex, ey, eth — 3
-constexpr int PRIV_COVERAGE = 7;    // 진짜 벽 덮음 — 1
-constexpr int PRIV_REMAIN = 8;      // 남은 벽 면 칸 (정규화) — 1
-constexpr int PRIV_RESERVED = 9;    // 사람 참 위치 등 (9: 가장 가까운 사람 간격 — observations.h)
-constexpr int PRIV_IDLE = 10;       // 정답 벽 진척 시계: 마지막 새 벽 면 칸 뒤 시간 / kIdleTime (env.h since_wall, 정답 벽이라 정책엔 안 줌, 판 끝엔 안 씀) — 1
-constexpr int PRIV = 32;
-constexpr int CRITIC_1D = POLICY_1D + PRIV;
-
 }  // namespace mdp::obs
 
 // ---- 계층형 행동 모드 (2026-11-08, mdp/README "계층형"): 정책이 1 s 마다 프론티어 후보 K 개 중 하나를 고르고, 경로 계획 + 추종기가 몬다.
@@ -84,7 +74,6 @@ enum : int {
 };
 constexpr int CAND_1D = K * FEAT;                         // 56
 constexpr int POLICY_1D = mdp::obs::POLICY_1D + CAND_1D;  // 1360 (앞 1304 칸은 기본 모드와 같은 배치)
-constexpr int CRITIC_1D = POLICY_1D + mdp::obs::PRIV;
 constexpr int kCandMinCells = 1;     // 후보 덩어리 크기 문턱 (칸) — 0.75 m 미만 조각도 후보 (정체 판의 36 % 가 그런 조각만 남아 실패, 2026-11-08 조사)
 constexpr int kCandMinDist = 6;      // 후보 칸은 로봇 칸에서 BFS 6 칸(0.3 m) 이상 — 그 안은 라이다가 못 보는 뒤·발밑(fov 220°)이라 가도 안 풀림. 잠정
                                      // (2026-11-08 규칙 정책: 이 문턱 없이 늘 0 번을 고르면 거리 0 덩어리에 "도착"해 128 판 모두 정체)
@@ -102,7 +91,7 @@ constexpr int kPathMax = 64;         // 웨이포인트 상한 (EnvState)
 
 // ---- 그래프 관측 모드 (2026-11-11, network/README "그래프 어텐션 정책"): HEADER(Cao et al., arXiv 2510.15679) 식.
 // 정책 입력은 로봇 둘레 격자 그래프(노드 특징·간선·현재 노드)와 전역 벡터뿐이고 원시 센서는 없다. 행동 = 현재 노드의 이웃 하나.
-// 버퍼 모양(환경 n 개): 노드 특징 uint8 [n][N][FEAT], 간선 uint32 [n][N], 현재 노드 int [n], 전역 float [n][GLOB], 참값 float [n][obs::PRIV]
+// 버퍼 모양(환경 n 개): 노드 특징 uint8 [n][N][FEAT], 간선 uint32 [n][N], 현재 노드 int [n], 전역 float [n][GLOB]
 namespace mdp::graph {
 constexpr int GW = 32, GH = 32;       // 노드 격자 열·행 수 — 간격 0.8 m 면 25.6 m 창 (지도 전체, obs::kFrontNorm 과 같은 범위)
 constexpr float NODE_RES = 0.8f;      // m, 노드 간격의 기본값 — 실제 값은 env.yaml action.graph.node_resolution (EnvCfg graph_step). HEADER(arXiv 2510.15679): 학습 시뮬 4 m(센서 20 m, IV-D),
@@ -127,7 +116,6 @@ enum : int {
 // 현재 노드 cur: int 0 … N − 1 (로봇이 선 노드, 반드시 유효). 행동 가림 = edge[cur] 의 비트.
 constexpr int GLOB = 16;              // 전역 벡터 칸 수 (float, 정규화됨 — 내용은 시뮬 쪽이 정한다). 잠정. HEADER 에 없는 우리 추가 —
                                       // 신경망은 이 입력의 가중치를 0 으로 시작하고(시작 시점엔 논문 구조와 같은 출력) 끌 수도 있다
-// 가치 전용 참값은 obs::PRIV (32) 그대로.
 // 이 모드의 행동: 환경마다 act::DIM 칸, a[0] = 고른 스텐실 번호 0 … NB − 1 (정수 값), 나머지 0
 }  // namespace mdp::graph
 

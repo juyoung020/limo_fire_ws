@@ -28,11 +28,10 @@ int main(int argc, char** argv) {
   auto& ac = ppo.ac();
   // 환경 쪽 버퍼 (러너가 줄 것과 같은 크기)
   uint8_t* img;
-  float *o1, *pv, *act, *rew;
+  float *o1, *act, *rew;
   int* done;
   CK(cudaMalloc(&img, (size_t)N * o::IMG_SIZE));
   CK(cudaMalloc(&o1, (size_t)N * o::POLICY_1D * 4));
-  CK(cudaMalloc(&pv, (size_t)N * o::PRIV * 4));
   CK(cudaMalloc(&act, (size_t)N * mdp::act::DIM * 4));
   CK(cudaMalloc(&rew, N * 4));
   CK(cudaMalloc(&done, N * 4));
@@ -42,12 +41,10 @@ int main(int argc, char** argv) {
     for (auto& v : hi) v = (uint8_t)(rng() & 255);
     CK(cudaMemcpy(img, hi.data(), hi.size(), cudaMemcpyHostToDevice));
     std::normal_distribution<float> G;
-    std::vector<float> h1((size_t)N * o::POLICY_1D), hp((size_t)N * o::PRIV), hr(N);
+    std::vector<float> h1((size_t)N * o::POLICY_1D), hr(N);
     for (auto& v : h1) v = G(rng);
-    for (auto& v : hp) v = G(rng);
     for (auto& v : hr) v = G(rng);
     CK(cudaMemcpy(o1, h1.data(), h1.size() * 4, cudaMemcpyHostToDevice));
-    CK(cudaMemcpy(pv, hp.data(), hp.size() * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(rew, hr.data(), N * 4, cudaMemcpyHostToDevice));
     CK(cudaMemset(done, 0, N * 4));
   }
@@ -61,13 +58,13 @@ int main(int argc, char** argv) {
     for (int t = 0; t < cfg.steps_per_env; ++t) {
       CK(cudaDeviceSynchronize());
       auto a0 = now();
-      ppo.act(img, o1, pv, act);
+      ppo.act(img, o1, act);
       CK(cudaDeviceSynchronize());
       ta += ms(a0, now());
       ppo.store(rew, done);
     }
     auto u0 = now();
-    ppo.update(img, o1, pv);
+    ppo.update(img, o1);
     CK(cudaDeviceSynchronize());
     double tu = ms(u0, now());
     auto i0 = now();
@@ -87,6 +84,6 @@ int main(int argc, char** argv) {
   std::printf("GPU 메모리: 이 프로세스가 더 쓴 양 %.2f GB (롤아웃·Adam·작업 버퍼 %.2f GB, 신경망 작업 공간 actor %.2f + critic %.2f GB, "
               "환경 쪽 관측 버퍼 %.2f GB, 나머지 cuBLAS·CUDA 문맥)\n",
               (free0 - free1) / 1e9, ppo.storage_bytes() / 1e9, ac.actor.ws_bytes() / 1e9, ac.critic.ws_bytes() / 1e9,
-              ((size_t)N * (o::IMG_SIZE + 4 * (o::POLICY_1D + o::PRIV + mdp::act::DIM + 2))) / 1e9);
+              ((size_t)N * (o::IMG_SIZE + 4 * (o::POLICY_1D + mdp::act::DIM + 2))) / 1e9);
   return 0;
 }

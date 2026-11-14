@@ -1,4 +1,4 @@
-// 옛 빌드 == 새 빌드 비교용: 같은 장면·씨앗·행동열로 GPU 환경을 돌려 걸음마다 모든 출력(상태·보상·항·끝·판 정보·관측 2D·1D·가치 전용)과
+// 옛 빌드 == 새 빌드 비교용: 같은 장면·씨앗·행동열로 GPU 환경을 돌려 걸음마다 모든 출력(상태·보상·항·끝·판 정보·관측 2D·1D)과
 // 끝에 지도·덮음 표시의 해시(FNV-1a 64)를 한 줄씩 찍는다. 커널을 고친 뒤 두 빌드의 출력을 diff 하면 시뮬 결과가 비트까지 같은지 안다.
 // env_dump <장면.scene> [장면 …] [--list 목록] [--envs 256] [--steps 60] [--people 0] [--declare 0.01] [--seed 7] [--hier]
 #include <cstdio>
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
   cudaMalloc(&d_act, sizeof(float) * A * n_env);
   uint64_t rng = 99 + seed;
   std::vector<sim::EnvState> st;
-  std::vector<float> r, t, o1, pv;
+  std::vector<float> r, t, o1;
   std::vector<int32_t> d;
   std::vector<sim::EpInfo> ep;
   std::vector<uint8_t> img;
@@ -70,13 +70,13 @@ int main(int argc, char** argv) {
     gpu.get_reward(r, d);
     gpu.get_terms(t);
     gpu.get_ep(ep);
-    gpu.get_obs(img, o1, pv);
+    gpu.get_obs(img, o1);
     if (s == img_step) { FILE* f = std::fopen(img_file.c_str(), "wb"); std::fwrite(img.data(), 1, img.size(), f); std::fclose(f); }
     // 판 정보는 끝난 환경만 유효
     uint64_t he = 1469598103934665603ull;
     for (int i = 0; i < n_env; ++i)
       if (d[i] != 0) he = fnv(&ep[i], sizeof(sim::EpInfo), he);
-    const uint64_t h[7] = {fnv_v(st), fnv_v(r), fnv_v(d), fnv_v(t), he, fnv_v(img), fnv(o1.data(), o1.size() * 4, fnv_v(pv))};
+    const uint64_t h[7] = {fnv_v(st), fnv_v(r), fnv_v(d), fnv_v(t), he, fnv_v(img), fnv_v(o1)};
     std::printf("%d st %016llx r %016llx d %016llx t %016llx ep %016llx img %016llx 1d %016llx\n", s, (unsigned long long)h[0],
                 (unsigned long long)h[1], (unsigned long long)h[2], (unsigned long long)h[3], (unsigned long long)h[4],
                 (unsigned long long)h[5], (unsigned long long)h[6]);

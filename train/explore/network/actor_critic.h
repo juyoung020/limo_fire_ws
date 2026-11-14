@@ -155,7 +155,7 @@ class Normalizer {
   static constexpr real kEps = 1e-2f;
 };
 
-// 공유 인코더(합성곱 가지들) → 특징 F. actor·critic MLP 입력 = [F | 정규화 1D] (actor 는 정책 1D, critic 은 참값까지).
+// 공유 인코더(합성곱 가지들) → 특징 F. actor·critic MLP 입력 = [F | 정규화 1D] — 둘이 같은 1D(정책 관측)를 본다 (가치 전용 참값 입력 없음).
 // actor·critic 의 imgs 는 비우고 in1d 는 1D 만 적는다 — ActorCritic 이 앞에 F 열을 붙인다.
 struct ACSpec {
   NetSpec enc;               // 합성곱 가지만 (in1d 0, MLP 없음)
@@ -163,7 +163,6 @@ struct ACSpec {
   int n_cont = 3;            // 가우시안 성분 수 (actor 출력 앞쪽), 뒤 1 개가 선언 로짓
   real init_log_std = 0.f;  // log σ 초기값 (σ = 1, rsl_rl init_noise_std=1.0)
   real declare_bias = -7.f; // 선언 로짓 편향 초기값 (mdp/README "행동")
-  int norm_dim = 0;          // 정규화 대상 1D 수 (critic 1D 전체; actor 는 앞 in1d 개를 같은 통계로)
   // 인코더 나누기 (2026-11-08, rsl_rl·legged_gym·Jonnarth 2024·Cao 2024 처럼): true 면 actor 인코더 enc 와 critic 인코더 enc_c 가 같은 구조·따로 가중치,
   // 각 인코더 기울기는 자기 손실에서만. false = 공유 인코더(구조 버전 2, 체크포인트 형식 2)
   bool split_enc = false;
@@ -171,7 +170,7 @@ struct ACSpec {
   // 머리가 슬롯마다 [임베딩 ; 정규화 1D 의 slot_off + k·slot_feat 칸] → 로짓. 이때 n_cont = 0 (σ 없음), 선언 로짓 없음
   int n_slots = 0, slot_feat = 0, slot_off = 0, slot_hidden = 64;
   // 그래프 어텐션 정책 (graph_net.cuh, network/README "그래프 어텐션 정책"): graph = true 면 관측 = 노드 그래프, 행동 = 현재 노드의 이웃 24 칸 중 하나
-  // (가린 범주 분포). enc·actor 는 안 쓴다. critic = 가치 머리 MLP — in1d 는 참값 칸 수(= norm_dim), 입력은 [E | Hc | 정규화 참값]. n_cont = 0
+  // (가린 범주 분포). enc·actor 는 안 쓴다. critic = 가치 머리 MLP — in1d 0, 입력은 [E | Hc] (정규화 없음). n_cont = 0
   bool graph = false;
   GraphSpec gspec;
   int graph_glob = 0;          // 정책 머리에 넣는 전역 벡터 칸 수 (HEADER 에 없는 우리 추가, 가중치 0 으로 시작). 0 = 끔 (논문 구조 그대로)

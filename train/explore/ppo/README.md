@@ -30,10 +30,9 @@ cmake --build <빌드> -j8
 
 ```cpp
 xppo::PPO ppo(xppo::PPOConfig{/*num_envs=*/2048, ...}, xnet::explore_spec(), seed);
-void act(const uint8_t* obs_img /*[N][IMG_SIZE]*/, const float* obs_1d /*[N][POLICY_1D]*/,
-         const float* priv /*[N][PRIV], nullptr=0*/, float* actions /*[N][4]*/);   // 학습: 샘플·기록·정규화 갱신
+void act(const uint8_t* obs_img /*[N][IMG_SIZE]*/, const float* obs_1d /*[N][POLICY_1D]*/, float* actions /*[N][4]*/);   // 학습: 샘플·기록·정규화 갱신
 void store(const float* reward /*[N]*/, const int* done /*[N]: 0 진행, 1 종료(선언·충돌), 3 끊김*/);
-UpdateStats update(const uint8_t* obs_img, const float* obs_1d, const float* priv); // steps_per_env 번 act/store 뒤, 다음 관측으로
+UpdateStats update(const uint8_t* obs_img, const float* obs_1d); // steps_per_env 번 act/store 뒤, 다음 관측으로
 void act_inference(const uint8_t* obs_img, const float* obs_1d, float* actions, int n = -1); // 평균 행동, 선언 = p > 0.5
 void save(const std::string& path) const;  void load(const std::string& path);      // 반복 사이에서만
 int iteration() const;  float learning_rate() const;  xnet::ActorCritic& ac();
@@ -711,3 +710,28 @@ nsys 커널 시간 (train 3 반복 전체 합 ÷ 3 = 반복당, 롤아웃 act �
 판 가중 평균 판 보상: 처음 5 반복 23.33 (판 92) → 마지막 5 반복 30.73 (판 698). 엔트로피 2.31 → 1.91, 덮음 ~0.90, 성공 0.95~1.00.
 단 처음 5 반복은 판이 거의 안 끝나거나(반복마다 2~4 판) 시작하자마자 끝난 판(덮음 0.08)이 섞여 낮은 것이고, 판이 고르게 끝나기 시작한
 반복 5~9 의 평균은 28.3 이다 — 그 뒤로는 30 언저리에서 평평하다. 배우는 신호로는 약하다(엔트로피 감소 + 소폭 상승). 반복은 73 s (update 48 s, 노드 ~157).
+
+## 가치 참값 입력 뺌 (2026-11-14, 브랜치 critic-nopriv)
+
+가치(critic)가 정책 1D 뒤에 붙여 보던 시뮬 정답 32 칸(참 자세·자세 오차·정답 덮음·남은 벽 칸·가장 가까운 사람 간격·정답 벽 진행 없음 시계)을 없앴다 —
+실물에서 못 재는 값이 학습 신호를 만들면 실물에서 이어 학습할 수 없어서다. 이제 가치와 정책의 1D 입력이 같다(`critic.in1d == actor.in1d`, 정규화 칸 = 정책 1D. 그래프는 `[E | Hc]` 만).
+
+- **옛 체크포인트**: 체크포인트 형식 버전은 그대로고, 블록 크기 검사가 옛 파일을 거부하며 변환 도구를 알려 준다. `ckpt_drop_priv 입력.bin 출력.bin` 이 가치 첫 층
+  (`critic.mlp0.w` · 그래프 `gcritic.v.mlp0.w`)의 마지막 32 입력 열을 가중치·Adam m·v 에서 빼고 정규화 칸을 32 줄인다. 나머지는 바이트 그대로. 이미 바꾼 파일은 거부.
+  죽은 열을 남기는 호환 경로는 두지 않았다 — 정규화된 입력은 평균 ~0 이라 열을 빼도 가치 출력 평균이 보존되고, 아래 실측에서 손실이 나빠지지 않았다.
+- **가치만 맞추기**: `train --critic-warmup N` = 이어 학습 처음 N 반복은 가치 쪽 블록(`enc_c.*`·`critic.*`·`gcritic.*`)만 Adam(`PPO::set_critic_only`). 정책·log σ·KL 학습률은 그대로.
+  인코더를 같이 쓰는 구조(공유 인코더·`graph_share`)에서는 예외. 로그 `train/value0` = 반복 첫 미니배치의 걸음 전 가치 손실.
+
+실측 (`runs/low_e0` 반복 9000, RTX 3060, 환경 512 · 사람 2 · 씨앗 1 — 짧은 확인):
+
+| 확인 | 결과 |
+|---|---|
+| 변환 | `critic.mlp0.w` [256][1088 → 1056], 변수 695078 → 686886. 뺀 열 \|w\| 평균 0.0496 (남은 열 0.1110) |
+| 파일 비교 | 65 블록 가운데 가치 첫 층을 뺀 64 블록의 변수·Adam m·v, 정규화 앞 32 칸, 반복·학습률·씨앗이 바이트 같음 |
+| 정책 출력 | `low_policy_run --mode follow` bookstore · 사람 2 · 64 판(정책 걸음 34576) 결정적 실행의 출력이 첫 줄(파일 이름·변수 수) 빼고 같음 — 전체 지문 `c9d8a3b191ced294` |
+| 가치 손실 (같은 롤아웃) | 반복 9000 `value0`: 옛 빌드(정답 입력 있음) 1.804 → 변환본 1.720. 반복 9001: 2.166 → 2.148 (두 번째부터는 가치가 달라져 정확히 같은 롤아웃은 아님) |
+| `--critic-warmup 20` | `value0` 처음 5 반복 평균 1.70, 마지막 5 반복 평균 1.97(3.81 한 번 포함 — 빼면 1.51). 반복마다 1.17 ~ 3.81 로 흔들려 흐름은 안 보임 |
+| 가치만 맞춘 뒤 | 20 반복 뒤 체크포인트: 정책 쪽 33 블록 바이트 같음, 가치 쪽 32 블록만 바뀜. 정규화 통계는 평소처럼 갱신됨 |
+
+읽는 법: 이 체크포인트의 가치는 정답 입력에 거의 기대지 않았다(뺀 직후 손실이 오르지 않음). 그래서 가치만 맞추기는 이 체크포인트에는 꼭 필요하지 않다 — 도구는 정답 입력에 더 기댄 체크포인트용으로 남긴다.
+안 한 것: 긴 이어 학습으로 본 성능 변화, 그래프·계층 체크포인트 변환 실측.

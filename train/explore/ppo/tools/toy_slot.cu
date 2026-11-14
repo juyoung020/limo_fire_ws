@@ -20,7 +20,7 @@
 using namespace xnet;
 
 namespace {
-constexpr int K = 8, F = 7, BASE = 5, P1 = BASE + K * F, PR = 2;
+constexpr int K = 8, F = 7, BASE = 5, P1 = BASE + K * F;
 
 xnet::ACSpec toy_spec() {
   ACSpec s;
@@ -34,11 +34,9 @@ xnet::ACSpec toy_spec() {
   a.hidden = {64, 64};
   a.out = 16;
   NetSpec c = a;
-  c.in1d = P1 + PR;
   c.out = 1;
   s.actor = a;
   s.critic = c;
-  s.norm_dim = P1 + PR;
   s.split_enc = true;
   s.n_cont = 0;
   s.n_slots = K;
@@ -51,9 +49,9 @@ xnet::ACSpec toy_spec() {
 struct Toy {
   int n;
   std::mt19937 rng;
-  std::vector<float> o1, pr;
+  std::vector<float> o1;
   std::vector<int> best;
-  explicit Toy(int n_, uint64_t seed) : n(n_), rng((uint32_t)seed), o1((size_t)n_ * P1), pr((size_t)n_ * PR), best(n_) {}
+  explicit Toy(int n_, uint64_t seed) : n(n_), rng((uint32_t)seed), o1((size_t)n_ * P1), best(n_) {}
   void sample() {
     std::normal_distribution<float> G(0.f, 1.f);
     std::uniform_int_distribution<int> U(1, K);
@@ -74,28 +72,24 @@ struct Toy {
         if (v && (b < 0 || f[0] > o[BASE + b * F])) b = k;
       }
       best[i] = b;
-      pr[(size_t)i * PR] = (float)b / K;
-      pr[(size_t)i * PR + 1] = 0.f;
     }
   }
 };
 
 struct Dev {
   uint8_t* img;
-  float *o1, *pr, *act, *rew;
+  float *o1, *act, *rew;
   int* done;
   Dev(int n) {
     CK(cudaMalloc(&img, (size_t)n * 1280));
     CK(cudaMemset(img, 0, (size_t)n * 1280));
     CK(cudaMalloc(&o1, sizeof(float) * n * P1));
-    CK(cudaMalloc(&pr, sizeof(float) * n * PR));
     CK(cudaMalloc(&act, sizeof(float) * n * 4));
     CK(cudaMalloc(&rew, sizeof(float) * n));
     CK(cudaMalloc(&done, sizeof(int) * n));
   }
   void up(const Toy& t) {
     CK(cudaMemcpy(o1, t.o1.data(), sizeof(float) * t.o1.size(), cudaMemcpyHostToDevice));
-    CK(cudaMemcpy(pr, t.pr.data(), sizeof(float) * t.pr.size(), cudaMemcpyHostToDevice));
   }
 };
 
@@ -129,7 +123,7 @@ double train(int iters, int n, uint64_t seed, const std::string& save, long* bad
   for (int it = 0; it < iters; ++it) {
     double hit = 0;
     for (int t = 0; t < cfg.steps_per_env; ++t) {
-      ppo.act(d.img, d.o1, d.pr, d.act);
+      ppo.act(d.img, d.o1, d.act);
       CK(cudaMemcpy(act.data(), d.act, sizeof(float) * act.size(), cudaMemcpyDeviceToHost));
       for (int i = 0; i < n; ++i) {
         const int a = (int)act[(size_t)i * 4];
@@ -143,7 +137,7 @@ double train(int iters, int n, uint64_t seed, const std::string& save, long* bad
       env.sample();
       d.up(env);
     }
-    const auto us = ppo.update(d.img, d.o1, d.pr);
+    const auto us = ppo.update(d.img, d.o1);
     g_opt.last_cm = us.logit_cm;
     if (g_opt.cm_log && (it % 50 == 0 || it == iters - 1))
       std::printf("  반복 %3d: 공통 성분 |l̄| %.4g, 있는 칸 표준편차 %.3g, max|l| %.4g, 기울기 노름 %.3g, kl0 %.2g, kl %.4f, lr %.2e\n", it, us.logit_cm,

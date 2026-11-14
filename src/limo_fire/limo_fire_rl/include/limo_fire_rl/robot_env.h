@@ -101,7 +101,7 @@ class RobotEnv {
   std::vector<int16_t> lmap_;
   std::vector<uint32_t> marks_, trail_;
   std::vector<uint8_t> img_, cvox_;
-  std::vector<float> o1d_, priv_, ring_, vprev_, lint_, rew_, terms_, cpts_;
+  std::vector<float> o1d_, ring_, vprev_, lint_, rew_, terms_, cpts_;
   std::vector<int32_t> done_buf_, cand_, cand_cur_;
   std::vector<sim::EpInfo> ep_;
 };

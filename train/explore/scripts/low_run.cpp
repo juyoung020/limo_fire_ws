@@ -481,12 +481,11 @@ int run_follow(const Args& a, bool verify) {
           v_tgt[i] = cmd[i].target;
         }
         std::vector<uint8_t> im1, im2, cv1, cv2;
-        std::vector<float> o1, o2, p1, p2, cp1, cp2;
-        envs[0]->get_obs(im1, o1, p1);
-        envs[1]->get_obs(im2, o2, p2);
+        std::vector<float> o1, o2, cp1, cp2;
+        envs[0]->get_obs(im1, o1);
+        envs[1]->get_obs(im2, o2);
         v_obs += im1 != im2;
         v_obs += std::memcmp(o1.data(), o2.data(), 4 * o1.size()) != 0;
-        v_obs += std::memcmp(p1.data(), p2.data(), 4 * p1.size()) != 0;
         envs[0]->get_camlayer(cv1, cp1);
         envs[1]->get_camlayer(cv2, cp2);
         v_cam += cv1 != cv2;
