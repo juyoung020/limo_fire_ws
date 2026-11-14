@@ -42,7 +42,8 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[i], "--share")) share = true;
     if (!std::strcmp(argv[i], "--hier")) setenv("GC_HIER", "1", 1);   // 계층형: 슬롯 머리 + 가린 범주 분포 (gc_impl.cuh)
     if (!std::strcmp(argv[i], "--low")) setenv("GC_LOW", "1", 1);
-    if (!std::strcmp(argv[i], "--wide")) setenv("GC_LOW_WIDE", "1", 1);   // --low --full 과 같이: 넓은 지도 가지(explore_spec_low(true))     // 아래층 RL: 연속 행동 2 개, --full 이면 explore_spec_low (gc_impl.cuh)
+    if (!std::strcmp(argv[i], "--wide")) setenv("GC_LOW_WIDE", "1", 1);
+    if (!std::strcmp(argv[i], "--gru")) setenv("GC_LOW_GRU", "1", 1);   // --low 와 같이: actor·critic 순환 핵 + 순서 미니배치 (gc_impl.cuh)   // --low --full 과 같이: 넓은 지도 가지(explore_spec_low(true))     // 아래층 RL: 연속 행동 2 개, --full 이면 explore_spec_low (gc_impl.cuh)
     if (!std::strcmp(argv[i], "--mlp") && i + 1 < argc) mlp = std::atoi(argv[++i]);
   }
   const int K = full ? 8 : 16;

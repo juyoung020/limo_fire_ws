@@ -44,6 +44,7 @@ struct OptixRt::Impl {
   RtParams* dparams = nullptr;   // prog 마다 한 칸 (kRtProgs)
   RtParams hparams[kRtProgs] = {};   // 장치 칸에 올라 있는 값 (같으면 다시 안 올림)
   bool hvalid[kRtProgs] = {};
+  cudaStream_t up = nullptr;   // 캡처 중 인자 올리기용
 };
 
 bool OptixRt::available() {
@@ -225,7 +226,17 @@ void OptixRt::launch(const RtParams& p0, cudaStream_t st) {
   if (!same) {   // 앞서 넣은 발사가 이 칸을 아직 읽을 수 있으므로 같은 스트림 차례로 올린다 (호스트 사본은 객체 안 — 복사가 끝날 때까지 살아 있음)
     I.hparams[slot] = p;
     I.hvalid[slot] = true;
-    cudaMemcpyAsync(I.dparams + slot, &I.hparams[slot], sizeof(RtParams), cudaMemcpyHostToDevice, st);
+    cudaStreamCaptureStatus cs = cudaStreamCaptureStatusNone;
+    cudaStreamIsCapturing(st, &cs);
+    if (cs == cudaStreamCaptureStatusNone) {
+      cudaMemcpyAsync(I.dparams + slot, &I.hparams[slot], sizeof(RtParams), cudaMemcpyHostToDevice, st);
+    } else {
+      // CUDA Graph 캡처 중 (학습 롤아웃 그래프): 페이지 메모리 복사는 캡처할 수 없다 → 따로 스트림에서 지금 올리고 기다린다.
+      // 이 칸을 읽는 앞선 발사가 없을 때만 (캡처 전에 같은 칸을 쓴 발사가 아직 돌 수 있으면 안전하지 않음 — 시뮬 걸음 발사 1 ~ 4 는 Env 마다 처음 한 번만 올림)
+      if (!I.up) cudaStreamCreateWithFlags(&I.up, cudaStreamNonBlocking);
+      cudaMemcpyAsync(I.dparams + slot, &I.hparams[slot], sizeof(RtParams), cudaMemcpyHostToDevice, I.up);
+      cudaStreamSynchronize(I.up);
+    }
   }
   const unsigned dim = (unsigned)std::min(p.n, 1 << 19);   // 발사 칸은 많아야 2^19 개 — raygen 이 칸마다 여러 일을 차례로
   OptixShaderBindingTable sbt = I.sbt;

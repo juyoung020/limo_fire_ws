@@ -25,11 +25,12 @@ namespace {
 constexpr int MAXC = 8;  // 연속 성분 최대 수 (커널 안 고정 배열)
 
 // 샘플: a = μ + σ·ε (자르지 않음), 선언 = u < sigmoid(로짓). Philox(씨앗, 환경, 호출 수) → 재현 가능
-__global__ void k_sample(const real* aout, const real* log_std, int n, int nc, uint64_t seed, uint64_t call,
+__global__ void k_sample(const real* aout, const real* log_std, int n, int nc, uint64_t seed, const unsigned long long* call_dev,
                          int env0, real* act_out, real* s_act, real* s_logp, real* s_mu, real* s_logit,
                          real* s_sd) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) return;
+  const uint64_t call = *call_dev;   // 호출 수는 장치에 (캡처한 롤아웃 그래프가 반복마다 다른 값을 읽음)
   curandStatePhilox4_32_10_t rs;
   curand_init(seed, (uint64_t)(env0 + i), call * 8ull, &rs);
   int A = nc + 1;
@@ -82,6 +83,31 @@ __global__ void k_store(const real* r, const int* done, const real* val, real ga
   s_done[i] = d != 0 ? 1.f : 0.f;
 }
 
+// 순환 핵: 걸음 끝 — 판이 끝난 환경의 h 를 0 으로 (다음 걸음부터 새 판), 다음 걸음 행의 reset 칸 (마지막 걸음이면 안 씀)
+__global__ void k_h_done(const int* done, int n, int H, real* ha, real* hc, real* reset_next) {
+  long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (k >= (long)n * H) return;
+  const int i = (int)(k / H);
+  const bool d = done[i] != 0;
+  if (d) {
+    if (ha) ha[k] = 0.f;
+    if (hc) hc[k] = 0.f;
+  }
+  if (reset_next && k % H == 0) reset_next[i] = d ? 1.f : 0.f;
+}
+// 순서 미니배치 모으기: reset [n] = s_reset[idx[i]], h0 [B][H] = s_h0[env] (행 i < B 의 idx = 0 걸음 칸 = 환경 번호)
+__global__ void k_gather_seq(const int* idx, int n, int B, int H, const real* s_reset, const real* s_h0a, const real* s_h0c, real* c_reset, real* c_h0a,
+                             real* c_h0c) {
+  long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (k < n) c_reset[k] = s_reset[idx[k]];
+  if (k < (long)B * H) {
+    const int i = (int)(k / H), j = (int)(k % H);
+    const long e = idx[i];
+    c_h0a[k] = s_h0a[e * H + j];
+    c_h0c[k] = s_h0c[e * H + j];
+  }
+}
+
 // GAE: rsl_rl storage/rollout_storage.py:145-167, 환경마다 스레드 하나가 뒤에서부터
 __global__ void k_gae(const real* rew, const real* done, const real* val, const real* last_val, int T, int N,
                       real gamma, real lam, real* ret, real* adv) {
@@ -112,7 +138,7 @@ struct GatherSet {
   int W;  // 폭 합
 };
 __global__ void k_gather_mb(const real* __restrict__ obs, int D, const int* __restrict__ idx, int n, real* dst_obs,
-                            long ld_obs, __nv_bfloat16* dst_h, GatherSet gs) {
+                            long ld_obs, __nv_bfloat16* dst_h, GatherSet gs, int both = 0) {
   long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
   const int R = D + gs.W;
   if (k >= (long)n * R) return;
@@ -122,7 +148,7 @@ __global__ void k_gather_mb(const real* __restrict__ obs, int D, const int* __re
     const real v = obs[r * D + j];
     if (dst_h)
       dst_h[(long)i * ld_obs + j] = __float2bfloat16_rn(v);
-    else
+    if (!dst_h || both)
       dst_obs[(long)i * ld_obs + j] = v;
     return;
   }
@@ -426,14 +452,15 @@ __global__ void k_vcat(const real* E, const real* Hc, int n, int d, real* dst) {
 }
 
 // MLP 입력 [F | 1D] 의 1D 열: dst[i·ldd + j] = x[i·ldx + j] (j < d), dst_h 면 bf16 만. F 열은 인코더가 바로 쓴다
-__global__ void k_put_1d(const real* __restrict__ x, int ldx, int d, int n, real* dst, __nv_bfloat16* dst_h, long ldd) {
+// both: bf16 사본이 있어도 fp32 에도 씀 (순환 핵이 fp32 행의 1D 열을 읽음)
+__global__ void k_put_1d(const real* __restrict__ x, int ldx, int d, int n, real* dst, __nv_bfloat16* dst_h, long ldd, int both = 0) {
   long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
   if (k >= (long)n * d) return;
   int i = (int)(k / d), j = (int)(k % d);
   const real v = x[(long)i * ldx + j];
   if (dst_h)
     dst_h[(long)i * ldd + j] = __float2bfloat16_rn(v);
-  else
+  if (!dst_h || both)
     dst[(long)i * ldd + j] = v;
 }
 
@@ -460,6 +487,146 @@ __global__ void k_adam(real* p, const real* g, real* m, real* v, long n, real lr
   v[i] = vi;
   real denom = sqrt(vi) / sqrt(bc2) + eps;
   p[i] -= (lr / bc1) * mi / denom;
+}
+
+// ---- 장치 갱신 (PPOConfig::device_update) — 옛 호스트 식을 그대로 옮긴 것 (같은 식·같은 차례 → 비트 같음) ----
+// k_adam 과 같은 식, 학습률·자르기 배율·편향 보정을 장치에서 읽음
+__global__ void k_adam_dev(real* p, const real* g, real* m, real* v, long n, const float* lr_p, real b1, real b2, real eps,
+                           const float* bc, const float* gscale_p) {
+  long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  const real lr = *lr_p, bc1 = bc[0], bc2 = bc[1], gscale = *gscale_p;
+  real gi = g[i] * gscale;
+  real mi = b1 * m[i] + (1.f - b1) * gi;
+  real vi = b2 * v[i] + (1.f - b2) * gi * gi;
+  m[i] = mi;
+  v[i] = vi;
+  real denom = sqrt(vi) / sqrt(bc2) + eps;
+  p[i] -= (lr / bc1) * mi / denom;
+}
+// 정규화 갱신 (network/actor_critic.cu k_norm_update 와 같은 몸통) — 개수를 장치에서 읽음. 개수 올리기는 뒤 커널(k_count_add)이
+constexpr int kNormG2 = 16;
+__global__ void __launch_bounds__(32 * kNormG2) k_norm_update_dev(const real* x, int n, int ld, int D, real* mean, real* var, const double* count_old) {
+  __shared__ double sh[kNormG2][32];
+  __shared__ double mx_s[32];
+  const int lane = threadIdx.x, g = threadIdx.y;
+  const int j = blockIdx.x * 32 + lane;
+  const bool ok = j < D;
+  double s = 0;
+  if (ok)
+    for (int i = g; i < n; i += kNormG2) s += x[(long)i * ld + j];
+  sh[g][lane] = s;
+  __syncthreads();
+  if (g == 0) {
+    double t = 0;
+    for (int k = 0; k < kNormG2; ++k) t += sh[k][lane];
+    mx_s[lane] = t / n;
+  }
+  __syncthreads();
+  const double mx = mx_s[lane];
+  double v = 0;
+  if (ok)
+    for (int i = g; i < n; i += kNormG2) {
+      double d = x[(long)i * ld + j] - mx;
+      v += d * d;
+    }
+  __syncthreads();
+  sh[g][lane] = v;
+  __syncthreads();
+  if (g != 0 || !ok) return;
+  double vv0 = 0;
+  for (int k = 0; k < kNormG2; ++k) vv0 += sh[k][lane];
+  vv0 /= n;
+  const double count_new = *count_old + n;   // 호스트 옛 길: cn = count + n
+  double rate = (double)n / count_new;
+  double m = mean[j], vv = var[j];
+  double dm = mx - m;
+  m += rate * dm;
+  vv += rate * (vv0 - vv + dm * (mx - m));
+  mean[j] = (real)m;
+  var[j] = (real)vv;
+}
+// act 하나 끝: 정규화 개수 += n, 난수 호출 수 += 1 (스레드 하나)
+__global__ void k_act_tick(double* count, unsigned long long* calls, int n, int upd) {
+  if (upd) *count += n;
+  *calls += 1ull;
+}
+// 결정적 합의 부분합 (network/common.cu reduce 와 같은 몸통 — 512 블록 × 256, 블록 안 나무 더하기) → part[512]
+constexpr int kRedNB = 512, kRedRT = 256;
+constexpr int kPartSlots = 64;   // 부분합 칸: 0 이점 합 · 1 이점 제곱합 · 2 가치 합 · 3 수익 합 · 4.. 기울기 노름 범위
+constexpr int kRec = 8;          // 미니배치 기록 칸 (k_upd_ctrl)
+template <bool SQ>
+__global__ void k_partial_dev(const real* x, long n, double* part) {
+  __shared__ double sh[kRedRT];
+  double a = 0;
+  for (long i = blockIdx.x * (long)kRedRT + threadIdx.x; i < n; i += (long)gridDim.x * kRedRT) {
+    double v = x[i];
+    a += SQ ? v * v : v;
+  }
+  sh[threadIdx.x] = a;
+  __syncthreads();
+  for (int s = kRedRT / 2; s > 0; s >>= 1) {
+    if (threadIdx.x < s) sh[threadIdx.x] += sh[threadIdx.x + s];
+    __syncthreads();
+  }
+  if (threadIdx.x == 0) part[blockIdx.x] = sh[0];
+}
+__device__ double part_total(const double* p) {   // 호스트 옛 길: for (double v : h) a += v (차례대로)
+  double a = 0;
+  for (int i = 0; i < kRedNB; ++i) a += p[i];
+  return a;
+}
+// GAE 이점 정규화 (gae() 의 호스트 식): m = s/S, var = (ss − S·m²)/max(1, S−1), inv = 1/(√max(var,0) + 1e-8) → out[0] = (real)m, out[1] = inv
+__global__ void k_adv_norm(const double* part_s, const double* part_ss, int S, real* out) {
+  const double s = part_total(part_s), ss = part_total(part_ss);
+  const double m = s / S;
+  const double var = (ss - S * m * m) / (S - 1 > 1 ? S - 1 : 1);
+  out[0] = (real)m;
+  out[1] = (real)(1.0 / (sqrt(var > 0.0 ? var : 0.0) + 1e-8));
+}
+__global__ void k_affine_dev(real* x, long n, const real* mi) {
+  long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (i < n) x[i] = (x[i] - mi[0]) * mi[1];
+}
+// 덩이 통계 더하기 (minibatch 의 호스트 옛 길: stats[k] += hs[k], float → double)
+__global__ void k_stat_acc(const real* red, int ns, double* stats, int zero) {
+  const int k = threadIdx.x;
+  if (k >= 8) return;
+  if (zero) stats[k] = 0.0;
+  if (k < ns) stats[k] += (double)red[k];
+}
+// 미니배치 하나의 갱신 제어 (finish_update 의 호스트 식): 엔트로피(가우시안) · KL 적응 학습률 · 기울기 노름 → 자르기 배율, 기록
+// rec: [0..3] stats(surr, value, kl, 엔트로피 합 자리) · [4] gn · [5] 이 미니배치 뒤 학습률
+struct CtrlArgs {
+  const real* log_std;
+  int nc, n_all, mb;
+  int adapt;            // desired_kl > 0 && !critic_only
+  double desired_kl;
+  float lr_min, lr_max;
+  int n_rng;            // 기울기 노름 범위 수 (부분합 칸 수)
+  const double* part;   // [n_rng][512]
+  double max_grad_norm;
+};
+__global__ void k_upd_ctrl(CtrlArgs a, double* stats, float* lr, float* gscale, double* rec) {
+  // 엔트로피: −c·Σ(½+½ln2π+logσ) 의 합 자리 — 호스트 옛 길 ent += 0.5 + 0.91893853320467274 + l
+  double ent = 0;
+  for (int k = 0; k < a.nc; ++k) ent += 0.5 + 0.91893853320467274 + a.log_std[k];
+  stats[3] = ent * a.n_all;
+  const double kl = stats[2] / a.mb;
+  float l = *lr;
+  if (a.adapt) {
+    if (kl > a.desired_kl * 2.0) l = fmaxf((float)a.lr_min, l / 1.5f);
+    else if (kl < a.desired_kl / 2.0 && kl > 0.0) l = fminf((float)a.lr_max, l * 1.5f);
+  }
+  *lr = l;
+  double g2 = 0;
+  for (int r = 0; r < a.n_rng; ++r) g2 += part_total(a.part + (size_t)r * kRedNB);
+  const double gn = sqrt(g2);
+  const double cs = a.max_grad_norm / (gn + 1e-6);
+  *gscale = (real)(cs < 1.0 ? cs : 1.0);
+  for (int k = 0; k < 4; ++k) rec[k] = stats[k];
+  rec[4] = gn;
+  rec[5] = l;
 }
 
 template <typename T>
@@ -492,7 +659,9 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   S_ = N_ * T_;
   D_ = spec.actor.in1d;
   IMG_ = spec.enc.img_stride;
-  NF_ = ac_->nf;
+  NF_ = ac_->nx;   // MLP 입력에서 1D 앞 열 수 ([F | h]) — 순환 핵이 없으면 nf
+  NFE_ = ac_->nf;
+  H_ = spec.gru_h;
   NC_ = spec.n_cont;
   A_ = NC_ + 1;
   disc_ = spec.n_slots > 0;
@@ -520,6 +689,7 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   }
   if (IMG_ % 4) throw std::runtime_error("img_stride 는 4 의 배수여야 함");
   if (S_ % cfg.minibatches) throw std::runtime_error("N·T 가 minibatches 로 안 나뉨");
+  if (spec.gru_h > 0 && N_ % cfg.minibatches) throw std::runtime_error("순환 핵: N 이 minibatches 로 안 나뉨 (환경 단위 미니배치)");
   size_t& b = storage_bytes_;
   long P = ac_->n_params;
   m_ = dmalloc<real>(P, b);
@@ -579,14 +749,43 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   }
   c_gat_ = dmalloc<real>((long)C * (A_ + 5 + 2 * std::max(NC_, K_)), b);
   d_perm_ = dmalloc<int>(S_, b);
+  if (H_ > 0) {   // 순환 핵 상태·순서 미니배치 (러너는 환경 단위 순열 — finish_update)
+    if (!ac_->split) throw std::runtime_error("PPO: 순환 핵은 인코더 나눔(split_enc) 구조에서만");
+    if (C < S_ / cfg_.minibatches || (S_ / cfg_.minibatches) % T_ != 0) throw std::runtime_error("PPO: 순환 핵은 chunk ≥ 미니배치, 미니배치가 T 의 배수여야");
+    for (real** p : {&h_a_, &h_c_, &s_h0a_, &s_h0c_, &h_tmp_, &h_ia_}) {
+      *p = dmalloc<real>((long)N_ * H_, b);
+      CK(cudaMemset(*p, 0, sizeof(real) * N_ * H_));
+    }
+    s_reset_ = dmalloc<real>(S_, b);
+    CK(cudaMemset(s_reset_, 0, sizeof(real) * S_));
+    c_reset_ = dmalloc<real>(C, b);
+    c_h0a_ = dmalloc<real>((long)C * H_, b);
+    c_h0c_ = dmalloc<real>((long)C * H_, b);
+  }
+  // 장치 갱신 상태 (DevState · 부분합 · 미니배치 기록 · 편향 보정) 와 pinned 사본 — 반복 동안 새로 잡지 않음
+  d_st_ = dmalloc<DevState>(1, b);
+  d_part_ = dmalloc<double>((long)kPartSlots * kRedNB, b);
+  const int nmb = cfg_.epochs * cfg_.minibatches;
+  d_mbrec_ = dmalloc<double>((long)(nmb + 1) * kRec, b);
+  d_bc_ = dmalloc<float>(2L * nmb, b);
+  CK(cudaMallocHost(&h_mbrec_, sizeof(double) * ((nmb + 1) * kRec + 4 * kRedNB)));
+  CK(cudaMallocHost(&h_bc_, sizeof(float) * 2 * nmb));
+  CK(cudaMallocHost(&h_perm_, sizeof(int) * S_));
+  CK(cudaEventCreateWithFlags(&ev_upd_, cudaEventDisableTiming));
+  push_dev_state();
 }
 
 PPO::~PPO() {
   for (void* p : std::initializer_list<void*>{m_, v_, s_img_, s_obs_, s_act_, s_logp_, s_val_, s_mu_, s_logit_, s_sd_,
                                               s_rew_, s_done_, s_ret_, s_adv_, raw_, last_obs_, last_val_, c_img_,
                                               c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_,
-                                              s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_, c_gred_})
+                                              s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_, c_gred_,
+                                              d_st_, d_part_, d_mbrec_, d_bc_, h_a_, h_c_, s_h0a_, s_h0c_, h_tmp_, h_ia_, s_reset_, c_reset_, c_h0a_, c_h0c_})
     cudaFree(p);
+  for (void* p : std::initializer_list<void*>{h_mbrec_, h_bc_, h_perm_}) cudaFreeHost(p);
+  for (void* g : upd_exec_)
+    if (g) cudaGraphExecDestroy((cudaGraphExec_t)g);
+  if (ev_upd_) cudaEventDestroy(ev_upd_);
   delete ac_;
 }
 
@@ -596,14 +795,14 @@ void PPO::encode(int n, const uint8_t* img, const int* idx, const real* x1d) {
   auto st = ac_->stream;
   ac_->enc.forward(ac_->cublas, st, n, img, nullptr, 0, nullptr, idx);
   if (x1d)
-    k_put_1d<<<nblk((long)n * D_), 256, 0, st>>>(x1d, D_, D_, n, c_x_ + NF_, c_xh_ ? (__nv_bfloat16*)c_xh_ + NF_ : nullptr, NF_ + D_);
+    k_put_1d<<<nblk((long)n * D_), 256, 0, st>>>(x1d, D_, D_, n, c_x_ + NF_, c_xh_ ? (__nv_bfloat16*)c_xh_ + NF_ : nullptr, NF_ + D_, H_ > 0);
 }
 
 void PPO::encode_c(int n, const uint8_t* img, const int* idx, const real* x1d) {
   auto st = ac_->stream2;
   ac_->enc_c.forward(ac_->cublas2, st, n, img, nullptr, 0, nullptr, idx);
   if (x1d)
-    k_put_1d<<<nblk((long)n * D_), 256, 0, st>>>(x1d, D_, D_, n, c_xc_ + NF_, c_xch_ ? (__nv_bfloat16*)c_xch_ + NF_ : nullptr, NF_ + D_);
+    k_put_1d<<<nblk((long)n * D_), 256, 0, st>>>(x1d, D_, D_, n, c_xc_ + NF_, c_xch_ ? (__nv_bfloat16*)c_xch_ + NF_ : nullptr, NF_ + D_, H_ > 0);
 }
 
 void PPO::normalize(const real* obs1d, int n, bool upd, real* out) {
@@ -618,8 +817,15 @@ void PPO::act(const uint8_t* img, const real* obs1d, real* actions) {
   auto st = ac_->stream;
   long k0 = (long)step_ * N_;
   real* obs = s_obs_ + k0 * D_;
-  normalize(obs1d, N_, true, obs);
+  // 정규화 통계 갱신: 개수를 장치(d_st_)에서 읽는 판 (Normalizer::update 와 같은 몸통·같은 값) — 롤아웃 그래프를 다시 돌려도 맞는 개수
+  k_norm_update_dev<<<(ac_->norm.dim + 31) / 32, dim3(32, kNormG2), 0, st>>>(obs1d, N_, D_, ac_->norm.dim, ac_->norm.d_mean, ac_->norm.d_var, &d_st_->norm_count);
+  ac_->norm.count += N_;   // 호스트 거울 (체크포인트용)
+  ac_->norm.apply(obs1d, N_, D_, obs, D_, st);
   CK(cudaMemcpyAsync(s_img_ + k0 * IMG_, img, (size_t)N_ * IMG_, cudaMemcpyDeviceToDevice, st));
+  if (H_ > 0 && step_ == 0) {   // 롤아웃 시작 h (갱신의 순서 정방향 h0)
+    CK(cudaMemcpyAsync(s_h0a_, h_a_, sizeof(real) * N_ * H_, cudaMemcpyDeviceToDevice, st));
+    CK(cudaMemcpyAsync(s_h0c_, h_c_, sizeof(real) * N_ * H_, cudaMemcpyDeviceToDevice, st));
+  }
   for (int c0 = 0; c0 < N_; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, N_ - c0);
     const uint8_t* im = s_img_ + (k0 + c0) * IMG_;
@@ -628,6 +834,10 @@ void PPO::act(const uint8_t* img, const real* obs1d, real* actions) {
     if (ac_->split) encode_c(n, im, nullptr, ob);
     encode(n, im, nullptr, ob);
     if (!ac_->split) ac_->fork();
+    if (H_ > 0) {   // 순환 핵 한 걸음: h (판 끝은 store 가 0 으로 해 둠) → 새 h 를 MLP 입력의 h 열에 · 제자리 갱신
+      ac_->gru_c.step(ac_->cublas2, ac_->stream2, n, cx(), NF_ + D_, NF_, h_c_ + (long)c0 * H_, cx() + NFE_, NF_ + D_, cxh() ? cxh() + NFE_ : nullptr);
+      ac_->gru_a.step(ac_->cublas, st, n, c_x_, NF_ + D_, NF_, h_a_ + (long)c0 * H_, c_x_ + NFE_, NF_ + D_, c_xh_ ? c_xh_ + NFE_ : nullptr);
+    }
     ac_->critic.forward(ac_->cublas2, ac_->stream2, n, nullptr, cx(), NF_ + D_, s_val_ + k0 + c0, nullptr, cxh());
     ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     ac_->join();
@@ -639,11 +849,28 @@ void PPO::act(const uint8_t* img, const real* obs1d, real* actions) {
                                                   s_act_ + k, s_logp_ + k, s_logit_ + k * K_, s_mask_ + k * K_);
       continue;
     }
-    k_sample<<<nblk(n, 128), 128, 0, st>>>(c_aout_, ac_->log_std(), n, NC_, seed_, act_calls_, c0, actions + (long)c0 * A_,
+    k_sample<<<nblk(n, 128), 128, 0, st>>>(c_aout_, ac_->log_std(), n, NC_, seed_, &d_st_->act_calls, c0, actions + (long)c0 * A_,
                                             s_act_ + k * A_, s_logp_ + k, s_mu_ + k * NC_, s_logit_ + k,
                                             s_sd_ + k * NC_);
   }
+  k_act_tick<<<1, 1, 0, st>>>(&d_st_->norm_count, &d_st_->act_calls, N_, 1);   // 장치 계수 (호스트 거울과 같이)
   ++act_calls_;
+}
+
+void PPO::rollout_replayed(int steps) {
+  if (step_ + steps > T_) throw std::runtime_error("rollout_replayed: 롤아웃 칸을 넘음");
+  step_ += steps;
+  act_calls_ += (uint64_t)steps;
+  for (int t = 0; t < steps; ++t) ac_->norm.count += N_;   // act 와 같은 차례로 더함 (double 반올림 같게)
+}
+
+void PPO::push_dev_state() {
+  DevState h{};
+  h.norm_count = ac_->norm.count;
+  h.act_calls = act_calls_;
+  h.lr = lr_;
+  h.gscale = 1.f;
+  CK(cudaMemcpy(d_st_, &h, sizeof(h), cudaMemcpyHostToDevice));
 }
 
 void PPO::last_act_info(int n, real* logit, real* value) const {
@@ -659,6 +886,8 @@ void PPO::store(const real* reward, const int* done) {
   long k0 = (long)step_ * N_;
   k_store<<<nblk(N_, 128), 128, 0, ac_->stream>>>(reward, done, s_val_ + k0, cfg_.gamma, N_, s_rew_ + k0,
                                                   s_done_ + k0);
+  if (H_ > 0)   // 판이 끝난 환경: h → 0 (다음 걸음이 새 판), 다음 걸음 행 reset
+    k_h_done<<<nblk((long)N_ * H_), 256, 0, ac_->stream>>>(done, N_, H_, h_a_, h_c_, step_ + 1 < T_ ? s_reset_ + k0 + N_ : nullptr);
   ++step_;
 }
 
@@ -672,6 +901,7 @@ void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, in
   for (int c0 = 0; c0 < n_all; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, n_all - c0);
     encode(n, img + (long)c0 * IMG_, nullptr, raw_ + (long)c0 * D_);
+    if (H_ > 0) ac_->gru_a.step(ac_->cublas, st, n, c_x_, NF_ + D_, NF_, h_ia_ + (long)c0 * H_, c_x_ + NFE_, NF_ + D_, c_xh_ ? c_xh_ + NFE_ : nullptr);
     ac_->actor.forward(ac_->cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     if (disc_) {
       ac_->head.forward(st, n, c_aout_, AO_, raw_ + (long)c0 * D_, D_, SOFF_, ac_->d_params, c_logits_);
@@ -698,6 +928,10 @@ void PPO::compute_returns(const uint8_t* img, const real* obs1d) {
     if (ac_->split) {   // critic 인코더만 (stream2 → stream 에 합침)
       ac_->fork();
       encode_c(n, img + (long)c0 * IMG_, nullptr, last_obs_ + (long)c0 * D_);
+      if (H_ > 0) {   // 마지막 가치: critic h 한 걸음 (사본에서 — 롤아웃 h 는 다음 반복의 첫 act 가 이어 감)
+        CK(cudaMemcpyAsync(h_tmp_ + (long)c0 * H_, h_c_ + (long)c0 * H_, sizeof(real) * n * H_, cudaMemcpyDeviceToDevice, ac_->stream2));
+        ac_->gru_c.step(ac_->cublas2, ac_->stream2, n, c_xc_, NF_ + D_, NF_, h_tmp_ + (long)c0 * H_, c_xc_ + NFE_, NF_ + D_, c_xch_ ? c_xch_ + NFE_ : nullptr);
+      }
       ac_->critic.forward(ac_->cublas2, ac_->stream2, n, nullptr, c_xc_, NF_ + D_, last_val_ + c0, nullptr, c_xch_);
       ac_->join();
     } else {
@@ -713,6 +947,14 @@ void PPO::gae() {
   k_gae<<<nblk(N_, 128), 128, 0, st>>>(s_rew_, s_done_, s_val_, last_val_, T_, N_, cfg_.gamma, cfg_.lam, s_ret_,
                                        s_adv_);
   // 이점 정규화 (전체, torch.std 는 불편 추정) — rollout_storage.py:166-167
+  if (dev_mb_) {   // 장치 갱신: 같은 부분합·같은 식을 장치에서 (호스트 왕복 없음)
+    k_partial_dev<false><<<kRedNB, kRedRT, 0, st>>>(s_adv_, S_, d_part_ + 0 * kRedNB);
+    k_partial_dev<true><<<kRedNB, kRedRT, 0, st>>>(s_adv_, S_, d_part_ + 1 * kRedNB);
+    real* mi = (real*)(d_st_->stats + 6);   // 이점 평균·배율 (real 둘 — stats 끝 칸을 빌림, 미니배치 루프 전에만 씀)
+    k_adv_norm<<<1, 1, 0, st>>>(d_part_ + 0 * kRedNB, d_part_ + 1 * kRedNB, S_, mi);
+    k_affine_dev<<<nblk(S_), 256, 0, st>>>(s_adv_, S_, mi);
+    return;
+  }
   double s = sum_all(s_adv_, S_, st), ss = sumsq_all(s_adv_, S_, st);
   double m = s / S_;
   double var = (ss - S_ * m * m) / std::max(1, S_ - 1);
@@ -749,16 +991,25 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
       cur += (long)n * gs.w[g];
       gs.W += gs.w[g];
     }
+    if (H_ > 0) {   // 순서 미니배치: 행 t·B + b (러너 순열이 환경 단위) — reset·h0 모으기
+      const int B = n / T_;
+      k_gather_seq<<<nblk(std::max<long>(n, (long)B * H_)), 256, 0, st>>>(ix, n, B, H_, s_reset_, s_h0a_, s_h0c_, c_reset_, c_h0a_, c_h0c_);
+    }
     k_gather_mb<<<nblk((long)n * (D_ + gs.W)), 256, 0, st>>>(s_obs_, D_, ix, n, c_x_ + NF_, NF_ + D_,
-                                                                   c_xh_ ? (__nv_bfloat16*)c_xh_ + NF_ : nullptr, gs);
+                                                                   c_xh_ ? (__nv_bfloat16*)c_xh_ + NF_ : nullptr, gs, H_ > 0);
     if (ac.split) {   // critic 입력 버퍼에도 같은 1D 열 (모을 롤아웃 값은 없이)
       GatherSet g0{{}, {}, {}, 0};
-      k_gather_mb<<<nblk((long)n * D_), 256, 0, st>>>(s_obs_, D_, ix, n, c_xc_ + NF_, NF_ + D_, c_xch_ ? (__nv_bfloat16*)c_xch_ + NF_ : nullptr, g0);
+      k_gather_mb<<<nblk((long)n * D_), 256, 0, st>>>(s_obs_, D_, ix, n, c_xc_ + NF_, NF_ + D_, c_xch_ ? (__nv_bfloat16*)c_xch_ + NF_ : nullptr, g0, H_ > 0);
     }
     ac.fork();
     if (ac.split) encode_c(n, im, imx, nullptr);
     encode(n, im, imx, nullptr);
     if (!ac.split) ac.fork();
+    if (H_ > 0) {   // 순환 핵: 순서 정방향 (T 걸음 × B 환경, h0·reset 은 위에서 모음) → MLP 입력의 h 열
+      const int B = n / T_;
+      ac.gru_c.forward_seq(ac.cublas2, ac.stream2, T_, B, cx(), NF_ + D_, NF_, c_h0c_, c_reset_, cx() + NFE_, NF_ + D_, cxh() ? cxh() + NFE_ : nullptr);
+      ac.gru_a.forward_seq(ac.cublas, st, T_, B, c_x_, NF_ + D_, NF_, c_h0a_, c_reset_, c_x_ + NFE_, NF_ + D_, c_xh_ ? c_xh_ + NFE_ : nullptr);
+    }
     ac.critic.forward(ac.cublas2, ac.stream2, n, nullptr, cx(), NF_ + D_, c_v_, nullptr, cxh());
     ac.actor.forward(ac.cublas, st, n, nullptr, c_x_, NF_ + D_, c_aout_, nullptr, c_xh_);
     ac.join();
@@ -777,10 +1028,17 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
     if (backward) {
       ac.fork();
       ac.critic.backward(ac.cublas2, ac.stream2, n, nullptr, c_dv_);
-      if (ac.split) ac.enc_c.backward_feat(ac.cublas2, ac.stream2, n, im, imx, ac.critic.dx0(), ac.critic.feat(), nullptr, 0);   // critic 손실만
+      const int B = H_ > 0 ? n / T_ : 0;
+      if (H_ > 0) {   // 순환 핵 역방향 (h 열 기울기 → 변수 · F 열 기울기 dxf), 인코더는 MLP 의 F 열 기울기 + dxf 를 더해 받는다
+        ac.gru_c.backward_seq(ac.cublas2, ac.stream2, T_, B, cx(), NF_ + D_, NF_, c_reset_, ac.critic.dx0() + NFE_, ac.critic.feat(), ac.gru_c.dxf_buf());
+        ac.enc_c.backward_feat(ac.cublas2, ac.stream2, n, im, imx, ac.critic.dx0(), ac.critic.feat(), ac.gru_c.dxf_buf(), NFE_);
+      } else if (ac.split) ac.enc_c.backward_feat(ac.cublas2, ac.stream2, n, im, imx, ac.critic.dx0(), ac.critic.feat(), nullptr, 0);   // critic 손실만
       if (disc_) ac.head.backward(ac.cublas, st, n, c_aout_, AO_, ac.d_params, ac.d_grads, c_G_, c_da_, AO_);   // 머리 → 임베딩 기울기 c_da_
       ac.actor.backward(ac.cublas, st, n, nullptr, c_da_);
-      if (ac.split) ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), nullptr, 0);   // actor 손실만
+      if (H_ > 0) {
+        ac.gru_a.backward_seq(ac.cublas, st, T_, B, c_x_, NF_ + D_, NF_, c_reset_, ac.actor.dx0() + NFE_, ac.actor.feat(), ac.gru_a.dxf_buf());
+        ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), ac.gru_a.dxf_buf(), NFE_);
+      } else if (ac.split) ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), nullptr, 0);   // actor 손실만
       ac.join();
       // 공유 인코더: 두 MLP 의 특징 기울기(actor + critic, 고정 순서)를 합성곱 역방향으로 (rsl_rl·공유 인코더 PPO 와 같은 합 손실).
       // 더하기는 넷째 층 역방향이 읽으면서 한다 (모으는 버퍼 없음)
@@ -788,9 +1046,17 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
       if (NC_ > 0) col_sum(c_dls_, n, NC_, NC_, ac.log_std_grad(), true, st);
     }
     col_sum(c_stat_, n, NS, NS, c_red_, false, st);
+    if (dev_mb_) {   // 장치 갱신: 통계는 장치에서 더함 (호스트 왕복 없음 — k_upd_ctrl 이 읽음)
+      k_stat_acc<<<1, 32, 0, st>>>(c_red_, NS, d_st_->stats, c0 == 0);
+      continue;
+    }
     CK(cudaMemcpyAsync(hs.data(), c_red_, NS * sizeof(real), cudaMemcpyDeviceToHost, st));
     CK(cudaStreamSynchronize(st));
     for (int k = 0; k < NS; ++k) stats[k] += hs[k];
+  }
+  if (dev_mb_) {   // 엔트로피·학습률·기울기 노름은 k_upd_ctrl 이 (log σ 기울기 상수항만 여기서 — 옛 길과 같은 차례)
+    if (backward) k_add_const<<<1, 32, 0, st>>>(ac.log_std_grad(), NC_, -cfg_.entropy_coef * ((real)n_all / mb));
+    return 0.0;
   }
   // 엔트로피(가우시안만, 상태 무관): −c·Σ(½+½ln2π+logσ) → d/dlogσ = −c
   std::vector<real> ls(NC_);
@@ -812,9 +1078,146 @@ double PPO::loss_and_grad(const int* d_idx, int n, bool backward) {
   return minibatch(d_idx, n, n, backward, st);
 }
 
+namespace {
+bool is_critic_block(const std::string& nm) { return nm.rfind("enc_c.", 0) == 0 || nm.rfind("critic.", 0) == 0 || nm.rfind("gcritic.", 0) == 0; }
+}  // namespace
+
+// 미니배치 순열: 순환 핵이 없으면 샘플 순열 (rsl_rl mini_batch_generator — 반복마다 randperm 하나를 모든 에포크가 같이),
+// 있으면 환경 순열 (rsl_rl recurrent_mini_batch_generator 처럼 궤적을 통째로): 미니배치 b = 환경 B 개, 행 t·B + j = 걸음 t · 환경 env[b·B + j]
+void PPO::make_perm(int* out) const {
+  std::mt19937_64 rng(seed_ * 0x9E3779B97F4A7C15ull + (uint64_t)iter_ * 1315423911ull + 7);
+  if (H_ == 0) {
+    std::iota(out, out + S_, 0);
+    std::shuffle(out, out + S_, rng);
+    return;
+  }
+  std::vector<int> env(N_);
+  std::iota(env.begin(), env.end(), 0);
+  std::shuffle(env.begin(), env.end(), rng);
+  const int B = N_ / cfg_.minibatches;
+  for (int b = 0; b < cfg_.minibatches; ++b)
+    for (int t = 0; t < T_; ++t)
+      for (int j = 0; j < B; ++j) out[(long)b * B * T_ + (long)t * B + j] = t * N_ + env[b * B + j];
+}
+
+void PPO::inference_reset(const int* done, int n) {
+  if (H_ == 0) return;
+  k_h_done<<<nblk((long)n * H_), 256, 0, ac_->stream>>>(done, n, H_, h_ia_, nullptr, nullptr);
+}
+void PPO::inference_reset_all() {
+  if (H_ == 0) return;
+  CK(cudaMemsetAsync(h_ia_, 0, sizeof(real) * N_ * H_, ac_->stream));
+}
+
 UpdateStats PPO::update(const uint8_t* img, const real* obs1d) {
+  if (cfg_.device_update && !disc_ && !graph_) {   // 장치 갱신 (연속 행동 판)
+    upd_img_ = img;
+    upd_obs_ = obs1d;
+    return finish_update_dev();
+  }
   compute_returns(img, obs1d);
   return finish_update();
+}
+
+// 장치 갱신 본문 (캡처 대상 — 호스트가 읽는 값 없음): 마지막 가치·GAE → 가치·수익 부분합 → 미니배치 루프 (통계·KL 학습률·기울기 노름·Adam 모두 장치)
+void PPO::update_body_dev() {
+  auto st = ac_->stream;
+  dev_mb_ = true;
+  compute_returns(upd_img_, upd_obs_);
+  k_partial_dev<false><<<kRedNB, kRedRT, 0, st>>>(s_val_, S_, d_part_ + 2 * kRedNB);
+  k_partial_dev<false><<<kRedNB, kRedRT, 0, st>>>(s_ret_, S_, d_part_ + 3 * kRedNB);
+  std::vector<std::pair<long, long>> rng;   // 고칠 변수 구간 (finish_update 와 같음)
+  if (critic_only_) {
+    for (auto& bl : ac_->blocks)
+      if (is_critic_block(bl.name)) rng.push_back({bl.off, bl.n});
+  } else {
+    rng.push_back({0, ac_->n_params});
+  }
+  if (4 + (int)rng.size() > kPartSlots) throw std::runtime_error("update_body_dev: 부분합 칸 부족");
+  const int mb = S_ / cfg_.minibatches;
+  int j = 0;
+  for (int ep = 0; ep < cfg_.epochs; ++ep) {
+    for (int b = 0; b < cfg_.minibatches; ++b, ++j) {
+      ac_->zero_grad();
+      double s[5];
+      minibatch(d_perm_ + (long)b * mb, mb, mb, true, s);
+      for (size_t r = 0; r < rng.size(); ++r)
+        k_partial_dev<true><<<kRedNB, kRedRT, 0, st>>>(ac_->d_grads + rng[r].first, rng[r].second, d_part_ + (4 + r) * kRedNB);
+      CtrlArgs ca{ac_->log_std(), NC_, mb, mb, cfg_.desired_kl > 0 && !critic_only_ ? 1 : 0, (double)cfg_.desired_kl, cfg_.lr_min, cfg_.lr_max,
+                  (int)rng.size(), d_part_ + 4 * kRedNB, (double)cfg_.max_grad_norm};
+      k_upd_ctrl<<<1, 1, 0, st>>>(ca, d_st_->stats, &d_st_->lr, &d_st_->gscale, d_mbrec_ + (long)j * kRec);
+      for (auto [p0, pn] : rng)
+        k_adam_dev<<<nblk(pn), 256, 0, st>>>(ac_->d_params + p0, ac_->d_grads + p0, m_ + p0, v_ + p0, pn, &d_st_->lr, cfg_.adam_b1, cfg_.adam_b2,
+                                              cfg_.adam_eps, d_bc_ + 2 * j, &d_st_->gscale);
+      clamp_std();
+      ac_->params_changed();
+    }
+  }
+  dev_mb_ = false;
+}
+
+UpdateStats PPO::finish_update_dev() {
+  auto st = ac_->stream;
+  const int nmb = cfg_.epochs * cfg_.minibatches, mb = S_ / cfg_.minibatches;
+  // 순열 (rsl_rl: 반복마다 randperm 하나를 모든 에포크가 같이) — finish_update 와 같은 난수 → pinned → 장치 (반복마다 한 번)
+  make_perm(h_perm_);
+  // Adam 편향 보정: 걸음 수는 데이터와 무관 — 호스트가 미니배치마다 같은 식으로 미리 셈
+  for (int j = 0; j < nmb; ++j) {
+    ++adam_t_;
+    h_bc_[2 * j] = 1.f - std::pow(cfg_.adam_b1, (real)adam_t_);
+    h_bc_[2 * j + 1] = 1.f - std::pow(cfg_.adam_b2, (real)adam_t_);
+  }
+  CK(cudaMemcpyAsync(d_perm_, h_perm_, S_ * sizeof(int), cudaMemcpyHostToDevice, st));
+  CK(cudaMemcpyAsync(d_bc_, h_bc_, 2 * nmb * sizeof(float), cudaMemcpyHostToDevice, st));
+  if (cfg_.graph_update) {
+    cudaGraphExec_t& ex = reinterpret_cast<cudaGraphExec_t&>(upd_exec_[critic_only_ ? 1 : 0]);
+    if (!ex) {   // 처음: 캡처 (실행은 안 함) → 만들기. 이후 반복은 같은 그래프 (포인터·모양 고정, 바뀌는 값은 장치에서 읽음)
+      cudaGraph_t g;
+      CK(cudaStreamBeginCapture(st, cudaStreamCaptureModeRelaxed));
+      update_body_dev();
+      CK(cudaStreamEndCapture(st, &g));
+      CK(cudaGraphInstantiate(&ex, g, 0));
+      CK(cudaGraphDestroy(g));
+    }
+    CK(cudaGraphLaunch(ex, st));
+  } else {
+    update_body_dev();
+  }
+  // 기록 한 번에 내림: 미니배치 기록 · 가치·수익 부분합
+  CK(cudaMemcpyAsync(h_mbrec_, d_mbrec_, sizeof(double) * nmb * kRec, cudaMemcpyDeviceToHost, st));
+  CK(cudaMemcpyAsync(h_mbrec_ + (nmb + 1) * kRec, d_part_ + 2 * kRedNB, sizeof(double) * 2 * kRedNB, cudaMemcpyDeviceToHost, st));
+  CK(cudaEventRecord(ev_upd_, st));
+  CK(cudaEventSynchronize(ev_upd_));   // 반복에 한 번 (러너가 바로 쓰는 값)
+  UpdateStats out;
+  {
+    const double* pv = h_mbrec_ + (nmb + 1) * kRec;
+    double sv = 0, sr = 0;
+    for (int i = 0; i < kRedNB; ++i) sv += pv[i];
+    for (int i = 0; i < kRedNB; ++i) sr += pv[kRedNB + i];
+    out.mean_value = (real)(sv / S_);
+    out.mean_return = (real)(sr / S_);
+  }
+  double acc_s = 0, acc_v = 0, acc_e = 0, acc_kl = 0, acc_gn = 0;
+  for (int j = 0; j < nmb; ++j) {
+    const double* r = h_mbrec_ + (long)j * kRec;
+    const double kl = r[2] / mb;
+    if (j == 0) out.kl0 = (real)kl, out.value0 = (real)(r[1] / mb);
+    acc_s += r[0] / mb;
+    acc_v += r[1] / mb;
+    acc_e += r[3] / mb;
+    acc_kl += kl;
+    acc_gn += r[4];
+  }
+  lr_ = (float)h_mbrec_[(long)(nmb - 1) * kRec + 5];
+  out.surrogate = (real)(acc_s / nmb);
+  out.value = (real)(acc_v / nmb);
+  out.entropy = (real)(acc_e / nmb);
+  out.kl = (real)(acc_kl / nmb);
+  out.grad_norm = (real)(acc_gn / nmb);
+  out.lr = lr_;
+  step_ = 0;
+  ++iter_;
+  return out;
 }
 
 UpdateStats PPO::update(const GraphObs& o) {
@@ -822,9 +1225,6 @@ UpdateStats PPO::update(const GraphObs& o) {
   return finish_update();
 }
 
-namespace {
-bool is_critic_block(const std::string& nm) { return nm.rfind("enc_c.", 0) == 0 || nm.rfind("critic.", 0) == 0 || nm.rfind("gcritic.", 0) == 0; }
-}  // namespace
 
 void PPO::set_critic_only(bool on) {
   // 인코더(그래프는 몸통)를 정책과 같이 쓰면 가치만 고쳐도 정책이 바뀐다
@@ -852,9 +1252,7 @@ UpdateStats PPO::finish_update() {
   }
   // rsl_rl mini_batch_generator: 반복마다 randperm 하나를 모든 에포크가 같이 씀
   std::vector<int> perm(S_);
-  std::iota(perm.begin(), perm.end(), 0);
-  std::mt19937_64 rng(seed_ * 0x9E3779B97F4A7C15ull + (uint64_t)iter_ * 1315423911ull + 7);
-  std::shuffle(perm.begin(), perm.end(), rng);
+  make_perm(perm.data());
   CK(cudaMemcpyAsync(d_perm_, perm.data(), S_ * sizeof(int), cudaMemcpyHostToDevice, st));
   int mb = S_ / cfg_.minibatches;
   double acc_s = 0, acc_v = 0, acc_e = 0, acc_kl = 0, acc_gn = 0;
@@ -1194,6 +1592,7 @@ void PPO::load(const std::string& path) {
   act_calls_ = acn;
   seed_ = sd;
   step_ = 0;
+  push_dev_state();
 }
 
 void PPO::load_convert_shared(const std::string& path) {
@@ -1287,6 +1686,7 @@ void PPO::load_convert_shared(const std::string& path) {
   act_calls_ = acn;
   seed_ = sd;
   step_ = 0;
+  push_dev_state();
 }
 
 }  // namespace XPPO_NS

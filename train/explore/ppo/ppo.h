@@ -64,6 +64,11 @@ struct PPOConfig {
   bool cnn_bf16 = true;         // 합성곱 가지를 텐서 코어(bf16 입력·fp32 누산)로. false = fp32 융합 커널(정확 경로, 기울기 검사가 씀). network/README "계산 방식"
   bool tf32 = false;            // cuBLAS TF32 텐서 코어. 2026-11-04 실측: update 6.5 → 7.1 s 로 오히려 느려 기본 끔 (ppo/README "속도")
   int mlp = 2;                  // MLP 계산: 0 cuBLAS(옛 길), 1 융합 GEMM fp32(정확, 기울기 검사), 2 융합 GEMM bf16 텐서 코어·fp32 누산 (ppo/README "속도")
+  // 장치 갱신 (연속 행동 판만 — 계층형·그래프 판은 옛 길): 미니배치 루프의 KL 적응 학습률·기울기 노름 자르기·Adam·통계를 장치에서 —
+  // 미니배치마다 호스트 왕복 없음, 반복 끝에 기록을 한 번 내림. graph_update 면 update 전체(마지막 가치·GAE·미니배치 루프)를 CUDA Graph 하나로 잡아 돌린다.
+  // 값은 옛 길과 비트까지 같다(같은 식·같은 더하기 차례 — ppo/README "장치 갱신"). false 면 옛 길 (A/B 확인용)
+  bool device_update = true;
+  bool graph_update = true;
 };
 
 // 그래프 모드(train --graph, 그래프 어텐션 정책) PPO 설정 — 한곳. 위 기본값(직접 제어·계층형)과 다른 것만 바꾼다.
@@ -137,6 +142,10 @@ class PPO {
   // 평가 (정규화 통계·학습 난수 안 바꿈). actions 는 [N][n_cont+1]. sample_call < 0: 결정적(평균 행동, 선언 = 확률 > 0.5).
   // sample_call ≥ 0: 정책 분포에서 샘플(학습과 같은 분포, 다른 난수 계열 — 걸음마다 다른 값을 넘긴다). 학습 성공과 평가 성공의 차이를 가르려고.
   void act_inference(const uint8_t* img, const real* obs1d, real* actions, int n = -1, int64_t sample_call = -1);
+  // 순환 핵(spec.gru_h > 0)의 평가용 h: act_inference 는 환경 i 의 h 를 자기 버퍼(학습 롤아웃 h 와 따로)에 이어 간다.
+  // 판이 끝난 환경은 다음 act_inference 전에 0 으로 — done [n] (장치, 0 이 아니면 끝) 을 넘김. inference_reset_all 은 모두 0 (평가 시작)
+  void inference_reset(const int* done, int n);
+  void inference_reset_all();
   // 계층형만: 직전 act_inference 의 슬롯 로짓 (장치 [n][K], 가림 전) — n 이 한 묶음(chunk) 안일 때. 실물 CPU 정방향 비교(tools/policy_cpu_check)용
   const real* last_logits() const { return c_logits_; }
 
@@ -162,6 +171,11 @@ class PPO {
   const PPOConfig& config() const { return cfg_; }
   XNET_NS::ActorCritic& ac() { return *ac_; }
   int rollout_step() const { return step_; }
+  // 학습 스트림 (정책·저장이 도는 스트림 — 러너가 시뮬 걸음도 여기 넣어 롤아웃 전체를 CUDA Graph 하나로 잡는다)
+  cudaStream_t stream() const { return ac_->stream; }
+  // 롤아웃 그래프를 다시 돌릴 때: 캡처 때 호스트가 센 것(걸음 칸·난수 호출 수·정규화 개수)을 그래프 한 번(steps 걸음)만큼 올린다.
+  // 장치 쪽 같은 값은 그래프 안 커널이 올린다
+  void rollout_replayed(int steps);
   size_t storage_bytes() const { return storage_bytes_; }
   // 그래프 판: 지난(또는 모으는 중인) 롤아웃의 샘플마다 유효 노드 수 평균 — 갱신 시간이 이 값에 비례한다 (러너 로그용)
   double graph_nodes_mean() const {
@@ -210,6 +224,37 @@ class PPO {
   std::vector<int> h_cnt_;        // 롤아웃 샘플마다 유효 노드 수 (host — 미니배치를 행 상한에 맞춰 나누는 데)
   int step_ = 0, iter_ = 0;
   uint64_t act_calls_ = 0;
+  // 순환 핵 (spec.gru_h > 0): H_ = 은닉, NFE_ = 인코더 특징 수 (MLP 입력 [F (NFE_) | h (H_) | 1D] — NF_ = NFE_ + H_ 가 1D 앞 열 수)
+  int H_ = 0, NFE_ = 0;
+  real *h_a_ = nullptr, *h_c_ = nullptr;        // 롤아웃 h [N][H] (actor · critic) — 판이 끝난 환경은 store 가 0 으로
+  real *s_h0a_ = nullptr, *s_h0c_ = nullptr;    // 롤아웃 시작 h [N][H] (갱신의 순서 정방향 h0)
+  real* s_reset_ = nullptr;                     // [T][N] 그 걸음에 판이 새로 시작 (앞 걸음 done) — 0 걸음 행은 0
+  real *c_h0a_ = nullptr, *c_h0c_ = nullptr, *c_reset_ = nullptr;   // 미니배치 모은 h0 [B][H] · reset [chunk]
+  real* h_tmp_ = nullptr;                       // 마지막 가치용 critic h 사본 [N][H] (상태는 안 바꿈)
+  real *h_ia_ = nullptr;                        // 평가 h [N][H] (act_inference — actor 만)
+  // 장치에 둔 계수·갱신 상태 (호스트 값의 거울 — 캡처한 그래프가 반복마다 바뀌는 값을 여기서 읽는다)
+  struct DevState {
+    double norm_count;            // 정규화 개수 (Normalizer::count 와 같은 값)
+    unsigned long long act_calls; // 난수 호출 수 (act_calls_)
+    float lr, gscale;             // 학습률 (lr_) · 이번 미니배치 기울기 자르기 배율
+    double stats[8];              // 이번 미니배치 샘플 통계 합 (덩이마다 double 로 더함)
+  };
+  DevState* d_st_ = nullptr;
+  double* d_part_ = nullptr;      // 결정적 합 부분합 (512 × 칸) — 기울기 노름 범위들 · GAE 이점 합 · 가치·수익 합
+  double* d_mbrec_ = nullptr;     // 미니배치마다 기록 [미니배치][kRec]
+  double* h_mbrec_ = nullptr;     // 그 pinned 사본
+  float* d_bc_ = nullptr;         // 미니배치마다 Adam 편향 보정 (bc1, bc2) — 호스트가 반복마다 올림
+  float* h_bc_ = nullptr;
+  int* h_perm_ = nullptr;         // 순열 pinned
+  void* upd_exec_[2] = {nullptr, nullptr};   // cudaGraphExec_t — critic_only 0/1
+  cudaEvent_t ev_upd_ = nullptr;
+  void push_dev_state();
+  void make_perm(int* out) const;   // 이번 반복 미니배치 순열 [S] (finish_update · 장치 갱신이 같이 씀)          // 호스트 계수 → 장치 (생성·불러오기 뒤)
+  void update_body_dev();         // 장치 갱신 본문 (캡처 대상): 마지막 가치·GAE·미니배치 루프
+  UpdateStats finish_update_dev();
+  bool dev_mb_ = false;           // minibatch·gae 가 장치 길로 (update_body_dev 동안)
+  const uint8_t* upd_img_ = nullptr;
+  const real* upd_obs_ = nullptr;
   float lr_;
   long adam_t_ = 0;
   real *m_ = nullptr, *v_ = nullptr;

@@ -742,3 +742,17 @@ nsys 커널 시간 (train 3 반복 전체 합 ÷ 3 = 반복당, 롤아웃 act �
 넓은 지도만으로 학습한 체크포인트(가지 4 개)에는 `--gru H` 로 순환 핵만 더한다 (h 열 0 — low_w0 → low_w1 처럼 학습을 버리지 않고 잇기).
 새 특징·h 열이 0 이라 처음 정책은 옛 것과 같다(GEMM 더하는 차례 몫의 반올림만 다름 — 환경 4 개 평가 궤적은 같았고 16 개는 31 걸음에서 소수 셋째 자리부터 갈림). network/README "넓은 지도 가지·순환 핵".
 
+
+## 순환 핵 학습 · 장치 갱신 (2026-11-15)
+
+- **순환 핵 (`train --low --gru H`)**: actor·critic 이 GRU 를 따로 (network/README "순환 핵"). 롤아웃은 걸음마다 `Gru::step` 으로 h 를 제자리 갱신하고,
+  판이 끝난 환경의 h 는 `store` 가 0 으로 (다음 걸음이 새 판). 롤아웃 시작 h 는 `s_h0*`, 걸음마다 "이 걸음에 판이 새로 시작" 칸은 `s_reset_` (앞 걸음 done).
+  갱신은 환경 단위 순열 (rsl_rl recurrent_mini_batch_generator 처럼 궤적을 통째로): 미니배치 = 환경 N / 미니배치 수 개 × 24 걸음, 행 t·B + b →
+  `forward_seq`(h0·reset) → MLP → `backward_seq` 의 F 열 기울기를 인코더 역방향이 MLP 기울기에 더해 받는다 (truncated BPTT = 롤아웃 24 걸음).
+  마지막 가치는 critic h 사본으로 한 걸음 (상태는 안 바꿈). 평가(`act_inference`)는 따로 h, 판 끝은 `inference_reset(done, n)`, 맵마다 `inference_reset_all()`.
+  확인: `gradcheck --low --gru` (순서 미니배치·판 경계까지 손실 → 기울기), GRU 끈 `--low` 3 반복 체크포인트 md5 가 이 변경 전과 같음,
+  GRU 켠 학습의 첫 미니배치 KL(kl0) 2.1e-5 — GRU 끈 것(2.0e-5)과 같은 크기 (롤아웃·갱신 정방향이 같다는 뜻).
+- **장치 갱신 (`PPOConfig::device_update`, 연속 행동 판)**: 미니배치마다 하던 호스트 왕복(통계 D2H·기울기 노름·log σ 읽기)을 없애고 KL 적응 학습률·기울기 노름 자르기·
+  Adam·통계를 장치 커널로 — 같은 식·같은 더하기 차례라 옛 길과 비트 같음 (`--low` 3 반복 md5 같음). `graph_update` 면 갱신 전체(마지막 가치·GAE·미니배치 루프)를
+  CUDA Graph 하나로 잡아 반복마다 실행 한 번. 반복마다 바뀌는 값(순열·Adam 편향 보정)은 pinned 버퍼에서 비동기로 올리고, 기록은 반복 끝에 한 번 내린다.
+  정규화 개수·난수 호출 수도 장치에 둔다 (롤아웃 그래프를 다시 돌려도 맞는 값). 롤아웃 그래프(`--rollout-graph`)는 OptiX 발사가 캡처 안에서 실패해 아직 기본 끔.

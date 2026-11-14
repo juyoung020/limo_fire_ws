@@ -53,12 +53,18 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
     if (full) spec = explore_spec_low(std::getenv("GC_LOW_WIDE") != nullptr);   // GC_LOW_WIDE=1 (gradcheck --low --full --wide): 넓은 지도 가지까지
     else { spec.n_cont = 2; spec.actor.out = 3; }
   }
+  // 순환 핵 (GC_LOW_GRU=1, gradcheck --low --gru): actor·critic GRU — PPO 의 순서 미니배치(행 t·B + b, h0·판 경계 reset)까지 손실 → 기울기 검사
+  const bool gru = std::getenv("GC_LOW_GRU") != nullptr;
+  if (gru) {
+    spec.gru_h = full ? 256 : 32;   // GRU 문 커널은 은닉 32 의 배수
+    spec.split_enc = true;          // 순환 핵은 인코더 나눔 구조에서만 (explore_spec_low 와 같음)
+  }
   spec.declare_bias = 0.f;  // 검사에서는 선언 확률을 중간으로 (−7 이면 베르누이 기울기가 거의 0)
   PPOConfig cfg;
   cfg.num_envs = 6;
   cfg.steps_per_env = 2;
   cfg.minibatches = 1;
-  cfg.chunk = 4;  // S=12 를 4 개씩 3 덩이 → 덩이 누적도 검사
+  cfg.chunk = gru ? 12 : 4;  // S=12 를 4 개씩 3 덩이 → 덩이 누적도 검사 (순환 핵은 순서 하나를 한 번에 — chunk ≥ 미니배치)
   cfg.tf32 = false;  // fp32 정확 모드로 검사
   cfg.cnn_bf16 = false;
   cfg.mlp = mlp;

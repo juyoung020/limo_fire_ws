@@ -10,6 +10,7 @@
 #include <map>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
 
 #include "common.cuh"
 #include "gemm_fused.cuh"
@@ -571,7 +572,9 @@ float* splitk_ws(cudaStream_t st, long n) {
   static std::map<cudaStream_t, W> ws;
   W& w = ws[st];
   if (n > w.cap) {
-    if (w.p) CK(cudaFree(w.p));
+    // 옛 버퍼는 풀지 않는다: 캡처한 CUDA Graph(ppo 장치 갱신·롤아웃)가 그 포인터를 들고 있을 수 있다 (늘어나는 횟수는 몇 번뿐)
+    static std::vector<float*> graveyard;
+    if (w.p) graveyard.push_back(w.p);
     CK(cudaMalloc(&w.p, n * sizeof(float)));
     w.cap = n;
   }

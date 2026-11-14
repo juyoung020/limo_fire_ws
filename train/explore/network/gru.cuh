@@ -45,6 +45,8 @@ class Gru {
   int max_rows_ = 0;
   real *GX_ = nullptr, *HP_ = nullptr, *R_ = nullptr, *Z_ = nullptr, *N_ = nullptr, *GHN_ = nullptr;   // [rows][3H] · [rows][H] × 5
   real *DGX_ = nullptr, *DGH_ = nullptr, *DC_ = nullptr, *DIR_ = nullptr, *dXF_ = nullptr;           // [rows][3H] × 2 · [rows][H] × 2 · [rows][nf]
+  real* GH_ = nullptr;   // 순환 쪽 GEMM 결과 h·Wh [rows][3H] (걸음마다 GEMM 한 번 → 문 커널이 읽음)
+  bool ref_ = false;     // GRU_REF=1: 옛 문 커널(블록 안 직접 곱) — A/B 확인용
   void input_gemm(cublasHandle_t cb, cudaStream_t st, int n, const real* x, long ldx, int off_d);
 };
 

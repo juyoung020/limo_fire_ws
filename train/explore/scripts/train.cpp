@@ -47,6 +47,13 @@
 #include "ppo.h"
 #include "rewards.h"
 #include "runfolder.h"
+
+// CUDA 호출 검사 (롤아웃 그래프 캡처·실행)
+#define CKR(x)                                                                                              \
+  do {                                                                                                      \
+    cudaError_t e_ = (x);                                                                                   \
+    if (e_ != cudaSuccess) throw std::runtime_error(std::string(#x) + ": " + cudaGetErrorString(e_));       \
+  } while (0)
 #include "sensor_model.h"
 
 namespace {
@@ -83,7 +90,9 @@ struct Args {
   int low_solo = 0;           // --low-solo: 그때 단독 과제로 도는 환경 몫 (%)
   int low_eval_steps = 3000;  // --low-eval-steps: 탐사 판 평가의 걸음 상한
   bool lean = true;           // --no-lean: 아래층 단독 과제에서도 프론티어 요약 커널을 돌림 (Env::set_lean_low — 결과는 같고 느림)
-  bool step_sync = false;     // --step-sync: 아래층 롤아웃 걸음마다 호스트가 GPU 를 기다림 (옛 방식 — act·sim 시간을 호스트 시계로 가름). 끄면 CUDA 이벤트로 잼
+  bool step_sync = false;
+  int gru = 0;                // --gru H (--low): actor·critic 순환 핵 GRU 은닉 H (0 = 끔). 순서 미니배치 (ppo/README "순환 핵")
+  bool roll_graph = false;    // --rollout-graph: 아래층 롤아웃을 CUDA Graph 하나로 (실험 — 2026-11-15 OptiX 발사가 캡처 안에서 실패(7900)해 기본 끔)     // --step-sync: 아래층 롤아웃 걸음마다 호스트가 GPU 를 기다림 (옛 방식 — act·sim 시간을 호스트 시계로 가름). 끄면 CUDA 이벤트로 잼
   bool graph = false;  // --graph: 그래프 모드 (이웃 노드 하나 — sim kActPath + graph_on, PPO 그래프 어텐션 정책). 결정 하나 = env.step 한 번, 걸음 수는 가변
   int graph_share = -1;   // --graph-share 0|1 (음수 = ACSpec 기본: 가치 몸통 따로)
   sim::GraphArgs gargs;   // --graph-node 등 (sim/include/env_cfg.h)
@@ -308,7 +317,7 @@ int run_low(Args a) {
   env.sync();
   std::vector<sim::World> tests;
   for (auto& t : a.test) tests.push_back(sim::build_world(stem(t), sim::load_scene(t), hc));
-  const xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0);
+  const xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0, a.gru);   // --gru H: actor·critic 순환 핵 (은닉 H, 0 = 끔)
   xppo::PPO ppo(pc, spec, a.seed);
   const std::string dir = a.root + "/" + a.name, ckdir = dir + "/ckpt";
   if (a.resume) {
@@ -346,6 +355,7 @@ int run_low(Args a) {
   double total_steps = (double)ppo.iteration() * pc.steps_per_env * N;
   std::vector<cudaEvent_t> ev_roll(2 * pc.steps_per_env + 1);   // 롤아웃 걸음 경계 (--step-sync 가 아닐 때)
   for (auto& e : ev_roll) cudaEventCreate(&e);
+  cudaGraphExec_t roll_exec = nullptr;   // 롤아웃 CUDA Graph (--no-graph 가 아닐 때, 처음 반복에 캡처)
 
   // 주기 평가: 시험 맵마다 환경 E 개(앞 절반 사람 0 · 뒤 절반 사람 0 ~ 2), 자동 목표로 kEvalSteps 걸음. sample = 정책 분포 샘플(학습 롤아웃과 같은 행동 방식).
   // 기준선과 같은 조건의 측정(경로 길이 구간별 목표)은 따로 low_policy_run — 이 평가는 학습 곡선용
@@ -371,12 +381,14 @@ int run_low(Args a) {
       ev.set_lean_low(a.lean);   // 단독 과제 평가 (hc_solo)
       ev.reset();
       ev.sync();
+      ppo.inference_reset_all();   // 순환 핵: 평가 h 를 0 으로 (맵마다 새로)
       for (int step = 0; step < kEvalSteps; ++step) {
         const sim::StepOut o = ev.outputs();
         ppo.act_inference(o.low_img, o.low_1d, d_eact, E, sample ? (int64_t)step * (int64_t)tests.size() + (int64_t)ti : -1);
         cudaDeviceSynchronize();
         ev.step(d_eact);
         ev.sync();
+        ppo.inference_reset(ev.outputs().done, E);   // 판이 끝난 환경의 h → 0
       }
       ev.take_low_stat(h_stat);
       LowSum s[2];
@@ -427,12 +439,14 @@ int run_low(Args a) {
       std::vector<float> rw;
       std::vector<int32_t> dn;
       int left = E;
+      ppo.inference_reset_all();
       for (int step = 0; step < a.low_eval_steps && left > 0; ++step) {
         const sim::StepOut o = ev.outputs();
         ppo.act_inference(o.low_img, o.low_1d, d_eact, E, -1);
         cudaDeviceSynchronize();
         ev.step(d_eact);
         ev.sync();
+        ppo.inference_reset(ev.outputs().done, E);
         ev.get_reward(rw, dn);
         for (int i = 0; i < E; ++i)
           if (!fin[i] && dn[i]) { fin[i] = 1; fd[i] = dn[i]; fs[i] = step + 1; --left; }
@@ -535,6 +549,35 @@ int run_low(Args a) {
         cudaDeviceSynchronize();
         t_sim += ms_since(t0);
       }
+    } else if (a.roll_graph) {
+      // 롤아웃 24 걸음(정책 · 시뮬 · 저장)을 학습 스트림 하나에 넣어 CUDA Graph 하나로 잡는다 — 처음 반복에 캡처(실행 안 함)해 만들고, 그 뒤로는
+      // 반복마다 그래프 실행 한 번 (커널 약 1400 개를 호스트가 하나씩 던지지 않음). 반복마다 바뀌는 값(난수 호출 수·정규화 개수·판 상태)은 모두 장치에 있다.
+      // 호스트 쪽 계수는 ppo.rollout_replayed 가 같은 만큼 올린다. 결과는 걸음마다 던지는 길(--no-graph)과 비트 같음
+      const cudaStream_t st = ppo.stream();
+      if (!roll_exec) {
+        cudaGraph_t g;
+        CKR(cudaStreamBeginCapture(st, cudaStreamCaptureModeRelaxed));
+        for (int t = 0; t < pc.steps_per_env; ++t) {
+          const sim::StepOut o = env.outputs();
+          ppo.act(o.low_img, o.low_1d, d_act);
+          env.step(d_act, st);
+          const sim::StepOut o2 = env.outputs();
+          k_map_done_low<<<(N + 255) / 256, 256, 0, st>>>(o2.done, N, d_done);
+          ppo.store(o2.reward, d_done);
+        }
+        CKR(cudaStreamEndCapture(st, &g));
+        CKR(cudaGraphInstantiate(&roll_exec, g, 0));
+        CKR(cudaGraphDestroy(g));
+      } else {
+        ppo.rollout_replayed(pc.steps_per_env);
+      }
+      CKR(cudaEventRecord(ev_roll[0], st));
+      CKR(cudaGraphLaunch(roll_exec, st));
+      CKR(cudaEventRecord(ev_roll[1], st));
+      CKR(cudaEventSynchronize(ev_roll[1]));
+      float ms = 0;
+      cudaEventElapsedTime(&ms, ev_roll[0], ev_roll[1]);
+      t_sim = ms;   // 그래프 안에서는 정책·시뮬을 못 가름 — 롤아웃 전체를 sim 칸에 (act 0)
     } else {
       // 롤아웃 동안 호스트는 안 기다린다: 정책(ppo 스트림 — 막는 스트림)과 시뮬(기본 스트림 0)은 기본 스트림의 암묵 동기로 차례가 지켜진다.
       // act·sim 시간은 기본 스트림 이벤트 사이 GPU 시간 (걸음마다 둘씩, 반복 끝에 한 번 기다려 읽음)
@@ -698,6 +741,8 @@ int main(int argc, char** argv) {
       else if (k == "--low-solo") a.low_solo = std::stoi(nx());
       else if (k == "--low-eval-steps") a.low_eval_steps = std::stoi(nx());
       else if (k == "--step-sync") a.step_sync = true;
+      else if (k == "--rollout-graph") a.roll_graph = true;
+      else if (k == "--gru") a.gru = std::stoi(nx());
       else if (k == "--no-lean") a.lean = false;
       else if (k == "--graph-share") a.graph_share = std::stoi(nx());
       else if (k.rfind("--graph-", 0) == 0) { const std::string v = nx(); if (!sim::graph_arg(a.gargs, k, v.c_str())) throw std::runtime_error("모르는 인자 " + k); }

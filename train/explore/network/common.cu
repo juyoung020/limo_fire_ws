@@ -71,6 +71,12 @@ __global__ void k_partial(const real* x, long n, double* part) {
   if (threadIdx.x == 0) part[blockIdx.x] = sh[0];
 }
 
+// 늘어나며 버린 작업 버퍼 (프로세스 끝까지 둠 — 위 col_sum 설명)
+std::vector<void*>& graveyard() {
+  static std::vector<void*> g;
+  return g;
+}
+
 template <bool SQ>
 double reduce(const real* x, long n, cudaStream_t s) {
   constexpr int NB = 512;
@@ -99,7 +105,8 @@ void col_sum(const real* x, long R, int C, int ld, real* out, bool acc, cudaStre
   int nb = (int)std::min<long>(MAXB, std::max<long>(1, R / 256));
   long rpb = (R + nb - 1) / nb;
   if ((long)nb * C > cap) {
-    if (d_part) CK(cudaFree(d_part));
+    // 옛 버퍼는 풀지 않는다: 캡처한 CUDA Graph(ppo 장치 갱신·롤아웃)가 그 포인터를 들고 있을 수 있다 (크기는 몇 번만 늘어남 — 몇 KB)
+    if (d_part) graveyard().push_back(d_part);
     cap = (long)nb * C;
     CK(cudaMalloc(&d_part, cap * sizeof(real)));
   }
