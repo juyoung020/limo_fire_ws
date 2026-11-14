@@ -8,6 +8,9 @@
 //   - 로봇 무시(p_ignore): 로봇이 있어도 그대로 걷는다 — 정책이 피해야만 한다. 나머지는 로봇(참 자세 중심)이 yield_dist 안이면
 //     로봇에서 멀어지는 쪽으로 yield_speed 로 비켜서고, 못 비키면(벽) 선다.
 //   - 사람끼리: 새 자리가 다른 사람과 겹치면서 더 가까워지면 안 움직인다(멀어지는 건 됨).
+//   - 다가옴(p_approach)·가로지름(p_cross, 2026-11-14 — 무작위 목표 걷기는 로봇과 잘 안 마주쳐서): 걷는 사람의 목표를 1 s 마다 다시 —
+//     다가옴 = 로봇 지금 자리, 가로지름 = 로봇 앞 예측 길(지금 속도 × 2 s, 1 ~ 3 m)의 점에서 사람 반대쪽으로 1 m. 속도·벽·사람끼리 규칙은 같고,
+//     로봇 무시가 아니면 1 m 안에선 그대로 비켜선다. 시뮬 쪽 동작이라 참 자세를 쓴다 (정책은 센서로만 봄).
 //   - 놓기: 판 시작에 로봇 출발점에서 spawn_keep 안엔 안 놓고, 서로 안 겹치게. 자리가 안 나면 그만큼 적게 놓는다.
 // 센서: 라이다·깊이 광선이 원기둥을 맞힌다(scene.h raycast, SceneView::cyl). 라이다 재질은 "보통"(빠짐 없음 + 물체 σ 배율) — 잠정,
 //   옷 재질 세기·빠짐을 실측하면 바꾼다. 지도는 라이다 그대로 쌓아 사람이 흔적을 남긴다(실물과 같음). 덮음(벽 면 칸 분자·분모)엔 안 든다.
@@ -30,12 +33,13 @@ struct PeopleCfg {
   float r_lo, r_hi, h_lo, h_hi;        // 반지름·키 범위 (m)
   float v_lo, v_hi;                    // 걷는 사람 속도 범위 (m/s)
   float p_stand, p_ignore;             // 서 있기만 하는 사람·로봇 무시하는 사람 비율
+  float p_approach, p_cross;           // 걷는 사람 중 로봇 쪽으로 다가오는·로봇 앞을 가로지르는 사람 비율 (env.yaml 에 없으면 0 — 옛 동작과 비트 같음)
   float yield_dist, yield_speed;       // 로봇 중심이 이 안이면 비켜섬 (m), 그 속도
   float spawn_keep;                    // 로봇 출발점에서 이 안엔 안 놓음 (m)
   float pause;                         // 목표에 닿으면 0 ~ 이 시간 섬 (s)
 };
 
-enum : int32_t { kPersonWalk = 1, kPersonIgnore = 2 };   // People::mode 비트
+enum : int32_t { kPersonWalk = 1, kPersonIgnore = 2, kPersonApproach = 4, kPersonCross = 8 };   // People::mode 비트 (다가옴·가로지름은 걷는 사람만 — people_sim.h person_robot_goal)
 
 // 환경 한 판의 사람들 (EnvState::people). 위치는 세계 좌표(참값)
 struct People {

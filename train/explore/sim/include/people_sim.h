@@ -42,6 +42,22 @@ DEV void person_pick_goal(const EnvCfg& c, const MapDev& m, People& P, int i) {
   }
 }
 
+// 다가옴·가로지름 목표 (people.h 머리말): 로봇 참 자세 (x, y, th) · 몸통 속도 v. 목표 자리에 못 서면(벽) 로봇 쪽 점 그대로 (막히면 people_step 이 새 목표)
+constexpr int kPersonRetarget = 50;   // 다가옴·가로지름 목표를 다시 잡는 물리 걸음 (50 × 0.02 s = 1 s)
+DEV void person_robot_goal(const EnvCfg& c, const MapDev& m, People& P, int i, float x, float y, float th, float v) {
+  if (P.mode[i] & kPersonApproach) { P.gx[i] = x; P.gy[i] = y; return; }
+  float s, co;
+  dm::sincosf_d(th, &s, &co);
+  const float ahead = dm::clampf(dm::absf(v) * 2.f, 1.f, 3.f);
+  const float px = x + co * ahead, py = y + s * ahead;   // 로봇 앞 예측 길의 점
+  const float dx = px - P.cyl[i].x, dy = py - P.cyl[i].y, d = sqrtf(dx * dx + dy * dy);
+  float gx = px, gy = py;
+  if (d > 1e-3f) { gx = px + dx / d; gy = py + dy / d; }   // 사람에서 그 점을 지나 1 m 더 — 로봇 앞을 가로지름
+  if (!person_free(c, m, gx, gy, P.cyl[i].r)) { gx = px; gy = py; }
+  P.gx[i] = gx;
+  P.gy[i] = gy;
+}
+
 // 로봇 몸통 사각형(가운데 (x, y), 방향 th, half_len × half_wid) ~ 원기둥 간격 (겹치면 음수)
 DEV float body_cyl_gap(const EnvCfg& c, const Cyl& C, float x, float y, float s, float co) {
   const float dx = C.x - x, dy = C.y - y;
@@ -94,12 +110,17 @@ DEV void people_reset(const EnvBatch& b, EnvState& e) {
     P.cyl[i] = Cyl{x, y, r, h};
     const float u_walk = dm::rand01(P.rng), u_ign = dm::rand01(P.rng);
     P.mode[i] = (u_walk >= pc.p_stand ? kPersonWalk : 0) | (u_ign < pc.p_ignore ? kPersonIgnore : 0);
+    if (pc.p_approach > 0.f || pc.p_cross > 0.f) {   // 둘 다 0 이면 난수를 안 뽑아 옛 판과 비트 같음
+      const float u = dm::rand01(P.rng);
+      if (P.mode[i] & kPersonWalk) P.mode[i] |= u < pc.p_approach ? kPersonApproach : (u < pc.p_approach + pc.p_cross ? kPersonCross : 0);
+    }
     P.speed[i] = dm::rand_range(P.rng, pc.v_lo, pc.v_hi);
     P.wait[i] = 0.f;
     P.gx[i] = x;
     P.gy[i] = y;
     P.n = i + 1;
     person_pick_goal(c, m, P, i);
+    if (P.mode[i] & (kPersonApproach | kPersonCross)) person_robot_goal(c, m, P, i, e.x, e.y, e.th, e.v);
   }
   P.near_d = people_gap(c, P, e.x, e.y, e.th);
 }
@@ -110,8 +131,13 @@ DEV void people_step(const EnvBatch& b, EnvState& e) {
   const PeopleCfg& pc = c.people;
   const MapDev& m = b.maps[e.map];
   People& P = e.people;
+  const bool retarget = e.tick % kPersonRetarget == 0;
   for (int i = 0; i < P.n; ++i) {
     if (!(P.mode[i] & kPersonWalk)) continue;
+    if (retarget && (P.mode[i] & (kPersonApproach | kPersonCross))) {   // 1 s 마다 로봇 쪽 목표 (쉬던 중이면 쉼을 끝냄)
+      person_robot_goal(c, m, P, i, e.x, e.y, e.th, e.v);
+      P.wait[i] = 0.f;
+    }
     Cyl& C = P.cyl[i];
     float sx, sy;   // 이번 걸음 이동
     bool to_goal = false;

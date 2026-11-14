@@ -325,6 +325,11 @@ oracle 목표는 닫힘을 막는 칸(전: 굵은 프론티어). \* 거짓 닫�
 - 시뮬: 판마다 사람 0~N 명(원기둥, 몸통 높이까지 → 라이다·깊이에 보임). 서 있기 + 걷기(경로점 사이, 0~1.3 m/s — 실내 보행 0.8~1.0 m/s 사례, 건강한 성인 평소 걸음 1.31 m/s 메타분석). 로봇을 무시하고 걷는 사람도 섞어 정책이 피해야만 하게. 정적 장면 BVH 와 따로 광선 교차 ✅
   - 구현 `sim/include/people.h` (규칙·상태) · `people_sim.h` (동작) · `people_geom.h` (원기둥 광선), 값 `sim/config/env.yaml people`. 사람 수 = 환경마다 판 시작 인자 `Env::set_people_max` (0~`kMaxPeople` 8, 판마다 0~k 고르게 — 커리큘럼). 상태 `EnvState::people`: `hit_person`(몸통이 사람과 겹침 — 벽과 다른 끝 종류용), `near_d`(몸통~가장 가까운 사람 간격, 가치·보상용), 뷰어는 `Env::get_people`. 라이다 재질은 "보통" 잠정 📏
   - 검증 `sim/tools/people_check` (스캔·깊이·지도에 보임, 긴 시간 막힌 칸 겹침 0), `env_verify --people 8 [--negative-person]` (GPU == CPU 비트)
+- 다가옴·가로지름 (2026-11-14, 사용자 요청 "사람을 피하는 법을 배워야"): 무작위 목표 걷기는 로봇과 잘 안 마주쳐서, 걷는 사람 가운데 `p_approach` 는 목표를 1 s 마다 로봇 자리로,
+  `p_cross` 는 로봇 앞 예측 길(지금 속도 × 2 s, 1 ~ 3 m)의 점을 지나 1 m 더 간 곳으로 잡는다(`people_sim.h person_robot_goal` — 시뮬 쪽이라 참 자세, 정책은 센서로만 봄).
+  속도·벽·사람끼리 규칙은 같고, 로봇 무시가 아니면 1 m 안에선 비켜선다. 둘 다 0(기본)이면 난수를 안 뽑아 옛 판과 비트 같음(low_policy_run 지문 같음 확인).
+  행동 비율은 환경변수 `SIM_PEOPLE_P_STAND·_IGNORE·_APPROACH·_CROSS` 로도 바꾼다. `env_verify --people 8`(어려운 비율) GPU == CPU 비트 같음.
+- 학습 사람 상한 커리큘럼: `train --low --people-ramp N` 이 이어 학습 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → `--people` 로 곧게 올린다.
 - 관측: 라이다 직전 스캔 3 장·깊이로 움직임을 본다. 사람은 지도에 벽처럼 남지 않게 — 지도 갱신 규칙 확인 필요
 - 보상: 위 표(사람 충돌 > 벽 충돌, 사람 근접 감점)
 - 덮음 분모·정답 맵에서 사람은 뺀다(정적 장면만 — `build_world` 는 장면 파일만 본다)

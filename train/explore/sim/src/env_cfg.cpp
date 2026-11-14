@@ -429,6 +429,13 @@ PeopleCfg load_people_cfg(const std::string& path) {
   pair("speed", &p.v_lo, &p.v_hi);
   p.p_stand = y["p_stand"].as<float>();
   p.p_ignore = y["p_ignore"].as<float>();
+  p.p_approach = y["p_approach"] ? y["p_approach"].as<float>() : 0.f;   // 없으면 0 (옛 설정 그대로)
+  p.p_cross = y["p_cross"] ? y["p_cross"].as<float>() : 0.f;
+  // 행동 비율 환경변수 (학습·판정 세트가 사람 행동만 바꿀 때 — mdp/README "아래층 RL — 사람"): SIM_PEOPLE_P_STAND · _IGNORE · _APPROACH · _CROSS
+  for (auto [k, v] : {std::pair<const char*, float*>{"SIM_PEOPLE_P_STAND", &p.p_stand}, {"SIM_PEOPLE_P_IGNORE", &p.p_ignore},
+                      {"SIM_PEOPLE_P_APPROACH", &p.p_approach}, {"SIM_PEOPLE_P_CROSS", &p.p_cross}})
+    if (const char* g = std::getenv(k); g && g[0]) *v = (float)std::atof(g);
+  if (p.p_approach < 0.f || p.p_cross < 0.f || p.p_approach + p.p_cross > 1.f) throw std::runtime_error(path + ": people.p_approach + p_cross 는 [0, 1]");
   p.yield_dist = y["yield_dist"].as<float>();
   p.yield_speed = y["yield_speed"].as<float>();
   p.spawn_keep = y["spawn_keep"].as<float>();

@@ -16,6 +16,7 @@
 //                   진행 로그 lowx/*, 평가에 탐사 판(사람 0 · 결정적 · 환경마다 첫 판 · 상한 --low-eval-steps 3000 걸음)이 더해짐 (mdp/README "아래층 RL — 탐사 판 학습")
 //         [--critic-warmup N]  이번 실행의 처음 N 반복은 가치만 맞춘다 (PPO::set_critic_only — 정책·학습률 그대로). 가치 입력이 바뀐 체크포인트
 //                   (ppo/tools/ckpt_drop_priv)에서 --resume 할 때 쓴다 (ppo/README "가치 참값 입력 뺌"). 로그 train/value0 = 걸음 전 가치 손실
+//         [--people-ramp N]  (--low) 이번 실행 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → --people 로 곧게 올린다 (사람 행동 비율은 SIM_PEOPLE_P_* — env_cfg.cpp)
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
 //
 // 반복 하나 = 24 걸음 롤아웃(act → env.step → store) → update. done 매핑: mdp::cur::terminal(1·2·4·5) → 1 종료, 3 → 3 끊김.
@@ -75,6 +76,7 @@ struct Args {
   int critic_warmup = 0;   // --critic-warmup: 처음 이만큼 반복은 가치만 맞춤
   bool low = false;    // --low: 아래층 RL (단독 과제를 정책이 10 Hz 로 — run_low)
   int low_people = 2;  // --people: 아래층 RL 판마다 사람 0 ~ 이 수
+  int people_ramp = 0;  // --people-ramp N: 이어 학습 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → --people 로 곧게 올림 (0 = 처음부터 --people)
   bool low_explore = false;   // --low-explore: 탐사 판 학습 (위층 규칙을 환경이 돌림)
   int low_solo = 0;           // --low-solo: 그때 단독 과제로 도는 환경 몫 (%)
   int low_eval_steps = 3000;  // --low-eval-steps: 탐사 판 평가의 걸음 상한
@@ -481,8 +483,17 @@ int run_low(Args a) {
 
   const auto t_start = std::chrono::steady_clock::now();
   const int it0 = ppo.iteration();
+  int k_people = a.low_people;
   while (!g_stop) {
     const int it = ppo.iteration();
+    if (a.people_ramp > 0) {   // 사람 상한 커리큘럼: 1 → --people (다음 판부터 들음 — Env::set_people_max)
+      const int k = std::min(a.low_people, 1 + (int)((double)(a.low_people - 1) * (it - it0) / a.people_ramp + 0.5));
+      if (k != k_people || it == it0) {
+        k_people = k;
+        env.set_people_max(std::vector<int>(N, k));
+        run.event("사람 상한 " + std::to_string(k) + " (반복 " + std::to_string(it) + ")");
+      }
+    }
     if (a.iters > 0 && it - it0 >= a.iters) break;
     if (a.minutes > 0 && ms_since(t_start) / 60000.0 >= a.minutes) break;
     const auto t_it = std::chrono::steady_clock::now();
@@ -570,6 +581,7 @@ int run_low(Args a) {
     r.last("low/speed", s.speed(dt_act));
     r.last("low/reach_len_mean", s.reached > 0 ? s.reach_len / s.reached : 0.0);
     r.last("low/wall_per_100m", s.wall100());
+    r.last("low/people_max", k_people);   // 판마다 사람 0 ~ 이 수 (--people-ramp 면 올라감)
     r.last("low/person_per_100m", s.person100());
     r.last("low/gt_wall_per_100m", s.gt_wall100());   // 시뮬 정답 충돌 (기록 전용)
     r.last("low/gt_person_per_100m", s.gt_person100());
@@ -660,6 +672,7 @@ int main(int argc, char** argv) {
       else if (k == "--graph") a.graph = true;
       else if (k == "--low") a.low = true;
       else if (k == "--people") a.low_people = std::stoi(nx());
+      else if (k == "--people-ramp") a.people_ramp = std::stoi(nx());
       else if (k == "--low-explore") a.low_explore = true;
       else if (k == "--low-solo") a.low_solo = std::stoi(nx());
       else if (k == "--low-eval-steps") a.low_eval_steps = std::stoi(nx());
