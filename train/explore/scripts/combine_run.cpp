@@ -67,6 +67,7 @@
 #include <vector>
 
 #include "actor_critic.h"
+#include "ckpt_meta.h"
 #include "cand_rules.h"
 #include "decider.h"
 #include "env_api.h"
@@ -232,7 +233,9 @@ int run(const Args& a) {
   if (use_pol) {
     xppo::PPOConfig pc;
     pc.num_envs = N;
-    ppo.reset(new xppo::PPO(pc, xnet::explore_spec_low(c.lo_wide != 0), 1));
+    const LowCkptMeta km = read_low_ckpt_meta(a.policy);   // 넓은 지도·순환 핵은 체크포인트 구조를 따른다 (넓은 지도는 관측도 켜져 있어야)
+    if (km.wide != (c.lo_wide != 0)) throw std::runtime_error(km.wide ? "넓은 지도 정책인데 SIM_LOW_WIDE=1 이 아님" : "넓은 지도 없는 정책인데 SIM_LOW_WIDE=1");
+    ppo.reset(new xppo::PPO(pc, xnet::explore_spec_low(km.wide, km.gru_h), 1));
     ppo->load(a.policy);
     std::printf("아래층: RL 정책 %s (반복 %d) — 결정적(평균 행동)\n", a.policy.c_str(), ppo->iteration());
   } else {
@@ -884,6 +887,7 @@ int run(const Args& a) {
       }
       env.step(d_act);
       env.sync();
+      if (use_pol) ppo->inference_reset(env.outputs().done, N);   // 순환 핵(GRU): 판이 끝난 환경의 h = 0 (학습 store 와 같은 규칙). 순환 핵 없으면 아무것도 안 함
       env.get_reward(rew, done);
       env.get_ep(ep);
       env.get_state(st);
