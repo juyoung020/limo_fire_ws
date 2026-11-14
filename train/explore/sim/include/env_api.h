@@ -82,6 +82,11 @@ class Env {
   GraphOut graph() const;
   void graph_refresh();   // 그래프 관측을 지금 상태에서 한 번 더 냄 (값은 그대로 — 시간 재기용, env_bench --graph)
   void sync() const;
+  // 아래층 단독 과제 학습용 (scripts/train --low): 걸음마다 env_reach_kernel(프론티어 요약 → 위층 관측 덩어리 칸·map_closed·탐사 보상 shape_obs·닫힘 trail·후보)을
+  // 건너뛴다. 이 모드에서 그 값들은 판 끝(단독 과제는 닫힘·진행 없음 규칙을 끔)·보상(shape_obs 는 kActPath 에서 아무것도 안 함)·아래층 관측(lowrl_pack·lowrl_img 는
+  // 자기 상태·라이다·직전 행동·지도·깊이만 읽음)·기록 어디에서도 안 읽힌다. 켜도 학습 결과는 비트까지 그대로 (2026-11-14 확인: --low 3 반복 체크포인트 md5 가 끈 것과 같음).
+  // 위층 관측(obs_1d 의 덩어리 칸·CLOSED)·map_closed 는 그때부터 낡은 값이 되므로 그걸 읽는 도구(env_verify 의 GPU·CPU 견줌 등)에서는 켜지 말 것. GPU 만
+  void set_lean_low(bool on) { lean_low_ = on; }
 
   // 호스트로 꺼내기 (비교·뷰어용)
   void get_state(std::vector<EnvState>& out) const;
@@ -125,6 +130,7 @@ class Env {
 
  private:
   bool gpu_;
+  bool lean_low_ = false;
   EnvBatch b_{};
   std::vector<void*> owned_;            // 장치 메모리
   std::vector<std::vector<uint8_t>> host_;   // CPU 판 메모리
@@ -167,7 +173,9 @@ inline void to_normalized(const EnvCfg& c, float v, float vy, float w, float dec
 }
 
 // 한 걸음 (src/env_kernel.cu, src/env_ref.cpp)
-void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);   // actions: [N][mdp::act::DIM]
+// lean: 아래층 단독 과제(low_rl · low_auto 1 · low_explore 0)에서 결과를 아무도 안 읽는 프론티어 요약(env_reach_kernel)을 건너뜀 — Env::set_lean_low.
+//   다른 모드에서는 무시. CPU 참조판(env_step_cpu)은 늘 요약을 낸다 (그래서 env_verify 처럼 둘을 견주는 도구는 lean 을 켜지 않는다)
+void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0, bool lean = false);   // actions: [N][mdp::act::DIM]
 void env_step_cpu(const EnvBatch& b, const float* actions);
 // 아래층 RL 준비 단계 (include/low_rl.h 머리말 — low_auto 가 아니면 호스트가 LowCmd 를 넣은 뒤 부른다. Env::low_prepare)
 void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);

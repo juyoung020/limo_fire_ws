@@ -387,7 +387,7 @@ void Env::reset() {
 }
 
 void Env::step(const float* actions, cudaStream_t st) {
-  if (gpu_) env_step_gpu(b_, actions, st);
+  if (gpu_) env_step_gpu(b_, actions, st, lean_low_);
   else env_step_cpu(b_, actions);
 }
 

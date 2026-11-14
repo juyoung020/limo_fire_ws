@@ -78,6 +78,8 @@ struct Args {
   bool low_explore = false;   // --low-explore: 탐사 판 학습 (위층 규칙을 환경이 돌림)
   int low_solo = 0;           // --low-solo: 그때 단독 과제로 도는 환경 몫 (%)
   int low_eval_steps = 3000;  // --low-eval-steps: 탐사 판 평가의 걸음 상한
+  bool lean = true;           // --no-lean: 아래층 단독 과제에서도 프론티어 요약 커널을 돌림 (Env::set_lean_low — 결과는 같고 느림)
+  bool step_sync = false;     // --step-sync: 아래층 롤아웃 걸음마다 호스트가 GPU 를 기다림 (옛 방식 — act·sim 시간을 호스트 시계로 가름). 끄면 CUDA 이벤트로 잼
   bool graph = false;  // --graph: 그래프 모드 (이웃 노드 하나 — sim kActPath + graph_on, PPO 그래프 어텐션 정책). 결정 하나 = env.step 한 번, 걸음 수는 가변
   int graph_share = -1;   // --graph-share 0|1 (음수 = ACSpec 기본: 가치 몸통 따로)
   sim::GraphArgs gargs;   // --graph-node 등 (sim/include/env_cfg.h)
@@ -297,6 +299,7 @@ int run_low(Args a) {
   const int N = pc.num_envs, AW = mdp::low::ACT;
   sim::Env env(hc, worlds, lidar, N, a.seed, true);
   env.set_people_max(std::vector<int>(N, a.low_people));   // 판마다 사람 0 ~ 이 수 (people.h)
+  env.set_lean_low(a.lean && !a.low_explore);   // 단독 과제: 안 읽히는 프론티어 요약을 건너뜀 (탐사 판 학습은 후보·닫힘을 쓰므로 그대로)
   env.reset();
   env.sync();
   std::vector<sim::World> tests;
@@ -337,6 +340,8 @@ int run_low(Args a) {
   cudaMalloc(&d_done, sizeof(int) * N);
   std::vector<sim::LowRlStat> h_stat;
   double total_steps = (double)ppo.iteration() * pc.steps_per_env * N;
+  std::vector<cudaEvent_t> ev_roll(2 * pc.steps_per_env + 1);   // 롤아웃 걸음 경계 (--step-sync 가 아닐 때)
+  for (auto& e : ev_roll) cudaEventCreate(&e);
 
   // 주기 평가: 시험 맵마다 환경 E 개(앞 절반 사람 0 · 뒤 절반 사람 0 ~ 2), 자동 목표로 kEvalSteps 걸음. sample = 정책 분포 샘플(학습 롤아웃과 같은 행동 방식).
   // 기준선과 같은 조건의 측정(경로 길이 구간별 목표)은 따로 low_policy_run — 이 평가는 학습 곡선용
@@ -359,6 +364,7 @@ int run_low(Args a) {
       std::vector<int> pm(E);
       for (int i = 0; i < E; ++i) pm[i] = i < E / 2 ? 0 : 2;
       ev.set_people_max(pm);
+      ev.set_lean_low(a.lean);   // 단독 과제 평가 (hc_solo)
       ev.reset();
       ev.sync();
       for (int step = 0; step < kEvalSteps; ++step) {
@@ -482,20 +488,44 @@ int run_low(Args a) {
     const auto t_it = std::chrono::steady_clock::now();
     if (a.eval_every > 0 && (it == 0 || (a.low_explore && it == it0))) { evaluate(it, false); if (a.low_explore) evaluate_x(it); else evaluate(it, true); }   // 배우기 전 정책 (비교 기준 — 탐사 판 학습은 이어 학습의 시작점도)
     double t_act = 0, t_sim = 0, step_rew = 0;
-    for (int t = 0; t < pc.steps_per_env; ++t) {
-      auto t0 = std::chrono::steady_clock::now();
-      const sim::StepOut o = env.outputs();
-      ppo.act(o.low_img, o.low_1d, d_act);
-      cudaDeviceSynchronize();
-      t_act += ms_since(t0);
-      t0 = std::chrono::steady_clock::now();
-      env.step(d_act);
-      env.sync();
-      const sim::StepOut o2 = env.outputs();
-      k_map_done_low<<<(N + 255) / 256, 256>>>(o2.done, N, d_done);
-      ppo.store(o2.reward, d_done);
-      cudaDeviceSynchronize();
-      t_sim += ms_since(t0);
+    if (a.step_sync) {   // 옛 방식: 걸음마다 세 번 기다림 (호스트 시계로 act·sim 을 가름)
+      for (int t = 0; t < pc.steps_per_env; ++t) {
+        auto t0 = std::chrono::steady_clock::now();
+        const sim::StepOut o = env.outputs();
+        ppo.act(o.low_img, o.low_1d, d_act);
+        cudaDeviceSynchronize();
+        t_act += ms_since(t0);
+        t0 = std::chrono::steady_clock::now();
+        env.step(d_act);
+        env.sync();
+        const sim::StepOut o2 = env.outputs();
+        k_map_done_low<<<(N + 255) / 256, 256>>>(o2.done, N, d_done);
+        ppo.store(o2.reward, d_done);
+        cudaDeviceSynchronize();
+        t_sim += ms_since(t0);
+      }
+    } else {
+      // 롤아웃 동안 호스트는 안 기다린다: 정책(ppo 스트림 — 막는 스트림)과 시뮬(기본 스트림 0)은 기본 스트림의 암묵 동기로 차례가 지켜진다.
+      // act·sim 시간은 기본 스트림 이벤트 사이 GPU 시간 (걸음마다 둘씩, 반복 끝에 한 번 기다려 읽음)
+      for (int t = 0; t < pc.steps_per_env; ++t) {
+        cudaEventRecord(ev_roll[2 * t], 0);
+        const sim::StepOut o = env.outputs();
+        ppo.act(o.low_img, o.low_1d, d_act);
+        cudaEventRecord(ev_roll[2 * t + 1], 0);
+        env.step(d_act);
+        const sim::StepOut o2 = env.outputs();
+        k_map_done_low<<<(N + 255) / 256, 256>>>(o2.done, N, d_done);
+        ppo.store(o2.reward, d_done);
+      }
+      cudaEventRecord(ev_roll[2 * pc.steps_per_env], 0);
+      cudaEventSynchronize(ev_roll[2 * pc.steps_per_env]);
+      for (int t = 0; t < pc.steps_per_env; ++t) {
+        float ma = 0, ms = 0;
+        cudaEventElapsedTime(&ma, ev_roll[2 * t], ev_roll[2 * t + 1]);
+        cudaEventElapsedTime(&ms, ev_roll[2 * t + 1], ev_roll[2 * t + 2]);
+        t_act += ma;
+        t_sim += ms;
+      }
     }
     const double iter_steps = (double)pc.steps_per_env * N;
     total_steps += iter_steps;
@@ -633,6 +663,8 @@ int main(int argc, char** argv) {
       else if (k == "--low-explore") a.low_explore = true;
       else if (k == "--low-solo") a.low_solo = std::stoi(nx());
       else if (k == "--low-eval-steps") a.low_eval_steps = std::stoi(nx());
+      else if (k == "--step-sync") a.step_sync = true;
+      else if (k == "--no-lean") a.lean = false;
       else if (k == "--graph-share") a.graph_share = std::stoi(nx());
       else if (k.rfind("--graph-", 0) == 0) { const std::string v = nx(); if (!sim::graph_arg(a.gargs, k, v.c_str())) throw std::runtime_error("모르는 인자 " + k); }
       else if (k == "--steps") a.steps = std::stoi(nx());

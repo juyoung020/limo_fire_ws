@@ -409,17 +409,21 @@ struct Inst {
         wr::smem_fwd<CI>(), wr::smem_bwd<CI>()                                                          \
   }
 
-// 실제 구조(가까운 지도 6·먼 지도 7·깊이 1 채널, 16-32-32)와 기울기 검사의 작은 구조(3-4-4)
-Inst* find_inst(int cin, int c0, int c1, int c2) {
-  static Inst tab[] = {XNET_CNN_INST_TC(6, 64, 64), XNET_CNN_INST_TC(7, 32, 32), XNET_CNN_INST_TC(1, 40, 64),
+// 실제 구조(가까운 지도 6·먼 지도 7·깊이 1 채널, 아래층 라이다 그림 1 채널 32×32, 16-32-32)와 기울기 검사의 작은 구조(3-4-4).
+// 텐서 코어 판은 (입력 채널, H, W) 마다 따로 만든다 — h·w 를 주면 그 크기 판을 먼저 찾는다 (없으면 채널만 맞는 첫 판 = fp32 판만 씀)
+Inst* find_inst(int cin, int c0, int c1, int c2, int h = -1, int w = -1) {
+  static Inst tab[] = {XNET_CNN_INST_TC(6, 64, 64), XNET_CNN_INST_TC(7, 32, 32), XNET_CNN_INST_TC(1, 40, 64), XNET_CNN_INST_TC(1, 32, 32),
                        XNET_CNN_INST(2, 3, 4, 4),    XNET_CNN_INST(3, 3, 4, 4),    XNET_CNN_INST(1, 3, 4, 4)};
+  if (h > 0)
+    for (auto& t : tab)
+      if (t.cin == cin && t.c0 == c0 && t.c1 == c1 && t.c2 == c2 && t.fwd_tc && t.h == h && t.w == w) return &t;
   for (auto& t : tab)
     if (t.cin == cin && t.c0 == c0 && t.c1 == c1 && t.c2 == c2) return &t;
   return nullptr;
 }
 
 Inst& get(const CnnBranch& b) {
-  Inst* t = find_inst(b.cin, b.c0, b.c1, b.c2);
+  Inst* t = find_inst(b.cin, b.c0, b.c1, b.c2, b.h, b.w);
   if (!t) throw std::runtime_error("cnn_fused: 지원 안 하는 채널");
   t->prepare();
   return *t;
@@ -458,7 +462,7 @@ long cnn_fused_part_floats(const CnnBranch& b) {
 }
 
 bool cnn_fused_tc_supported(const CnnBranch& b) {
-  Inst* t = find_inst(b.cin, b.c0, b.c1, b.c2);
+  Inst* t = find_inst(b.cin, b.c0, b.c1, b.c2, b.h, b.w);
   return t && t->fwd_tc && t->h == b.h && t->w == b.w;
 }
 

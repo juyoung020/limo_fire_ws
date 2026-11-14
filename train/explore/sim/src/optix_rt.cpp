@@ -41,7 +41,9 @@ struct OptixRt::Impl {
   unsigned long long* gas = nullptr;
   unsigned long long* gas_fast = nullptr;   // 하드웨어 삼각형
   const void** tris = nullptr;
-  RtParams* dparams = nullptr;
+  RtParams* dparams = nullptr;   // prog 마다 한 칸 (kRtProgs)
+  RtParams hparams[kRtProgs] = {};   // 장치 칸에 올라 있는 값 (같으면 다시 안 올림)
+  bool hvalid[kRtProgs] = {};
 };
 
 bool OptixRt::available() {
@@ -191,7 +193,7 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   I.sbt.hitgroupRecordBase = (CUdeviceptr)&dr[R + 1];
   I.sbt.hitgroupRecordStrideInBytes = sizeof(Rec);
   I.sbt.hitgroupRecordCount = 2;   // 0 정확한 길(교차 프로그램), 1 빠른 길(하드웨어 삼각형)
-  I.dparams = dalloc<RtParams>(1);
+  I.dparams = dalloc<RtParams>(kRtProgs);
 }
 
 OptixRt::~OptixRt() {
@@ -214,11 +216,21 @@ void OptixRt::launch(const RtParams& p0, cudaStream_t st) {
   p.gas = p.fast ? I.gas_fast : I.gas;
   p.tris = I.tris;
   if (p.n <= 0) return;
-  cudaMemcpyAsync(I.dparams, &p, sizeof(p), cudaMemcpyHostToDevice, st);
+  // 발사 인자는 prog 마다 장치 칸 하나에 둔다. 시뮬 걸음의 발사(prog 1 ~ 4)는 인자가 Env 하나 동안 안 바뀌므로 처음 한 번만 올린다
+  // (전에는 발사마다 페이지 메모리 → 장치 복사 한 번 — 걸음마다 4 번, 호스트가 복사를 기다림. CUDA 그래프 캡처도 막았음)
+  const int slot = p.prog >= 0 && p.prog < kRtProgs ? p.prog : 0;
+  const RtParams& h = I.hparams[slot];
+  const bool same = I.hvalid[slot] && h.prog == p.prog && h.batch == p.batch && h.o == p.o && h.d == p.d && h.tri0 == p.tri0 && h.gas == p.gas && h.tris == p.tris &&
+                    h.out_t == p.out_t && h.out_tri == p.out_tri && h.n == p.n && h.n_dev == p.n_dev && h.off == p.off && h.fast == p.fast;
+  if (!same) {   // 앞서 넣은 발사가 이 칸을 아직 읽을 수 있으므로 같은 스트림 차례로 올린다 (호스트 사본은 객체 안 — 복사가 끝날 때까지 살아 있음)
+    I.hparams[slot] = p;
+    I.hvalid[slot] = true;
+    cudaMemcpyAsync(I.dparams + slot, &I.hparams[slot], sizeof(RtParams), cudaMemcpyHostToDevice, st);
+  }
   const unsigned dim = (unsigned)std::min(p.n, 1 << 19);   // 발사 칸은 많아야 2^19 개 — raygen 이 칸마다 여러 일을 차례로
   OptixShaderBindingTable sbt = I.sbt;
   sbt.raygenRecord = I.raygen[p.prog];
-  ox(optixLaunch(I.pipe, st, (CUdeviceptr)I.dparams, sizeof(RtParams), &sbt, dim, 1, 1), "launch");
+  ox(optixLaunch(I.pipe, st, (CUdeviceptr)(I.dparams + slot), sizeof(RtParams), &sbt, dim, 1, 1), "launch");
 }
 
 }  // namespace sim

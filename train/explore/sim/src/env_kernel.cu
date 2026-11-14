@@ -1950,7 +1950,7 @@ void reach_and_depth(const EnvBatch& b, cudaStream_t st, int gate = 0) {
 
 namespace {
 // 행동 하나 (속도 행동 주기). sub < 0: 기본 · sub ≥ 0: 계층형 묶음의 sub 번째 걸음 (깊이는 묶음 끝에만 — 정책이 묶음 끝 관측만 보고 깊이는 상태만의 함수)
-void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub) {
+void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub, bool reach = true) {
   const EnvCfg& c = b.cfg;
   // 한 행동의 라이다 장 수 ≤ ⌈substeps / lidar_every⌉ — 장마다 물리·빔·지도 갱신 한 바퀴
   const int n_scan = (c.substeps + c.lidar_every - 1) / c.lidar_every;
@@ -1964,7 +1964,7 @@ void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub
   }
   env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b, sub);
   if (sub < 0) reach_and_depth(b, st);
-  else env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1, sub);   // 덩어리 칸 관측의 지연 차례(vec_prev)를 걸음마다 맞춤 — 끝난 환경은 묶음 끝에
+  else if (reach) env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1, sub);   // 덩어리 칸 관측의 지연 차례(vec_prev)를 걸음마다 맞춤 — 끝난 환경은 묶음 끝에
 }
 }  // namespace
 
@@ -1977,15 +1977,18 @@ void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t s
   env_low_pack_kernel<<<b.n_env, kLowPackT, 0, st>>>(b);
 }
 
-void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
+void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st, bool lean) {
   if (b.cfg.action_mode != kActPath) {
     step_once(b, actions, st, -1);
     return;
   }
   if (b.lowrl) {   // 아래층 RL: 한 번 = 걸음 하나 (묶음 길이 1 — 깊이도 걸음마다). 계획은 준비 단계가
-    step_once(b, actions, st, 0);
+    // lean (Env::set_lean_low): 단독 과제에서는 프론티어 요약을 읽는 곳이 없다 — 요약 커널 둘(걸음 · 끝난 환경)을 빼고 깊이만
+    const bool skip = lean && b.cfg.low_auto == 1 && b.cfg.low_explore == 0;
+    step_once(b, actions, st, 0, !skip);
     env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
-    reach_and_depth(b, st, 2);
+    if (skip) depth_gpu(b, st);
+    else reach_and_depth(b, st, 2);
     if (b.cfg.low_auto) env_low_prepare_gpu(b, actions, st);
     return;
   }

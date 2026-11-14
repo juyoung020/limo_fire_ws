@@ -10,9 +10,10 @@ using namespace xnet;
 namespace o = mdp::obs;
 int main() {
   long feat = 3840 + 1336;
-  CnnBranch br[3] = {{6, 64, 64, 16, 32, 32, 0, o::IMG_SIZE, feat, 0},
+  CnnBranch br[4] = {{6, 64, 64, 16, 32, 32, 0, o::IMG_SIZE, feat, 0},
                      {7, 32, 32, 16, 32, 32, o::NEAR_SIZE, o::IMG_SIZE, feat, 2048},
-                     {1, 40, 64, 16, 32, 32, o::NEAR_SIZE + o::FAR_SIZE, o::IMG_SIZE, feat, 2560}};
+                     {1, 40, 64, 16, 32, 32, o::NEAR_SIZE + o::FAR_SIZE, o::IMG_SIZE, feat, 2560},
+                     {1, 32, 32, 16, 32, 32, o::NEAR_SIZE, o::IMG_SIZE, feat, 3840}};   // 아래층 라이다 그림 (1 채널 32×32, 출력 4×4×32 = 512 열)
   int NMAX = 1100;
   uint8_t* img; float *X0a, *X0b, *dX0, *P, *Ga, *Gb, *part; int* idx;
   cudaMalloc(&img, (size_t)NMAX * o::IMG_SIZE);
@@ -29,7 +30,7 @@ int main() {
   std::vector<int> hx(NMAX); for (int i = 0; i < NMAX; ++i) hx[i] = (i * 37 + 11) % NMAX;
   cudaMemcpy(idx, hx.data(), NMAX * 4, cudaMemcpyHostToDevice);
   int worst = 0; double wmax = 0;
-  for (int b = 0; b < 3; ++b) {
+  for (int b = 0; b < 4; ++b) {
     // torch 기본 초기화 크기 U(±1/√fan_in)
     std::vector<float> hp(7000);
     int K[3] = {4 * br[b].cin, 64, 128}, C[3] = {16, 32, 32}; int off = 0;
@@ -48,7 +49,7 @@ int main() {
       cudaMemcpy(a.data(), X0a, n * feat * 4, cudaMemcpyDeviceToHost); cudaMemcpy(c.data(), X0b, n * feat * 4, cudaMemcpyDeviceToHost);
       cudaMemcpy(ga.data(), Ga, off * 4, cudaMemcpyDeviceToHost); cudaMemcpy(gb.data(), Gb, off * 4, cudaMemcpyDeviceToHost);
       double na = 0, d = 0, outside = 0; long cnt = 0;
-      int w = b == 0 ? 2048 : (b == 1 ? 512 : 1280);
+      int w = b == 0 ? 2048 : (b == 1 ? 512 : (b == 2 ? 1280 : 512));
       for (int i = 0; i < n; ++i) for (long j = 0; j < feat; ++j) {
         double x = a[i * feat + j], y = c[i * feat + j];
         bool in = j >= br[b].flat_off && j < br[b].flat_off + w;
