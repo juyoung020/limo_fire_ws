@@ -1,0 +1,39 @@
+09:00:23 시작 1/18: office hold hard seed=0 (온도 58 61)
+09:08:29 끝 1: office hold hard s0 **요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.27 m, 가장 큰 추정 오차 0.56 m
+09:09:14 시작 2/18: office sonar hard seed=0 (온도 57 62)
+09:18:29 끝 2: office sonar hard s0 **요약**: 성공 11 / 14, 성공한 목표의 평균 도착 오차 0.42 m, 가장 큰 추정 오차 1.24 m
+09:19:14 시작 3/18: office sonar soft seed=0 (온도 57 60)
+09:27:33 끝 3: office sonar soft s0 **요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.28 m, 가장 큰 추정 오차 0.59 m
+09:28:18 시작 4/18: warehouse hold hard seed=0 (온도 54 51)
+09:37:13 끝 4: warehouse hold hard s0 **요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.33 m, 가장 큰 추정 오차 0.45 m
+09:37:58 시작 5/18: warehouse sonar hard seed=0 (온도 54 51)
+12:18:52 끝 5: warehouse sonar hard s0 **요약**: 성공 3 / 13, 성공한 목표의 평균 도착 오차 1.85 m, 가장 큰 추정 오차 3.35 m
+12:19:37 시작 6/18: warehouse sonar soft seed=0 (온도 39 35)
+12:57:17 재개(노트북 재시작 뒤)
+12:57:17 시작 6/18: warehouse sonar soft seed=0 (온도 43 48)
+13:09:57 끝 6: warehouse sonar soft s0 **요약**: 성공 3 / 13, 성공한 목표의 평균 도착 오차 1.85 m, 가장 큰 추정 오차 5.38 m
+13:10:42 시작 7/18: office hold hard seed=1 (온도 52 52)
+13:18:57 끝 7: office hold hard s1 **요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.30 m, 가장 큰 추정 오차 0.55 m
+13:19:42 시작 8/18: office sonar hard seed=1 (온도 52 50)
+13:32:58 끝 8: office sonar hard s1 **요약**: 성공 12 / 14, 성공한 목표의 평균 도착 오차 0.78 m, 가장 큰 추정 오차 3.87 m
+13:33:43 시작 9/18: office sonar soft seed=1 (온도 49 45)
+13:41:51 끝 9: office sonar soft s1 **요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.46 m, 가장 큰 추정 오차 1.95 m
+13:42:36 시작 10/18: warehouse hold hard seed=1 (온도 49 45)
+13:50:54 끝 10: warehouse hold hard s1 **요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.34 m, 가장 큰 추정 오차 0.48 m
+13:51:39 시작 11/18: warehouse sonar hard seed=1 (온도 50 45)
+14:14:42 끝 11: warehouse sonar hard s1 **요약**: 성공 5 / 13, 성공한 목표의 평균 도착 오차 0.73 m, 가장 큰 추정 오차 1.73 m
+14:15:27 시작 12/18: warehouse sonar soft seed=1 (온도 52 55)
+14:39:12 끝 12: warehouse sonar soft s1 **요약**: 성공 3 / 13, 성공한 목표의 평균 도착 오차 0.76 m, 가장 큰 추정 오차 3.74 m
+14:39:57 시작 13/18: office hold hard seed=2 (온도 51 49)
+14:47:53 끝 13: office hold hard s2 **요약**: 성공 14 / 14, 성공한 목표의 평균 도착 오차 0.31 m, 가장 큰 추정 오차 0.56 m
+14:48:38 시작 14/18: office sonar hard seed=2 (온도 50 46)
+15:07:26 끝 14: office sonar hard s2 **요약**: 성공 9 / 14, 성공한 목표의 평균 도착 오차 0.25 m, 가장 큰 추정 오차 2.10 m
+15:08:12 시작 15/18: office sonar soft seed=2 (온도 49 49)
+15:19:03 끝 15: office sonar soft s2 **요약**: 성공 12 / 14, 성공한 목표의 평균 도착 오차 0.59 m, 가장 큰 추정 오차 1.79 m
+15:19:48 시작 16/18: warehouse hold hard seed=2 (온도 48 44)
+15:28:21 끝 16: warehouse hold hard s2 **요약**: 성공 13 / 13, 성공한 목표의 평균 도착 오차 0.32 m, 가장 큰 추정 오차 0.46 m
+15:29:06 시작 17/18: warehouse sonar hard seed=2 (온도 50 47)
+16:40:27 끝 17: warehouse sonar hard s2 실패(요약 없음)
+16:41:12 시작 18/18: warehouse sonar soft seed=2 (온도 44 42)
+17:23:37 끝 18: warehouse sonar soft s2 실패(요약 없음)
+17:24:22 전체 끝
