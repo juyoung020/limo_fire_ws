@@ -6,6 +6,8 @@
 //   scene_lowobs --in a.scene [--boxes boxes.tsv --out b.scene] [--env config/env.yaml] [--ppm out.ppm] [--ppm-scale 4]
 //   boxes.tsv : 줄마다 상자 하나 — 가운데 x  y (m, 세계)  yaw(도)  길이  폭  높이 (m)  [이름]   (# 주석 · 빈 줄 무시, 바닥 z = 0 에 놓음)
 //   --boxes 없이 부르면 원본 보고만 (격자 · 라이다에 안 보이는 벽 면 칸 수)
+//   --random N --seed S --out b.scene : 상자 N 개를 갈 수 있는 바닥 칸에서 무작위로 (2026-11-14, 아래층 학습 맵용 — 크기 0.3~0.8 × 0.25~0.5 m,
+//     높이 0.05~0.09 m, 방향 고르게, 출발점 1 m 안은 뺌. 모두 잠정). 아래 확인을 못 넘으면 실패 — 부른 쪽이 다른 씨앗으로 다시
 //
 // 확인하고 적는 것 (하나라도 어기면 실패, 파일을 안 씀):
 //   · 상자 윗면 < 라이다 높이 − 1 cm, 윗면 > collision_band 아래 끝 (그래야 막힌 칸이 됨)
@@ -15,6 +17,7 @@
 // 그림(--ppm): 흰색 갈 수 있는 바닥 · 검정 벽 면 칸(라이다 높이에 형상 있음) · 빨강 벽 면 칸인데 라이다 높이에 형상 없음 · 회색 그 밖 막힘 · 파랑 더한 상자 ·
 //   초록 출발점 · 옅은 선 1 m 눈금(굵은 선 5 m). 위가 +y
 #include <algorithm>
+#include <random>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -165,7 +168,9 @@ void write_ppm(const sim::World& w, const std::vector<uint8_t>& lid, const std::
 int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", in, out, boxes_path, ppm;
   int sc = 4;
-  float max_lost = 3.0f;   // 상자 때문에 줄어도 되는 갈 수 있는 바닥 (m²) — 넘으면 방이 끊긴 것으로 봄 (잠정)
+  float max_lost = 3.0f;
+  int n_random = 0;
+  unsigned seed = 1;   // 상자 때문에 줄어도 되는 갈 수 있는 바닥 (m²) — 넘으면 방이 끊긴 것으로 봄 (잠정)
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--env" && i + 1 < argc) env_path = argv[++i];
@@ -175,9 +180,11 @@ int main(int argc, char** argv) {
     else if (a == "--ppm" && i + 1 < argc) ppm = argv[++i];
     else if (a == "--ppm-scale" && i + 1 < argc) sc = std::max(1, std::atoi(argv[++i]));
     else if (a == "--max-lost" && i + 1 < argc) max_lost = (float)std::atof(argv[++i]);
+    else if (a == "--random" && i + 1 < argc) n_random = std::atoi(argv[++i]);
+    else if (a == "--seed" && i + 1 < argc) seed = (unsigned)std::atoi(argv[++i]);
     else { std::fprintf(stderr, "모르는 인자 %s\n", a.c_str()); return 2; }
   }
-  if (in.empty() || (boxes_path.empty() != out.empty())) {
+  if (in.empty() || ((boxes_path.empty() && n_random <= 0) != out.empty())) {
     std::fprintf(stderr, "scene_lowobs --in a.scene [--boxes boxes.tsv --out b.scene] [--env env.yaml] [--ppm out.ppm] [--ppm-scale 4] [--max-lost 3.0]\n");
     return 2;
   }
@@ -192,11 +199,37 @@ int main(int argc, char** argv) {
                 w0.gw, w0.gh, w0.ox, w0.oy, res, base.nodes[0].lo[2], base.nodes[0].hi[2], base.start[0], base.start[1]);
     std::printf("원본: 갈 수 있는 바닥 %.2f m² · 벽 면 칸 %d · 막힌 칸 %d | 라이다 높이 %.3f m · 몸통 띠 %.2f ~ %.2f m — 벽 면 칸 가운데 라이다 높이에 형상이 없는 칸(이웃 포함) %d (%.1f %%)\n",
                 s0.floor * res * res, s0.wall, s0.blocked, lz, hc.band_lo, hc.band_hi, s0.wall_hidden, s0.wall > 0 ? 100.0 * s0.wall_hidden / s0.wall : 0.0);
-    if (boxes_path.empty()) {
+    if (boxes_path.empty() && n_random <= 0) {
       if (!ppm.empty()) write_ppm(w0, lid0, {}, res, sc, ppm);
       return 0;
     }
-    const std::vector<Box> boxes = read_boxes(boxes_path);
+    std::vector<Box> boxes;
+    if (n_random > 0) {
+      std::mt19937 rng(seed);
+      std::uniform_real_distribution<float> u(0.f, 1.f);
+      std::vector<int> cand;
+      for (int k = 0; k < w0.gw * w0.gh; ++k) {
+        if (!(w0.grid[k] & sim::kCellFloor) || (w0.grid[k] & sim::kCellBlocked)) continue;
+        const float x = w0.ox + ((float)(k % w0.gw) + 0.5f) * res, y = w0.oy + ((float)(k / w0.gw) + 0.5f) * res;
+        if (std::hypot(x - base.start[0], y - base.start[1]) < 1.0f) continue;
+        cand.push_back(k);
+      }
+      if (cand.empty()) throw std::runtime_error("상자 놓을 바닥이 없음");
+      for (int i = 0; i < n_random; ++i) {
+        const int k = cand[(size_t)(u(rng) * (float)cand.size()) % cand.size()];
+        Box b;
+        b.x = w0.ox + ((float)(k % w0.gw) + 0.5f) * res;
+        b.y = w0.oy + ((float)(k / w0.gw) + 0.5f) * res;
+        b.yaw = u(rng) * 3.14159265f;
+        b.len = 0.3f + 0.5f * u(rng);
+        b.wid = 0.25f + 0.25f * u(rng);
+        b.h = 0.05f + 0.04f * u(rng);
+        b.name = "box_r" + std::to_string(i);
+        boxes.push_back(b);
+      }
+    } else {
+      boxes = read_boxes(boxes_path);
+    }
     if (boxes.empty()) throw std::runtime_error("상자가 없음: " + boxes_path);
     sim::Scene s = base;
     for (const Box& b : boxes) {

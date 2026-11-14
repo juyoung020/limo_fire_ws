@@ -265,6 +265,7 @@ struct EnvState {
   // 로봇이 재는 간격·닿음 (contact.h sense_step, 걸음마다): 라이다 점 · 지도 막힘 칸 · 깊이 층 칸 → 몸통 간격 (m), 그 최솟값(근접 항),
   // 라이다 추적 사람까지 간격(없으면 kSenseFar), 멈춤 시계(걸음), 닿은 센서 비트 (kCon*), 닿음 (con_mask). gt_touch: 판 동안 정답 충돌 (비트 1 벽 · 2 사람) — 기록 전용, 학습에 안 씀
   float s_lid, s_map, s_cam, s_clear, s_pgap;
+  float s_dir;                 // 진행 방향 간격: 위 셋 가운데 몸통이 다가가는 점·칸만 (contact.h rect_toward, 몸통 속도 = 오도메트리·자이로) — 근접 항
   int32_t s_stall, s_kind, contact, gt_touch;
   // 계층형 행동 (kActPath, include/hier_path.h): 지금 목표 칸 (y · gw + x, −1 없음), 웨이포인트 수·지금 구간·고른 후보 번호·앞 부분만 담았나, 웨이포인트 칸 (x, y)
   int32_t goal_cell, p_n, p_i, p_slot, p_trunc, p_stops;   // p_stops: 판 동안 충돌 검사로 멈추거나 물러난 걸음 수 (기록)
@@ -551,6 +552,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.s_lid = kSenseFar;
   e.s_map = e.s_cam = e.s_clear = kSenseWin;   // 아직 안 잼 — 첫 걸음 끝에 잼
   e.s_pgap = kSenseFar;
+  e.s_dir = kSenseFar;
   e.s_stall = e.s_kind = e.contact = e.gt_touch = 0;
   e.reward = 0.f;
   e.coverage = 0.f;

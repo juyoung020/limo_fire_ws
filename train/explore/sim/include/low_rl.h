@@ -579,8 +579,9 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     r[kLrTime] = kLrTimeK;
     if (reach_new && (!xm || R.g_len >= kLrXReachLen)) r[kLrReach] = kLrReachK;   // 탐사 판 학습: 처음 계획 길이 kLrXReachLen 넘는 목표만 (위 상수)
     if (e.contact) r[kLrCollision] = (e.s_kind & kConPerson) ? c.lr_pcol_k : kLrCollisionK;   // 닿음 (센서 — contact.h)
-    {   // 근접: 센서 간격 (contact.h s_clear — 이번 장 라이다 점 · 로봇 지도 막힘 · 깊이 카메라 층, 지도 자세. 사람도 라이다 점으로 들어감)
-      const float d = e.s_clear;
+    {   // 근접 (2026-11-14 진행 방향): 몸통이 다가가는 쪽의 센서 간격 (contact.h s_dir — 이번 장 라이다 점 · 로봇 지도 막힘 · 깊이 층 가운데
+        // 몸통 속도로 다가가는 점만. 옛 전방위 s_clear 는 서 있거나 비켜 가는 벽에도 벌을 줌). 크기·띠는 그대로
+      const float d = e.s_dir;
       if (d < kLrProxDist) r[kLrProximity] = kLrProxK * (1.f - dm::maxf(d, 0.f) / kLrProxDist);
       if (c.lr_mprox_k != 0.f && d < c.lr_mprox_d) {   // 움직임 근접: 몸통 가장 빠른 점 속도 = |v| + 꼭짓점 반경 × |ω|
         const float rc = sqrtf(c.half_len * c.half_len + c.half_wid * c.half_wid);

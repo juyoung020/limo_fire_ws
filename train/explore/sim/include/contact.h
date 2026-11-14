@@ -19,9 +19,20 @@ DEV float rect_gap(const EnvCfg& c, float u, float v) {
   return dm::maxf(dx, dy);
 }
 
+// 점 (u, v) 쪽으로 몸통이 다가가나 (2026-11-14, 진행 방향 근접 항): 그 점에 가장 가까운 몸통 둘레 점 q 의 속도(몸통 v·ω —
+// 바퀴 오도메트리·자이로)가 q → 점 쪽 성분을 가지면 다가감. 몸통 안 점은 늘 다가감. 서 있으면(v = ω = 0) 다가가는 점 없음
+DEV bool rect_toward(const EnvCfg& c, float u, float v, float vb, float wb) {
+  const float qx = dm::clampf(u, -c.half_len, c.half_len), qy = dm::clampf(v, -c.half_wid, c.half_wid);
+  const float dx = u - qx, dy = v - qy;
+  if (dx == 0.f && dy == 0.f) return true;
+  return (vb - wb * qy) * dx + (wb * qx) * dy > 0.f;
+}
+
 // 이번 행동의 라이다 장(Shared::bins — 관측 라이다 칸과 같은 248 칸, 칸마다 가장 가까운 점)의 점 → 몸통 간격 최솟값.
 // 장은 행동 끝 자세에서 쏜 것이라(lidar_every = substeps) 몸통 좌표 = 장착 위치 + 빔. 장이 없었으면 kSenseFar
-DEV float sense_lidar_gap(const EnvCfg& c, const Shared& sh) {
+// *dir: 그 가운데 몸통이 다가가는 점(rect_toward)만의 최솟값 (vb·wb = 몸통 속도)
+DEV float sense_lidar_gap(const EnvCfg& c, const Shared& sh, float vb, float wb, float* dir) {
+  *dir = kSenseFar;
   if (!sh.scanned) return kSenseFar;
   float best = kSenseFar;
   for (int k = 0; k < mdp::obs::LIDAR_BINS; ++k) {
@@ -31,13 +42,16 @@ DEV float sense_lidar_gap(const EnvCfg& c, const Shared& sh) {
     const float a = mdp::obs::kLidarMin + ((float)k + 0.5f) * mdp::obs::kLidarBin;
     float s, co;
     dm::sincosf_d(a, &s, &co);
-    best = dm::minf(best, rect_gap(c, c.mount_x + r * co, c.mount_y + r * s));
+    const float u = c.mount_x + r * co, v = c.mount_y + r * s, g = rect_gap(c, u, v);
+    best = dm::minf(best, g);
+    if (g < *dir && rect_toward(c, u, v, vb, wb)) *dir = g;
   }
   return best;
 }
 
 // 지도 자세 몸통 둘레 kSenseWin 안 칸: 로봇 지도 막힘 → *g_map, 깊이 카메라 층 → *g_cam (칸 가운데 간격 − 칸 반 폭, 없으면 kSenseWin)
-DEV void sense_map_gaps(const EnvBatch& b, const EnvState& e, int env, float* g_map, float* g_cam) {
+// *g_dir: 막힘·깊이 층 칸 가운데 몸통이 다가가는 칸만의 최솟값 (vb·wb = 몸통 속도)
+DEV void sense_map_gaps(const EnvBatch& b, const EnvState& e, int env, float vb, float wb, float* g_map, float* g_cam, float* g_dir) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
@@ -48,7 +62,7 @@ DEV void sense_map_gaps(const EnvBatch& b, const EnvState& e, int env, float* g_
   int x0, y0, x1, y1;
   cell_of(c, m, px - rad, py - rad, &x0, &y0);
   cell_of(c, m, px + rad, py + rad, &x1, &y1);
-  float gm = kSenseWin, gc = kSenseWin;
+  float gm = kSenseWin, gc = kSenseWin, gd = kSenseWin;
   y0 = y0 < 0 ? 0 : y0;
   x0 = x0 < 0 ? 0 : x0;
   y1 = y1 > m.gh - 1 ? m.gh - 1 : y1;
@@ -58,12 +72,14 @@ DEV void sense_map_gaps(const EnvBatch& b, const EnvState& e, int env, float* g_
       const bool occ = mdp::cell_class(L[y * c.size + x]) == mdp::kOcc, cam = cam_lethal(b, env, x, y);
       if (!occ && !cam) continue;
       const float wx = m.ox + ((float)x + 0.5f) * c.res - px, wy = m.oy + ((float)y + 0.5f) * c.res - py;
-      const float g = rect_gap(c, co * wx + s * wy, co * wy - s * wx) - 0.5f * c.res;
+      const float u = co * wx + s * wy, v = co * wy - s * wx, g = rect_gap(c, u, v) - 0.5f * c.res;
       if (occ) gm = dm::minf(gm, g);
       if (cam) gc = dm::minf(gc, g);
+      if (g < gd && rect_toward(c, u, v, vb, wb)) gd = g;
     }
   *g_map = gm;
   *g_cam = gc;
+  *g_dir = gd;
 }
 
 // 사람 (라이다 덩어리 칼만 추적 — 아래층 RL 의 lowrl_trk, 센서만): 지도 자세 몸통 ~ 추적한 움직이는 덩어리(원) 간격 최솟값 (m). 추적이 없으면 kSenseFar.
@@ -88,9 +104,11 @@ DEV float tracked_person_gap(const EnvBatch& b, const EnvState& e, int env) {
 DEV void sense_step(const EnvBatch& b, EnvState& e, int env, const Shared& sh) {
   const EnvCfg& c = b.cfg;
   if (e.collided) e.gt_touch |= e.people.hit_person ? 2 : 1;   // 정답 충돌 (기록 전용 — 학습에 안 씀)
-  e.s_lid = sense_lidar_gap(c, sh);
-  sense_map_gaps(b, e, env, &e.s_map, &e.s_cam);
+  float dl, dm2;
+  e.s_lid = sense_lidar_gap(c, sh, e.drive.wv, e.gyro, &dl);   // 몸통 속도 = 바퀴 오도메트리 v · 자이로 ω (행동 끝)
+  sense_map_gaps(b, e, env, e.drive.wv, e.gyro, &e.s_map, &e.s_cam, &dm2);
   e.s_clear = dm::minf(dm::minf(e.s_lid, e.s_cam), e.s_map);
+  e.s_dir = dm::minf(dl, dm2);   // 진행 방향 간격 (근접 항 — low_rl.h)
   // 멈춤: 보낸 명령(/cmd_vel)이 움직이라는데 바퀴 오도메트리(drive.wv·ww)·자이로가 거의 0
   const bool cmd = dm::absf(e.cmd_v) >= c.con_cmd_v || dm::absf(e.cmd_w) >= c.con_cmd_w;
   const bool still = dm::absf(e.drive.wv) < c.con_odo_v && dm::absf(e.drive.ww) < c.con_odo_w && dm::absf(e.gyro) < c.con_odo_w;
