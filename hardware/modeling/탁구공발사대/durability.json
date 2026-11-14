@@ -1,0 +1,35 @@
+{
+ "mass_kg": 0.018064,
+ "impact_v_mps": 4.89,
+ "energy_J": 0.216,
+ "A_old_pin_stop": {
+  "peak_force_N": 1295,
+  "contact_pressure_MPa": 222,
+  "pin_bending_MPa": 64.1,
+  "pin_shear_MPa": 30.5
+ },
+ "B_lug_stop": {
+  "peak_force_N": 1672,
+  "contact_pressure_MPa": 41.1,
+  "lug_root_shear_MPa": 11.6,
+  "barrel_wall_compression_MPa": 17.4,
+  "plunger_wall_compression_MPa": 11.1,
+  "pin_load": "귀가 핀을 감싸 핀에는 충격이 걸리지 않음"
+ },
+ "sear_and_trip": {
+  "hold_force_N": 10.34,
+  "sear_band_peak_N": 2.09,
+  "stop_force_min_N": 2.58,
+  "finger_peak_N": 17.77,
+  "pin_bending_MPa": 3.6,
+  "tooth_root_bending_MPa": 1.0,
+  "tooth_arm_MPa": 4.5,
+  "tooth_contact_MPa": 21.7,
+  "sear_pin_bending_MPa": 10.3,
+  "sear_hole_bearing_MPa": 0.25,
+  "finger_bending_MPa": 11.1,
+  "tail_bending_MPa": 4.4,
+  "lever_bending_at_stall_MPa": 20.1,
+  "note": "매 발 반복되는 응력은 모두 반복 기준 20 MPa 아래. 걸쇠 바이어스는 고무줄이라 PLA 판스프링 피로가 없다."
+ }
+}

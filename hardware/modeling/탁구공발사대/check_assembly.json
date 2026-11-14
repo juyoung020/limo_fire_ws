@@ -1,0 +1,420 @@
+{
+ "servo_lever_vs_body_mm3": 0.0,
+ "horn_lever_vs_body_mm3": 0.0,
+ "horn_lever_vs_lever_hub_mm3(혼 윗면에 앉음 = 0)": 0.0,
+ "sear_pin_vs_body_mm3(구멍과 같은 지름)": 0.0,
+ "pin_travel_hits_body": [],
+ "pin_travel_hits_horn_servo": [],
+ "plunger_travel_hits_body": [],
+ "plunger_insert_path_hits(dx)": [],
+ "plunger_rest_gap_to_slot_front(mm3 at +0.2)": 5.78,
+ "lever_hits": [],
+ "lever_track_every5": [
+  [
+   0.0,
+   -30.0
+  ],
+  [
+   5.0,
+   -30.0
+  ],
+  [
+   10.0,
+   -32.75
+  ],
+  [
+   15.0,
+   -37.95
+  ],
+  [
+   20.0,
+   -42.75
+  ],
+  [
+   25.0,
+   -47.25
+  ],
+  [
+   30.0,
+   -51.6
+  ],
+  [
+   35.0,
+   -55.85
+  ],
+  [
+   40.0,
+   -60.0
+  ],
+  [
+   45.0,
+   -64.2
+  ],
+  [
+   50.0,
+   -68.5
+  ],
+  [
+   55.0,
+   -73.0
+  ],
+  [
+   60.0,
+   -77.7
+  ],
+  [
+   65.0,
+   -82.7
+  ],
+  [
+   70.0,
+   -88.2
+  ]
+ ],
+ "lever_angle_to_cock(-80)": 62.5,
+ "lever_first_touch_deg": 8.0,
+ "pin_x_at_cmd_angle": -83.75,
+ "rest_lever_blocks_pin_path": [],
+ "trip_lever_blocks_pin_path": [],
+ "sear_open_needed_vs_pin_x": {
+  "-73.3": 6.7,
+  "-72.3": 8.8,
+  "-71.3": 8.8,
+  "-70.3": 8.8,
+  "-69.3": 8.8,
+  "-68.3": 8.5,
+  "-67.3": 8.3,
+  "-66.3": 6.9,
+  "-65.3": 5.0,
+  "-64.3": 3.2,
+  "-63.3": 1.6,
+  "-62.3": 0.1
+ },
+ "sear_open_to_release_deg(핀이 걸림면 앞으로 지나가는 데 필요한 최대)": 8.8,
+ "sear_closed_holds_pin(pin +0.3 forward of hold hits)": true,
+ "sear_hold_pin_x": -73.5,
+ "sear_closed_free_at_cock_positions": {
+  "-80.0": true,
+  "-85.3": true,
+  "-73.55": true
+ },
+ "sear_sweep_hits_body_deg": [
+  34.5,
+  35.0
+ ],
+ "sear_closed_gap_to_stop(mm3 at -0.3 deg)": 0.57,
+ "lever_vs_sear_during_cock(th, pin_x, sear_s)": [],
+ "trip_track_every1deg(lever, sear)": [
+  [
+   0.0,
+   0.0
+  ],
+  [
+   -1.0,
+   0.0
+  ],
+  [
+   -2.0,
+   0.0
+  ],
+  [
+   -3.0,
+   0.0
+  ],
+  [
+   -4.0,
+   0.7
+  ],
+  [
+   -5.0,
+   1.8
+  ],
+  [
+   -6.0,
+   2.95
+  ],
+  [
+   -7.0,
+   4.35
+  ],
+  [
+   -8.0,
+   5.9
+  ],
+  [
+   -9.0,
+   7.45
+  ],
+  [
+   -10.0,
+   9.05
+  ],
+  [
+   -11.0,
+   10.6
+  ],
+  [
+   -12.0,
+   12.15
+  ],
+  [
+   -13.0,
+   13.75
+  ],
+  [
+   -14.0,
+   15.3
+  ],
+  [
+   -15.0,
+   16.85
+  ],
+  [
+   -16.0,
+   18.35
+  ],
+  [
+   -17.0,
+   19.85
+  ],
+  [
+   -18.0,
+   21.3
+  ],
+  [
+   -19.0,
+   22.75
+  ],
+  [
+   -20.0,
+   24.15
+  ],
+  [
+   -21.0,
+   25.5
+  ],
+  [
+   -22.0,
+   26.8
+  ]
+ ],
+ "trip_first_touch_lever_deg": -3.5,
+ "trip_release_lever_deg": -10.0,
+ "sear_s_at_trip_cmd": 21.3,
+ "sear_at_trip_blocks_pin_path": [],
+ "sear_at_trip_hits_body": false,
+ "lever_finger_vs_sear_at_rest_gap_ok": true,
+ "band_hits": {
+  "hook12.0_pin-30.0_y-1": [],
+  "hook12.0_pin-30.0_y1": [],
+  "hook12.0_pin-73.5_y-1": [],
+  "hook12.0_pin-73.5_y1": [],
+  "hook12.0_pin-80.0_y-1": [],
+  "hook12.0_pin-80.0_y1": [],
+  "hook12.0_pin-85.3_y-1": [],
+  "hook12.0_pin-85.3_y1": []
+ },
+ "sear_band": {
+  "s0": {
+   "hits": [],
+   "span_mm": 47.0,
+   "arm_mm": 17.0
+  },
+  "s8.8": {
+   "hits": [],
+   "span_mm": 49.58,
+   "arm_mm": 16.54
+  },
+  "s21.3": {
+   "hits": [],
+   "span_mm": 53.07,
+   "arm_mm": 15.39
+  }
+ },
+ "lever_servo_insert_path_hits(dz, 걸쇠 닫힘 있음)": [],
+ "sear_insert_path_hits(1: 아래에서 올림 dz, 앞 40)": [],
+ "sear_insert_path_hits(2: 뒤로 밂 dx)": [],
+ "sear_pin_insert_path_hits(dy, 레버 서보 있음)": [],
+ "sear_pin_vs_sear_hole_mm3": 0.0,
+ "pin_insert_path_hits(-dy, 플런저 쉴 때)": [],
+ "hopper_tube_vs_body_mm3": 0.0,
+ "hopper_tube_insert_path_hits(dz, 레버 서보 있음)": [],
+ "hopper_tube_seat_gap(mm3 at -0.3 down; >0 = 짧은 통 위에 앉음)": 0.75,
+ "ball_path_hopper_balls_vs_parts_mm3": 0.0,
+ "cradle_vs_tilt_servo_mm3": -0.0,
+ "tilt": {
+  "5.0": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    41.1,
+    [
+     -94,
+     26
+    ]
+   ],
+   "front_x": 35.6,
+   "rear_x": -101.9,
+   "top_z": 338.7
+  },
+  "7.5": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    38.5,
+    [
+     -93,
+     26
+    ]
+   ],
+   "front_x": 34.8,
+   "rear_x": -104.1,
+   "top_z": 339.4
+  },
+  "10.0": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    30.5,
+    [
+     -92,
+     -1
+    ]
+   ],
+   "front_x": 33.8,
+   "rear_x": -106.2,
+   "top_z": 339.5
+  },
+  "12.5": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    25.2,
+    [
+     -92,
+     -2
+    ]
+   ],
+   "front_x": 32.7,
+   "rear_x": -108.1,
+   "top_z": 339.1
+  },
+  "15.0": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    22.3,
+    [
+     -92,
+     -2
+    ]
+   ],
+   "front_x": 31.5,
+   "rear_x": -109.8,
+   "top_z": 338.2
+  },
+  "17.5": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    19.4,
+    [
+     -93,
+     -2
+    ]
+   ],
+   "front_x": 30.2,
+   "rear_x": -111.4,
+   "top_z": 336.7
+  },
+  "20.0": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    16.4,
+    [
+     -93,
+     -2
+    ]
+   ],
+   "front_x": 28.8,
+   "rear_x": -121.7,
+   "top_z": 334.8
+  },
+  "22.5": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    13.5,
+    [
+     -92,
+     -2
+    ]
+   ],
+   "front_x": 27.3,
+   "rear_x": -132.8,
+   "top_z": 332.3
+  },
+  "25.0": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    10.5,
+    [
+     -92,
+     -2
+    ]
+   ],
+   "front_x": 25.7,
+   "rear_x": -143.7,
+   "top_z": 329.3
+  },
+  "27.5": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    9.7,
+    [
+     -93,
+     -1
+    ]
+   ],
+   "front_x": 24.0,
+   "rear_x": -154.4,
+   "top_z": 325.8
+  },
+  "30.0": {
+   "launcher_vs_cradle_mm3": 0.0,
+   "launcher_vs_tilt_servo_mm3": 0.0,
+   "min_gap_to_limo": [
+    6.8,
+    [
+     -93,
+     -1
+    ]
+   ],
+   "front_x": 22.2,
+   "rear_x": -164.8,
+   "top_z": 321.8
+  }
+ },
+ "cradle_min_gap_to_limo": [
+  -0.0,
+  [
+   -4,
+   -54
+  ]
+ ],
+ "axle_pin_vs_cradle_and_body_mm3(구멍 안이면 0)": [
+  0.0,
+  0.0,
+  0.0
+ ],
+ "axle_pin_insert_path_hits(dy, 15deg)": [],
+ "tilt_horn_screw_driver_hits_mm3": 0.0,
+ "tilt_servo_insert_path_hits(dy)": [],
+ "flange_screw_driver_hits_mm3": {
+  "lever": -0.0,
+  "tilt": 0.0
+ }
+}

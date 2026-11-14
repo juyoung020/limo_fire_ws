@@ -1,0 +1,3 @@
+{"s0": 10.3, "k": 1.0, "cock_t": 1.0, "tau": 0.6, "v": [6.115, 6.069, 6.134], "held": [true, true, true], "peak": 0.577}
+{"s0": 18, "k": 1.0, "cock_t": 1.0, "tau": 0.6, "v": [6.712, 6.489, 6.782], "held": [true, true, true], "peak": 0.6}
+{"s0": 25, "k": 1.0, "cock_t": 1.0, "tau": 0.6, "v": [null, null, null], "held": [false, false, false], "peak": 0.6}

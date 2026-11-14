@@ -1,0 +1,106 @@
+{
+ "body": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 162.79,
+  "ext": [
+   134.0,
+   92.5,
+   128.0
+  ]
+ },
+ "plunger": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 5.45,
+  "ext": [
+   50.0,
+   46.8,
+   40.8
+  ]
+ },
+ "pin": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 2.04,
+  "ext": [
+   8.0,
+   88.2,
+   6.5
+  ]
+ },
+ "lever": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 6.2,
+  "ext": [
+   80.3,
+   57.8,
+   9.2
+  ]
+ },
+ "sear": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 4.37,
+  "ext": [
+   45.5,
+   14.0,
+   44.6
+  ]
+ },
+ "sear_pin": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 0.56,
+  "ext": [
+   8.0,
+   27.4,
+   6.0
+  ]
+ },
+ "axle_pin": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 1.1,
+  "ext": [
+   14.0,
+   18.0,
+   10.5
+  ]
+ },
+ "hopper_tube": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 18.31,
+  "ext": [
+   48.4,
+   48.4,
+   164.8
+  ]
+ },
+ "hopper_cap": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 5.6,
+  "ext": [
+   48.6,
+   48.6,
+   10.0
+  ]
+ },
+ "roller": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 0.2,
+  "ext": [
+   10.0,
+   10.0,
+   4.4
+  ]
+ },
+ "AX": [
+  -40.0,
+  -45.0
+ ]
+}

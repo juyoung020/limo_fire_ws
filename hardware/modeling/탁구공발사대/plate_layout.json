@@ -1,0 +1,182 @@
+{
+ "parts": {
+  "body": {
+   "file": "print_body.stl",
+   "rot_z_deg": 0,
+   "x": [
+    25.0,
+    159.0
+   ],
+   "y": [
+    5.0,
+    97.5
+   ],
+   "height": 128.0,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 162.79
+  },
+  "cradle": {
+   "file": "print_cradle.stl",
+   "rot_z_deg": 0,
+   "x": [
+    25.0,
+    131.1
+   ],
+   "y": [
+    103.0,
+    203.0
+   ],
+   "height": 77.0,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 53.89
+  },
+  "hopper_tube": {
+   "file": "print_hopper_tube.stl",
+   "rot_z_deg": 0,
+   "x": [
+    165.0,
+    213.4
+   ],
+   "y": [
+    5.0,
+    53.4
+   ],
+   "height": 164.8,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 18.31
+  },
+  "hopper_cap": {
+   "file": "print_hopper_cap.stl",
+   "rot_z_deg": 0,
+   "x": [
+    165.0,
+    213.6
+   ],
+   "y": [
+    59.0,
+    107.6
+   ],
+   "height": 10.0,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 5.6
+  },
+  "lever": {
+   "file": "print_lever.stl",
+   "rot_z_deg": 0,
+   "x": [
+    137.0,
+    217.3
+   ],
+   "y": [
+    113.0,
+    170.8
+   ],
+   "height": 9.2,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 6.2
+  },
+  "sear": {
+   "file": "print_sear.stl",
+   "rot_z_deg": 0,
+   "x": [
+    137.0,
+    185.5
+   ],
+   "y": [
+    176.0,
+    220.6
+   ],
+   "height": 14.0,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 4.43
+  },
+  "plunger": {
+   "file": "print_plunger.stl",
+   "rot_z_deg": 0,
+   "x": [
+    191.0,
+    231.8
+   ],
+   "y": [
+    176.0,
+    222.8
+   ],
+   "height": 50.0,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 12.2
+  },
+  "pin": {
+   "file": "print_pin.stl",
+   "rot_z_deg": 90,
+   "x": [
+    25.0,
+    113.2
+   ],
+   "y": [
+    209.0,
+    217.0
+   ],
+   "height": 6.5,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 2.32
+  },
+  "sear_pin": {
+   "file": "print_sear_pin.stl",
+   "rot_z_deg": 90,
+   "x": [
+    25.0,
+    52.4
+   ],
+   "y": [
+    222.0,
+    230.0
+   ],
+   "height": 6.0,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 0.56
+  },
+  "axle_pin": {
+   "file": "print_axle_pin.stl",
+   "rot_z_deg": 0,
+   "x": [
+    58.0,
+    72.0
+   ],
+   "y": [
+    222.0,
+    240.0
+   ],
+   "height": 10.5,
+   "inside_plate": true,
+   "height_ok": true,
+   "vol_cm3": 1.1
+  }
+ },
+ "close_pairs_mm": {
+  "body-cradle": 5.5,
+  "body-hopper_tube": 6.0,
+  "body-hopper_cap": 8.3,
+  "cradle-lever": 5.9,
+  "cradle-sear": 5.9,
+  "cradle-pin": 6.3,
+  "hopper_tube-hopper_cap": 5.6,
+  "hopper_cap-lever": 8.5,
+  "lever-plunger": 5.2,
+  "sear-plunger": 7.1,
+  "pin-sear_pin": 6.0,
+  "pin-axle_pin": 5.5,
+  "sear_pin-axle_pin": 7.2
+ },
+ "min_gap_mm": 5.2,
+ "all_ok": true,
+ "total_vol_cm3": 267.4
+}

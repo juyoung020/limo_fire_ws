@@ -1,0 +1,73 @@
+{
+ "body": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 200.33,
+  "ext": [
+   144.4,
+   100.6,
+   182.0
+  ]
+ },
+ "pusher": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 9.48,
+  "ext": [
+   22.0,
+   40.8,
+   40.8
+  ]
+ },
+ "pin": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 2.26,
+  "ext": [
+   6.0,
+   80.0,
+   6.0
+  ]
+ },
+ "fork": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 2.66,
+  "ext": [
+   50.0,
+   24.0,
+   5.0
+  ]
+ },
+ "wheel": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 16.89,
+  "ext": [
+   40.0,
+   40.0,
+   16.5
+  ]
+ },
+ "wedge": {
+  "pieces": 1,
+  "watertight": true,
+  "vol_cm3": 112.36,
+  "ext": [
+   124.8,
+   97.2,
+   42.4
+  ]
+ },
+ "zshift": 94.97677333709257,
+ "flange_y": 55.4,
+ "servo_cx": -56.5,
+ "motor": [
+  4.45,
+  19.55,
+  -37.2,
+  -12.1,
+  -49.05,
+  -28.95
+ ]
+}
