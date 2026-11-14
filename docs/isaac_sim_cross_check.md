@@ -1,9 +1,7 @@
 # Isaac Sim 교차 검증 (연기 모드 초음파)
 
 연기 모드 검증 현황의 "다른 시뮬레이터와 교차 검증" 항목을 한 문서로 정리한다. 무엇을·왜·어떻게 했는지, 어디까지 믿을 수 있는지를 적는다.
-숫자 결과는 [benchmarks/README.md](benchmarks/README.md) "결과 4"(초음파 3 개, 옛 설계) 와 "결과 6"(**현재 설계 2 개 재실행**), [20261113_0650_nav_isaac_cross_check.csv](benchmarks/20261113_0650_nav_isaac_cross_check.csv)·[20261114_1724_nav_isaac_sonar2_cross_check.csv](benchmarks/20261114_1724_nav_isaac_sonar2_cross_check.csv) 에 있다.
-
-> **2026-11-14 갱신**: 아래 "환경·교차 방법·시험 조합"은 처음 돌린 **초음파 3 개** 배치 기준이다. 현재 실물 설계는 2 개(앞 좌우 ±20°·위 5°, `/ultrasonic/front_left`·`front_right`)라 이 배치로 office·warehouse 시드 0~2(18 판)를 다시 돌렸고, 결과 요약은 아래 "2 개 배치 재실행"에 있다. 3 개 배치 결과는 옛 설계 기록으로만 남긴다.
+숫자 결과는 [benchmarks/README.md](benchmarks/README.md) "결과 4" 와 [20261113_0650_nav_isaac_cross_check.csv](benchmarks/20261113_0650_nav_isaac_cross_check.csv) 에 있다.
 
 ## 한눈에
 
@@ -101,13 +99,6 @@
 
 office 맵 `sonar hard`·`soft` 를 한 판씩 위에서 내려다본 영상: [assets/office_sonar_hard_vs_soft.mp4](assets/office_sonar_hard_vs_soft.mp4) · [GIF](assets/office_sonar_hard_vs_soft.gif).
 파란 원 = 순찰점, 주황 선 = 실제 이동 궤적, 빨간 원 = 로봇. 24 배속.
-
-## 2 개 배치 재실행 (현재 실물 설계, 2026-11-14)
-
-- 로봇 덮개 파일의 초음파를 2 개로 바꿨다: `ultrasonic_front_left` (0.18, +0.025, −0.06)·`ultrasonic_front_right` (0.18, −0.025, −0.06), 좌우 ±20°, 위 5°(`limo_fire.urdf.xacro` 와 같은 값, 잠정). 토픽은 `/ultrasonic/front_left`·`front_right`. 사양(0.02~4 m, 15°, 광선 5 개, 잡음 1 %)은 같다.
-- 시험은 줄여서 office·warehouse × (`hold`/`sonar hard`/`sonar soft`) × 시드 0~2, 18 판. 두 판(warehouse 시드 2 의 `hard`·`soft`)은 시뮬 시간 한도에 걸려 일부 목표만 시도했다.
-- 결과: `hold` 는 모두 전 목표 성공. `sonar` 는 `hold` 보다 나쁘다 — office `hard` 32/42·`soft` 40/42, warehouse `hard` 12/37·`soft` 8/38. 3 개 배치와 달리 warehouse 에서는 `soft` 도 `hold` 수준으로 돌아오지 않았다. 자세한 표는 [결과 6](benchmarks/README.md).
-- 이 결과로 위 "한눈에" 의 `soft` 문장(`hold` 와 비슷)은 3 개 배치에만 맞고, 현재 설계에서는 office 에서만 조금 낫다.
 
 ## 어디까지 믿을 수 있나
 
