@@ -149,7 +149,7 @@ struct LowRl {
 };
 
 // 보상 항 (차례 = LowRlStat::term 칸 번호 — 도구·학습기가 이름표를 같은 차례로 가짐)
-enum : int32_t { kLrProgress = 0, kLrTime, kLrReach, kLrCollision, kLrProximity, kLrSmooth, kLrBack, kLrTerms };   // (안전층 항 safety 는 2026-11-14 에 없앰)
+enum : int32_t { kLrProgress = 0, kLrTime, kLrReach, kLrCollision, kLrProximity, kLrSmooth, kLrBack, kLrTtc, kLrTerms };   // (안전층 항 safety 는 2026-11-14 에 없앰)
 
 // 환경마다 누적 (정책이 몬 걸음만). 호스트가 가져가며 0 으로 (Env::take_low_stat) — 학습기가 반복마다 한 번
 struct LowRlStat {

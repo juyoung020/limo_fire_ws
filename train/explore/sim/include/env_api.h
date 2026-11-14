@@ -116,6 +116,9 @@ class Env {
   void get_low_rl(std::vector<LowRl>& out) const;
   void get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
   void take_low_stat(std::vector<LowRlStat>& out);   // 누적을 가져가며 0 으로
+  // 맵 뽑기 우선순위 (train --map-prio): 맵마다 끝난 판 수·닿음으로 끝난 판 수를 가져가며 0 으로 · 리셋 때 맵을 뽑을 누적 분포 [n_maps] (빈 것 = 고르게)
+  void take_map_stats(std::vector<int32_t>& eps, std::vector<int32_t>& hit);
+  void set_map_cdf(const std::vector<float>& cdf);
   void get_terms(std::vector<float>& terms) const;
   void get_ep(std::vector<EpInfo>& ep) const;
   void get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const;
@@ -129,6 +132,7 @@ class Env {
   bool bit_exact() const { return ray_path() != kRayRtFast; }   // CPU 참조판과 비트까지 같다고 약속하는 길인가
 
  private:
+  float* cdf_buf_ = nullptr;   // set_map_cdf 의 장치(또는 호스트) 버퍼
   bool gpu_;
   bool lean_low_ = false;
   EnvBatch b_{};

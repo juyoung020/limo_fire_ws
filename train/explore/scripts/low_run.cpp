@@ -833,7 +833,7 @@ const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tt
 
 // 걸음 자취 (--trace): 정책이 몬 걸음마다 한 줄 — 닿음 센서 값(contact.h)과 시뮬 정답(충돌·간격)을 나란히. 정답 칸은 기록 전용
 const char* kTraceHead = "scene\tpeople\tenv\tep\tt\tend\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\twv\tgyro\t"
-                         "s_lid\ts_map\ts_cam\ts_pgap\ts_stall\ts_kind\tcontact\tgt_touch\tgt_person\tgt_gap\tgt_u\tgt_v\tgt_pgap\tgoal_d\tgt_pmode\tgt_pbear\ts_dir\n";
+                         "s_lid\ts_map\ts_cam\ts_pgap\ts_stall\ts_kind\tcontact\tgt_touch\tgt_person\tgt_gap\tgt_u\tgt_v\tgt_pgap\tgoal_d\tgt_pmode\tgt_pbear\ts_dir\ts_close\n";
 void trace_row(std::FILE* f, const sim::EnvCfg& c, const sim::World& W, const char* scene, int people, int i, int ep, int t, int end, const sim::EnvState& e,
                float a0, float a1, int safe, float goal_d) {
   float hu = 0.f, hv = 0.f, hd = 9.f;
@@ -849,9 +849,9 @@ void trace_row(std::FILE* f, const sim::EnvCfg& c, const sim::World& W, const ch
       if (gk < g) { g = gk; pm = e.people.mode[k]; pb = std::remainder(std::atan2(e.people.cyl[k].y - e.y, e.people.cyl[k].x - e.x) - e.th, 6.2831853f); }
     }
   }
-  std::fprintf(f, "%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.3f\t%.3f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\n",
+  std::fprintf(f, "%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.3f\t%.3f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\n",
                scene, people, i, ep, t, end, e.x, e.y, e.th, e.v, e.w, a0, a1, e.cmd_v, e.cmd_w, safe, e.drive.wv, e.gyro, e.s_lid, e.s_map, e.s_cam,
-               e.s_pgap, e.s_stall, e.s_kind, e.contact, e.collided, e.people.hit_person, hd, hu, hv, e.people.near_d, goal_d, pm, pb, e.s_dir);
+               e.s_pgap, e.s_stall, e.s_kind, e.contact, e.collided, e.people.hit_person, hd, hu, hv, e.people.near_d, goal_d, pm, pb, e.s_dir, e.s_close);
 }
 
 struct PolRes {

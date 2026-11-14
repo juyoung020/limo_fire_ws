@@ -23,6 +23,8 @@ constexpr float kLrProxDist = 0.2f;      // 근접: 몸통~막힌 칸·사람 �
 constexpr float kLrProxK = -0.05f;       //   × (1 − 간격 / kLrProxDist) 걸음마다 (닿기 직전 = 진행의 절반)
 constexpr float kLrSmoothK = -0.01f;     // 매끄러움: × ‖이번 − 직전 행동‖ (정규 단위 v, ω)
 constexpr float kLrBackK = -0.02f;       // 후진: × 후진 명령 크기 (정규 단위 0 ~ 1). 라이다가 뒤 140° 를 못 봄 — 막지는 않고 값만
+constexpr float kLrTtcK = -0.1f;         // 충돌 시간(2026-11-14 low_s4): × (1 − TTC / kLrTtcT) 걸음마다, TTC = 진행 방향 센서 간격 / 다가가는 속도 (contact.h s_dir·s_close
+constexpr float kLrTtcT = 0.6f;          //   — 바퀴 오도메트리·자이로). 1 m/s 면 0.6 m 앞부터 켜짐. 크기는 제 속도 진행(+0.1/걸음)과 같게 — 둘 다 잠정
 // ---------- 벽 충돌 대책 (2026-11-13, 모두 잠정 — 재어 고른 값. 진단·견줌 표는 mdp/README "아래층 RL — 벽 충돌") ----------
 // EnvCfg 기본값 (env_cfg.cpp 가 환경변수 SIM_LOW_NOBACK · SIM_LR_MPROX_K · _D 로 덮음)
 constexpr int kLrNoBack = 1;             // 1: 정책 후진 명령을 0 으로 — v ∈ [0, 1.0] m/s (2026-11-13 기본. 뒤 140° 는 라이다 밖, Long 외·DRL-VO 도 v ≥ 0 — mdp/README "아래층 RL — 탐사 판 학습"). 0 = 옛 [−0.3, 1.0]
@@ -588,6 +590,10 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
         r[kLrProximity] += c.lr_mprox_k * (dm::absf(e.drive.wv) + rc * dm::absf(e.gyro)) * (1.f - dm::maxf(d, 0.f) / c.lr_mprox_d);   // 바퀴 오도메트리 v · 자이로
       }
       if (c.lr_ppl_k != 0.f) r[kLrProximity] += c.lr_ppl_k * lowrl_ppl_risk(b, e, env);
+    }
+    if (c.lr_ttc_k != 0.f && e.s_close > 1e-3f && e.s_dir < kSenseFar) {   // 충돌 시간 항
+      const float ttc = dm::maxf(e.s_dir, 0.f) / e.s_close;
+      if (ttc < kLrTtcT) r[kLrTtc] = c.lr_ttc_k * (1.f - ttc / kLrTtcT);
     }
     if (e.step > 1) {
       const float d0 = e.last_act[0] - e.last_act[mdp::act::DIM], d2 = e.last_act[2] - e.last_act[mdp::act::DIM + 2];

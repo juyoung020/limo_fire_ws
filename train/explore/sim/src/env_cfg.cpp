@@ -314,6 +314,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       const auto envf = [](const char* k, float d) { const char* s = std::getenv(k); return s && s[0] ? (float)std::atof(s) : d; };
       c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
       c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
+      c.lr_ttc_k = envf("SIM_LR_TTC_K", kLrTtcK);
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
       // 사람 충돌·속도 대책 (mdp/README "아래층 RL — 사람 충돌·속도"). 보상만 바꾼다 — 정책 행동·관측은 그대로
       c.lr_ppl_k = envf("SIM_LR_PPL_K", kLrPplK);

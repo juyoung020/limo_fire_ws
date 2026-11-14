@@ -316,6 +316,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       }
       b_.lowrl = upload(r);
       b_.lowstat = alloc<LowRlStat>(n_env);
+      b_.map_eps = alloc<int32_t>((size_t)b_.n_maps);   // 맵 뽑기 우선순위 통계 (set_map_cdf 를 안 부르면 쓰이기만 하고 뽑기는 고르게)
+      b_.map_hit = alloc<int32_t>((size_t)b_.n_maps);
       b_.low_img = alloc<uint8_t>((size_t)kLowImg * n_env);
       b_.low_1d = alloc<float>((size_t)kLow1d * n_env);
     }
@@ -473,6 +475,21 @@ void Env::get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const 
   if (!b_.lowrl) { img.clear(); o1d.clear(); return; }
   fetch(gpu_, b_.low_img, (size_t)kLowImg * b_.n_env, img);
   fetch(gpu_, b_.low_1d, (size_t)kLow1d * b_.n_env, o1d);
+}
+void Env::take_map_stats(std::vector<int32_t>& eps, std::vector<int32_t>& hit) {
+  if (!b_.map_eps) { eps.clear(); hit.clear(); return; }
+  fetch(gpu_, b_.map_eps, (size_t)b_.n_maps, eps);
+  fetch(gpu_, b_.map_hit, (size_t)b_.n_maps, hit);
+  if (gpu_) { cudaMemset(b_.map_eps, 0, sizeof(int32_t) * b_.n_maps); cudaMemset(b_.map_hit, 0, sizeof(int32_t) * b_.n_maps); }
+  else { std::fill(b_.map_eps, b_.map_eps + b_.n_maps, 0); std::fill(b_.map_hit, b_.map_hit + b_.n_maps, 0); }
+}
+void Env::set_map_cdf(const std::vector<float>& cdf) {
+  if (cdf.empty()) { b_.map_cdf = nullptr; return; }
+  if ((int)cdf.size() != b_.n_maps) throw std::runtime_error("set_map_cdf: 맵 수와 다름");
+  if (!cdf_buf_) cdf_buf_ = alloc<float>((size_t)b_.n_maps);
+  if (gpu_) cudaMemcpy(cdf_buf_, cdf.data(), sizeof(float) * cdf.size(), cudaMemcpyHostToDevice);
+  else std::copy(cdf.begin(), cdf.end(), cdf_buf_);
+  b_.map_cdf = cdf_buf_;
 }
 void Env::take_low_stat(std::vector<LowRlStat>& out) {
   if (!b_.lowstat) { out.clear(); return; }

@@ -89,6 +89,7 @@ struct EnvCfg {
   float sweep_h, sweep_margin;   // 내다보는 시간 (s), 몸통 둘레 여유 (m)
   // 아래층 RL (low_rl.h · mdp/README "아래층 RL"). 기본값은 low_rl.h 상수, env_cfg.cpp 가 환경변수로 덮는다
   int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
+  float lr_ttc_k;                // 충돌 시간 벌점 (low_rl.h kLrTtcK, SIM_LR_TTC_K — 0 = 끔)
   float lr_mprox_k, lr_mprox_d;  // 움직임 근접 벌점: × 몸통 가장 빠른 점 속도 (m/s) × (1 − 간격 / lr_mprox_d). 0 = 끔
   float lr_ppl_k, lr_ppl_t, lr_ppl_m;   // 사람 마주침 벌점 (low_rl.h lowrl_ppl_risk): × (1 − 가장 가까워질 때까지 시간 / lr_ppl_t), 그때 간격 < lr_ppl_m 인 사람. 0 = 끔
   // 사람 추적 (low_rl.h lowrl_trk — 라이다 덩어리 칼만 필터, lo_mov 일 때 걸음마다. 인지만 — 명령은 안 고침)
@@ -211,7 +212,7 @@ constexpr int kProgRing = 20;                             // 탐사 진행 속�
 constexpr int kBinNone = 1 << 30;                         // 라이다 칸에 점 없음
 // 로봇이 재는 간격·닿음 (contact.h): 닿은 센서 비트, 지도·깊이 층 간격을 보는 몸통 둘레 거리 (m — 근접 항 띠 0.2 m 보다 조금 넓게, 밖은 이 값), 라이다 점이 없을 때 간격
 enum : int32_t { kConLidar = 1, kConCam = 2, kConStall = 4, kConMap = 8, kConPerson = 16 };   // kConPerson: 닿음 때 추적 사람이 곁 (닿음 센서 아님)
-constexpr float kSenseWin = 0.25f;
+constexpr float kSenseWin = 0.6f;   // 2026-11-14 low_s4: 0.25 → 0.6 (충돌 시간 항이 1 m/s 에서 0.6 m 앞까지 보게)
 constexpr float kSenseFar = 9.f;
 constexpr int kClassLog = 16384;                          // 한 장에 칸 종류가 바뀐 칸 낱말 목록 길이 (넘으면 장 범위 전체를 다시 셈 — env_kernel.cu)
 
@@ -265,6 +266,7 @@ struct EnvState {
   // 로봇이 재는 간격·닿음 (contact.h sense_step, 걸음마다): 라이다 점 · 지도 막힘 칸 · 깊이 층 칸 → 몸통 간격 (m), 그 최솟값(근접 항),
   // 라이다 추적 사람까지 간격(없으면 kSenseFar), 멈춤 시계(걸음), 닿은 센서 비트 (kCon*), 닿음 (con_mask). gt_touch: 판 동안 정답 충돌 (비트 1 벽 · 2 사람) — 기록 전용, 학습에 안 씀
   float s_lid, s_map, s_cam, s_clear, s_pgap;
+  float s_close;               // s_dir 점에 다가가는 속도 (m/s, 몸통 둘레 점 속도의 그 점 쪽 성분 — 충돌 시간 항)
   float s_dir;                 // 진행 방향 간격: 위 셋 가운데 몸통이 다가가는 점·칸만 (contact.h rect_toward, 몸통 속도 = 오도메트리·자이로) — 근접 항
   int32_t s_stall, s_kind, contact, gt_touch;
   // 계층형 행동 (kActPath, include/hier_path.h): 지금 목표 칸 (y · gw + x, −1 없음), 웨이포인트 수·지금 구간·고른 후보 번호·앞 부분만 담았나, 웨이포인트 칸 (x, y)
@@ -363,6 +365,11 @@ struct EnvBatch {
   int stage_off[mdp::cur::kNumStages + 1];
   int max_stage;
   int n_env;
+  // 맵 뽑기 우선순위 (2026-11-14 low_s4, train --map-prio — 우선 재생 꼴): 맵마다 끝난 판 수·닿음으로 끝난 판 수 (판 끝에 더함, 정수라 차례 무관),
+  // 호스트가 고친 누적 분포 map_cdf [n_maps] (nullptr 이면 고르게 — 옛 동작과 비트 같음)
+  int32_t* map_eps;
+  int32_t* map_hit;
+  const float* map_cdf;
   Shared* scratch;             // [env] GPU 판: 커널 사이에 넘기는 장 준비·한 행동 합 (CPU 판은 안 씀)
   // GPU 판 깊이 광선 (env_kernel.cu·optix_rays.cu): 픽셀마다 가운데 광선 거리·삼각형, 옆 광선 큐(소프트웨어: 픽셀 · 2 + 왼0/오른1, RT 코어: 픽셀)·그 거리(소프트웨어), 원자 셈 칸
   float* dep_z;                // [env · DEPTH_SIZE]
@@ -509,7 +516,14 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
     e.map = b.stage_maps[b.stage_off[s] + (int)(dm::splitmix64(e.rng) % (uint64_t)n)];
     e.err_scale = mdp::cur::err_scale_of(s);
   } else {
-    e.map = (int)(dm::splitmix64(e.rng) % (uint64_t)b.n_maps);
+    if (b.map_cdf) {   // 우선순위 뽑기 (누적 분포에서 이분 탐색)
+      const float u = (float)(dm::splitmix64(e.rng) >> 40) * (1.f / 16777216.f) * b.map_cdf[b.n_maps - 1];
+      int lo = 0, hi = b.n_maps - 1;
+      while (lo < hi) { const int mid = (lo + hi) / 2; if (b.map_cdf[mid] > u) hi = mid; else lo = mid + 1; }
+      e.map = lo;
+    } else {
+      e.map = (int)(dm::splitmix64(e.rng) % (uint64_t)b.n_maps);
+    }
     e.err_scale = 1.f;
   }
   const MapDev& m = b.maps[e.map];
@@ -553,6 +567,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.s_map = e.s_cam = e.s_clear = kSenseWin;   // 아직 안 잼 — 첫 걸음 끝에 잼
   e.s_pgap = kSenseFar;
   e.s_dir = kSenseFar;
+  e.s_close = 0.f;
   e.s_stall = e.s_kind = e.contact = e.gt_touch = 0;
   e.reward = 0.f;
   e.coverage = 0.f;
@@ -1354,6 +1369,15 @@ DEV void episode_end(const EnvBatch& b, EnvState& e, int env, float cov, float d
   I.coll_kind = !e.contact ? 0
                 : (e.cmd_v > 0.01f ? 1 : (e.cmd_v < -0.01f ? 3 : (dm::absf(e.cmd_w) > 0.01f ? 2 : 4)));
   I.gt_touch = e.gt_touch;
+  if (b.map_eps) {   // 맵 뽑기 우선순위 통계 (정수 더하기 — GPU 원자 연산이어도 결과는 차례와 무관)
+#ifdef __CUDA_ARCH__
+    atomicAdd(&b.map_eps[e.map], 1);
+    if (e.done == mdp::cur::kCollision || e.done == mdp::cur::kCollisionPerson) atomicAdd(&b.map_hit[e.map], 1);
+#else
+    b.map_eps[e.map] += 1;
+    if (e.done == mdp::cur::kCollision || e.done == mdp::cur::kCollisionPerson) b.map_hit[e.map] += 1;
+#endif
+  }
   if (c.curriculum) {
     // 맨 위 단계 무작위 (실험, 켤 때만 난수를 뽑아 끈 쪽은 난수 흐름이 그대로)
     const uint32_t rnd = c.cur_top_random ? (uint32_t)(dm::splitmix64(e.rng) >> 32) : 0u;

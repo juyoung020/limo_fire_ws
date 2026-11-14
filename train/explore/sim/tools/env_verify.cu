@@ -268,7 +268,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     bad_cam += vg != vc;
     bad_cam += p1.size() != p2.size() || std::memcmp(p1.data(), p2.data(), 4 * p1.size()) != 0;
   }
-  static const char* tn[sim::kLrTerms] = {"진행", "시간", "통과", "충돌", "근접", "매끄러움", "후진"};
+  static const char* tn[sim::kLrTerms] = {"진행", "시간", "통과", "충돌", "근접", "매끄러움", "후진", "충돌시간"};
   std::printf("아래층 RL (%s, 행동 폭 %d, 계획 주기 %d 걸음, 사람 상한 %d): 환경 %d × 걸음 %d%s\n", host ? "호스트가 목표" : "자동 목표", A, sim::lowrl_period(c), people, n_env,
               n_steps, negative ? " (일부러 어긋나게)" : "");
   std::printf("판 끝: 벽 충돌 %d · 사람 충돌 %d · 끊김(시간·정체·목표 수) %d | 정책 걸음 %d (전체 %zu 중 %zu) · 끝난 판 %d (벽 %d · 사람 %d · 정체 %d · 시간 %d)\n", ends[2], ends[5], ends[3],
