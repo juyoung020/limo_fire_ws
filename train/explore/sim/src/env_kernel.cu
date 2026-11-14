@@ -1171,7 +1171,8 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   const bool scan = c.path_scan != 0 || b.cvox != nullptr || path_rb_plan(c, mdp::obsgen::reach_robot(c)).r2 != mdp::obsgen::reach_robot(c).r2;   // 느슨 판 LO·SLO 를 따로 만드나 (지금 스캔 · 깊이 카메라 층 · 계획 반경)
   const auto Bp = [&](int t) { return P + (size_t)(kPpB + (t & 3)) * nf; };
   const bool due = lowrl_due(b, e, env);   // 아래층 RL: 계획 차례인 환경만 (끄면 늘 true). 고치는 것은 아래 동기화 뒤 스레드 0
-  if (tid == 0 && due) {
+  const bool replan = lowrl_replan(b, e, env);   // 목적지만이면 목표가 새로 들어올 때만 (아니면 due 와 같음)
+  if (tid == 0 && replan) {
     int force = 0;   // 복구 (hier_path.h path_recovery): 다시 계획 · 포기한 목표면 다른 후보(없으면 −1)
     const int k_in = lowrl_policy(b, env) ? 0 : (actions && c.low_auto != 2 ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1);   // 정책 환경: 행동 줄은 속도 — 목표는 LowCmd 하나
     const int k = path_recovery(b, e, env, k_in, &force);
@@ -1187,7 +1188,10 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
     s_start = -1;
   }
   __syncthreads();
-  if (!due) return;   // 블록 전체 같은 값
+  if (!replan) {   // 블록 전체 같은 값
+    if (tid == 0 && due && b.lowrl) lowrl_planned(b, e, env);   // 목적지만: 계획은 건너뛰고 차례 기록만 (깊이 카메라 층 주기는 그대로)
+    return;
+  }
   if (tid == 0 && b.lowrl) lowrl_planned(b, e, env);
   if (!s_plan) {   // 빈 후보: 목표 없음. 아는 칸이 없으면 목표만 (경로 없이 섬)
     if (tid == 0 && s_target >= 0) {

@@ -112,6 +112,18 @@ DEV bool lowrl_due(const EnvBatch& b, const EnvState& e, int env) {
   const LowRl& R = b.lowrl[env];
   return R.tgt_seen == -2 || e.step - R.p_step >= lowrl_period(b.cfg) || b.lowcmd[env].target != R.tgt_seen || b.lowcmd[env].follow != R.fol_seen;
 }
+// 목표가 새로 들어왔나 (지난 계획 뒤 LowCmd 가 바뀜)
+DEV bool lowrl_goal_new(const EnvBatch& b, int env) {
+  const LowRl& R = b.lowrl[env];
+  return R.tgt_seen == -2 || b.lowcmd[env].target != R.tgt_seen || b.lowcmd[env].follow != R.fol_seen;
+}
+// 경로 계획을 이번에 다시 하나: 보통은 lowrl_due 와 같다. 목적지만(SIM_LOW_GOALONLY, 2026-11-15 순수 RL)이면 목표가 새로 들어올 때만 —
+// 그때 한 번 짠 경로는 과제 만들기(로봇 지도에서 갈 수 있는 목표인지 · goal_cell)에만 쓰고, 목표마다 판 끝은 통과·시간·지도 자세 정체·닿음만 (low_step.h low_finish).
+// 깊이 카메라 층은 그대로 lowrl_due 차례마다 (관측이 씀)
+DEV bool lowrl_replan(const EnvBatch& b, const EnvState& e, int env) {
+  if (!lowrl_due(b, e, env)) return false;
+  return !b.lowrl || !b.cfg.lo_goalonly || lowrl_goal_new(b, env);
+}
 DEV void lowrl_planned(const EnvBatch& b, const EnvState& e, int env) {
   LowRl& R = b.lowrl[env];
   R.p_step = e.step;
@@ -573,8 +585,9 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     // 탐사 판 학습: 통과는 목표마다 처음 한 번만 센다 (탐사 판은 통과 반경 안에 있는 걸음마다 표시가 서고, 위층 규칙이 같은 칸을 다시 줄 수 있음)
     const bool reach_new = reached && !(xm && R.x_paid);
     if (xm && reached) R.x_paid = 1;
-    const bool off = !reached && L.hold != 0;                                   // 경로 끝에 왔는데 통과 반경 밖
-    const bool nopath = !reached && !off && t.has_goal && !t.has_path;          // 경로를 못 짬
+    const bool off = !reached && L.hold != 0;                                   // 경로 끝에 왔는데 통과 반경 밖 (목적지만이면 low_finish 가 안 세움 → 늘 거짓)
+    // 경로를 못 짬. 목적지만이면 목표를 받을 때 한 번 짠 계획(lowrl_replan)으로만 — 로봇 지도에서 못 가는 목표를 다시 뽑는 과제 만들기 (판정·보상 아님)
+    const bool nopath = !reached && !off && t.has_goal && !t.has_path;
     float r[kLrTerms];
     for (int k = 0; k < kLrTerms; ++k) r[k] = 0.f;
     if (R.rem_ok && t.has_path) r[kLrProgress] = kLrProgressK * dm::clampf(R.rem_prev - t.rem, -kLrProgressClip, kLrProgressClip);

@@ -160,7 +160,17 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
   if (!L.following || !b.lowcmd) return false;
   const int tgt = b.lowcmd[env].target;
   const float px = e.x + e.ex, py = e.y + e.ey;   // 지도 자세 (로봇이 아는 자기 자리)
-  if (tgt >= 0 && e.goal_cell == tgt) {
+  // 목적지만 (SIM_LOW_GOALONLY — low_rl.h lowrl_replan): 경로는 목표를 받을 때만 짜므로 통과는 목표 칸과 지도 자세 거리만으로, 경로 끝(off)·그 대기(hold)는 안 씀
+  const bool go = b.lowrl && c.lo_goalonly;
+  if (go && tgt >= 0) {
+    const float tx = m.ox + ((float)(tgt % m.gw) + 0.5f) * c.res - px, ty = m.oy + ((float)(tgt / m.gw) + 0.5f) * c.res - py;
+    if (tx * tx + ty * ty <= c.low_pass_r * c.low_pass_r) {
+      L.reached += 1;
+      L.reach_step = e.step;
+      L.hold = e.step - L.d_step;
+      if (L.reached >= c.low_goals) { L.end = kLowEndGoals; return true; }
+    }
+  } else if (tgt >= 0 && e.goal_cell == tgt) {
     const float tx = m.ox + ((float)(tgt % m.gw) + 0.5f) * c.res - px, ty = m.oy + ((float)(tgt / m.gw) + 0.5f) * c.res - py;
     if (tx * tx + ty * ty <= c.low_pass_r * c.low_pass_r) {
       L.reached += 1;

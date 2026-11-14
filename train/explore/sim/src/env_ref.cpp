@@ -352,7 +352,8 @@ static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
   }
   if (lowrl_due(b, e, env)) {
     hier_camlayer_cpu(b, e, env);
-    plan_cpu(b, e, env, lowrl_policy(b, env) ? 0 : (actions && c.low_auto != 2 ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1));
+    if (lowrl_replan(b, e, env))   // 목적지만이면 목표가 새로 들어올 때만 (env_kernel.cu env_plan_kernel 과 같은 규칙)
+      plan_cpu(b, e, env, lowrl_policy(b, env) ? 0 : (actions && c.low_auto != 2 ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1));
     lowrl_planned(b, e, env);
   }
   lowrl_pack(b, e, env);
