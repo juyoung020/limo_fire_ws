@@ -17,7 +17,10 @@
 namespace sim {
 namespace {
 void ox(OptixResult r, const char* what) {
-  if (r != OPTIX_SUCCESS) throw std::runtime_error(std::string("OptiX ") + what + " 실패 " + std::to_string((int)r));
+  if (r != OPTIX_SUCCESS) {   // CUDA 쪽 오류(7900)면 그 CUDA 오류 글도 붙임
+    const cudaError_t ce = cudaPeekAtLastError();
+    throw std::runtime_error(std::string("OptiX ") + what + " 실패 " + std::to_string((int)r) + " (" + optixGetErrorName(r) + ", CUDA: " + cudaGetErrorString(ce) + ")");
+  }
 }
 template <class T>
 T* dalloc(size_t n) {

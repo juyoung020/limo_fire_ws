@@ -302,3 +302,11 @@ rsl_rl `ActorCriticRecurrent` (actor·critic 이 순환 층을 따로, 롤아웃
 aarch64(젯슨 Orin Nano)에서 합성곱·actor MLP 의 곱합을 출력 16 개(NEON 벡터 4 개 — 서로 다른 FMA 사슬 넷)씩. 가중치는 load 때 [입력][출력]으로 전치해 둔다.
 출력마다 더하는 차례가 스칼라와 같아(스칼라도 gcc 가 fmadd 로 묶음) 결과가 비트까지 같다. `tools/neon_bench.cpp` 로 확인: 같은 무작위 관측 30 개의 로짓 덤프 cmp 같음,
 6.94 → 2.84 ms/act (계층형 체크포인트 explore_h6). 슬롯 머리는 작아서 스칼라 그대로. `XNET_CPU_SCALAR` 를 정의하면 스칼라만. x86 빌드는 그대로(스칼라).
+
+### 아래층 CPU 정책 (2026-11-15, `policy_cpu.h` LowPolicy)
+
+`explore_spec_low(true, H)` (넓은 지도 가지 + 순환 핵) 의 actor 정방향을 CPU 로 — 실물 노드가 걸음마다 `act(img IMG_WIDE, 1D N1D, out)`, 판(과제)이 새로 시작하면 `reset()` (학습의 판 끝 h = 0).
+행동 = 평균 (v, ω) 와 선언 로짓 (학습기 act_inference 결정적 행동과 같은 값). 확인 `ppo/tools/low_cpu_check --ckpt … [--perturb 0.05]` (환경 8 × 30 걸음, 판 끝 섞음):
+학습기 정확 경로(합성곱·MLP fp32 융합)와 행동 최대 차 3.8e-6, 선언 같음 · 학습 기본 경로(bf16 텐서 코어)와는 최대 0.06 (bf16 반올림 몫 — 비트 같을 수 없음, 무작위 관측이라 큰 쪽).
+`--perturb` 는 모든 변수를 흔든 체크포인트로 (이어 학습 시작점은 h 열이 0 이라 순환 핵 길이 출력에 안 보이므로). NEON(aarch64): 합성곱·선형·GRU 곱합을 출력 16 개씩 —
+스칼라와 비트 같음(`tools/low_bench.cpp` 덤프 cmp, 40 걸음 · h 포함), Orin Nano 9.1 → 4.5 ms/걸음.

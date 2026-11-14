@@ -92,7 +92,7 @@ struct Args {
   bool lean = true;           // --no-lean: 아래층 단독 과제에서도 프론티어 요약 커널을 돌림 (Env::set_lean_low — 결과는 같고 느림)
   bool step_sync = false;
   int gru = 0;                // --gru H (--low): actor·critic 순환 핵 GRU 은닉 H (0 = 끔). 순서 미니배치 (ppo/README "순환 핵")
-  bool roll_graph = false;    // --rollout-graph: 아래층 롤아웃을 CUDA Graph 하나로 (실험 — 2026-11-15 OptiX 발사가 캡처 안에서 실패(7900)해 기본 끔)     // --step-sync: 아래층 롤아웃 걸음마다 호스트가 GPU 를 기다림 (옛 방식 — act·sim 시간을 호스트 시계로 가름). 끄면 CUDA 이벤트로 잼
+  bool roll_graph = false;    // --rollout-graph: 아래층 롤아웃을 CUDA Graph 하나로 (실험 — 2026-11-15 OptiX 9 optixLaunch 가 스트림 캡처 안에서 OPTIX_ERROR_CUDA_ERROR(7900, CUDA 쪽 오류는 없음)로 실패해 기본 끔. GPU 가 이미 99 % 바빠 얻을 몫도 작음)     // --step-sync: 아래층 롤아웃 걸음마다 호스트가 GPU 를 기다림 (옛 방식 — act·sim 시간을 호스트 시계로 가름). 끄면 CUDA 이벤트로 잼
   bool graph = false;  // --graph: 그래프 모드 (이웃 노드 하나 — sim kActPath + graph_on, PPO 그래프 어텐션 정책). 결정 하나 = env.step 한 번, 걸음 수는 가변
   int graph_share = -1;   // --graph-share 0|1 (음수 = ACSpec 기본: 가치 몸통 따로)
   sim::GraphArgs gargs;   // --graph-node 등 (sim/include/env_cfg.h)
@@ -310,6 +310,8 @@ int run_low(Args a) {
   if (a.gamma >= 0) pc.gamma = a.gamma;
   if (a.lam >= 0) pc.lam = a.lam;
   const int N = pc.num_envs, AW = mdp::low::ACT;
+  size_t mem_f0 = 0, mem_t = 0, mem_f1 = 0, mem_f2 = 0;   // 이 프로세스가 잡은 장치 메모리 (시뮬 · PPO) — 다른 프로세스가 같이 쓰면 그 사이 몫이 섞일 수 있음
+  cudaMemGetInfo(&mem_f0, &mem_t);
   sim::Env env(hc, worlds, lidar, N, a.seed, true);
   env.set_people_max(std::vector<int>(N, a.low_people));   // 판마다 사람 0 ~ 이 수 (people.h)
   env.set_lean_low(a.lean && !a.low_explore);   // 단독 과제: 안 읽히는 프론티어 요약을 건너뜀 (탐사 판 학습은 후보·닫힘을 쓰므로 그대로)
@@ -318,7 +320,11 @@ int run_low(Args a) {
   std::vector<sim::World> tests;
   for (auto& t : a.test) tests.push_back(sim::build_world(stem(t), sim::load_scene(t), hc));
   const xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0, a.gru);   // --gru H: actor·critic 순환 핵 (은닉 H, 0 = 끔)
+  cudaMemGetInfo(&mem_f1, &mem_t);
   xppo::PPO ppo(pc, spec, a.seed);
+  cudaMemGetInfo(&mem_f2, &mem_t);
+  std::fprintf(stderr, "장치 메모리: 시뮬 %.0f MB · PPO(신경망·롤아웃 저장·작업 공간) %.0f MB (그 중 롤아웃 저장 %.0f MB) — 학습 중 작업 버퍼가 조금 더 늘 수 있음\n",
+               (double)(mem_f0 - mem_f1) / 1048576.0, (double)(mem_f1 - mem_f2) / 1048576.0, (double)ppo.storage_bytes() / 1048576.0);
   const std::string dir = a.root + "/" + a.name, ckdir = dir + "/ckpt";
   if (a.resume) {
     const std::string p = ckdir + "/model_latest.bin";

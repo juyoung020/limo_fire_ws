@@ -43,7 +43,7 @@ target_link_libraries(gradcheck gc32 explore_ppo64)
 add_executable(graph_net_check tools/graph_net_check.cu)
 target_link_libraries(graph_net_check gc32 explore_ppo64)
 
-foreach(t toy_train toy_slot toy_graph graph_bench bench gemm_bench policy_cpu_check)
+foreach(t toy_train toy_slot toy_graph graph_bench bench gemm_bench policy_cpu_check low_cpu_check)
   add_executable(${t} tools/${t}.cu)
   target_link_libraries(${t} explore_ppo)
 endforeach()
