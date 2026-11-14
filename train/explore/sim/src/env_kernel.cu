@@ -1384,8 +1384,8 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   };
   int mode = 0;
   if (s_tgt_ok && run(SST, LT)) mode = 1;           // 엄격 (블록 전체 같은 값)
-  else if (run(LPASS, LOBS)) mode = 2;              // 느슨: 목표가 약한 막힘 둘레 안이거나 엄격으로 못 닿음 (지금 스캔은 느슨에서도 막힘)
-  else if (c.path_consistent && rb.r2 != mdp::obsgen::reach_robot(c).r2) {   // 계획 반경으로 못 짬: 느슨 막힘 + 관측 BFS 반경 (hier_path.h (e)) — SLO 판을 고쳐 씀
+  else if ((c.path_fallback & 1) && run(LPASS, LOBS)) mode = 2;              // 느슨: 목표가 약한 막힘 둘레 안이거나 엄격으로 못 닿음 (지금 스캔은 느슨에서도 막힘)
+  else if ((c.path_fallback & 2) && c.path_consistent && rb.r2 != mdp::obsgen::reach_robot(c).r2) {   // 계획 반경으로 못 짬: 느슨 막힘 + 관측 BFS 반경 (hier_path.h (e)) — SLO 판을 고쳐 씀
     const mdp::Robot r3 = mdp::obsgen::reach_robot(c);
     for (int k = tid; k < nbox; k += kRT) {
       const int y = by0 + k / nbw, wx = bw0 + k % nbw;

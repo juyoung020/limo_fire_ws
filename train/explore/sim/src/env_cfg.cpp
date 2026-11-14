@@ -193,6 +193,8 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     // 계획·충돌 검사 일치 (hier_path.h "계획·충돌 검사 일치"): 절이 없으면 끔 (옛 동작). SIM_PATH_CONSISTENT=0/1 (앞뒤 비교)
     c.path_consistent = ap["consistent_plan"] && ap["consistent_plan"].as<bool>() ? 1 : 0;
     if (const char* g = std::getenv("SIM_PATH_CONSISTENT")) c.path_consistent = g[0] == '1' ? 1 : 0;
+    c.path_fallback = 3;   // 엄격으로 못 짜면 느슨 → 작은 반경 (hier_path.h (e)). 진단용으로 SIM_PATH_FALLBACK=0·1 이면 그 단계를 안 씀 (경로 없음 = 목표만 두고 섬)
+    if (const char* g = std::getenv("SIM_PATH_FALLBACK")) c.path_fallback = std::atoi(g);
     {
       // 계획 반경 = 충돌 검사 발자국(footprint + 패딩) 외접 반경 + 칸 대각(칸 가운데끼리 거리로 재는 반경 → 발자국 점이 든 칸까지 · 로봇이 칸 안 어디든 — 칸 반 대각 × 2)
       const float hl = c.half_len + c.path_fp_pad, hw = c.half_wid + c.path_fp_pad;
@@ -315,6 +317,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
       c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
       c.lr_ttc_k = envf("SIM_LR_TTC_K", kLrTtcK);
+      c.lo_goalonly = (int)envf("SIM_LOW_GOALONLY", 0.f);   // 목적지만 (2026-11-15 사용자 결정 실험 — 경로를 관측·보상 어디에도 안 씀)
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
       // 사람 충돌·속도 대책 (mdp/README "아래층 RL — 사람 충돌·속도"). 보상만 바꾼다 — 정책 행동·관측은 그대로
       c.lr_ppl_k = envf("SIM_LR_PPL_K", kLrPplK);

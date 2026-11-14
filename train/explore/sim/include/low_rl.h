@@ -601,6 +601,9 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     }
     if (c.lr_w_k != 0.f) r[kLrSmooth] += c.lr_w_k * dm::maxf(0.f, dm::absf(e.last_act[2]) * c.act_w_max - c.lr_w0);
     if (e.last_act[0] < 0.f) r[kLrBack] = kLrBackK * -e.last_act[0];
+    if (c.lo_goalonly) {   // 목적지만 (2026-11-15, SIM_LOW_GOALONLY): 보상 = 도착까지 시간 — 걸음마다 시간 · 통과 · 닿음(판 끝)만. 진행·근접·충돌 시간·매끄러움·후진 항 끔
+      r[kLrProgress] = r[kLrProximity] = r[kLrSmooth] = r[kLrBack] = r[kLrTtc] = 0.f;
+    }
     float sum = 0.f;
     for (int k = 0; k < kLrTerms; ++k) {
       sum += r[k];
@@ -732,6 +735,11 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
   }
   O[kLoHasPath] = (float)t.has_path;
   O[kLoRem] = dm::minf(1.f, t.rem / kLrGoalNorm);
+  if (b.cfg.lo_goalonly) {   // 목적지만: 경로를 정책에 안 보임 — 부목표 2 개 · 경로 있음 · 남은 경로 길이 칸을 0 (배치는 그대로라 옛 체크포인트가 읽힘)
+    for (int k = 0; k < 6; ++k) O[kLoSub + k] = 0.f;
+    O[kLoHasPath] = 0.f;
+    O[kLoRem] = 0.f;
+  }
   O[kLoHasGoal] = (float)t.has_goal;
   if (b.cfg.lo_mov) {   // 가장 가까운 "움직이는 것" (lowrl_trk — 직전 걸음 lowrl_act 가 이어 간 추적. 없으면 0)
     LrMover M[kLrMovers];

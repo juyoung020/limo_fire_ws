@@ -219,8 +219,8 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) {
   };
   int mode = 0;
   if (any_goal(1) && run(1)) mode = 1;
-  else if (run(2)) mode = 2;
-  else if (c.path_consistent && rb3.r2 != rb.r2 && run(3)) mode = 3;
+  else if ((c.path_fallback & 1) && run(2)) mode = 2;
+  else if ((c.path_fallback & 2) && c.path_consistent && rb3.r2 != rb.r2 && run(3)) mode = 3;
   if (!mode) return;   // 설 수 있는 칸이 없거나 못 닿음: 목표만 두고 섬
   const auto wfn = [&](int x, int y) { return weight(mode, x, y); };
   thread_local std::vector<int32_t> list;

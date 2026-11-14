@@ -89,6 +89,7 @@ struct EnvCfg {
   float sweep_h, sweep_margin;   // 내다보는 시간 (s), 몸통 둘레 여유 (m)
   // 아래층 RL (low_rl.h · mdp/README "아래층 RL"). 기본값은 low_rl.h 상수, env_cfg.cpp 가 환경변수로 덮는다
   int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
+  int lo_goalonly;               // 목적지만 (SIM_LOW_GOALONLY, 기본 0): 관측에서 경로 칸을 0 으로, 보상은 시간·통과·닿음만 (low_rl.h)
   float lr_ttc_k;                // 충돌 시간 벌점 (low_rl.h kLrTtcK, SIM_LR_TTC_K — 0 = 끔)
   float lr_mprox_k, lr_mprox_d;  // 움직임 근접 벌점: × 몸통 가장 빠른 점 속도 (m/s) × (1 − 간격 / lr_mprox_d). 0 = 끔
   float lr_ppl_k, lr_ppl_t, lr_ppl_m;   // 사람 마주침 벌점 (low_rl.h lowrl_ppl_risk): × (1 − 가장 가까워질 때까지 시간 / lr_ppl_t), 그때 간격 < lr_ppl_m 인 사람. 0 = 끔
@@ -155,6 +156,7 @@ struct EnvCfg {
   // 외접 반경 + 칸 대각 (호스트가 셈), 목표가 그 반경으로 설 수 없으면 path_goal_tol 안 칸으로 (Smac tolerance), 충돌 검사 막힘 = 지난 계획 칸 기준,
   // 지금 자세가 이미 패딩에 걸리면 몸통(패딩 없음)으로 검사. 0 이면 옛 동작 (path_r_plan = 관측 BFS 반경 0.2, path_goal_tol 0)
   int path_consistent;
+  int path_fallback;        // 계획 내려가기 허용 (비트, 진단·견줌 — SIM_PATH_FALLBACK): 1 느슨(지도 막힘만, p_mode 2) · 2 작은 반경 0.2 m (p_mode 3). 기본 3 = 둘 다 (옛 동작)
   float path_r_plan, path_goal_tol, path_goal_far;   // path_goal_far: 목표 둘레 칸이 모두 못 닿을 때 받아들이는 먼 허용 (hier_path.h "목표 허용")
   // 복구 (2026-11-10, hier_path.h "복구"): rec_on = 1 이면 같은 목표에서 충돌 검사가 결정의 절반 넘게 막은 결정이 이어질 때 Nav2 BT 복구 꼴 —
   // 다시 계획 → 물러나기(rec_backup_steps 걸음, BackUp 0.30 m @ 0.05 m/s) → 그 목표 포기(rec_bl_steps 걸음 동안 그 둘레 rec_bl_r m 안 후보를 고르면 제자리 회전)

@@ -833,11 +833,59 @@ const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tt
 
 // 걸음 자취 (--trace): 정책이 몬 걸음마다 한 줄 — 닿음 센서 값(contact.h)과 시뮬 정답(충돌·간격)을 나란히. 정답 칸은 기록 전용
 const char* kTraceHead = "scene\tpeople\tenv\tep\tt\tend\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\twv\tgyro\t"
-                         "s_lid\ts_map\ts_cam\ts_pgap\ts_stall\ts_kind\tcontact\tgt_touch\tgt_person\tgt_gap\tgt_u\tgt_v\tgt_pgap\tgoal_d\tgt_pmode\tgt_pbear\ts_dir\ts_close\n";
+                         "s_lid\ts_map\ts_cam\ts_pgap\ts_stall\ts_kind\tcontact\tgt_touch\tgt_person\tgt_gap\tgt_u\tgt_v\tgt_pgap\tgoal_d\tgt_pmode\tgt_pbear\ts_dir\ts_close\tp_mode\tp_n\tpath_lat\tpath_clr_here\tpath_clr_min\tsub_blk\n";
 void trace_row(std::FILE* f, const sim::EnvCfg& c, const sim::World& W, const char* scene, int people, int i, int ep, int t, int end, const sim::EnvState& e,
                float a0, float a1, int safe, float goal_d) {
   float hu = 0.f, hv = 0.f, hd = 9.f;
   diag_nearest(c, W, e, &hu, &hv, &hd);
+  // 계획 경로 진단 (정답 격자 — 기록 전용): 지도 자세에서 경로(웨이포인트 꺾은선)까지 옆 거리, 가장 가까운 경로 점의 정답 간격(막힌 칸까지 — W.clear),
+  // 거기서 1.5 m 앞까지 경로 위 정답 간격 최솟값, 1.0 m 앞 경로 점(부목표 자리)까지 곧은 선이 정답 막힌 칸을 지나나
+  float p_lat = -1.f, p_here = -1.f, p_min = -1.f;
+  int sub_blk = -1;
+  if (e.p_n > 0) {
+    const float mx = e.x + e.ex, my = e.y + e.ey;
+    std::vector<float> px, py;
+    px.push_back(mx); py.push_back(my);   // 경로는 로봇 자리에서 첫 웨이포인트로 이어짐
+    for (int k = 0; k < e.p_n; ++k) { px.push_back(W.ox + ((float)e.wp[2 * k] + 0.5f) * c.res); py.push_back(W.oy + ((float)e.wp[2 * k + 1] + 0.5f) * c.res); }
+    const auto clr = [&](float x, float y) {
+      const int cx = (int)std::floor((x - W.ox) / c.res), cy = (int)std::floor((y - W.oy) / c.res);
+      if (cx < 0 || cy < 0 || cx >= W.gw || cy >= W.gh) return 0.f;
+      return (float)W.clear[(size_t)cy * W.gw + cx] * 0.01f;
+    };
+    const auto blk = [&](float x, float y) {
+      const int cx = (int)std::floor((x - W.ox) / c.res), cy = (int)std::floor((y - W.oy) / c.res);
+      return cx < 0 || cy < 0 || cx >= W.gw || cy >= W.gh || (W.grid[(size_t)cy * W.gw + cx] & sim::kCellBlocked);
+    };
+    float best = 1e9f, s_best = 0.f, acc = 0.f;
+    for (size_t k = 0; k + 1 < px.size(); ++k) {
+      const float dx = px[k + 1] - px[k], dy = py[k + 1] - py[k], L2 = dx * dx + dy * dy, L = std::sqrt(L2);
+      float t = L2 > 0 ? ((mx - px[k]) * dx + (my - py[k]) * dy) / L2 : 0.f;
+      t = std::min(1.f, std::max(0.f, t));
+      const float qx = px[k] + t * dx - mx, qy = py[k] + t * dy - my, d = std::hypot(qx, qy);
+      if (d < best) { best = d; s_best = acc + t * L; }
+      acc += L;
+    }
+    p_lat = best;
+    const auto at = [&](float s_at, float* ox, float* oy) {   // 꺾은선 위 길이 s_at 자리
+      float a2 = 0.f;
+      for (size_t k = 0; k + 1 < px.size(); ++k) {
+        const float L = std::hypot(px[k + 1] - px[k], py[k + 1] - py[k]);
+        if (a2 + L >= s_at || k + 2 == px.size()) { const float t = L > 0 ? std::min(1.f, (s_at - a2) / L) : 0.f; *ox = px[k] + t * (px[k + 1] - px[k]); *oy = py[k] + t * (py[k + 1] - py[k]); return; }
+        a2 += L;
+      }
+      *ox = px.back(); *oy = py.back();
+    };
+    float hx, hy;
+    at(s_best, &hx, &hy);
+    p_here = clr(hx, hy);
+    p_min = p_here;
+    for (float ds = 0.05f; ds <= 1.5f && s_best + ds <= acc; ds += 0.05f) { float x, y; at(s_best + ds, &x, &y); p_min = std::min(p_min, clr(x, y)); }
+    float gx, gy;
+    at(std::min(acc, s_best + 1.0f), &gx, &gy);
+    sub_blk = 0;
+    const float L = std::hypot(gx - mx, gy - my);
+    for (float u = 0.f; u <= L; u += 0.025f) if (blk(mx + (gx - mx) * (L > 0 ? u / L : 0.f), my + (gy - my) * (L > 0 ? u / L : 0.f))) { sub_blk = 1; break; }
+  }
   // 가장 가까운 사람 (정답 — 기록 전용): 행동 비트(people.h kPerson*), 로봇 기준 방위 (rad)
   int pm = -1;
   float pb = 0.f;
@@ -849,9 +897,9 @@ void trace_row(std::FILE* f, const sim::EnvCfg& c, const sim::World& W, const ch
       if (gk < g) { g = gk; pm = e.people.mode[k]; pb = std::remainder(std::atan2(e.people.cyl[k].y - e.y, e.people.cyl[k].x - e.x) - e.th, 6.2831853f); }
     }
   }
-  std::fprintf(f, "%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.3f\t%.3f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\n",
+  std::fprintf(f, "%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.3f\t%.3f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\t%d\t%d\t%.3f\t%.3f\t%.3f\t%d\n",
                scene, people, i, ep, t, end, e.x, e.y, e.th, e.v, e.w, a0, a1, e.cmd_v, e.cmd_w, safe, e.drive.wv, e.gyro, e.s_lid, e.s_map, e.s_cam,
-               e.s_pgap, e.s_stall, e.s_kind, e.contact, e.collided, e.people.hit_person, hd, hu, hv, e.people.near_d, goal_d, pm, pb, e.s_dir, e.s_close);
+               e.s_pgap, e.s_stall, e.s_kind, e.contact, e.collided, e.people.hit_person, hd, hu, hv, e.people.near_d, goal_d, pm, pb, e.s_dir, e.s_close, e.p_mode, e.p_n, p_lat, p_here, p_min, sub_blk);
 }
 
 struct PolRes {
