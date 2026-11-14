@@ -662,7 +662,7 @@ bool diag_nearest(const sim::EnvCfg& c, const sim::World& W, const sim::EnvState
 void diag_row(Diag& D, const char* kind, const sim::EnvCfg& c, const sim::World& W, int people, int i, const sim::LowEp& L, const sim::LowCmd& cmd, int safe_now, int goal_age) {
   using namespace mdp::obs;
   const sim::EnvState& e = D.st[i];
-  const uint8_t* I = D.img.data() + (size_t)i * sim::kLowImg;
+  const uint8_t* I = D.img.data() + (size_t)i * (c.lo_wide ? sim::kLowImgWide : sim::kLowImg);
   const float* O = D.o1d.data() + (size_t)i * sim::kLow1d;
   float hu = 0, hv = 0, hd = 9;
   const bool got = diag_nearest(c, W, e, &hu, &hv, &hd);
@@ -986,7 +986,7 @@ int run_policy(const Args& a) {
   if (use_pol) {
     xppo::PPOConfig pc;
     pc.num_envs = N;
-    ppo.reset(new xppo::PPO(pc, xnet::explore_spec_low(), 1));
+    ppo.reset(new xppo::PPO(pc, xnet::explore_spec_low(c.lo_wide != 0), 1));
     ppo->load(a.policy);
     std::printf("정책: %s (반복 %d, 변수 %ld) — 결정적(평균 행동)\n", a.policy.c_str(), ppo->iteration(), (long)ppo->ac().n_params);
   } else {
@@ -1136,7 +1136,7 @@ int run_policy(const Args& a) {
           const sim::EnvState& e0 = dg.st[i];
           const int safe_now = L.kind == sim::kLowSafety;
           const float a0 = use_pol ? pol[(size_t)PW * i] : 0.f, a1 = use_pol ? pol[(size_t)PW * i + 1] : 0.f;
-          ppl_push(pd, c, i, e0, dg.img.data() + (size_t)i * sim::kLowImg, a0, a1, done[i] ? 0.f : st[i].cmd_v, done[i] ? 0.f : st[i].cmd_w, safe_now, dg.rl_post[i]);
+          ppl_push(pd, c, i, e0, dg.img.data() + (size_t)i * (c.lo_wide ? sim::kLowImgWide : sim::kLowImg), a0, a1, done[i] ? 0.f : st[i].cmd_v, done[i] ? 0.f : st[i].cmd_w, safe_now, dg.rl_post[i]);
           const int e_ = done[i] ? L.end : 0;
           if (e_ == sim::kLowEndPerson) ppl_dump(pd, c, W.name.c_str(), people, i, e0, L.hit_dir, e0.step - step0[i]);
           if (!done[i]) {

@@ -761,13 +761,17 @@ ACSpec explore_spec_hier() {
   return s;
 }
 
-ACSpec explore_spec_low() {
+ACSpec explore_spec_low(bool wide, int gru_h) {
   namespace o = mdp::obs;
   namespace l = mdp::low;
   ACSpec s;
   NetSpec e;
   e.imgs = {{0, o::NEAR_C, o::NEAR_H, o::NEAR_W}, {l::LIDAR_OFF, 1, l::LIDAR_HW, l::LIDAR_HW}, {l::DEPTH_OFF, o::DEPTH_C, o::DEPTH_H, o::DEPTH_W}};
   e.img_stride = l::IMG;
+  if (wide) {
+    e.imgs.push_back({l::WIDE_OFF, l::WIDE_C, l::WIDE_HW, l::WIDE_HW});
+    e.img_stride = l::IMG_WIDE;
+  }
   e.conv_ch = {16, 32, 32, 32};   // 위층과 같은 꼴 (같은 융합 커널): 평탄화 가까운 지도 4×4 · 라이다 2×2 · 깊이 3×4 × 32 = 1024
   e.in1d = 0;
   e.out = 0;
@@ -782,6 +786,7 @@ ACSpec explore_spec_low() {
   s.critic = c;
   s.n_cont = l::CONT;
   s.split_enc = true;
+  s.gru_h = gru_h;
   return s;
 }
 
@@ -868,12 +873,18 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   nf = (int)enc.feat_img();
   split = sp.split_enc;
   if (split) enc_c.build(sp.enc, blocks, cur, "enc_c");
-  NetSpec as = sp.actor, cs = sp.critic;  // 입력 = [F | 1D], 앞 nf 열 기울기를 인코더로
-  as.in1d += nf;
-  cs.in1d += nf;
-  as.grad_cols = cs.grad_cols = nf;
+  if (sp.gru_h < 0 || (sp.gru_h > 0 && sp.n_slots > 0)) throw std::runtime_error("ACSpec gru_h: 연속 행동 구조에서만");
+  nx = nf + sp.gru_h;
+  NetSpec as = sp.actor, cs = sp.critic;  // 입력 = [F | h | 1D], 앞 nx 열 기울기를 인코더(F)·순환 핵(h)으로
+  as.in1d += nx;
+  cs.in1d += nx;
+  as.grad_cols = cs.grad_cols = nx;
   actor.build(as, blocks, cur, "actor");
   critic.build(cs, blocks, cur, "critic");
+  if (sp.gru_h > 0) {
+    gru_a.build(nf, sp.actor.in1d, sp.gru_h, blocks, cur, "actor.gru");
+    gru_c.build(nf, sp.actor.in1d, sp.gru_h, blocks, cur, "critic.gru");
+  }
   if (sp.n_slots > 0) {   // 슬롯 머리 (slot_head.cuh): W1 [H][E + C], b1 [H], w2 [H]
     head.E = sp.actor.out;
     head.C = sp.slot_feat;
@@ -893,12 +904,20 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   if (split) enc_c.bind(d_params, d_grads, mc);
   actor.bind(d_params, d_grads, mc);
   critic.bind(d_params, d_grads, mc);
+  if (sp.gru_h > 0) {
+    gru_a.bind(d_params, d_grads, mc);
+    gru_c.bind(d_params, d_grads, mc);
+  }
   std::vector<real> host(n_params);
   std::mt19937_64 rng(seed);
   enc.init(rng, host);
   if (split) enc_c.init(rng, host);
   actor.init(rng, host);
   critic.init(rng, host);
+  if (sp.gru_h > 0) {
+    gru_a.init(rng, host);
+    gru_c.init(rng, host);
+  }
   for (int j = 0; j < sp.n_cont; ++j) host[logstd_off + j] = sp.init_log_std;
   if (sp.n_slots > 0) {   // torch nn.Linear 기본 초기화와 같은 꼴 U(±1/√fan_in), float 로 뽑음 (fp64 빌드도 같은 값)
     auto uni = [&](long off, long n, float bound) {
@@ -937,6 +956,8 @@ ActorCritic::~ActorCritic() {
   if (split) enc_c.free_ws();
   actor.free_ws();
   critic.free_ws();
+  gru_a.free_ws();
+  gru_c.free_ws();
   norm.release();
   cudaFree(d_params);
   cudaFree(d_grads);

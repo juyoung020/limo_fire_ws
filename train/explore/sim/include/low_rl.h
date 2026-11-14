@@ -694,6 +694,79 @@ DEV uint8_t lowrl_img(const EnvBatch& b, const EnvState& e, int env, int i) {
   }
   return I[mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE + (i - kLowDepthOff)];   // 깊이 (위층 관측 그대로)
 }
+// 환경 하나 그림 바이트 수 (넓은 지도를 켜면 뒤에 붙음)
+DEV int low_img_n(const EnvCfg& c) { return c.lo_wide ? kLowImgWide : kLowImg; }
+// 넓은 지도 1 단계 — 줄인 판 칸 하나 (k = 행 · (size/4) + 열): 로봇 지도 4 × 4 칸(0.2 m)을 모아 b.low_wred 에 32 비트로
+//   비트 0~15 아는 칸 로그 오즈 최댓값 + 32768 (모두 모름이면 0) · 16~20 아는 빈 칸 수(로그 오즈 < 0) · 21~25 모름 칸 수(맵 밖 포함) · 26 지나간 곳 · 27 깊이 카메라 장애물
+// 지도 줄 차례로 읽어(이웃 스레드 = 이웃 칸) 빠르다. 로봇 지도·지나간 곳·카메라 층만 (시뮬 정답 없음)
+DEV void lowrl_wred(const EnvBatch& b, const EnvState& e, int env, int k) {
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int rs = c.size / 4, rx = k % rs, ry = k / rs;
+  const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
+  const uint32_t* M = b.marks + (size_t)env * (c.size * c.size / 4);
+  int lmax = kUnknown, nfree = 0, nunk = 0, vis = 0, cam = 0;
+  for (int j = 0; j < 4; ++j)
+    for (int i = 0; i < 4; ++i) {
+      const int x = 4 * rx + i, y = 4 * ry + j;
+      if (x >= m.gw || y >= m.gh) { nunk += 1; continue; }
+      const int ci = y * c.size + x;
+      const int l = L[ci];
+      if (l == kUnknown) nunk += 1;
+      else if (l < 0) nfree += 1;
+      lmax = l > lmax ? l : lmax;
+      vis |= ((M[ci >> 2] >> (8 * (ci & 3))) & 32u) != 0u ? 1 : 0;   // = mdp::obsgen::visited (이 머리는 observations.h 없이도 쓰임)
+      cam |= cam_lethal(b, env, x, y) ? 1 : 0;
+    }
+  b.low_wred[(size_t)env * rs * rs + k] = (uint32_t)(lmax + 32768) | ((uint32_t)nfree << 16) | ((uint32_t)nunk << 21) | ((uint32_t)vis << 26) | ((uint32_t)cam << 27);
+}
+// 넓은 지도 2 단계 — 칸 하나 (cell = 행 · 64 + 열, 행 0 = 앞쪽 끝 — 가까운 지도와 같은 꼴, 칸 0.4 m, 로봇 중심·로봇 방향): 칸 안 2 × 2 점(0.2 m 간격)이
+// 떨어지는 줄인 판 칸 4 개를 합쳐 6 채널을 O[ch · 64² + cell] 에 쓴다 (줄인 판은 1 단계가 다 쓴 뒤 — GPU 는 블록 동기화)
+//   0 막힘 확률: 아는 칸 로그 오즈 최댓값 (prob_u8, 모두 모름이면 0 — 먼 지도와 같은 규칙: 1 칸 두께 벽도 최댓값으로 남음)
+//   1 아는 빈 칸 몫 · 2 모름 칸 몫 (지도 밖 포함) — 칸 수(최대 64) × 255 / 64 (내림)
+//   3 지나간 곳 (하나라도 255) · 4 목적지 점 (R.w_has — 창 밖이면 가장자리 칸으로 자름) · 5 깊이 카메라 장애물 (하나라도 255)
+DEV void lowrl_wide(const EnvBatch& b, const EnvState& e, int env, int cell, uint8_t* O) {
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const int rs = c.size / 4;
+  const uint32_t* W = b.low_wred + (size_t)env * rs * rs;
+  const int hw = kLowWideHW * kLowWideHW, row = cell / kLowWideHW, col = cell % kLowWideHW;
+  const float px = e.x + e.ex, py = e.y + e.ey;
+  float s, co;
+  dm::sincosf_d(e.th + e.eth, &s, &co);
+  const float half = 0.5f * (float)kLowWideHW * kLowWideCell, sub = kLowWideCell / 2.f;
+  int lmax = kUnknown, nfree = 0, nunk = 0, vis = 0, cam = 0;
+  for (int kr = 0; kr < 2; ++kr) {
+    const float fwd = half - (float)row * kLowWideCell - ((float)kr + 0.5f) * sub;
+    for (int kc = 0; kc < 2; ++kc) {
+      const float left = half - (float)col * kLowWideCell - ((float)kc + 0.5f) * sub;
+      const float wx = (px + co * fwd) - s * left, wy = (py + s * fwd) + co * left;
+      int cx, cy;
+      if (cell_of(c, m, wx, wy, &cx, &cy) < 0) { nunk += 16; continue; }
+      const uint32_t v = W[(cy >> 2) * rs + (cx >> 2)];
+      const int l = (int)(v & 0xFFFFu) - 32768;
+      lmax = l > lmax ? l : lmax;
+      nfree += (int)((v >> 16) & 31u);
+      nunk += (int)((v >> 21) & 31u);
+      vis |= (int)((v >> 26) & 1u);
+      cam |= (int)((v >> 27) & 1u);
+    }
+  }
+  int goal = 0;
+  if (b.lowrl[env].w_has) {
+    const float dx = b.lowrl[env].w_gx - px, dy = b.lowrl[env].w_gy - py;
+    const float gf = co * dx + s * dy, gl = -s * dx + co * dy;
+    const int gr = (int)dm::clampf(floorf((half - gf) / kLowWideCell), 0.f, (float)(kLowWideHW - 1));
+    const int gc = (int)dm::clampf(floorf((half - gl) / kLowWideCell), 0.f, (float)(kLowWideHW - 1));
+    goal = gr == row && gc == col;
+  }
+  O[cell] = lmax == kUnknown ? (uint8_t)0 : (uint8_t)(1 + (lmax - c.l_min) * 254 / (c.l_max - c.l_min));   // = mdp::obsgen::prob_u8
+  O[hw + cell] = (uint8_t)(nfree * 255 / 64);
+  O[2 * hw + cell] = (uint8_t)(nunk * 255 / 64);
+  O[3 * hw + cell] = vis ? (uint8_t)255 : (uint8_t)0;
+  O[4 * hw + cell] = goal ? (uint8_t)255 : (uint8_t)0;
+  O[5 * hw + cell] = cam ? (uint8_t)255 : (uint8_t)0;
+}
 // 숫자 관측 + 걸음 사이 값 (스레드 0). 계획 뒤에 부른다 — 남은 경로 길이를 방금 짠 경로 기준으로 적어 둠 (다음 걸음 진행 항의 기준)
 DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
   LowRl& R = b.lowrl[env];
@@ -724,6 +797,9 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
     o[1] = s;
     o[2] = co;
   };
+  R.w_has = t.has_goal;   // 넓은 지도 목적지 점 (lowrl_wide)
+  R.w_gx = t.has_goal ? t.gx : 0.f;
+  R.w_gy = t.has_goal ? t.gy : 0.f;
   if (t.has_goal) {
     rel(t.sx[0], t.sy[0], kLrSubNorm, O + kLoSub);
     rel(t.sx[1], t.sy[1], kLrSubNorm, O + kLoSub + 3);

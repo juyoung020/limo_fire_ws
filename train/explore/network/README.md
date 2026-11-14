@@ -271,3 +271,21 @@ arXiv:2510.15679, III-B)의 정책 신경망을 그대로 따른 구조다. HEAD
   (인코더 206 만 + MLP 31 만) — 10 Hz 면 초당 2 400 만 번. Orin Nano 에서 잰 값은 없다(계산량만 셈).
 - **MLP 256-128-64 는 잠정**: 위층(legged_gym 기본 512-256-128)의 반. 근거는 계산량뿐이고 크기 비교 실험은 안 했다.
 - 기울기 검사: `gradcheck --low`(작은 구조) · `--low --full`(이 구조 그대로) 통과.
+
+## 넓은 지도 가지·순환 핵 (2026-11-15, `explore_spec_low(wide, gru_h)` — 순수 RL 목적지 찾기)
+
+목적지만 정책(low_g1)이 가까운 지도 ±3.2 m 창 밖 길(벽 돌아가기·막다른 곳)을 못 찾아 평평해져서, 사용자 결정(순수 RL — 계획기·경로 없음)에 따라 관측·구조를 넓혔다. 근거:
+DD-PPO (Wijmans et al., ICLR 2020, arXiv 1911.00357 — 순환 정책 2 층 LSTM 512, 지도 없이 PointGoal 거의 해결, 25 억 걸음 · 1 억 걸음에 최고의 90 %),
+Neural Map (Parisotto & Salakhutdinov, ICLR 2018, arXiv 1702.08360)·EgoMap (Beeching et al., ECML-PKDD 2020, arXiv 2002.02286 — 공간 구조 기억이 LSTM 만보다 나음),
+rsl_rl `ActorCriticRecurrent` (actor·critic 이 순환 층을 따로, 롤아웃 단위 BPTT).
+
+- **넓은 지도 가지** (`wide`): 넷째 CNN 가지, 입력 6 × 64 × 64 (mdp/obs_layout.h `WIDE_*`, mdp/README "넓은 지도"), 가까운 지도와 같은 꼴 → 평탄화 512. 그림 간격 `IMG_WIDE`.
+- **순환 핵** (`gru_h`, network/gru.cuh): actor·critic 이 GRU 한 층씩(은닉 `gru_h`, 기본 256 으로 씀). GRU 입력 = [F | 1D], MLP 입력 = [F | h | 1D] (`ActorCritic::nx` = nf + gru_h 열이 1D 앞).
+  변수 `actor.gru.wx|bx|wh|bh` · `critic.gru.*` (Wx [3H][F+1D], Wh 는 [H][3H] k 먼저), PyTorch nn.GRU 기본 초기화 U(±1/√H). 판 경계에서 h = 0 (reset).
+  API: `Gru::step` (롤아웃·평가 한 걸음 — 부르는 쪽이 판 끝난 환경의 h 를 0 으로), `forward_seq`·`backward_seq` (갱신: 행 = 걸음 먼저 T·B, h0 · reset[행]).
+  입력 쪽은 GEMM 두 번(F 열·1D 열 — 가운데 h 열은 안 읽음), 순환 쪽은 걸음마다 직접 짠 문 커널(앞 1 · 뒤 2), 변수 기울기는 모든 걸음을 GEMM 한 번에. 원자 연산 없음. 작업 공간은 `bind` 에서 미리.
+  PPO 연결(롤아웃 h0 저장·환경 단위 순서 미니배치·act 때 h 갱신·평가 h 초기화)은 ppo/ 쪽 몫 (성능 정리와 같이).
+- **이어 학습**: `ppo/tools/ckpt_add_wide 옛.bin 새.bin [씨앗] [--gru H]` — 새 가지 꼬리 0 · MLP 첫 층 넓은 지도 열 무작위 · h 열 0 → 처음 정책 = 옛 정책 (ppo/README "넓은 지도·순환 핵 더하기").
+- **검증**: `gru_check` (CPU 참조와 GPU fp64 2.8e-16 · fp32 1.0e-07, fp64 유한 차분 최대 5.4e-06, fp32 vs fp64 기울기 3.7e-05, 한 걸음씩 = 순서 2.2e-16 · fp32 0, `--negative` 잡음).
+  `gradcheck --low --full --wide` 통과 (9.5e-07), 넓은 지도·순환 핵을 끄면 정책 출력·평가 지문이 옛 바이너리와 비트 같음.
+

@@ -1494,9 +1494,16 @@ constexpr int kLowPackT = 256;
 __global__ void __launch_bounds__(kLowPackT) env_low_pack_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
   EnvState& e = b.st[env];
-  if (tid == 0) lowrl_pack(b, e, env);   // p_i 만 고침 — 그림은 자세·지도만 읽음
-  uint8_t* O = b.low_img + (size_t)env * kLowImg;
+  if (tid == 0) lowrl_pack(b, e, env);   // p_i · 넓은 지도 목적지 점만 고침 — 그림은 자세·지도만 읽음
+  const int n = low_img_n(b.cfg);
+  uint8_t* O = b.low_img + (size_t)env * n;
   for (int i = tid; i < kLowImg; i += kLowPackT) O[i] = lowrl_img(b, e, env, i);
+  if (b.cfg.lo_wide) {
+    const int rs = b.cfg.size / 4;
+    for (int k = tid; k < rs * rs; k += kLowPackT) lowrl_wred(b, e, env, k);
+    __syncthreads();   // 줄인 판 · 목적지 점 (스레드 0 의 lowrl_pack)
+    for (int k = tid; k < kLowWideHW * kLowWideHW; k += kLowPackT) lowrl_wide(b, e, env, k, O + kLowWideOff);
+  }
 }
 __global__ void env_low_clear_kernel(EnvBatch b) {
   const int env = blockIdx.x * blockDim.x + threadIdx.x;

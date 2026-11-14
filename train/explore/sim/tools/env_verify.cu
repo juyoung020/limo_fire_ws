@@ -99,6 +99,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   std::vector<int> since(n_env, 1 << 20);
   LowRlStat tot{};
   double rew_sum = 0;
+  size_t nz_wide[sim::kLowWideC] = {}, n_wide = 0;
   size_t nz_cam = 0, nz_lidar = 0, nz_depth = 0, n_path = 0, n_goal = 0, n_obs = 0, n_pol = 0;
   const auto mark = [&](size_t n, size_t& acc, int t) { acc += n; if (n && first_bad < 0) first_bad = t; };
   const auto cmp_low = [&](int t) {   // 아래층 관측·걸음 사이 값·목표
@@ -138,11 +139,23 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
       ++n_obs;
       n_path += O[sim::kLoHasPath] > 0.5f;
       n_goal += O[sim::kLoHasGoal] > 0.5f;
-      const uint8_t* I = &lci[(size_t)i * sim::kLowImg];
+      const uint8_t* I = &lci[(size_t)i * (lci.size() / n_env)];
       const int hw = mdp::obs::NEAR_H * mdp::obs::NEAR_W;
       for (int k = 0; k < hw; ++k) nz_cam += I[sim::kLowCamCh * hw + k] != 0;
       for (int k = sim::kLowLidarOff; k < sim::kLowDepthOff; ++k) nz_lidar += I[k] != 0;
       for (int k = sim::kLowDepthOff; k < sim::kLowImg; ++k) nz_depth += I[k] != 0;
+      if (lci.size() / n_env == (size_t)sim::kLowImgWide) {   // 넓은 지도 (SIM_LOW_WIDE=1): 채널마다 0 아닌 칸 수 · 목적지 점이 있으면 정확히 한 칸
+        ++n_wide;
+        const int hw = sim::kLowWideHW * sim::kLowWideHW;
+        for (int ch = 0; ch < sim::kLowWideC; ++ch)
+          for (int k = 0; k < hw; ++k) nz_wide[ch] += I[sim::kLowWideOff + ch * hw + k] != 0;
+        int ng = 0;
+        for (int k = 0; k < hw; ++k) ng += I[sim::kLowWideOff + 4 * hw + k] != 0;
+        if (ng != (O[sim::kLoHasGoal] > 0.5f ? 1 : 0)) {
+          if (!bad_range) std::printf("넓은 지도 목적지 점 %d 개 (목적지 있음 %g): 걸음 %d 환경 %d\n", ng, O[sim::kLoHasGoal], t, i);
+          ++bad_range;
+        }
+      }
     }
   };
   cmp_low(-1);
@@ -288,6 +301,12 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   std::printf(" (걸음 보상 합 %.3f)\n", rew_sum);
   std::printf("아래층 관측 %zu 개: 경로 있음 %.3f · 목적지 있음 %.3f · 0 아닌 칸 평균 — 깊이 카메라 층 채널 %.1f · 라이다 그림 %.1f / 992 · 깊이 %.1f / %d\n", n_obs,
               (double)n_path / n_obs, (double)n_goal / n_obs, (double)nz_cam / n_obs, (double)nz_lidar / n_obs, (double)nz_depth / n_obs, mdp::obs::DEPTH_SIZE);
+  if (n_wide) {
+    std::printf("넓은 지도 %zu 개: 0 아닌 칸 평균 (/ 4096) —", n_wide);
+    const char* wn[sim::kLowWideC] = {"막힘 확률", "아는 빈", "모름", "지나간 곳", "목적지", "깊이 카메라"};
+    for (int ch = 0; ch < sim::kLowWideC; ++ch) std::printf(" %s %.1f", wn[ch], (double)nz_wide[ch] / n_wide);
+    std::printf("\n");
+  }
   std::printf("관측 범위: NaN·inf %zu, 범위 밖 %zu\n", n_nan, bad_range);
   std::printf("상태 다름 %zu, 보상·항·끝·판 정보 다름 %zu, 위층 관측 다름 %zu, 아래층 관측 다름 %zu, 걸음 사이 값 다름 %zu, 목표 다름 %zu, 계측 누적 다름 %zu, RL 누적 다름 %zu, "
               "지도 칸 다름 %zu, 카메라 층 다름 %zu (처음 걸음 %d)\n", bad_state, bad_reward, bad_obs, bad_low, bad_rl, bad_cmd, bad_ep, bad_stat, bad_map, bad_cam, first_bad);

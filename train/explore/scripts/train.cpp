@@ -308,7 +308,7 @@ int run_low(Args a) {
   env.sync();
   std::vector<sim::World> tests;
   for (auto& t : a.test) tests.push_back(sim::build_world(stem(t), sim::load_scene(t), hc));
-  const xnet::ACSpec spec = xnet::explore_spec_low();
+  const xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0);
   xppo::PPO ppo(pc, spec, a.seed);
   const std::string dir = a.root + "/" + a.name, ckdir = dir + "/ckpt";
   if (a.resume) {

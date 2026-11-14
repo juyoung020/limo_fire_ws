@@ -127,6 +127,12 @@ constexpr int LIDAR_HW = 32;
 constexpr int LIDAR_OFF = mdp::obs::NEAR_SIZE;
 constexpr int DEPTH_OFF = LIDAR_OFF + LIDAR_HW * LIDAR_HW;
 constexpr int IMG = DEPTH_OFF + mdp::obs::DEPTH_SIZE;   // 28160
+// 넓은 지도 (2026-11-15, 켤 때만 — SIM_LOW_WIDE=1, sim/include/low_rl.h lowrl_wide): 로봇 지도에서 로봇 중심·로봇 방향 25.6 m 창, 칸 0.4 m, 6 × 64 × 64 (로봇 지도를 0.2 m 로 줄인 판에서 — 막힘은 최댓값이라 얇은 벽도 남음).
+// IMG 뒤에 붙는다 (끄면 그림 크기 IMG 그대로 — 옛 체크포인트·버퍼 모두 그대로). 채널: 0 막힘 확률 최댓값 · 1 아는 빈 몫 · 2 모름 몫 · 3 지나간 곳 ·
+// 4 목적지 점(창 밖이면 가장자리로 자름) · 5 깊이 카메라 장애물 층. 경로·거리장 없음 (순수 RL — 사용자 결정)
+constexpr int WIDE_C = 6, WIDE_HW = 64;
+constexpr int WIDE_OFF = IMG;
+constexpr int IMG_WIDE = WIDE_OFF + WIDE_C * WIDE_HW * WIDE_HW;   // 52736
 constexpr int N1D = 32;
 constexpr int CONT = 2;        // v, ω (옆 이동 없음)
 constexpr int ACT = CONT + 1;  // 신경망 출력 폭 (끝 칸 = 선언 로짓 자리)

@@ -128,6 +128,8 @@ struct LowRl {
   // 위층(같은 판에서 1 Hz 로 목적지를 넣는 쪽)이 그 후보를 빼고 다시 고르는 데 쓸 자리 (호스트: Env::get_low_rl, 장치: EnvBatch::lowrl)
   int32_t stall;
   int32_t stall_tgt;
+  int32_t w_has;               // 넓은 지도 목적지 점 (lowrl_pack 이 적고 lowrl_wide 가 읽음): 있음 · 지도 좌표
+  float w_gx, w_gy;
   // 사람 추적 (low_rl.h lowrl_trk, EnvCfg::lo_mov 일 때): 라이다 덩어리를 장마다 이어 가는 등속 칼만 필터. 지도 좌표. tk_hit == 0 이 빈 칸
   int32_t tk_head;             //   마지막으로 본 라이다 링 칸 (−1 = 아직 없음) — 새 장이 없는 걸음은 예측만
   int32_t tk_n;                //   진단: 지금 추적 중인 덩어리 수
@@ -178,6 +180,10 @@ constexpr int kLowLidarOff = mdp::obs::NEAR_SIZE;
 constexpr int kLowDepthOff = kLowLidarOff + kLowLidarHW * kLowLidarHW;
 constexpr int kLowImg = kLowDepthOff + mdp::obs::DEPTH_SIZE;
 static_assert(kLowImg == mdp::low::IMG && kLowLidarOff == mdp::low::LIDAR_OFF && kLowDepthOff == mdp::low::DEPTH_OFF, "아래층 그림 배치 = mdp/obs_layout.h");
+// 넓은 지도 (EnvCfg::lo_wide): 그림 뒤에 6 × 64 × 64 — 환경 하나 그림 바이트 수는 low_img_n (끄면 kLowImg 그대로)
+constexpr int kLowWideOff = mdp::low::WIDE_OFF, kLowWideHW = mdp::low::WIDE_HW, kLowWideC = mdp::low::WIDE_C;
+constexpr int kLowImgWide = mdp::low::IMG_WIDE;
+constexpr float kLowWideCell = 0.4f;   // 넓은 지도 칸 (m) — 줄인 판(로봇 지도 4 × 4 칸 = 0.2 m, 최댓값·칸 수) 2 × 2 점 (low_rl.h lowrl_wred·lowrl_wide)
 constexpr int kLowCamCh = 2;                          // 가까운 지도의 예약 물체 채널 (위층 관측에서는 늘 0)
 enum : int32_t {
   kLoWheelV = 0, kLoGyro, kLoSlip, kLoEkfV, kLoEkfW,   // 자기 상태 (obs_1d 의 같은 칸 그대로)

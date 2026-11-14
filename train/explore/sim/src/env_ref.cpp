@@ -356,7 +356,12 @@ static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
     lowrl_planned(b, e, env);
   }
   lowrl_pack(b, e, env);
-  for (int i = 0; i < kLowImg; ++i) b.low_img[(size_t)env * kLowImg + i] = lowrl_img(b, e, env, i);
+  const int n = low_img_n(c);
+  for (int i = 0; i < kLowImg; ++i) b.low_img[(size_t)env * n + i] = lowrl_img(b, e, env, i);
+  if (c.lo_wide) {
+    for (int k = 0; k < (c.size / 4) * (c.size / 4); ++k) lowrl_wred(b, e, env, k);
+    for (int k = 0; k < kLowWideHW * kLowWideHW; ++k) lowrl_wide(b, e, env, k, b.low_img + (size_t)env * n + kLowWideOff);
+  }
   b.st[env] = e;
 }
 void env_low_prepare_cpu(const EnvBatch& b, const float* actions) {

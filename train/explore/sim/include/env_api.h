@@ -44,7 +44,7 @@ struct StepOut {
   const int32_t* done;          // [N] mdp::cur::Done — 종료 여부는 mdp::cur::terminal(done), 끊김 = 3
   const EpInfo* ep;             // [N] done ≠ 0 인 환경의 끝난 판 정보 (덮음·t95·길이·충돌·단계·맵)
   int o1d;                      // 관측 1D 한 환경 칸 수
-  const uint8_t* low_img = nullptr;   // 아래층 RL 정책 관측 [N][kLowImg] (cfg.low_rl 일 때만 — include/low_task.h)
+  const uint8_t* low_img = nullptr;   // 아래층 RL 정책 관측 [N][low_img_n(cfg)] (넓은 지도 끄면 kLowImg) (cfg.low_rl 일 때만 — include/low_task.h)
   const float* low_1d = nullptr;      // [N][kLow1d]
 };
 

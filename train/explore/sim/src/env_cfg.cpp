@@ -317,6 +317,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
       c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
       c.lr_ttc_k = envf("SIM_LR_TTC_K", kLrTtcK);
+      c.lo_wide = (int)envf("SIM_LOW_WIDE", 0.f);   // 넓은 지도 (2026-11-15 — 목적지만 정책이 ±3.2 m 창 밖 길을 못 찾아서)
       c.lo_goalonly = (int)envf("SIM_LOW_GOALONLY", 0.f);   // 목적지만 (2026-11-15 사용자 결정 실험 — 경로를 관측·보상 어디에도 안 씀)
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
       // 사람 충돌·속도 대책 (mdp/README "아래층 RL — 사람 충돌·속도"). 보상만 바꾼다 — 정책 행동·관측은 그대로

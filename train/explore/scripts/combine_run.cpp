@@ -232,7 +232,7 @@ int run(const Args& a) {
   if (use_pol) {
     xppo::PPOConfig pc;
     pc.num_envs = N;
-    ppo.reset(new xppo::PPO(pc, xnet::explore_spec_low(), 1));
+    ppo.reset(new xppo::PPO(pc, xnet::explore_spec_low(c.lo_wide != 0), 1));
     ppo->load(a.policy);
     std::printf("아래층: RL 정책 %s (반복 %d) — 결정적(평균 행동)\n", a.policy.c_str(), ppo->iteration());
   } else {

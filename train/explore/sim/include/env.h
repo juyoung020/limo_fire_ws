@@ -89,6 +89,7 @@ struct EnvCfg {
   float sweep_h, sweep_margin;   // 내다보는 시간 (s), 몸통 둘레 여유 (m)
   // 아래층 RL (low_rl.h · mdp/README "아래층 RL"). 기본값은 low_rl.h 상수, env_cfg.cpp 가 환경변수로 덮는다
   int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
+  int lo_wide;                   // 넓은 지도 (SIM_LOW_WIDE, 기본 0): 아래층 그림 뒤에 로봇 지도 25.6 m 창 6 × 64 × 64 (low_task.h kLowWideOff, low_rl.h lowrl_wide)
   int lo_goalonly;               // 목적지만 (SIM_LOW_GOALONLY, 기본 0): 관측에서 경로 칸을 0 으로, 보상은 시간·통과·닿음만 (low_rl.h)
   float lr_ttc_k;                // 충돌 시간 벌점 (low_rl.h kLrTtcK, SIM_LR_TTC_K — 0 = 끔)
   float lr_mprox_k, lr_mprox_d;  // 움직임 근접 벌점: × 몸통 가장 빠른 점 속도 (m/s) × (1 − 간격 / lr_mprox_d). 0 = 끔
@@ -436,6 +437,7 @@ struct EnvBatch {
   LowRlStat* lowstat;
   uint8_t* low_img;
   float* low_1d;
+  uint32_t* low_wred;   // 넓은 지도 (lo_wide 일 때만): 로봇 지도 4 × 4 칸(0.2 m) 줄인 판 [env · (size/4)²] — low_rl.h lowrl_wred
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)

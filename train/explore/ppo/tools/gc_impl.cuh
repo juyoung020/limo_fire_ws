@@ -50,7 +50,7 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   }
   // 아래층 RL (GC_LOW=1, gradcheck --low): 연속 행동 2 개 + 선언 자리. 실제 크기는 explore_spec_low (라이다 그림·깊이 가지), 작은 구조는 같은 인코더에 행동 폭만
   if (std::getenv("GC_LOW") != nullptr) {
-    if (full) spec = explore_spec_low();
+    if (full) spec = explore_spec_low(std::getenv("GC_LOW_WIDE") != nullptr);   // GC_LOW_WIDE=1 (gradcheck --low --full --wide): 넓은 지도 가지까지
     else { spec.n_cont = 2; spec.actor.out = 3; }
   }
   spec.declare_bias = 0.f;  // 검사에서는 선언 확률을 중간으로 (−7 이면 베르누이 기울기가 거의 0)
