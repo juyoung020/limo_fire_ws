@@ -323,6 +323,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lr_ppl_k = envf("SIM_LR_PPL_K", kLrPplK);
       c.lr_ppl_t = envf("SIM_LR_PPL_T", kLrPplT);
       c.lr_ppl_m = envf("SIM_LR_PPL_M", kLrPplM);
+      c.lr_coll_k = envf("SIM_LR_COLL_K", kLrCollisionK);   // 벽 닿음 (2026-11-15: 목적지만 학습에서 −20 으로 — 제자리 회전 중 모서리 긁기가 늘어서)
       c.lr_pcol_k = envf("SIM_LR_PCOL_K", kLrPersonCollisionK);
       c.lr_w_k = envf("SIM_LR_W_K", kLrTurnK);
       c.tk_gate = envf("SIM_LOW_TRACK_GATE", kLrTrkGate);

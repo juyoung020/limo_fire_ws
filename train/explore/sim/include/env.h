@@ -108,6 +108,7 @@ struct EnvCfg {
   int con_stall;                     //   이 수만큼 이어지면 닿음
   int con_mask;                      //   닿음에 넣는 것 (contact.h kCon* 비트)
   int con_end;                       //   1: 닿음이 판을 끝냄 (기본). 0: 진단 전용 — 끝내지 않고 정답 충돌·센서 값을 기록만 (일치도 재기)
+  float lr_coll_k;               // 벽 닿음 보상 (판 끝 — low_rl.h kLrCollisionK, SIM_LR_COLL_K)
   float lr_pcol_k;               // 사람 충돌 보상 (벽 충돌은 kLrCollisionK 그대로)
   float lr_w_k, lr_w0;           // 회전 벌점: × max(0, |정책 ω| − lr_w0) (rad/s). 0 = 끔
   int curriculum;           // 1: 환경마다 단계(맵 묶음·오차 배율), 0: 모든 맵 고르게·오차 배율 1 (기준선·도구)
