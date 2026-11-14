@@ -132,6 +132,21 @@
 - CPU 참조판(`env_bench --cpu --threads 6`, 환경 32 × 100 걸음): HSSD 학습 목록 54.0 ms/걸음, ProcTHOR 학습 목록 23.6 ms/걸음.
 - 같은 인자로 다시 돌리면 장면 파일이 바이트까지 같다.
 
+## 낮은 장애물 변형 (`scene_lowobs`, `sim/tools/scene_lowobs.cpp`)
+
+판단 모델 실험([scripts/README](../scripts/README.md) "위층을 판단 모델에 맡기기")의 시험 장면. 시험 맵에 높이 0.09 m 턱 · 상자를 더한다.
+윗면이 라이다 평면보다 낮아 로봇 지도에는 안 찍히지만 몸통과는 부딪히고 카메라에는 보인다 — "지도에는 길이 뚫려 보이는데 실제로는 막힌 곳".
+상자 자리는 `sim/config/lowobs/<장면>.boxes.tsv`(손으로 고른 값, 잠정)에 있고, 변형 장면 파일은 저장소에 넣지 않는다. 다시 만들려면:
+
+```bash
+cd train/explore/sim
+<빌드>/sim/scene_lowobs --in ../scenes/test/small-house.scene --boxes config/lowobs/small-house.boxes.tsv \
+  --out <폴더>/small-house-lowobs.scene --max-lost 8 --ppm <폴더>/small-house-lowobs.ppm --ppm-scale 3
+```
+
+상자 윗면이 라이다 높이보다 낮고 몸통 충돌 띠 안인지, 집이 여전히 닫혀 있는지, 갈 수 있는 바닥이 `--max-lost`(m²) 넘게 줄지 않았는지 확인하고 하나라도 어기면 파일을 쓰지 않는다.
+`--boxes` 없이 부르면 원본 보고만 한다. `--ppm` 은 확인용 그림(파랑 = 더한 상자, 옅은 선 1 m 눈금).
+
 ## 라이선스
 
 | 출처 | 라이선스 | 비고 |

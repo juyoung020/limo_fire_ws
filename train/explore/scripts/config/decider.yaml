@@ -1,0 +1,30 @@
+# 판단 모델(위층)에게 주는 글과 값 — combine_run 이 읽는다 (decider.h config_text · load_score_cfg). 한 줄에 "key: 값".
+# 쓰는 곳: --decider-finish (mission) · --decider-mode score (전부). 실행할 때 --decider-config <파일> 로 다른 파일, --decider-mission "<글>" 로 임무 문장만 바꿀 수 있다.
+
+# 임무 문장. 과제 글(과 choice 의 끝 선언 질문)에 그대로 들어간다.
+mission: "map the whole floor as fast as possible"
+
+# 점수 방식: 후보마다 묻는 글. {id} 자리에 후보 글자(A~H)가 들어간다.
+score_question: "If the robot drives to candidate {id}, how much more of the map gets filled in?"
+# 단계 설명, 낮은 것부터. score_level_0 부터 이어진 번호만큼(2 ~ 10 개)이 단계 수가 된다.
+score_level_0: "none at all"
+score_level_1: "a little"
+score_level_2: "a fair amount"
+score_level_3: "a lot"
+score_level_4: "a whole new area opens"
+# 기대 점수(Σ 단계 × 확률)가 최고에서 이 값 안이면 비긴 것으로 본다: 지금 목표가 그 안에 있으면 그대로, 아니면 가까운 후보. (잠정 — 시험 장면에 맞춰 고르지 않음)
+score_margin: 0.25
+# 끝 선언(--decider-finish): 모든 후보의 기대 점수가 이 값보다 작으면 끝. 음수면 "모든 후보에서 가장 그럴듯한 단계가 0" 일 때 끝 (기본).
+score_finish_below: -1
+
+# choice 방식의 끝 선언(--decider-mode choice --decider-finish): 같은 요청에 score 질문 하나를 더해 "갈 수 있는 곳에서 지도에 더 넣을 수 있는 양"을 묻는다 (못 가는 모르는 곳은 세지 않음). 글과 단계(낮은 것 = 남은 게 없음).
+left_question: "How much more can the robot still add to its map from places it can reach? Unknown area the robot cannot reach does not count."
+left_level_0: "nothing more"
+left_level_1: "a little"
+left_level_2: "a fair amount"
+left_level_3: "a lot"
+left_level_4: "a whole new area"
+# "남은 게 없음" = 기대 점수가 이 값보다 작음. 음수면 가장 그럴듯한 단계가 0 일 때 (기본).
+left_finish_below: -1
+# 그 답이 이 수만큼 이어진 결정에서 끝을 선언한다. (잠정)
+left_hold: 2

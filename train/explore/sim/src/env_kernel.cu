@@ -1457,7 +1457,12 @@ __global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
   Shared& g = b.scratch[env];
   copy_state(e, b.st[env], tid);
   __syncthreads();
-  reset_env(b, e, env, tid);
+  if (b.cfg.end_hold && b.lowrl) {   // 판 끝 뒤 멈춤: 리셋 대신 표시만 (관측은 지금 상태로 전부 다시)
+    if (tid == 0) { e.done = 0; e.halt = 1; }
+    __syncthreads();
+  } else {
+    reset_env(b, e, env, tid);
+  }
   __shared__ mdp::obsgen::FarDirty fd;
   if (tid == 0) fd = mdp::obsgen::far_dirty_take(b, e, g, true);
   write_obs(b, e, env, sh, tid, fd, true);

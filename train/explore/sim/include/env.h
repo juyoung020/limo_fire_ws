@@ -77,6 +77,13 @@ struct EnvCfg {
   // 든 적이 없는(trail 판 1) 칸이 하나라도 있으면 안 닫힘. 값은 관측 때 프론티어 요약이 같이 낸다(EnvState::map_closed — 관측 CLOSED 와 같은 값, 다음 걸음 판 끝이 씀)
   int success_closed, close_every, close_min;
   float close_idle_s, close_look, close_radius;   // close_radius: 닫힘·후보 번지기의 몸통 반경 (m) = 계층형 계획기 반경 (load_env_cfg)
+  // 판 끝 뒤 멈춤 (녹화용, 기본 0 = 끔): 1 이면 아래층 RL 걸음 길(low_rl)에서 판이 끝난 환경을 리셋하지 않고 EnvState::halt = 1 로 둔다 — 끝 코드·EpInfo 는 그 걸음에 그대로 한 번 나가고,
+  // 그 뒤 걸음은 명령 v = w = 0 (physics_step) · 판 끝 판정 없음 (finish_step). 구동 모델이 그대로 돌아 로봇이 실제로 감속해 선다. 충돌로 끝난 판은 물리를 안 돌리므로 그 자리에 그대로
+  int end_hold;
+  // 판단 모델의 끝 선언 (combine_run --decider-finish, 기본 0 = 끔): 1 이면 아래층 RL 걸음 길에서 호스트가 LowCmd{kLowFinish, 0} 을 넣은 환경은 그 걸음에 끝을 선언한 것으로 본다
+  // (low_rl.h lowrl_begin). 판정은 로봇 지도만으로 — 선언한 걸음의 지도 닫힘(EnvState::map_closed, mdp/frontier.h 닫힘 규칙)이면 성공 코드 1, 아니면 이른 선언 코드 4 (finish_step).
+  // 정답 덮음은 안 봄. 닫힘 성공 규칙(닫힘 + close_idle_s)은 그대로 살아 있어 모델이 선언을 안 해도 판은 끝난다
+  int finish_declare;
   // 덮음 보상 (2026-11-08): reward_occ = 1 이면 정답 벽 덮음 대신 로봇 지도에서 판 처음 막힘이 된 칸 하나에 kOccCell (rewards.h)
   int reward_occ;
   int sweep_guard;          // 몸통 쓸림 안전층 켬 (실험, 기본 끔 — apply_action sweep_scale): 로봇 지도 막힘 칸을 다음 sweep_h 초 몸통이 쓸면 명령을 줄임
@@ -261,6 +268,8 @@ struct EnvState {
   // 복구 (rec_on, hier_path.h "복구"): 이번 결정에서 충돌 검사가 막은 걸음, 이어진 막힌 결정 수, 남은 물러나기 걸음, 포기한 목표 칸 (−1 없음)·포기 끝 걸음, 판 동안 포기 수 (기록)
   int32_t p_blk_now, p_blk, p_rec, p_gaveup;
   int32_t p_bl_cell[kRecBl], p_bl_until[kRecBl];   // 포기한 목표 칸 (−1 없음)·포기 끝 걸음 — 고리 (p_gaveup % kRecBl 자리에 새로)
+  // 판 끝 뒤 멈춤 (EnvCfg::end_hold — 녹화용): 1 이면 판이 끝났고 리셋 없이 서 있는 중. 명령은 0, 판 끝 판정 없음 (리셋이 0 으로)
+  int32_t halt, pad_halt;
 };
 
 // 블록 안 공유 (GPU __shared__, CPU 는 지역 변수)
@@ -530,6 +539,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.seen_wall = 0;
   e.seen_floor = 0;
   e.done = 0;
+  e.halt = 0;
   e.last_action = -1;
   e.collided = 0;
   e.declared = 0;
@@ -862,6 +872,7 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   people_step(b, e);   // 사람 먼저 움직임
+  if (e.halt) e.cmd_v = e.cmd_vy = e.cmd_w = e.vs = e.ws = 0.f;   // 판 끝 뒤 멈춤 (end_hold): 누가 낸 명령이든 0
   float cmd_v, cmd_w;
   if (c.action_mode != kActGoal) {   // 속도 행동·계층형 (계층형은 apply_action 이 낸 명령)
     cmd_v = e.cmd_v;
@@ -1434,9 +1445,10 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   }
   const bool low_end = low_finish(b, e, env);   // 아래층 계측: 걸음 거리 · 단독 과제 판 끝 (끄면 false)
   // 판 끝: 충돌 > 닫힘(성공) > 선언 > 진행 없음 > 끊김
-  if (e.collided) e.done = e.people.hit_person ? mdp::cur::kCollisionPerson : mdp::cur::kCollision;
+  if (e.halt) e.done = 0;   // 판 끝 뒤 멈춤 (end_hold): 더 판정 안 함
+  else if (e.collided) e.done = e.people.hit_person ? mdp::cur::kCollisionPerson : mdp::cur::kCollision;
   else if (in.closed) e.done = mdp::cur::kDeclareOk;   // 성공 코드 1 = 지도 닫힘 (닫힘 성공 규칙)
-  else if (in.declared) e.done = cov >= mdp::cur::kSuccessCov ? mdp::cur::kDeclareOk : mdp::cur::kDeclareShort;
+  else if (in.declared) e.done = (c.finish_declare ? e.map_closed != 0 : cov >= mdp::cur::kSuccessCov) ? mdp::cur::kDeclareOk : mdp::cur::kDeclareShort;   // finish_declare: 로봇 지도 닫힘으로만 판정 (정답 덮음 안 봄)
   else if (in.idle) e.done = mdp::cur::kNoProgress;
   else if (e.step >= c.max_steps) e.done = mdp::cur::kTruncated;
   else if (low_end) e.done = mdp::cur::kTruncated;   // 단독 과제 끝 (까닭은 LowEp::end)

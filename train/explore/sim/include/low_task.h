@@ -56,6 +56,7 @@ struct PathWhy {
 };
 
 // 호스트 → 환경 (단독 과제). 결정마다 호스트가 씀
+constexpr int32_t kLowFinish = -3;   // LowCmd::target 자리 (follow 0 일 때): 위층이 이 걸음에 판 끝을 선언 (EnvCfg::finish_declare 를 켰을 때만 봄 — low_rl.h lowrl_begin)
 struct LowCmd {
   int32_t target;    // 목표 칸 (cy · gw + cx, −1 없음) — follow 1 일 때만 봄
   int32_t follow;    // 0 보통 계층형(예열 탐사) · 1 단독 과제 · 2 단독 과제를 정책이 몲 (아래층 RL — cfg.low_rl 일 때만)

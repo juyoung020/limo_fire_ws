@@ -378,7 +378,8 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
         Shared sh;
         Shared& g = b.scratch[env];
         EnvState e = b.st[env];
-        reset_env(b, e, env);
+        if (c.end_hold) { e.done = 0; e.halt = 1; }   // 판 끝 뒤 멈춤: 리셋 대신 표시만 (GPU env_bundle_end_kernel 과 같게)
+        else reset_env(b, e, env);
         write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, true));
         b.st[env] = e;
       }

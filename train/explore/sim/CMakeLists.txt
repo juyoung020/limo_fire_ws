@@ -129,3 +129,7 @@ set(RL_NODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../src/limo_fire/limo_fire_rl)
 add_executable(rl_node_check tools/rl_node_check.cpp ${RL_NODE_DIR}/src/robot_env.cpp)
 target_include_directories(rl_node_check PRIVATE ${RL_NODE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/../network)
 target_link_libraries(rl_node_check limo_sim)
+
+# 낮은 상자(라이다 평면 아래 · 몸통 높이 안)를 더한 변형 장면 만들기 — 판단 모델 실험의 "눈으로만 알 수 있는 막힘" 시험 장면 (tools/scene_lowobs.cpp)
+add_executable(scene_lowobs tools/scene_lowobs.cpp)
+target_link_libraries(scene_lowobs limo_sim)

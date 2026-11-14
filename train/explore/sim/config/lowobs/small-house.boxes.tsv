@@ -1,0 +1,9 @@
+# small-house 변형 (small-house-lowobs): 방 사이 넓은 어귀를 일부만 막는 낮은 턱(남는 틈 ≥ 1 m) + 가구 둘레 한쪽 길 막기 — 높이 0.09 m.
+# 자리는 scene_lowobs --ppm 그림의 1 m 눈금으로 잡음 (잠정 — 손으로 고른 값)
+# x	y	yaw_deg	len	wid	h	name
+-2.50	-0.55	90	2.30	0.30	0.09	sill_west_door
+4.80	-0.35	90	4.50	0.30	0.09	sill_east_door
+-1.65	-2.50	0	1.90	0.30	0.09	sill_island_west
+-8.85	-1.50	0	1.30	0.30	0.09	sill_westroom
+2.50	0.80	20	0.40	0.40	0.09	box_a
+-5.50	0.20	0	0.40	0.40	0.09	box_b

@@ -79,10 +79,10 @@ DEV bool lowrl_policy(const EnvBatch& b, int env) { return b.lowrl && b.lowcmd[e
 DEV int lowrl_act_w(const EnvBatch& b) { return b.lowrl && b.cfg.low_act_w > 0 ? b.cfg.low_act_w : mdp::act::DIM; }
 DEV int lowrl_period(const EnvCfg& c) { return c.low_period > 0 ? c.low_period : c.decide_steps; }
 
-// 행동 앞머리 (env.h action_begin 몫 — 선언 없음)
+// 행동 앞머리 (env.h action_begin 몫 — 선언은 EnvCfg::finish_declare 를 켰을 때 호스트가 넣은 LowCmd{kLowFinish, 0} 만, 기본은 없음)
 DEV void lowrl_begin(const EnvBatch& b, EnvState& e, int env) {
   e.people.hit_person = 0;
-  e.declared = 0;
+  e.declared = b.cfg.finish_declare && b.lowcmd[env].follow == 0 && b.lowcmd[env].target == kLowFinish ? 1 : 0;
   LowRl& R = b.lowrl[env];
   if (R.p_step == e.step) {   // 계획 단계 뒤 첫 걸음 = 새 결정 구간: 막힘 신호를 지움 (low_task.h LowRl::stall)
     R.stall = 0;

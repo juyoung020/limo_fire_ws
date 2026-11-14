@@ -8,7 +8,7 @@ explore/
 ├── mdp/        관측 + 크기 · 보상 식 + 가중치 · 판 끝 판정 + 커리큘럼 단계
 ├── network/    CNN 혼합 정책·가치 (2D 마다 CNN + MLP)
 ├── ppo/        롤아웃·GAE · PPO 손실·갱신·Adam + 하이퍼파라미터 · 학습 루프
-├── scripts/    train · play · frontier_run(프론티어 기준선을 돌려 실행 폴더로)
+├── scripts/    train · play · frontier_run(프론티어 기준선을 돌려 실행 폴더로) · combine_run(두 층 합친 탐사, 위층을 판단 모델에 맡기는 실험)
 ├── baselines/  비교 기준선: frontier/ = 프론티어 탐사(explore_lite + Nav2 식). RL 이 이겨야 할 95 % 도달 시간
 ├── viewer/     학습 뷰어(trainview): 곡선·표·2D 재생·비교 + 러너가 쓰는 실행 폴더 헤더 include/runfolder.h
 ├── runs/       실험마다 체크포인트·로그·그때의 mdp/·ppo.h 사본·커밋 해시 (git 제외)

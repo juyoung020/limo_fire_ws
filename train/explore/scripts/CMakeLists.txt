@@ -45,3 +45,12 @@ target_link_libraries(low_policy_run frontier_explorer_h explore_ppo)
 add_executable(combine_run combine_run.cpp)
 set_source_files_properties(combine_run.cpp PROPERTIES LANGUAGE CUDA)   # ppo.h 머리글
 target_link_libraries(combine_run frontier_explorer_h explore_ppo)
+# 위층을 바깥 판단 모델 서버(llama-server /v1/systemone)에 맡기는 길 (combine_run --upper decider, decider.h): HTTP 는 libcurl, 사진은 zlib(PNG), JSON 은 nlohmann_json
+find_package(CURL REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(nlohmann_json REQUIRED)
+add_library(decider STATIC decider.cpp)
+target_link_libraries(decider PRIVATE CURL::libcurl ZLIB::ZLIB nlohmann_json::nlohmann_json)
+target_compile_options(decider PRIVATE -Wall -Wextra)
+target_link_libraries(combine_run decider)
+target_compile_definitions(combine_run PRIVATE DECIDER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/decider.yaml")   # 임무 문장 (--decider-finish)
