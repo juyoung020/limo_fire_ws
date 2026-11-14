@@ -1,5 +1,6 @@
 // 아래층 체크포인트(explore_spec_low())에 넓은 지도 가지(explore_spec_low(true) — mdp/obs_layout.h WIDE_*)를 더한다 — GPU 없이 파일 → 파일.
 //   ckpt_add_wide 입력.bin 출력.bin [씨앗] [--gru H]
+//   입력에 넓은 지도 가지가 이미 있으면(넓은 지도만으로 학습한 체크포인트) --gru 로 순환 핵만 더한다 (넓은 지도 쪽은 바이트 그대로).
 // 하는 일 (actor·critic 인코더 둘 다 — 나뉜 인코더 enc·enc_c):
 //   · 새 가지 cnn3 의 합성곱 앞 세 층은 Net::init 과 같은 무작위(U(±1/√(cin·4))), 넷째 층(꼬리) 가중치·편향은 0 → 새 가지 특징 = ELU(0) = 0
 //   · MLP 첫 층(actor.mlp0.w · critic.mlp0.w) [out][in] 의 합성곱 특징 열 뒤(1D 열 앞)에 512 열을 끼움 — U(±1/√새 in) 무작위
@@ -83,8 +84,13 @@ int main(int argc, char** argv) try {
   char tail[8 + 4 + 4 + 8 + 8];   // 정규화 개수 · 반복 · 학습률 · act 호출 수 · 씨앗 — 그대로 옮김
   r(tail, sizeof tail);
   if (D != mdp::low::N1D) throw std::runtime_error("아래층 체크포인트가 아님 (정규화 칸 수 " + std::to_string(D) + ")");
-  for (auto& b : blk)
-    if (b.name.find(".cnn" + std::to_string(kOld) + ".") != std::string::npos) throw std::runtime_error("이미 넓은 지도 가지가 있음: " + b.name);
+  bool has_wide = false;
+  for (auto& b : blk) {
+    if (b.name.find(".cnn" + std::to_string(kOld) + ".") != std::string::npos) has_wide = true;
+    if (b.name.find(".gru.") != std::string::npos) throw std::runtime_error("이미 순환 핵이 있음: " + b.name);
+  }
+  if (has_wide && gru_h == 0) throw std::runtime_error("이미 넓은 지도 가지가 있음 (순환 핵만 더하려면 --gru H)");
+  const int64_t feat_new = has_wide ? 0 : kFeatNew;   // 이번에 끼울 넓은 지도 열 수
 
   std::mt19937_64 rng(seed);
   auto uni = [&](std::vector<float>& o, int64_t n, float bound) {   // Net::init 과 같은 꼴 (float 로 뽑음)
@@ -103,24 +109,25 @@ int main(int argc, char** argv) try {
     if (is_mlp0) {
       const int64_t out = blk[i + 1].n, in = b.n / out;
       if (blk[i + 1].name != b.name.substr(0, b.name.size() - 1) + "b" || in * out != b.n) throw std::runtime_error(b.name + " 모양이 이상함");
-      const int64_t nf = in - mdp::low::N1D, in2 = in + kFeatNew + gru_h;
-      if (nf != 1024) throw std::runtime_error(b.name + ": 합성곱 특징 열 " + std::to_string(nf) + " (1024 이어야 — 옛 가지 3 개)");
+      const int64_t nf = in - mdp::low::N1D, in2 = in + feat_new + gru_h;
+      if (nf != (has_wide ? 1024 + kFeatNew : 1024))
+        throw std::runtime_error(b.name + ": 합성곱 특징 열 " + std::to_string(nf) + (has_wide ? " (1536 이어야 — 가지 4 개)" : " (1024 이어야 — 옛 가지 3 개)"));
       const float bd = 1.f / std::sqrt((float)in2);
       for (int64_t j = 0; j < out; ++j) {
         np.insert(np.end(), bp + j * in, bp + j * in + nf);
-        uni(np, kFeatNew, bd);
+        uni(np, feat_new, bd);
         np.insert(np.end(), gru_h, 0.f);   // h 열 0 — 처음 정책 그대로
         np.insert(np.end(), bp + j * in + nf, bp + (j + 1) * in);
         for (int q = 0; q < 2; ++q) {   // Adam m · v: 새 열 0
           std::vector<float>& o = q ? nv : nm;
           const float* src = q ? bv : bm;
           o.insert(o.end(), src + j * in, src + j * in + nf);
-          o.insert(o.end(), kFeatNew + gru_h, 0.f);
+          o.insert(o.end(), feat_new + gru_h, 0.f);
           o.insert(o.end(), src + j * in + nf, src + (j + 1) * in);
         }
       }
       nblk.push_back({b.name, out * in2});
-      added_mlp += out * (kFeatNew + gru_h);
+      added_mlp += out * (feat_new + gru_h);
     } else {
       np.insert(np.end(), bp, bp + b.n);
       nm.insert(nm.end(), bm, bm + b.n);
@@ -145,6 +152,7 @@ int main(int argc, char** argv) try {
     }
     // 인코더의 마지막 옛 가지 꼬리 편향 뒤에 새 가지
     for (const char* pfx : {"enc", "enc_c"}) {
+      if (has_wide) break;
       if (b.name != std::string(pfx) + ".cnn" + std::to_string(kOld - 1) + ".conv3.b") continue;
       int cin = mdp::low::WIDE_C;
       for (int l = 0; l < 4; ++l) {
@@ -168,7 +176,7 @@ int main(int argc, char** argv) try {
   }
   const int64_t P2 = (int64_t)np.size();
   if ((int64_t)nm.size() != P2 || (int64_t)nv.size() != P2 || P2 != P + added_conv + added_mlp + added_gru) throw std::runtime_error("새 변수 수 계산이 안 맞음");
-  if (added_conv == 0 || added_mlp == 0 || (gru_h > 0 && added_gru == 0)) throw std::runtime_error("인코더 꼬리나 MLP 첫 층을 못 찾음 (아래층 체크포인트?)");
+  if ((!has_wide && added_conv == 0) || added_mlp == 0 || (gru_h > 0 && added_gru == 0)) throw std::runtime_error("인코더 꼬리나 MLP 첫 층을 못 찾음 (아래층 체크포인트?)");
 
   const std::string tmp = std::string(argv[2]) + ".tmp";
   {
