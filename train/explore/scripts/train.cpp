@@ -238,16 +238,16 @@ __global__ void k_map_done_low(const int32_t* d, int n, int* out) {
   out[i] = d[i] == mdp::cur::kRunning ? 0 : ((d[i] == mdp::cur::kCollision || d[i] == mdp::cur::kCollisionPerson) ? 1 : 3);
 }
 
-const char* const kLowTermName[sim::kLrTerms] = {"progress", "time", "reach", "collision", "proximity", "smooth", "backward", "safety"};
+const char* const kLowTermName[sim::kLrTerms] = {"progress", "time", "reach", "collision", "proximity", "smooth", "backward"};
 
 struct LowSum {   // LowRlStat 여러 환경 합
   double term[sim::kLrTerms] = {}, steps = 0, episodes = 0, goals = 0, reached = 0, hit_wall = 0, hit_person = 0, stall = 0, timeout = 0, giveup = 0,
-         safe = 0, back = 0, reach_steps = 0, dist = 0, reach_len = 0, x_eps = 0, x_ok = 0, x_wall = 0, x_person = 0, x_idle = 0, x_ok_steps = 0, x_rule = 0,
+         back = 0, reach_steps = 0, dist = 0, reach_len = 0, x_eps = 0, x_ok = 0, x_wall = 0, x_person = 0, x_idle = 0, x_ok_steps = 0, x_rule = 0,
          gt_wall = 0, gt_person = 0;   // 판 동안 시뮬 정답 충돌이 있었던 판 (기록 전용 — hit_* 는 센서 닿음으로 끝난 판)
   void add(const sim::LowRlStat& s) {
     for (int k = 0; k < sim::kLrTerms; ++k) term[k] += s.term[k];
     steps += s.steps; episodes += s.episodes; goals += s.goals; reached += s.reached; hit_wall += s.hit_wall; hit_person += s.hit_person;
-    stall += s.stall; timeout += s.timeout; giveup += s.giveup; safe += s.safe_steps; back += s.back_steps; reach_steps += s.reach_steps;
+    stall += s.stall; timeout += s.timeout; giveup += s.giveup; back += s.back_steps; reach_steps += s.reach_steps;
     dist += s.dist; reach_len += s.reach_len;
     x_eps += s.x_eps; x_ok += s.x_ok; x_wall += s.x_wall; x_person += s.x_person; x_idle += s.x_idle; x_ok_steps += s.x_ok_steps; x_rule += s.x_rule_steps;
     gt_wall += s.gt_wall; gt_person += s.gt_person;
@@ -350,7 +350,7 @@ int run_low(Args a) {
   constexpr int kEvalSteps = 600;   // 60 s
   auto put_low = [&](rf::Json& j, const LowSum& s) {
     j.set("goals", s.goals).set("reach_rate", s.reach_rate()).set("speed", s.speed(dt_act)).set("wall_per_100m", s.wall100()).set("person_per_100m", s.person100()).set("gt_wall_per_100m", s.gt_wall100()).set("gt_person_per_100m", s.gt_person100())
-        .set("stall", s.stall).set("timeout", s.timeout).set("giveup", s.giveup).set("safety_frac", s.steps > 0 ? s.safe / s.steps : 0.0)
+        .set("stall", s.stall).set("timeout", s.timeout).set("giveup", s.giveup)
         .set("back_frac", s.steps > 0 ? s.back / s.steps : 0.0).set("dist", s.dist);
   };
   auto evaluate = [&](int it, bool sample) {
@@ -384,9 +384,9 @@ int run_low(Args a) {
         row.set("eval", tests[ti].name).set("split", sample ? "test_sample" : "test").set("people", p ? 2 : 0).set("n", (double)(p ? E - E / 2 : E / 2));
         put_low(row, s[p]);
         rows.push(row);
-        std::fprintf(stderr, "  평가%s %s 사람 %d: 목표 %.0f 도달률 %.3f 속도 %.3f m/s 벽 %.3f·사람 %.3f /100 m 정체 %.0f 시간끝 %.0f 안전층 %.3f\n", sample ? "(샘플)" : "",
+        std::fprintf(stderr, "  평가%s %s 사람 %d: 목표 %.0f 도달률 %.3f 속도 %.3f m/s 벽 %.3f·사람 %.3f /100 m 정체 %.0f 시간끝 %.0f\n", sample ? "(샘플)" : "",
                      tests[ti].name.c_str(), p ? 2 : 0, s[p].goals, s[p].reach_rate(), s[p].speed(dt_act), s[p].wall100(), s[p].person100(), s[p].stall,
-                     s[p].timeout, s[p].steps > 0 ? s[p].safe / s[p].steps : 0.0);
+                     s[p].timeout);
       }
       for (int i = 0; i < E; ++i) all.add(h_stat[i]);
     }
@@ -588,7 +588,6 @@ int run_low(Args a) {
     r.last("low/stall_per_goal", s.goals > 0 ? s.stall / s.goals : 0.0);
     r.last("low/timeout_per_goal", s.goals > 0 ? s.timeout / s.goals : 0.0);
     r.last("low/giveup_per_goal", s.goals > 0 ? s.giveup / s.goals : 0.0);
-    r.last("low/safety_frac", s.safe / ns);
     r.last("low/back_frac", s.back / ns);
     r.last("low/policy_frac", s.steps / iter_steps);
     r.last("low/mean_speed_all", s.dist / (ns * dt_act));
@@ -619,9 +618,9 @@ int run_low(Args a) {
     r.last(rf::key::GPU_MEM_MB, (tot - fr) / 1048576.0);
     const int it_now = ppo.iteration();
     std::fprintf(stderr,
-                 "반복 %d: 목표 %.0f 도달률 %.3f 속도 %.3f m/s 벽 %.3f·사람 %.3f /100 m 정체 %.0f 시간끝 %.0f 안전층 %.3f 후진 %.3f 걸음보상 %.4f | value %.4f kl %.4f lr %.2e "
+                 "반복 %d: 목표 %.0f 도달률 %.3f 속도 %.3f m/s 벽 %.3f·사람 %.3f /100 m 정체 %.0f 시간끝 %.0f 후진 %.3f 걸음보상 %.4f | value %.4f kl %.4f lr %.2e "
                  "σ %.3f %.3f | act %.0f sim %.0f update %.0f ms (%.0f 걸음/s)\n",
-                 it, s.goals, s.reach_rate(), s.speed(dt_act), s.wall100(), s.person100(), s.stall, s.timeout, s.safe / ns, s.back / ns, step_rew / ns, us.value,
+                 it, s.goals, s.reach_rate(), s.speed(dt_act), s.wall100(), s.person100(), s.stall, s.timeout, s.back / ns, step_rew / ns, us.value,
                  us.kl, us.lr, std::exp(ls[0]), std::exp(ls[1]), t_act, t_sim, t_upd, iter_steps / (t_iter / 1000));
     if (a.eval_every > 0 && it_now % a.eval_every == 0) { evaluate(it_now, false); if (a.low_explore) evaluate_x(it_now); else evaluate(it_now, true); }
     run.end_update();

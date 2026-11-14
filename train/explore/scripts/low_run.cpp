@@ -43,7 +43,7 @@ using sim::LowEp;
 
 const char* kKind[kLowKinds] = {"제 속도", "가속 중", "곡률 감속", "장애물 근접 감속", "경로 끝 감속", "충돌 감시 감속", "도착 뒤 회전", "도착 뒤 섬",
                                 "회전: 목적지 바뀜", "회전: 다시 계획", "회전: 가던 중", "회전: 목적지 없음", "경로 없음", "충돌 검사 멈춤", "복구 물러나기",
-                                "회전 막힘", "안전층"};
+                                "회전 막힘", "앞 정지(추종기)"};
 // 누구 몫: 0 못 줄임 · 1 아래층 · 2 위층 (제 속도·가속은 따로 셈)
 const int kOwner[kLowKinds] = {0, 0, 1, 1, 2, 1, 2, 2, 2, 1, 1, 2, 1, 1, 1, 1, 1};
 const char* kAng[sim::kLowAng] = {"0-30", "30-60", "60-90", "90-135", "135-180", "미정"};
@@ -733,29 +733,21 @@ void diag_row(Diag& D, const char* kind, const sim::EnvCfg& c, const sim::World&
   if (hn > 5) v5 = h(5).v;
   if (hn > 10) v10 = h(10).v;
   const DiagHist& now = h(0);
-  // 사람 추적 진단 (SIM_LOW_YIELD=3 일 때만 뜻이 있다): 로봇에 가장 가까운 "움직이는 것"까지 거리 · 그 속도 · 그것과 가장 가까운 참값 사람 사이 거리 (없으면 99)
   const sim::LowRl& RP = D.rl_post[i];
-  float m_rng = 99.f, m_spd = 0.f, m_gt = 99.f;
-  if (RP.ps_n > 0) {
-    m_rng = std::hypot(RP.ps_m[0] - (e.x + e.ex), RP.ps_m[1] - (e.y + e.ey));
-    m_spd = std::hypot(RP.ps_m[2], RP.ps_m[3]);
-    for (int k = 0; k < e.people.n; ++k) m_gt = std::min(m_gt, std::hypot(RP.ps_m[0] - e.ex - e.people.cyl[k].x, RP.ps_m[1] - e.ey - e.people.cyl[k].y));
-  }
-  std::fprintf(D.f, "%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%d\t%d\t%.3f\t%.3f\t%.3f\n",
+  std::fprintf(D.f, "%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%.3f\t%.3f\t%d\n",
                kind, W.name.c_str(), people, i, e.step - L.f_start, goal_age, e.x, e.y, e.th, e.v, e.w, now.a0, now.a1, safe_now, v5, v10, wmax5, k5 ? a0m5 / k5 : 0.f, safe10,
                hu, hv, hd, reg, near0, near0m, cam, fov, geom, lr[0], lr[1], lr[2], lr[3], gap, clr, gd, O[sim::kLoRem] * sim::kLrGoalNorm, O[sim::kLoSub] * sim::kLrSubNorm,
-               O[sim::kLoSub + 1], O[sim::kLoSub + 2], (int)O[sim::kLoHasPath], e.step - D.rl[i].p_step, e.delay, D.rl_post[i].lg_st, std::hypot(e.ex, e.ey), e.eth, RP.ps_n, RP.tk_n, m_rng, m_spd, m_gt);
+               O[sim::kLoSub + 1], O[sim::kLoSub + 2], (int)O[sim::kLoHasPath], e.step - D.rl[i].p_step, e.delay, std::hypot(e.ex, e.ey), e.eth, RP.tk_n);
   if (kind[0] != 'r') std::fflush(D.f);
 }
-const char* kDiagHead = "kind\tscene\tpeople\tenv\ttask_step\tgoal_age\tx\ty\tth\tv\tw\ta_v\ta_w\tsafe\tv5\tv10\twmax5\ta_v_mean5\tsafe10\thu\thv\thd\treg\tnear0\tnear0max\tcam\tfov\tgeom\tlid0\tlid1\tlid2\tlid3\tgap\tclr_cm\tgoal_d\trem\tsub_d\tsub_sin\tsub_cos\thas_path\tplan_age\tdelay\tguard\tperr_xy\tperr_th\ttrk\ttk_n\tm_rng\tm_spd\tm_gt\n";
+const char* kDiagHead = "kind\tscene\tpeople\tenv\ttask_step\tgoal_age\tx\ty\tth\tv\tw\ta_v\ta_w\tsafe\tv5\tv10\twmax5\ta_v_mean5\tsafe10\thu\thv\thd\treg\tnear0\tnear0max\tcam\tfov\tgeom\tlid0\tlid1\tlid2\tlid3\tgap\tclr_cm\tgoal_d\trem\tsub_d\tsub_sin\tsub_cos\thas_path\tplan_age\tdelay\tperr_xy\tperr_th\ttk_n\n";
 
 // ---------- 사람 충돌·속도 진단 (--diag 를 주면 <파일>.ppl.tsv 와 표준 출력의 "시간 손실" 표. 끄면 아무것도 안 함) ----------
-// 사람 충돌마다 닿기 전 kPplH 걸음의 로봇·그 사람 궤적을 걸음마다 한 줄씩: 누가 누구에게 다가갔나, 언제부터 라이다·지도에 보였나, 안전층이 언제 개입했나를 뒤에서 센다
+// 사람 충돌마다 닿기 전 kPplH 걸음의 로봇·그 사람 궤적을 걸음마다 한 줄씩: 누가 누구에게 다가갔나, 언제부터 라이다·지도에 보였나를 뒤에서 센다
 constexpr int kPplH = 50;
 struct PplStep {
-  float x, y, th, v, w, a0, a1, cv, cw;   // 걸음 앞 참 자세·속도, 정책 행동, 걸음 뒤 명령 (안전층 뒤)
+  float x, y, th, v, w, a0, a1, cv, cw;   // 걸음 앞 참 자세·속도, 정책 행동, 걸음 뒤 명령
   int safe, n;
-  int trk; float yres, m[4];   // 사람 비켜 주기 진단 (LowRl::ps_n · ps_res · ps_m — 그 걸음 뒤 값)
   float px[sim::kMaxPeople], py[sim::kMaxPeople], lid[sim::kMaxPeople];   // 사람 자리, 그 방위 라이다 최신 장의 가장 짧은 값 (m, 시야 밖 −1)
   int occ[sim::kMaxPeople], cam[sim::kMaxPeople];                         // 사람 겉(로봇 쪽) 점의 가까운 지도 막힘 채널·깊이 층 채널 (3 × 3 최댓값, 창 밖 −1)
   float tkd[sim::kMaxPeople], tkspd[sim::kMaxPeople], tkdisp[sim::kMaxPeople];   // 그 사람에 가장 가까운 추적 칸(LowRl::tk_*)까지 거리(없으면 99) · 그 칸 속도 · 움직인 거리
@@ -770,14 +762,12 @@ struct PplDiag {
   double cn[8] = {}, cd[8] = {}, cw[8] = {}, cs[8] = {}, cf[8] = {};   // 걸음 수 · 거리 · |명령 ω| 합 · |ω| 가 바퀴 한도에 걸린 걸음 · ω 부호가 뒤집힌 걸음
   std::vector<float> pw;   // 환경마다 직전 명령 ω
 };
-const char* kSpdName[8] = {"안전층·지킴이 개입", "새 목표 뒤 1 s", "목표 1 m 안", "급회전(|ω| > 1)", "느린 명령(v < 0.9)", "가속 중(명령 ≥ 0.9, 실제 < 0.9)", "제 속도", "목표 없음"};
+const char* kSpdName[8] = {"추종기 앞 정지", "새 목표 뒤 1 s", "목표 1 m 안", "급회전(|ω| > 1)", "느린 명령(v < 0.9)", "가속 중(명령 ≥ 0.9, 실제 < 0.9)", "제 속도", "목표 없음"};
 void ppl_push(PplDiag& P, const sim::EnvCfg& c, int i, const sim::EnvState& e, const uint8_t* I, float a0, float a1, float cv, float cw, int safe, const sim::LowRl& rl) {
   using namespace mdp::obs;
   PplStep& s = P.hist[(size_t)i * kPplH + P.hn[i] % kPplH];
   P.hn[i] += 1;
   s.x = e.x; s.y = e.y; s.th = e.th; s.v = e.v; s.w = e.w; s.a0 = a0; s.a1 = a1; s.cv = cv; s.cw = cw; s.safe = safe; s.n = e.people.n;
-  s.trk = rl.ps_n; s.yres = rl.ps_res;
-  for (int k = 0; k < 4; ++k) s.m[k] = rl.ps_m[k];
   const float s0 = std::sin(e.th), c0 = std::cos(e.th);
   const auto lid = [&](int bin) {
     const int z = 4 * bin;
@@ -834,12 +824,12 @@ void ppl_dump(PplDiag& P, const sim::EnvCfg& c, const char* scene, int people, i
     const float ss = std::sin(s.th), cc = std::cos(s.th);
     sim::Cyl C = pre.people.cyl[j];
     C.x = s.px[j]; C.y = s.py[j];
-    std::fprintf(P.f, "%ld\t%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.4f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\t%d\t%d\t%d\t%.1f\t%.3f\t%.3f\t%.3f\t%.3f\t%.2f\t%d\t%d\t%.2f\t%.2f\n", id, scene, people, i, hit_dir, goal_age, back, s.x, s.y,
-                 s.th, s.v, s.w, s.a0, s.a1, s.cv, s.cw, s.safe, C.x, C.y, C.r, pre.people.mode[j], pre.people.speed[j], sim::body_cyl_gap(c, C, s.x, s.y, ss, cc), s.lid[j], s.occ[j], s.cam[j], s.trk, s.yres, s.m[0], s.m[1], s.m[2], s.m[3], s.tkd[j], s.tkhit[j], s.tkmov[j], s.tkspd[j], s.tkdisp[j]);
+    std::fprintf(P.f, "%ld\t%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.4f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\t%d\t%d\t%.2f\t%d\t%d\t%.2f\t%.2f\n", id, scene, people, i, hit_dir, goal_age, back, s.x, s.y,
+                 s.th, s.v, s.w, s.a0, s.a1, s.cv, s.cw, s.safe, C.x, C.y, C.r, pre.people.mode[j], pre.people.speed[j], sim::body_cyl_gap(c, C, s.x, s.y, ss, cc), s.lid[j], s.occ[j], s.cam[j], s.tkd[j], s.tkhit[j], s.tkmov[j], s.tkspd[j], s.tkdisp[j]);
   }
   std::fflush(P.f);
 }
-const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\tpx\tpy\tpr\tmode\tpspeed\tgap\tlid\tocc\tcam\ttrk\tyres\tmx\tmy\tmvx\tmvy\ttk_d\ttk_hit\ttk_mov\ttk_spd\ttk_disp\n";
+const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\tpx\tpy\tpr\tmode\tpspeed\tgap\tlid\tocc\tcam\ttk_d\ttk_hit\ttk_mov\ttk_spd\ttk_disp\n";
 
 // 걸음 자취 (--trace): 정책이 몬 걸음마다 한 줄 — 닿음 센서 값(contact.h)과 시뮬 정답(충돌·간격)을 나란히. 정답 칸은 기록 전용
 const char* kTraceHead = "scene\tpeople\tenv\tep\tt\tend\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\twv\tgyro\t"
@@ -1038,7 +1028,7 @@ int run_policy(const Args& a) {
           else trace_row(tr, c, W, W.name.c_str(), people, i, eps[i], st[i].step - step0[i], 0, st[i], a0, a1, L.kind == sim::kLowSafety, gd);
         }
         if (dg.f && phase[i] == 1 && cmd[i].follow == 2) {   // 진단: 정책이 몬 걸음
-          const int safe_now = done[i] ? (L.kind == sim::kLowSafety) : dg.rl_post[i].safe;
+          const int safe_now = L.kind == sim::kLowSafety;   // 규칙 추종기의 앞 범퍼 정지 (정책 걸음엔 늘 0)
           dg.hist[(size_t)i * kDiagH + dg.hn[i] % kDiagH] = DiagHist{dg.st[i].v, dg.st[i].w, pol[(size_t)PW * i], pol[(size_t)PW * i + 1], safe_now};
           dg.hn[i] += 1;
           const int e_ = done[i] ? L.end : 0;
@@ -1120,8 +1110,8 @@ int run_policy(const Args& a) {
     if (active > 0) { std::fprintf(stderr, "%s: 환경 %d 개가 판 수를 못 채움\n", W.name.c_str(), active); bad += active; }
     fnv(h_all, &h, 8);
     env.take_low_stat(rs);
-    double ps = 0, safe = 0, back = 0;
-    for (const sim::LowRlStat& s : rs) { ps += s.steps; safe += s.safe_steps; back += s.back_steps; }
+    double ps = 0, back = 0;
+    for (const sim::LowRlStat& s : rs) { ps += s.steps; back += s.back_steps; }
     const double T = agg.steps * dt, D = agg.dist_all;
     std::printf("\n#### 단독 과제(%s) %s · 사람 상한 %d · 환경 %d × 판 %d = %.0f 판 (지문 %016llx)\n", use_pol ? "정책" : "규칙 추종기·걸음 루프", W.name.c_str(), people, N, M, n_ep,
                 (unsigned long long)h);
@@ -1130,7 +1120,7 @@ int run_policy(const Args& a) {
     std::printf("과제 구간 전체: 시간 %.0f s · 거리 %.0f m · 평균 속도 %.3f m/s | 100 m 당: 벽 충돌 %.3f · 사람 충돌 앞 %.3f · 밖 %.3f · 정체 %.3f\n", T, D, T > 0 ? D / T : 0.0,
                 D > 0 ? 100.0 * end_n[sim::kLowEndWall] / D : 0.0, D > 0 ? 100.0 * hit_front / D : 0.0, D > 0 ? 100.0 * hit_back / D : 0.0,
                 D > 0 ? 100.0 * end_n[sim::kLowEndStall] / D : 0.0);
-    if (use_pol) std::printf("정책 걸음 %.0f: 안전층이 고친 걸음 %.4f · 후진 명령 걸음 %.4f\n", ps, ps > 0 ? safe / ps : 0.0, ps > 0 ? back / ps : 0.0);
+    if (use_pol) std::printf("정책 걸음 %.0f: 후진 명령 걸음 %.4f\n", ps, ps > 0 ? back / ps : 0.0);
     std::printf("목표 뽑기: 넣은 목표 %.0f · 유효(계획 경로 %.0f~%.0f m) %.0f · 다시 뽑음: 경로 없음·포기 %.0f, 길이 구간 밖 %.0f · 못 뽑음 %.0f · 예열 중 판 끝 %.0f · "
                 "웨이포인트 잘림 %.0f · 첫 걸음 안 통과(뺌) %.0f · 호스트 최단 거리 평균 %.2f m 대 계획 경로 %.2f m\n",
                 n_assign, a.len[0], a.len[3], n_valid, redraw_nopath, redraw_len, no_sample, warm_fail, n_trunc, quick, n_valid > 0 ? est_sum / n_valid : 0.0,

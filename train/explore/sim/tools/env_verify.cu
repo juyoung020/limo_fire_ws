@@ -248,7 +248,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
         const LowRlStat& S = Sc[i];
         for (int k = 0; k < sim::kLrTerms; ++k) { tot.term[k] += S.term[k]; n_nan += !std::isfinite(S.term[k]); }
         tot.steps += S.steps; tot.episodes += S.episodes; tot.goals += S.goals; tot.reached += S.reached; tot.hit_wall += S.hit_wall;
-        tot.hit_person += S.hit_person; tot.stall += S.stall; tot.timeout += S.timeout; tot.giveup += S.giveup; tot.safe_steps += S.safe_steps;
+        tot.hit_person += S.hit_person; tot.stall += S.stall; tot.timeout += S.timeout; tot.giveup += S.giveup;
         tot.back_steps += S.back_steps; tot.reach_steps += S.reach_steps; tot.dist += S.dist; tot.reach_len += S.reach_len;
         tot.x_eps += S.x_eps; tot.x_ok += S.x_ok; tot.x_wall += S.x_wall; tot.x_person += S.x_person; tot.x_idle += S.x_idle; tot.x_ok_steps += S.x_ok_steps; tot.x_rule_steps += S.x_rule_steps;
       }
@@ -268,14 +268,14 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     bad_cam += vg != vc;
     bad_cam += p1.size() != p2.size() || std::memcmp(p1.data(), p2.data(), 4 * p1.size()) != 0;
   }
-  static const char* tn[sim::kLrTerms] = {"진행", "시간", "통과", "충돌", "근접", "매끄러움", "후진", "안전층"};
+  static const char* tn[sim::kLrTerms] = {"진행", "시간", "통과", "충돌", "근접", "매끄러움", "후진"};
   std::printf("아래층 RL (%s, 행동 폭 %d, 계획 주기 %d 걸음, 사람 상한 %d): 환경 %d × 걸음 %d%s\n", host ? "호스트가 목표" : "자동 목표", A, sim::lowrl_period(c), people, n_env,
               n_steps, negative ? " (일부러 어긋나게)" : "");
   std::printf("판 끝: 벽 충돌 %d · 사람 충돌 %d · 끊김(시간·정체·목표 수) %d | 정책 걸음 %d (전체 %zu 중 %zu) · 끝난 판 %d (벽 %d · 사람 %d · 정체 %d · 시간 %d)\n", ends[2], ends[5], ends[3],
               tot.steps, (size_t)n_env * n_steps, n_pol, tot.episodes, tot.hit_wall, tot.hit_person, tot.stall, tot.timeout);
-  std::printf("목표: 경로 짜인 것 %d · 통과 %d · 포기(경로 없음·끝이 밖) %d · 통과한 목표 평균 경로 %.2f m · 과제 구간 속도 %.3f m/s | 안전층 걸음 %d · 후진 걸음 %d · 이동 %.1f m\n",
+  std::printf("목표: 경로 짜인 것 %d · 통과 %d · 포기(경로 없음·끝이 밖) %d · 통과한 목표 평균 경로 %.2f m · 과제 구간 속도 %.3f m/s | 후진 걸음 %d · 이동 %.1f m\n",
               tot.goals, tot.reached, tot.giveup, tot.reached ? tot.reach_len / tot.reached : 0.f,
-              tot.reach_steps ? tot.reach_len / (tot.reach_steps * c.substeps * c.dt) : 0.f, tot.safe_steps, tot.back_steps, tot.dist);
+              tot.reach_steps ? tot.reach_len / (tot.reach_steps * c.substeps * c.dt) : 0.f, tot.back_steps, tot.dist);
   if (explore) std::printf("합친 탐사(low_explore): 막힘 신호 %zu 번 · 닫힘 성공 %zu 판 · 진행 없음 %zu 판 (정체·시간·목표 수는 판을 안 끝냄)\n", n_sig, n_ok, n_idle);
   if (g_low_train) {
     int nx = 0;
@@ -442,7 +442,7 @@ int main(int argc, char** argv) {
     if (++n_print <= 6 || n_print == (int)worlds.size()) std::printf("맵 %s: %d×%d 칸, 벽 면 칸(덮음 분모) %d (%.2f m²), 갈 수 있는 바닥 %d (%.1f m², 단계 %d), 시작 후보 %zu, %s\n",
                 w.name.c_str(), w.gw, w.gh, w.n_wall, w.n_wall * hc.cfg.res * hc.cfg.res, w.n_floor, w.n_floor * hc.cfg.res * hc.cfg.res,
                 (w.stage >= 0 ? w.stage : mdp::cur::stage_of_area(w.n_floor * hc.cfg.res * hc.cfg.res)), w.spawn.size(), w.closed ? "닫힘" : w.leak.c_str());
-  std::printf("안전층 %s: 문턱 %.3f m (앞 범퍼에서, 제동 거리 %.3f m + 판단 지연 0.2 s × %.1f m/s)\n", hc.cfg.safety ? "켬" : "끔", hc.cfg.safety_dist,
+  std::printf("규칙 추종기 앞 범퍼 정지 %s: 문턱 %.3f m (앞 범퍼에서, 제동 거리 %.3f m + 판단 지연 0.2 s × %.1f m/s)\n", hc.cfg.safety ? "켬" : "끔", hc.cfg.safety_dist,
               hc.brake_dist, mdp::act::V_FWD);
   if (low) return verify_low(hc, worlds, lidar, n_env, n_steps, people, negative, low_host, low_explore);
   sim::Env gpu(hc, worlds, lidar, n_env, seed, true), cpu(hc, worlds, lidar, n_env, seed, false);
@@ -455,7 +455,7 @@ int main(int argc, char** argv) {
   float* d_act;
   cudaMalloc(&d_act, sizeof(float) * A * n_env);
   uint64_t rng = 99;
-  size_t bad_state = 0, bad_reward = 0, bad_obs = 0, bad_range = 0, n_nan = 0, safety_zero = 0;
+  size_t bad_state = 0, bad_reward = 0, bad_obs = 0, bad_range = 0, n_nan = 0;
   int first_bad = -1, ends[mdp::cur::kNumDone] = {}, first_range = -1;
   double reward_sum = 0, term_sum[K] = {};
   long people_sum = 0, hit_person = 0;
@@ -575,8 +575,6 @@ int main(int argc, char** argv) {
       ends[dc[i]]++;
       reward_sum += rc[i];
       for (int k = 0; k < K; ++k) term_sum[k] += tc[(size_t)K * i + k];
-      // 안전층이 앞 명령을 0 으로 막은 걸음 (정규 v > 0 을 줬는데 명령 v == 0)
-      if (hc.cfg.safety && act[(size_t)A * i] > 0.f && sc[i].cmd_v == 0.f && dc[i] == 0) ++safety_zero;
       people_sum += sc[i].people.n;
       hit_person += sc[i].people.hit_person;
     }
@@ -650,8 +648,8 @@ int main(int argc, char** argv) {
   cudaGetDeviceProperties(&prop, 0);
   std::printf("GPU %s (sm_%d%d), 환경 %d × 행동 %d, 선언 확률 %.3f%s\n", prop.name, prop.major, prop.minor, n_env, n_steps, p_declare,
               negative ? " (일부러 어긋나게)" : "");
-  std::printf("판 끝: 선언 성공 %d · 벽 충돌 %d · 끊김 %d · 선언 실패 %d · 사람 충돌 %d · 진행 없음 %d, 행동당 평균 보상 %.4f, 안전층이 앞 명령을 막은 걸음 %zu, 지도에서 아는 칸 %zu, 지금 판들이 본 벽 면 칸 %zu\n",
-              ends[1], ends[2], ends[3], ends[4], ends[5], ends[6], reward_sum / (n_env * n_steps), safety_zero, known, seen_wall);
+  std::printf("판 끝: 선언 성공 %d · 벽 충돌 %d · 끊김 %d · 선언 실패 %d · 사람 충돌 %d · 진행 없음 %d, 행동당 평균 보상 %.4f, 지도에서 아는 칸 %zu, 지금 판들이 본 벽 면 칸 %zu\n",
+              ends[1], ends[2], ends[3], ends[4], ends[5], ends[6], reward_sum / (n_env * n_steps), known, seen_wall);
   std::printf("보상 항 합(전체):");
   for (int k = 0; k < K; ++k) std::printf(" %s %.3f", mdp::rew::term_name(k), term_sum[k]);
   std::printf("\n관측 0 아닌 칸 — 가까운 지도:");

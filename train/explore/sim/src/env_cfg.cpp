@@ -281,7 +281,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   const double cam_pitch = body["camera_pitch"].as<double>();
   c.cam_cp = (float)std::cos(cam_pitch);
   c.cam_sp = (float)std::sin(cam_pitch);
-  // 안전층 문턱 (mdp/README "안전층"): 앞 한도 V_FWD 로 가다가 명령 0 → 구동 모델(drive.h)로 멈출 때까지 간 거리
+  // 규칙 추종기 앞 범퍼 정지 문턱 (mdp/README "안전층" — 정책 명령엔 안 씀): 앞 한도 V_FWD 로 가다가 명령 0 → 구동 모델(drive.h)로 멈출 때까지 간 거리
   //   (지연·가속 한도·느린 갈래 모두 들어감, 바닥은 env.yaml floors 중 몸통 가속 한도가 가장 낮은 것)
   //   + 판단이 늦는 몫: 라이다 지연 0.1 s(sensor_model.yaml latency) + 행동 한 걸음(앞 장으로 판단) × V_FWD
   {
@@ -310,13 +310,9 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.sweep_h = 0.2f;
       c.sweep_margin = 0.02f;
       // 아래층 RL 벽 충돌 대책 (low_rl.h, mdp/README "아래층 RL — 벽 충돌"). 정책 환경(LowCmd::follow == 2)에만 듣는다.
-      // 환경변수는 견줌 실험용 — 학습·평가·env_verify 가 같은 값을 읽는다. SIM_LOW_GUARD=0 SIM_LOW_NOBACK=0 SIM_LR_MPROX_K=0 이 2026-11-12 동작
+      // 환경변수는 견줌 실험용 — 학습·평가·env_verify 가 같은 값을 읽는다. SIM_LOW_NOBACK=0 SIM_LR_MPROX_K=0 이 2026-11-12 동작
       const auto envf = [](const char* k, float d) { const char* s = std::getenv(k); return s && s[0] ? (float)std::atof(s) : d; };
-      c.lg_on = (int)envf("SIM_LOW_GUARD", (float)kLrGuardOn);
-      c.lg_h = envf("SIM_LOW_GUARD_H", kLrGuardH);
-      c.lg_margin = envf("SIM_LOW_GUARD_MARGIN", kLrGuardMargin);
       c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
-      c.lg_touch = (int)envf("SIM_LOW_GUARD_TOUCH", (float)kLrGuardTouch);
       c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
       // 사람 충돌·속도 대책 (mdp/README "아래층 RL — 사람 충돌·속도"). 보상만 바꾼다 — 정책 행동·관측은 그대로
@@ -325,13 +321,6 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lr_ppl_m = envf("SIM_LR_PPL_M", kLrPplM);
       c.lr_pcol_k = envf("SIM_LR_PCOL_K", kLrPersonCollisionK);
       c.lr_w_k = envf("SIM_LR_W_K", kLrTurnK);
-      c.ps_on = (int)envf("SIM_LOW_YIELD", (float)kLrYieldOn);
-      c.ps_h = envf("SIM_LOW_YIELD_H", kLrYieldH);
-      c.ps_gate = envf("SIM_LOW_YIELD_GATE", kLrYieldGate);
-      c.ps_margin = envf("SIM_LOW_YIELD_MARGIN", kLrYieldMargin);
-      c.ps_hold = (int)envf("SIM_LOW_YIELD_HOLD", (float)kLrYieldHold);
-      c.ps_mem = (int)envf("SIM_LOW_YIELD_MEM", (float)kLrYieldMem);
-      c.ps_trk = (int)envf("SIM_LOW_TRACK", (float)kLrTrkOn);
       c.tk_gate = envf("SIM_LOW_TRACK_GATE", kLrTrkGate);
       c.tk_sz = envf("SIM_LOW_TRACK_SZ", kLrTrkSz);
       c.tk_qa = envf("SIM_LOW_TRACK_QA", kLrTrkQa);
@@ -366,7 +355,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.con_stall = (int)envf("SIM_CON_STALL", 2.f);
       c.con_mask = (int)envf("SIM_CON_MASK", (float)(kConLidar | kConCam | kConStall));
       c.con_end = (int)envf("SIM_CON_END", 1.f);
-      // 안전층 (앞 범퍼 정지) 끄기 — 진단 전용 (안전층 끈 충돌 재기). 몸통 지킴이·비켜 주기는 SIM_LOW_GUARD=0·SIM_LOW_YIELD=0
+      // 규칙 추종기 앞 범퍼 정지 끄기 (진단 — 기준선을 앞 정지 없이 잴 때). 정책 명령을 고치는 층은 없음 (2026-11-14 에 없앰)
       if (const char* g = std::getenv("SIM_SAFETY")) c.safety = g[0] == '0' ? 0 : c.safety;
     }
     {

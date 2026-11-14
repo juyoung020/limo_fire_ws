@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
 
   // ---- 2. 정답 첫 충돌 진단 ----
   std::printf("\n정답 첫 충돌마다 (진단): 닿은 곳 = 정답 격자 가장 가까운 칸의 몸통 좌표 (앞 u > %.2f · 뒤 u < −%.2f · 그 밖 옆), 사람이면 사람\n", kHalfLen - 0.03f, kHalfLen - 0.03f);
-  std::printf("| 장면 | 사람 | 판 시각 (s) | 닿은 곳 | 움직임 | v · ω (참) | 명령 v · ω | 정책 v · ω | 안전층 (2 s 안 걸음) | 앞 2 s 라이다 최소 | 앞 2 s 깊이층 최소 | 닿은 걸음 라이다 · 깊이 · 멈춤 | 기본 묶음 늦음 (s) | 목표까지 (m) |\n");
+  std::printf("| 장면 | 사람 | 판 시각 (s) | 닿은 곳 | 움직임 | v · ω (참) | 명령 v · ω | 정책 v · ω | 추종기 앞 정지 (2 s 안 걸음 — 정책 걸음엔 0) | 앞 2 s 라이다 최소 | 앞 2 s 깊이층 최소 | 닿은 걸음 라이다 · 깊이 · 멈춤 | 기본 묶음 늦음 (s) | 목표까지 (m) |\n");
   std::printf("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
   int cat[6] = {};   // 0 앞 1 옆 2 뒤 3 사람
   int mov[3] = {};   // 0 직진 1 제자리 회전 2 멈춤
@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
                 q.t * kDt, where, m, q.v, q.w, q.cmd_v, q.cmd_w, q.a_v, q.a_w, safe_n, lmin, cmin, q.s_lid, q.s_cam, q.s_stall, dl, q.goal_d);
   }
   std::printf("\n요약: 닿은 곳 앞 %d · 옆 %d · 뒤 %d · 사람 %d | 움직임 직진·곡선 %d · 제자리 회전 %d · 멈춤 %d | 앞 2 s 라이다가 5 cm 안을 봄 %d · 깊이층만 %d · 둘 다 못 봄 %d | "
-              "앞 2 s 안전층이 고친 걸음 있음 %d\n",
+              "앞 2 s 추종기 앞 정지 걸음 있음 %d\n",
               cat[0], cat[1], cat[2], cat[3], mov[0], mov[1], mov[2], seen_lid, seen_cam_only, seen_none, by_safe);
   // 낮은 물체 노출: 깊이 층이 라이다보다 5 cm 넘게 가까운 걸음 비율 (라이다 면 아래 물체가 몸통 0.25 m 안)
   long low = 0, n = 0;

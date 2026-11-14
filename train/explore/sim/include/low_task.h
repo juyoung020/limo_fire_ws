@@ -35,7 +35,7 @@ enum : int32_t {
   kLowImm,          // RPP 충돌 검사에 걸려 멈춤·물러남
   kLowRec,          // 복구 물러나기 (BT BackUp)
   kLowRotBlocked,   // 제자리 회전이 뒤 장애물로 막힘
-  kLowSafety,       // 안전층(앞 간격)·sweep_guard 가 명령을 0 으로·줄임
+  kLowSafety,       // 규칙 추종기의 앞 정지(EnvCfg::safety)·sweep_guard 가 명령을 0 으로·줄임 (정책 걸음엔 없음 — 2026-11-14 부터 정책 명령은 안 고침)
   kLowKinds
 };
 // 추종기 가지 (path_follow → PathWhy::kind)
@@ -120,7 +120,7 @@ struct LowRl {
   int32_t need_goal;   // 자동 목표: 새 목표를 뽑을 차례
   int32_t rem_ok;      // rem_prev 가 지금 경로의 값인가
   float rem_prev;      // 지난 관측 때 남은 경로 길이 (m — 경로까지 거리 + 경로 위 남은 길이)
-  int32_t pol, safe;   // 이번 걸음: 정책이 몰았나 · 안전층(앞 틈·몸통 쓸림)이 명령을 고쳤나
+  int32_t pol;         // 이번 걸음: 정책이 몰았나
   int32_t g_step;      // 지금 목표를 받은 걸음 번호
   float g_len;         // 지금 목표의 처음 계획 길이 (m, < 0 = 아직 계획 전)
   // 위층에 알리는 막힘 신호: 이번 결정 구간(계획 단계 ~ 다음 계획 단계)에 단독 과제의 정체 판정(low_idle_steps 동안 low_idle_d 를 못 벗어남 —
@@ -128,14 +128,7 @@ struct LowRl {
   // 위층(같은 판에서 1 Hz 로 목적지를 넣는 쪽)이 그 후보를 빼고 다시 고르는 데 쓸 자리 (호스트: Env::get_low_rl, 장치: EnvBatch::lowrl)
   int32_t stall;
   int32_t stall_tgt;
-  int32_t ps_hold;     // 사람 비켜 주기(low_rl.h lowrl_yield): 줄인 배율을 더 붙들 걸음 수
-  float ps_k;          //   그 배율
-  int32_t ps_n;        //   진단(low_policy_run --diag): 이번 걸음 추적 결과 — 사람 수 · −1 쉼(로봇 속도가 바뀌는 중) · −2 안 봄(v ≤ 0 · 꺼짐)
-  float ps_res;        //   진단: 이번 걸음 판정 — 1 안 닿음 · 0.5 · 0 줄임 · 2 서도 닿음(못 가림)
-  float ps_m[5];       //   기억한 사람: 마지막으로 닿을 것으로 본 사람의 지도 자리·속도·반지름 (x, y, vx, vy, r) — 안 보이는 걸음엔 같은 속도로 옮김
-  int32_t ps_age;      //   그 기억을 더 쓸 걸음 수 (0 = 없음)
-  int32_t lg_st;               // 진단: 마지막 몸통 지킴이 판정 (판이 끝나도 그대로) — 0 안 봄 · 1 그대로 · 2 ½ · 3 ¼ · 4 세움, +10 = 이미 여유 안(여유 0 으로 봄), 20 = 지도로는 이미 닿음(lg_touch 끄면 안 막음), 21 ~ 24 = 이미 닿은 채 그대로 · ½ · ¼ · 세움(닿은 둘레 점이 느는 명령만 줄임)
-  // 사람 추적 (low_rl.h lowrl_trk, EnvCfg::ps_trk): 라이다 덩어리를 장마다 이어 가는 등속 칼만 필터. 지도 좌표. tk_hit == 0 이 빈 칸
+  // 사람 추적 (low_rl.h lowrl_trk, EnvCfg::lo_mov 일 때): 라이다 덩어리를 장마다 이어 가는 등속 칼만 필터. 지도 좌표. tk_hit == 0 이 빈 칸
   int32_t tk_head;             //   마지막으로 본 라이다 링 칸 (−1 = 아직 없음) — 새 장이 없는 걸음은 예측만
   int32_t tk_n;                //   진단: 지금 추적 중인 덩어리 수
   int32_t tk_hit[kLrTrk];      //   덩어리와 이어진 장 수
@@ -156,7 +149,7 @@ struct LowRl {
 };
 
 // 보상 항 (차례 = LowRlStat::term 칸 번호 — 도구·학습기가 이름표를 같은 차례로 가짐)
-enum : int32_t { kLrProgress = 0, kLrTime, kLrReach, kLrCollision, kLrProximity, kLrSmooth, kLrBack, kLrSafety, kLrTerms };
+enum : int32_t { kLrProgress = 0, kLrTime, kLrReach, kLrCollision, kLrProximity, kLrSmooth, kLrBack, kLrTerms };   // (안전층 항 safety 는 2026-11-14 에 없앰)
 
 // 환경마다 누적 (정책이 몬 걸음만). 호스트가 가져가며 0 으로 (Env::take_low_stat) — 학습기가 반복마다 한 번
 struct LowRlStat {
@@ -168,7 +161,6 @@ struct LowRlStat {
   int32_t hit_wall, hit_person, stall, timeout;   // 판 끝 까닭 (나머지 = 목표 수를 채움). hit_* = 닿음(센서, sim contact.h)으로 끝
   int32_t gt_wall, gt_person;   // 판 동안 시뮬 정답 충돌이 있었던 판 수 (기록 전용 — 센서 닿음과 견줌)
   int32_t giveup;           // 경로를 못 짰거나 경로 끝이 통과 반경 밖 (새 목표를 받음)
-  int32_t safe_steps;       // 안전층이 명령을 고친 걸음
   int32_t back_steps;       // 후진 명령 걸음
   int32_t reach_steps;      // 통과한 목표들의 걸린 걸음 합
   float dist;               // 이동 거리 (m)

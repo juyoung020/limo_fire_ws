@@ -14,7 +14,7 @@ namespace sim {
 struct EnvHostCfg {
   EnvCfg cfg{};
   float band_lo = 0.f, band_hi = 0.f, spawn_clearance = 0.f;
-  float brake_dist = 0.f;   // 안전층 문턱 근거: V_FWD 에서 명령 0 → 멈출 때까지 (m)
+  float brake_dist = 0.f;   // 규칙 추종기 앞 범퍼 정지 문턱 근거: V_FWD 에서 명령 0 → 멈출 때까지 (m)
 };
 
 // env.yaml + 그 안에서 가리키는 nav2_params.yaml

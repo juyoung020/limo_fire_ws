@@ -267,7 +267,7 @@ int run(const Args& a) {
     std::vector<sim::LowEp> low;
     std::vector<sim::LowRl> rl;
     std::vector<Avoid> av(N);
-    std::vector<int> fin(N, 0), redo(N, 1), slot(N, -1), sig_prev(N, 0), nsteps(N, 0), last_dec(N, 0), goal_prev(N, -1), sw_step(N, 0), end_since(N, -1), end_safe(N, 0);
+    std::vector<int> fin(N, 0), redo(N, 1), slot(N, -1), sig_prev(N, 0), nsteps(N, 0), last_dec(N, 0), goal_prev(N, -1), sw_step(N, 0), end_since(N, -1);
     std::vector<float> end_v(N, 0.f), end_d(N, 0.f), end_w(N, 0.f);
     constexpr int kH = 50;   // 끝 직전 5 s 의 자리·후진 (충돌 원인 분석)
     std::vector<float> hx((size_t)N * kH, 0.f), hy((size_t)N * kH, 0.f);
@@ -275,7 +275,7 @@ int run(const Args& a) {
     std::vector<double> dist(N, 0.0), chord(N, 0.0), px(N), py(N), cx(N), cy(N);
     // 판마다 걸음 통계 (원인 분석)
     std::vector<int> fc_step(N, -1), t_n(N, 0), t_sum(N, 0), t_cell(N, -1), t_start(N, 0), t_prev(N, -1);   // 처음 닫힌 걸음 · 60° 이상 전환 (수 · 걸음 합 · 재는 중인 목표 칸 · 시작 걸음 · 직전 목표 칸)
-    std::vector<int> n_dec(N, 0), n_sw(N, 0), n_stall(N, 0), n_reach(N, 0), n_off(N, 0), n_nopath(N, 0), n_safe(N, 0), n_back(N, 0), n_slow(N, 0), n_nogoal(N, 0), n_avoided(N, 0), n_early(N, 0), n_pathless(N, 0);
+    std::vector<int> n_dec(N, 0), n_sw(N, 0), n_stall(N, 0), n_reach(N, 0), n_off(N, 0), n_nopath(N, 0), n_back(N, 0), n_slow(N, 0), n_nogoal(N, 0), n_avoided(N, 0), n_early(N, 0), n_pathless(N, 0);
     std::vector<double> tgt_d(N, 0.0), w_abs(N, 0.0);
     std::vector<int> n_rule(N, 0);
     long dbin[4] = {0, 0, 0, 0};   // 결정 때 목표까지 직선 거리: < 1 · 1 ~ 3 · 3 ~ 15 · ≥ 15 m
@@ -1019,9 +1019,7 @@ int run(const Args& a) {
         hy[(size_t)i * kH + nsteps[i] % kH] = s.y;
         hb[(size_t)i * kH + nsteps[i] % kH] = s.cmd_v < 0.f;
         end_since[i] = s.step - sw_step[i];
-        end_safe[i] = rl[i].safe != 0;
         end_d[i] = s.goal_cell >= 0 ? (float)std::hypot(W.ox + ((double)(s.goal_cell % W.gw) + 0.5) * c.res - s.x, W.oy + ((double)(s.goal_cell / W.gw) + 0.5) * c.res - s.y) : -1.f;
-        n_safe[i] += rl[i].safe != 0;
         n_back[i] += s.cmd_v < 0.f;
         n_slow[i] += std::fabs(s.v) < 0.1f;
         w_abs[i] += std::fabs(s.w);
@@ -1054,13 +1052,13 @@ int run(const Args& a) {
     }
     // 장면 요약
     double n = N, succ = 0, cw = 0, cp = 0, idle = 0, trunc = 0, ts = 0, t_all = 0, d_all = 0, ch_all = 0, d_succ = 0, cov_s = 0;
-    double s_dec = 0, s_sw = 0, s_stall = 0, s_reach = 0, s_off = 0, s_nopath = 0, s_safe = 0, s_back = 0, s_slow = 0, s_nogoal = 0, s_avoided = 0, s_early = 0, s_steps = 0, s_tgt = 0, s_w = 0, s_pathless = 0, ep_stall = 0, s_rule = 0;
+    double s_dec = 0, s_sw = 0, s_stall = 0, s_reach = 0, s_off = 0, s_nopath = 0, s_back = 0, s_slow = 0, s_nogoal = 0, s_avoided = 0, s_early = 0, s_steps = 0, s_tgt = 0, s_w = 0, s_pathless = 0, ep_stall = 0, s_rule = 0;
     double fc_s = 0, s_tn = 0, s_tsum = 0;
     std::FILE* f = nullptr;
     if (!a.out.empty()) {
       f = std::fopen((a.out + "_" + W.name + ".tsv").c_str(), "w");
       if (!f) throw std::runtime_error("--out 파일을 못 엶");
-      std::fputs("env\tdone\tt\tcoverage\tdist_m\tchord_m\tdecisions\tswitches\tstalls\treached\toff\tnopath\tsafe_steps\tback_steps\tslow_steps\tnogoal_dec\tend_v\tend_steps_since_goal_change\tend_goal_dist\tend_safe\tend_w\tend_5s_span_m\tend_5s_back_steps\tfirst_closed_t\tturn60_n\tturn60_steps", f);
+      std::fputs("env\tdone\tt\tcoverage\tdist_m\tchord_m\tdecisions\tswitches\tstalls\treached\toff\tnopath\tback_steps\tslow_steps\tnogoal_dec\tend_v\tend_steps_since_goal_change\tend_goal_dist\tend_w\tend_5s_span_m\tend_5s_back_steps\tfirst_closed_t\tturn60_n\tturn60_steps", f);
       if (a.dec_finish) std::fputs("\tended_by_model\tfinish_questions\tdecl_p\tdecl_idle_s\tdecl_map_closed\tdecl_grid_open_cells\tdecl_grid_clusters", f);   // 끝 선언을 켰을 때만 (끄면 파일이 그대로)
       std::fputs("\n", f);
     }
@@ -1076,7 +1074,7 @@ int run(const Args& a) {
       d_all += dist[i];
       ch_all += chord[i];
       if (dd == mdp::cur::kDeclareOk) { ts += first[i].t; d_succ += dist[i]; cov_s += first[i].coverage; }
-      s_dec += n_dec[i]; s_sw += n_sw[i]; s_stall += n_stall[i]; s_reach += n_reach[i]; s_off += n_off[i]; s_nopath += n_nopath[i]; s_safe += n_safe[i];
+      s_dec += n_dec[i]; s_sw += n_sw[i]; s_stall += n_stall[i]; s_reach += n_reach[i]; s_off += n_off[i]; s_nopath += n_nopath[i];
       s_back += n_back[i]; s_slow += n_slow[i]; s_nogoal += n_nogoal[i]; s_avoided += n_avoided[i]; s_early += n_early[i]; s_steps += nsteps[i]; s_tgt += tgt_d[i]; s_w += w_abs[i];
       s_pathless += n_pathless[i];
       s_rule += n_rule[i];
@@ -1092,8 +1090,8 @@ int run(const Args& a) {
         }
       }
       if (f)
-        std::fprintf(f, "%d\t%d\t%.1f\t%.4f\t%.2f\t%.2f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%d\t%.2f\t%d\t%.2f\t%.2f\t%d\t%.1f\t%d\t%d", i, dd, ti, fin[i] ? first[i].coverage : 0.f, dist[i], chord[i], n_dec[i], n_sw[i], n_stall[i], n_reach[i], n_off[i],
-                     n_nopath[i], n_safe[i], n_back[i], n_slow[i], n_nogoal[i], end_v[i], end_since[i], end_d[i], end_safe[i], end_w[i], span, nb, fc_step[i] >= 0 ? fc_step[i] * dt : -1.0, t_n[i], t_sum[i]);
+        std::fprintf(f, "%d\t%d\t%.1f\t%.4f\t%.2f\t%.2f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%d\t%.2f\t%.2f\t%.2f\t%d\t%.1f\t%d\t%d", i, dd, ti, fin[i] ? first[i].coverage : 0.f, dist[i], chord[i], n_dec[i], n_sw[i], n_stall[i], n_reach[i], n_off[i],
+                     n_nopath[i], n_back[i], n_slow[i], n_nogoal[i], end_v[i], end_since[i], end_d[i], end_w[i], span, nb, fc_step[i] >= 0 ? fc_step[i] * dt : -1.0, t_n[i], t_sum[i]);
       if (f && a.dec_finish) std::fprintf(f, "\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d", end_by[i], n_finq[i], d_p[i], d_idle[i], d_closed[i], d_block[i], d_clus[i]);
       if (f) std::fputs("\n", f);
       if (dd == mdp::cur::kDeclareOk) fc_s += fc_step[i] >= 0 ? fc_step[i] * dt : first[i].t;
@@ -1109,10 +1107,10 @@ int run(const Args& a) {
     std::printf("[%s %s] 위층: 판당 결정 %.1f 개 (그중 10 걸음 주기 밖 %.3f) · 목표 없는 결정 %.3f · 규칙 추종기에 맡긴 결정 %.3f · 목표 칸 바뀜 판당 %.1f 번 (%.1f s 에 한 번) · 피하는 칸이라 건너뛴 후보 %.0f 개 | 결정 때 목표까지 직선 거리 평균 %.2f m — "
                 "1 m 안 %.3f · 1~3 m %.3f · 3~15 m %.3f · 15 m 밖 %.3f\n", tag, W.name.c_str(), s_dec / n, s_early / nd, s_nogoal / nd, s_rule / nd, s_sw / n, s_sw > 0 ? t_all / s_sw : 0.0, s_avoided, s_tgt / ng,
                 dbin[0] / ng, dbin[1] / ng, dbin[2] / ng, dbin[3] / ng);
-    std::printf("[%s %s] 아래층: 막힘 신호 %.0f 번 (선 판 비율 %.3f) · 통과 %.0f · 경로 끝이 목표 밖 %.0f · 경로 없음 %.0f | 걸음 비율 — 안전층이 고침 %.3f · 뒤로 %.3f · 0.1 m/s 아래 %.3f · 경로 없이 몬 걸음 %.3f · 평균 |ω| %.2f rad/s\n",
-                tag, W.name.c_str(), s_stall, ep_stall / n, s_reach, s_off, s_nopath, s_safe / nst, s_back / nst, s_slow / nst, s_pathless / nst, s_w / nst);
-    std::printf("[%s %s] 더: 지도가 처음 닫힌 시각 %.1f s (성공 판 평균) · 뒤로 걸음 비율 %.4f · 안전층·지킴이가 고친 걸음 %.2f s/판 · 60° 이상 전환 판당 %.1f 번 · 평균 %.2f s (목표 쪽 방위 30° 안까지; 그 전에 목표가 바뀐 것은 뺌)\n",
-                tag, W.name.c_str(), succ > 0 ? fc_s / succ : 0.0, s_back / nst, s_safe * dt / n, s_tn / n, s_tn > 0 ? s_tsum * dt / s_tn : 0.0);
+    std::printf("[%s %s] 아래층: 막힘 신호 %.0f 번 (선 판 비율 %.3f) · 통과 %.0f · 경로 끝이 목표 밖 %.0f · 경로 없음 %.0f | 걸음 비율 — 뒤로 %.3f · 0.1 m/s 아래 %.3f · 경로 없이 몬 걸음 %.3f · 평균 |ω| %.2f rad/s\n",
+                tag, W.name.c_str(), s_stall, ep_stall / n, s_reach, s_off, s_nopath, s_back / nst, s_slow / nst, s_pathless / nst, s_w / nst);
+    std::printf("[%s %s] 더: 지도가 처음 닫힌 시각 %.1f s (성공 판 평균) · 뒤로 걸음 비율 %.4f · 60° 이상 전환 판당 %.1f 번 · 평균 %.2f s (목표 쪽 방위 30° 안까지; 그 전에 목표가 바뀐 것은 뺌)\n",
+                tag, W.name.c_str(), succ > 0 ? fc_s / succ : 0.0, s_back / nst, s_tn / n, s_tn > 0 ? s_tsum * dt / s_tn : 0.0);
     std::printf("[%s %s] 벽 충돌 %.2f 건 / 100 m (벽 충돌 판 %.0f · 모든 판 이동 거리 합 %.0f m)\n", tag, W.name.c_str(), d_all > 0 ? cw / d_all * 100.0 : 0.0, cw, d_all);
     if (upper != kSlot0) {
       std::sort(lat.begin(), lat.end());

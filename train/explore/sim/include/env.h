@@ -4,7 +4,7 @@
 //
 // 한 행동 (env_step):
 //   0. 끝난 판이면 리셋: 맵·시작 칸·방향·라이다 오차 무작위화·지도 비움
-//   1. 행동: 속도 행동이면 (v, vy, ω, 선언) 정규 단위 → 한도·바퀴 단위 자르기 → 안전층(앞 길 라이다 < 문턱이면 앞 명령 0) → /cmd_vel.
+//   1. 행동: 속도 행동이면 (v, vy, ω, 선언) 정규 단위 → 한도·바퀴 단위 자르기 → /cmd_vel (정책 명령을 고치는 층은 없음 — 앞 범퍼 정지는 계층형 규칙 추종기만).
 //      목표점 행동이면 로봇(지도 자세) 기준 방향 n_dir × 거리,
 //      정답 충돌 격자로 막히기 전까지 자름 (Nav2 가 피해 가는 몫 대신)
 //   2. 물리 substeps 번 (dt, limo_base 50 Hz):
@@ -68,8 +68,8 @@ struct EnvCfg {
   int act_raw;              // 1: 행동이 물리 단위 (v, vy, ω, 선언) — 실물 녹화 다시 돌리기·기준선 도구용, 바퀴 자르기 없음
   float act_v_fwd, act_v_back, act_vy_max;   // 정규 단위 [−1, 1] → v ∈ [−back, fwd], vy ∈ ±vy_max, ω ∈ ±act_w_max
   float wheel_k, wheel_max;  // 메카넘 바퀴 선속도 = v ± vy ± k·ω, |·| ≤ wheel_max 넘으면 (v, vy, ω) 를 같은 비로 줄임
-  int safety;               // 안전층 켬 (mdp/README "안전층")
-  float safety_dist;        // 앞 범퍼에서 이 거리 안(몸통 폭 + 5 cm 길)에 직전 라이다 점 → 앞으로 가는 명령 0
+  int safety;               // 규칙 추종기 앞 범퍼 정지 켬 (계층형 path_step_c — 기준선·규칙 아래층만. 정책 명령은 안 고침)
+  float safety_dist;        // 앞 범퍼에서 이 거리 안(몸통 폭 + 5 cm 길)에 직전 라이다 점 → 추종기의 앞으로 가는 명령 0
   // 판 끝·성공 (2026-11-08 사용자 결정, 2026-11-10 닫힘 정의 고침 — mdp/README "판 끝"·"닫힘"): 성공 = 로봇 지도가 닫히고
   // 지도 진행 없음 시계(since_occ) ≥ close_idle_s. 정책의 끝 선언 출력은 무시(보상·끝 없음). 판정은 close_every 걸음마다(그 사이엔 안 셈).
   // (옛 "선언 + 정답 덮음 ≥ 0.95" 성공 규칙은 2026-11-14 에 없앰 — 실물이 못 재는 정답 덮음이 판 끝을 정해서)
@@ -85,24 +85,16 @@ struct EnvCfg {
   // (low_rl.h lowrl_begin). 판정은 로봇 지도만으로 — 선언한 걸음의 지도 닫힘(EnvState::map_closed, mdp/frontier.h 닫힘 규칙)이면 성공 코드 1, 아니면 이른 선언 코드 4 (finish_step).
   // 정답 덮음은 안 봄. 닫힘 성공 규칙(닫힘 + close_idle_s)은 그대로 살아 있어 모델이 선언을 안 해도 판은 끝난다
   int finish_declare;
-  int sweep_guard;          // 몸통 쓸림 안전층 켬 (실험, 기본 끔 — apply_action sweep_scale): 로봇 지도 막힘 칸을 다음 sweep_h 초 몸통이 쓸면 명령을 줄임
+  int sweep_guard;          // 규칙 추종기 몸통 쓸림 정지 (실험, 기본 끔 — path_step_c sweep_scale): 로봇 지도 막힘 칸을 다음 sweep_h 초 몸통이 쓸면 추종기 명령을 줄임
   float sweep_h, sweep_margin;   // 내다보는 시간 (s), 몸통 둘레 여유 (m)
-  // 아래층 RL 벽 충돌 대책 (2026-11-13, low_rl.h · mdp/README "아래층 RL — 벽 충돌"). 기본값은 low_rl.h 상수, env_cfg.cpp 가 환경변수로 덮는다
-  int lg_on;                     // 몸통 지킴이 (lowrl_guard): 정책 명령을 로봇 지도 막힘 + 깊이 카메라 층으로 내다봐 줄임
-  float lg_h, lg_margin;         //   내다보는 시간 (s) · 몸통 둘레 여유 (m)
+  // 아래층 RL (low_rl.h · mdp/README "아래층 RL"). 기본값은 low_rl.h 상수, env_cfg.cpp 가 환경변수로 덮는다
   int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
   float lr_mprox_k, lr_mprox_d;  // 움직임 근접 벌점: × 몸통 가장 빠른 점 속도 (m/s) × (1 − 간격 / lr_mprox_d). 0 = 끔
   float lr_ppl_k, lr_ppl_t, lr_ppl_m;   // 사람 마주침 벌점 (low_rl.h lowrl_ppl_risk): × (1 − 가장 가까워질 때까지 시간 / lr_ppl_t), 그때 간격 < lr_ppl_m 인 사람. 0 = 끔
-  int ps_on;                     // 사람 비켜 주기 (lowrl_yield): 0 끔 · 1 라이다 덩어리 추적(센서만) · 2 참값 사람(진단 전용 — 상한을 재는 용도, 채택 금지)
-  float ps_gate;                 //   추적을 쉬는 각속도 차 (rad/s)
-  float ps_h, ps_margin;         //   내다보는 시간 (s) · 사람 둘레 여유 (m)
-  int ps_mem;                    //   닿을 것으로 본 사람을 기억하는 걸음 수
-  int ps_hold;                   //   줄인 뒤 이 걸음 수 동안 그 배율을 붙듦
-  int ps_trk;                    //   1: 걸음마다 이어 가는 칼만 필터 추적 (lowrl_trk) · 0: 세 장 잇기 (lowrl_movers)
+  // 사람 추적 (low_rl.h lowrl_trk — 라이다 덩어리 칼만 필터, lo_mov 일 때 걸음마다. 인지만 — 명령은 안 고침)
   float tk_gate, tk_sz, tk_qa;   //   추적: 연결 문 (m) · 덩어리 자리 잡음 σ (m) · 가속 잡음 σ (m/s²)
   int tk_miss, tk_conf;          //   추적: 못 이어도 들고 가는 장 수 · 사람 판정까지 이어 받을 장 수
   float tk_disp;                 //   추적: 처음 자리에서 이만큼 벗어나야 사람 (m)
-  int lg_touch;                  //   몸통 지킴이: 지도로는 이미 닿은 때 닿은 둘레 점이 느는 명령을 줄임 (0 = 그때는 안 막음)
   int lo_mov;                    //   아래층 숫자 관측의 예약 칸(kLoMov)에 추적 결과를 넣음 (0 = 0 으로 둠 — 기존 체크포인트 그대로)
   float tk_sag;                  //   추적: 둥근 덩어리만 — 활꼴 높이 / 현 길이 하한 (0 이면 모양을 안 봄)
   float tk_w0;                   //   추적: 둥근 덩어리의 현 길이 하한 (m)
@@ -636,8 +628,8 @@ DEV void set_goal(const EnvBatch& b, EnvState& e, int action);
 
 DEV float clip1(float a) { return a != a ? 0.f : dm::clampf(a, -1.f, 1.f); }   // NaN → 0
 
-// 안전층: 직전 라이다 장(링 최신 칸)에서 몸통 폭(+5 cm) 길 안 앞쪽 점까지 앞 범퍼로부터 거리 (m). 없으면 큰 값.
-// 실물 정지 감시(limo_fire_rl)도 같은 식 — /scan 을 같은 248 각도 칸으로 모아 같은 문턱.
+// 앞 틈: 직전 라이다 장(링 최신 칸)에서 몸통 폭(+5 cm) 길 안 앞쪽 점까지 앞 범퍼로부터 거리 (m). 없으면 큰 값.
+// 규칙 추종기의 앞 범퍼 정지(EnvCfg::safety, path_step_c)가 쓴다 — 정책 명령엔 안 씀.
 DEV float front_gap(const EnvBatch& b, const EnvState& e, int env) {
   const EnvCfg& c = b.cfg;
   const float* R = b.lidar_ring + ((size_t)env * kLidarRing + e.lid_head) * mdp::obs::LIDAR_BINS;
@@ -657,7 +649,7 @@ DEV float front_gap(const EnvBatch& b, const EnvState& e, int env) {
   return best;
 }
 
-// 몸통 쓸림 안전층 (실험, EnvCfg::sweep_guard): 로봇 자기 지도(막힘 = mdp::kOcc, 실물도 같은 지도·지도 자세)로
+// 몸통 쓸림 정지 (실험, EnvCfg::sweep_guard — 규칙 추종기 path_step_c 만): 로봇 자기 지도(막힘 = mdp::kOcc, 실물도 같은 지도·지도 자세)로
 // 몸통 둘레(여유 sweep_margin) 20 점이 (x, y, th) 에서 막힘 칸에 닿나. 근거: explore_v7 벽 충돌 재생에서 몸통 닿은 곳의 60 % 가 옆·뒤
 // (라이다 ±110° 밖, 뒤 닿음 75 % 가 |ω| > 1 rad/s 로 도는 중), 닿은 벽의 83~86 % 는 그때 이미 지도에 막힘으로 있었다.
 DEV bool map_body_hits(const EnvBatch& b, const EnvState& e, int env, float x, float y, float th) {
@@ -708,7 +700,7 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
 #include "low_rl.h"      // 아래층 RL 걸음 함수 (low_step.h 뒤)
 #include "contact.h"     // 로봇이 재는 간격·닿음 (low_rl.h 뒤 — 사람 추적을 씀)
 
-// 계층형 관측 "직전 행동": 이번 걸음 명령 (v, ω) — 추종기·smoother·안전층 뒤 /cmd_vel — 을 정규 단위로 밀어 넣음 (vy·선언 0).
+// 계층형 관측 "직전 행동": 이번 걸음 명령 (v, ω) — 추종기·smoother·앞 범퍼 정지 뒤 /cmd_vel — 을 정규 단위로 밀어 넣음 (vy·선언 0).
 // 실물 노드(limo_fire_rl)는 Nav2 가 낸 /cmd_vel 로 같은 함수를 부른다
 DEV void path_last_act(const EnvCfg& c, EnvState& e, float v, float w) {
   for (int i = mdp::act::DIM * 4 - 1; i >= mdp::act::DIM; --i) e.last_act[i] = e.last_act[i - mdp::act::DIM];
@@ -765,7 +757,7 @@ DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const Pa
   s.w = e.ws;
 }
 // c: collision_monitor 배율 k (hier_path.h "지금 스캔" (b) path_monitor_scale(s.v, s.w)): velocity_smoother 뒤 — Nav2 처럼 smoother 상태는 그대로 두고
-// 내보내는 명령만 줄임 → 안전층 → 명령
+// 내보내는 명령만 줄임 → 앞 범퍼 정지(EnvCfg::safety)·몸통 쓸림 정지 → 명령 (규칙 추종기 몫 — 기준선)
 DEV void path_step_c(const EnvBatch& b, EnvState& e, int env, float k, const PathStep& s) {
   const EnvCfg& c = b.cfg;
   float v = s.v, w = s.w;
@@ -829,13 +821,7 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
         w = w * k;
       }
     }
-    if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) v = 0.f;
-    if (c.sweep_guard) {
-      const float k = sweep_scale(b, e, env, v, vy, w);
-      v *= k;
-      vy *= k;
-      w *= k;
-    }
+    // 정책 명령은 그대로 나간다 (앞 틈 정지·몸통 쓸림 정지는 규칙 추종기 path_step_c 에만 — 2026-11-14)
     e.cmd_v = v;
     e.cmd_vy = vy;
     e.cmd_w = w;
@@ -846,7 +832,7 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
     e.last_act[2] = dm::clampf(n2, -1.f, 1.f);
     e.last_act[3] = (float)e.declared;
   } else if (c.action_mode == kActPath) {
-    // 계층형: 경로(결정 때 plan 단계가 짬)를 추종기가 따라감 → velocity_smoother(행동 주기) → 안전층. 고른 후보 번호는 결정 때 p_slot 에.
+    // 계층형: 경로(결정 때 plan 단계가 짬)를 추종기가 따라감 → velocity_smoother(행동 주기) → 앞 범퍼 정지. 고른 후보 번호는 결정 때 p_slot 에.
     // 세 토막(path_step_a·b·c) 사이에 무거운 검사 둘(RPP 충돌 검사 · collision_monitor)이 낀다 — GPU env_act_kernel 은 그 둘을 블록 스레드로 나눠 본다
     if (lowrl_act(b, e, env, a)) return;   // 아래층 RL: 정책이 모는 환경 (low_rl.h — 아니면 false)
     PathStep s;

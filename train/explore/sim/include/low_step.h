@@ -21,7 +21,7 @@ DEV void low_resolve(LowEp& L, int abin) {
 }
 
 // 걸음 처음 (path_step_c 끝 — 명령이 정해진 뒤, 물리 앞). why: 추종기 가지, bkind: path_step_b 가지 (0 없음 · 1 복구 물러나기 · 2 충돌 검사 멈춤 ·
-// 3 제자리 회전 막힘), mon: collision_monitor 가 줄임, safe: 안전층·sweep_guard 가 줄임, v: 내보낸 명령
+// 3 제자리 회전 막힘), mon: collision_monitor 가 줄임, safe: 규칙 추종기 앞 정지·sweep_guard 가 줄임 (정책 걸음엔 늘 false), v: 내보낸 명령
 DEV void low_begin(const EnvBatch& b, const EnvState& e, int env, const PathWhy& why, int bkind, bool mon, bool safe, float v) {
   if (!b.low) return;
   const EnvCfg& c = b.cfg;

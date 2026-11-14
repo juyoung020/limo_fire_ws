@@ -70,7 +70,7 @@ DEV void sense_map_gaps(const EnvBatch& b, const EnvState& e, int env, float* g_
 // 닿음 때 이 간격 < kConPersonGap 이면 사람 닿음으로 셈 (몸통 쪽 덩어리 가장자리가 원 반지름만큼 흔들리므로 여유)
 constexpr float kConPersonGap = 0.15f;   // 잠정 — 추적 덩어리 자리 σ 0.05 m(low_rl.h kLrTrkSz)의 3 배
 DEV float tracked_person_gap(const EnvBatch& b, const EnvState& e, int env) {
-  if (!b.lowrl || !b.cfg.ps_trk) return kSenseFar;
+  if (!b.lowrl || !b.cfg.lo_mov) return kSenseFar;   // 추적은 lo_mov 일 때만 돈다
   LrMover M[kLrMovers + 1];
   const int n = lowrl_trk_movers(b, env, M);
   const float px = e.x + e.ex, py = e.y + e.ey;

@@ -141,6 +141,6 @@ constexpr float V_FWD = 1.0f;    // m/s, 데이터시트 최고 속도 1 m/s (�
 constexpr float V_BACK = 0.3f;   // m/s, 라이다가 뒤 140° 를 못 봐서 느리게
 constexpr float VY_MAX = 1.0f;   // m/s, 잠정 📏 (데이터시트에 옆 속도 없음)
 constexpr float W_MAX = 3.14f;   // rad/s, 실측 (env.yaml drive.max)
-constexpr bool SAFETY = true;    // 안전층 기본 켬 (시뮬·실물 같은 규칙)
+constexpr bool SAFETY = true;    // 규칙 추종기 앞 범퍼 정지 기본 켬 (계층형 path_step_c — 정책 명령엔 안 씀, 2026-11-14)
 // 계층형 모드의 행동: 환경마다 같은 DIM 칸, a[0] = 고른 후보 번호 0 … hier::K − 1 (정수 값), 나머지 0
 }  // namespace mdp::act
