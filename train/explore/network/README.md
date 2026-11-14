@@ -296,3 +296,9 @@ rsl_rl `ActorCriticRecurrent` (actor·critic 이 순환 층을 따로, 롤아웃
 (판 경계는 다음 문 커널이 버림). 옛 문 커널(블록 하나 = 행 8 개 × 출력 H, 블록 안에서 h·Wh 를 직접 곱함)은 행이 적으면(환경 256 → 미니배치 64 행 → 블록 8 개) SM 대부분이 놀아
 갱신이 느렸다. `GRU_REF=1` 이면 옛 커널 (A/B). 확인: `gru_check` 통과 (유한 차분 5.4e-6, fp32 vs fp64 1.9e-5, step = forward_seq), `gradcheck --low --gru` 통과,
 학습 첫 미니배치 KL 2.1e-5 (옛 커널과 같은 값). 시간 (환경 256 · GRU 256 · 넓은 지도, 학습과 GPU 를 나눠 쓴 상태): 갱신 반복당 약 740 → 440 ms.
+
+### CPU 정책 NEON (2026-11-15, `policy_cpu.h`)
+
+aarch64(젯슨 Orin Nano)에서 합성곱·actor MLP 의 곱합을 출력 16 개(NEON 벡터 4 개 — 서로 다른 FMA 사슬 넷)씩. 가중치는 load 때 [입력][출력]으로 전치해 둔다.
+출력마다 더하는 차례가 스칼라와 같아(스칼라도 gcc 가 fmadd 로 묶음) 결과가 비트까지 같다. `tools/neon_bench.cpp` 로 확인: 같은 무작위 관측 30 개의 로짓 덤프 cmp 같음,
+6.94 → 2.84 ms/act (계층형 체크포인트 explore_h6). 슬롯 머리는 작아서 스칼라 그대로. `XNET_CPU_SCALAR` 를 정의하면 스칼라만. x86 빌드는 그대로(스칼라).

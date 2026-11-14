@@ -20,6 +20,13 @@
 
 #include "../mdp/obs_layout.h"
 
+// NEON (aarch64 — 젯슨 Orin): 합성곱·MLP 의 곱합을 출력 4 개씩 한 벡터로 (출력마다 더하는 차례는 스칼라와 같음 → 결과 비트 같음, 가중치는 load 때 전치해 둠).
+// XNET_CPU_SCALAR 를 정의하면 스칼라만 (견줌용)
+#if (defined(__ARM_NEON) || defined(__ARM_NEON__)) && !defined(XNET_CPU_SCALAR)
+#include <arm_neon.h>
+#define XNET_CPU_NEON 1
+#endif
+
 namespace xnet_cpu {
 
 class HierPolicy {
@@ -100,6 +107,35 @@ class HierPolicy {
     need("head.w1", (size_t)kSlotHidden * (kEmbed + mdp::hier::FEAT));
     need("head.b1", (size_t)kSlotHidden);
     need("head.w2", (size_t)kSlotHidden);
+    // 전치 가중치 (NEON 길): 합성곱 [cout][q][cin] → [q][cin][cout], MLP [out][in] → [in][out]
+    tblk_.clear();
+    for (int b = 0; b < 3; ++b) {
+      int c = ci[b];
+      for (int l = 0; l < 4; ++l) {
+        const std::string nm = "enc.cnn" + std::to_string(b) + ".conv" + std::to_string(l) + ".w";
+        const std::vector<float>& w = blk_.at(nm);
+        const int co = kConvCh[l];
+        std::vector<float> t(w.size());
+        for (int k = 0; k < co; ++k)
+          for (int q = 0; q < 4; ++q)
+            for (int ch = 0; ch < c; ++ch) t[((size_t)q * c + ch) * co + k] = w[((size_t)k * 4 + q) * c + ch];
+        tblk_[nm] = std::move(t);
+        c = co;
+      }
+    }
+    {
+      int in2 = kFeat + in1d_;
+      for (int l = 0; l < 4; ++l) {
+        const std::string nm = "actor.mlp" + std::to_string(l) + ".w";
+        const std::vector<float>& w = blk_.at(nm);
+        const int out = dims[l];
+        std::vector<float> t(w.size());
+        for (int o = 0; o < out; ++o)
+          for (int i = 0; i < in2; ++i) t[(size_t)i * out + o] = w[(size_t)o * in2 + i];
+        tblk_[nm] = std::move(t);
+        in2 = out;
+      }
+    }
   }
 
   // bf16 흉내 (학습·평가 기본 경로 — 합성곱·MLP 입력·가중치를 bf16 로 반올림, fp32 누산, 머리는 fp32): 실물은 끔(fp32)이 기본.
@@ -135,6 +171,37 @@ class HierPolicy {
         const float* Bs = blk_.at(nm + ".b").data();
         const int co = kConvCh[l], oh = h / 2, ow = w / 2;
         std::vector<float> o((size_t)co * oh * ow);
+#ifdef XNET_CPU_NEON
+        if (!bf16_) {   // 출력 채널 4 개씩: 출력마다 (q, ch) 차례로 곱해 더함 — 스칼라 길과 같은 차례
+          const float* WT = tblk_.at(nm + ".w").data();   // [q][cin][cout]
+          for (int y = 0; y < oh; ++y)
+            for (int xx = 0; xx < ow; ++xx)
+              for (int k = 0; k < co; k += 16) {   // 출력 16 개 = 벡터 4 개 (서로 다른 곱합 사슬 넷 — FMA 지연을 가림). co 는 16·32
+                float32x4_t a0 = vdupq_n_f32(0.f), a1 = a0, a2 = a0, a3 = a0;
+                for (int q = 0; q < 4; ++q) {
+                  const int iy = 2 * y + q / 2, ix = 2 * xx + q % 2;
+                  const float* wq = WT + (size_t)q * c * co + k;
+                  for (int ch = 0; ch < c; ++ch) {
+                    const float v = a[((size_t)ch * h + iy) * w + ix];
+                    const float* wc = wq + (size_t)ch * co;
+                    a0 = vfmaq_n_f32(a0, vld1q_f32(wc), v);
+                    a1 = vfmaq_n_f32(a1, vld1q_f32(wc + 4), v);
+                    a2 = vfmaq_n_f32(a2, vld1q_f32(wc + 8), v);
+                    a3 = vfmaq_n_f32(a3, vld1q_f32(wc + 12), v);
+                  }
+                }
+                float s16[16];
+                vst1q_f32(s16, vaddq_f32(a0, vld1q_f32(Bs + k)));
+                vst1q_f32(s16 + 4, vaddq_f32(a1, vld1q_f32(Bs + k + 4)));
+                vst1q_f32(s16 + 8, vaddq_f32(a2, vld1q_f32(Bs + k + 8)));
+                vst1q_f32(s16 + 12, vaddq_f32(a3, vld1q_f32(Bs + k + 12)));
+                for (int u = 0; u < 16; ++u) o[((size_t)(k + u) * oh + y) * ow + xx] = elu(s16[u]);
+              }
+          a.swap(o);
+          c = co, h = oh, w = ow;
+          continue;
+        }
+#endif
         for (int k = 0; k < co; ++k)
           for (int y = 0; y < oh; ++y)
             for (int xx = 0; xx < ow; ++xx) {
@@ -166,6 +233,30 @@ class HierPolicy {
       const float* Bs = blk_.at(nm + ".b").data();
       const int in = (int)z.size(), out = dims[l];
       std::vector<float> y((size_t)out);
+#ifdef XNET_CPU_NEON
+      if (!bf16_) {   // 출력 4 개씩 (출력마다 입력 차례로 — 스칼라와 같은 차례)
+        const float* WT = tblk_.at(nm + ".w").data();   // [in][out]
+        for (int o = 0; o < out; o += 16) {   // 출력 16 개 = 벡터 4 개 (사슬 넷). out 은 512·256·128·64
+          float32x4_t a0 = vld1q_f32(Bs + o), a1 = vld1q_f32(Bs + o + 4), a2 = vld1q_f32(Bs + o + 8), a3 = vld1q_f32(Bs + o + 12);
+          for (int i = 0; i < in; ++i) {
+            const float* wi = WT + (size_t)i * out + o;
+            const float v = z[i];
+            a0 = vfmaq_n_f32(a0, vld1q_f32(wi), v);
+            a1 = vfmaq_n_f32(a1, vld1q_f32(wi + 4), v);
+            a2 = vfmaq_n_f32(a2, vld1q_f32(wi + 8), v);
+            a3 = vfmaq_n_f32(a3, vld1q_f32(wi + 12), v);
+          }
+          float s16[16];
+          vst1q_f32(s16, a0);
+          vst1q_f32(s16 + 4, a1);
+          vst1q_f32(s16 + 8, a2);
+          vst1q_f32(s16 + 12, a3);
+          for (int u = 0; u < 16; ++u) y[o + u] = l < 3 ? elu(s16[u]) : s16[u];
+        }
+        z.swap(y);
+        continue;
+      }
+#endif
       for (int o = 0; o < out; ++o) {
         float s = Bs[o];
         const float* wr = Wt + (size_t)o * in;
@@ -217,6 +308,7 @@ class HierPolicy {
       throw std::runtime_error("체크포인트 블록 " + n + " 없음 또는 크기 다름 (구조가 obs_layout.h 와 다름)");
   }
   std::map<std::string, std::vector<float>> blk_;
+  std::map<std::string, std::vector<float>> tblk_;   // 전치 가중치 (NEON 길)
   std::vector<float> mean_, var_;
   int in1d_ = 0, iteration_ = 0, format_ = 0;
 };
