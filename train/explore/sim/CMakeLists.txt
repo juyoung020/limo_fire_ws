@@ -107,11 +107,17 @@ if(SIM_OPTIX AND EXISTS ${OPTIX_INC}/optix.h)
     COMMAND ${CMAKE_CUDA_COMPILER} -ptx -arch=sm_${OPTIX_PTX_ARCH} --fmad=false -prec-div=true -prec-sqrt=true -ftz=false -std=c++17
             -I${OPTIX_INC} -I${CMAKE_CURRENT_SOURCE_DIR}/include -I${CMAKE_CURRENT_SOURCE_DIR}/../mdp ${CMAKE_CURRENT_SOURCE_DIR}/src/optix_rays.cu -o ${OPTIX_PTX}
     DEPENDS src/optix_rays.cu ${SIM_HEADERS})
-  add_custom_target(optix_rays_ptx ALL DEPENDS ${OPTIX_PTX})
-  target_sources(limo_sim PRIVATE src/optix_rt.cpp)
+  # PTX 를 바이너리 안에 (2026-11-15): 예전에는 실행 때 빌드 폴더의 PTX 파일을 절대 경로로 읽어, 그 폴더를 다시 지으면(EnvCfg 배치가 바뀐 PTX) 따로 복사해 둔
+  # 옛 바이너리가 맞지 않는 PTX 를 읽어 잘못된 메모리 접근이 났다. 이제 PTX 바이트를 C++ 배열로 만들어 limo_sim 에 넣는다 — 바이너리는 늘 자기 빌드의 PTX 만 씀
+  set(OPTIX_PTX_CPP ${CMAKE_CURRENT_BINARY_DIR}/optix_rays_ptx.cpp)
+  add_custom_command(OUTPUT ${OPTIX_PTX_CPP}
+    COMMAND ${CMAKE_COMMAND} -DIN=${OPTIX_PTX} -DOUT=${OPTIX_PTX_CPP} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake
+    DEPENDS ${OPTIX_PTX} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake)
+  add_custom_target(optix_rays_ptx ALL DEPENDS ${OPTIX_PTX} ${OPTIX_PTX_CPP})
+  target_sources(limo_sim PRIVATE src/optix_rt.cpp ${OPTIX_PTX_CPP})
   add_dependencies(limo_sim optix_rays_ptx)
   target_include_directories(limo_sim PRIVATE ${OPTIX_INC})
-  target_compile_definitions(limo_sim PUBLIC SIM_OPTIX=1 SIM_OPTIX_PTX="${OPTIX_PTX}")
+  target_compile_definitions(limo_sim PUBLIC SIM_OPTIX=1)
   target_link_libraries(limo_sim PUBLIC ${CMAKE_DL_LIBS})
   message(STATUS "SIM_OPTIX: RT 코어 깊이 광선 켬 (${OPTIX_INC})")
   # 빠른 길(하드웨어 삼각형) vs 정확한 길 통계 동등성

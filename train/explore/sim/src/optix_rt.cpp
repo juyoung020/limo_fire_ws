@@ -15,6 +15,11 @@
 #include "scene_host.h"
 
 namespace sim {
+extern const unsigned char kOptixRaysPtx[];   // 빌드가 만든 optix_rays_ptx.cpp (PTX 바이트)
+extern const std::size_t kOptixRaysPtxLen;
+}  // namespace sim
+
+namespace sim {
 namespace {
 void ox(OptixResult r, const char* what) {
   if (r != OPTIX_SUCCESS) {   // CUDA 쪽 오류(7900)면 그 CUDA 오류 글도 붙임
@@ -139,9 +144,8 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   cudaMemcpy(I.gas_fast, fast.data(), fast.size() * 8, cudaMemcpyHostToDevice);
   I.tris = dalloc<const void*>(dev_tris.size());
   cudaMemcpy(I.tris, dev_tris.data(), dev_tris.size() * sizeof(void*), cudaMemcpyHostToDevice);
-  std::ifstream f(SIM_OPTIX_PTX, std::ios::binary);
-  if (!f) throw std::runtime_error(std::string("OptiX 모듈 파일 없음: ") + SIM_OPTIX_PTX);
-  const std::string ir((std::istreambuf_iterator<char>(f)), {});
+  // 바이너리에 넣어 둔 PTX (sim/cmake/embed_ptx.cmake — 빌드 폴더 파일을 읽지 않음)
+  const std::string ir(reinterpret_cast<const char*>(kOptixRaysPtx), kOptixRaysPtxLen);
   OptixModuleCompileOptions mo = {};
   OptixPipelineCompileOptions po = {};
   po.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
