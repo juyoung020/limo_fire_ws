@@ -113,6 +113,7 @@ struct In {
   std::function<bool(int)> avoided;   // 피하는 칸 둘레인가 (combine_run Avoid)
   std::vector<CandOut>* cands = nullptr;      // 주면 후보 특징을 채움 (gpt 큰 순, cand_cap 개 — 지금 목표·fuel 고른 것은 늘 넣음)
   int cand_cap = 16;
+  int cand_big = 0;            // 상한 안에서 이 수만큼은 틈(open_m) 큰 순으로 채움 — 멀리 있는 큰 미탐사 구역이 gpt 차례로 밀려 빠지지 않게 (잠정 4)
   const std::vector<float>* people = nullptr;   // 추적된 사람 자리 (x, y 세계 m 쌍)
 };
 
@@ -683,7 +684,17 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
     for (int k = 0; k < m; ++k) ord[k] = k;
     std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return all[a].gpt > all[b].gpt; });
     std::vector<int> keep;
-    for (int k : ord) if ((int)keep.size() < in.cand_cap || all[k].cur || all[k].fuel) keep.push_back(k);
+    {   // gpt 큰 순 (cap − big) 개 + 남은 것에서 틈 큰 순 big 개 + 지금 목표 · fuel 고른 것
+      const int big = std::max(0, std::min(in.cand_big, in.cand_cap - 1)), nsmall = in.cand_cap - big;
+      std::vector<uint8_t> in_(m, 0);
+      for (int k : ord) if ((int)keep.size() < nsmall) { keep.push_back(k); in_[k] = 1; }
+      std::vector<int> rest;
+      for (int k : ord) if (!in_[k]) rest.push_back(k);
+      std::stable_sort(rest.begin(), rest.end(), [&](int a, int b) { return all[a].open_m > all[b].open_m; });
+      for (size_t q = 0; q < rest.size() && (int)q < big; ++q) { keep.push_back(rest[q]); in_[rest[q]] = 1; }
+      for (int k : ord) if (!in_[k] && (all[k].cur || all[k].fuel)) { keep.push_back(k); in_[k] = 1; }
+      std::stable_sort(keep.begin(), keep.end(), [&](int a, int b) { return all[a].gpt > all[b].gpt; });   // 글자 차례는 gpt 큰 순 그대로
+    }
     if (m > (int)keep.size()) {   // cand_cap 에 걸림 (셈만)
       st.cc_dec += 1;
       std::vector<uint8_t> kept(m, 0);

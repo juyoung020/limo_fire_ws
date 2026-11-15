@@ -97,6 +97,7 @@ struct Args {
   bool dec_cand_fuel = false;    // --decider-cand fuel: 판단 모델에 fuel 후보(덩어리마다 시점, 수 가변 · 상한 --cand-cap)와 특징 표를 줌
   std::string dec_log;           // --decider-log <폴더>: fuel 후보 결정마다 요청 본문(그림 포함)·후보 특징·라벨(fuel·gpt 최대)·답·로봇 지도 아는 칸 수 — 위층 판단 모델 LoRA 학습 데이터
   int dec_orders = 1;            // --decider-orders 2: fuel 후보를 거꾸로 차례(글자 다시 붙임, 그림도 다시)로 한 번 더 물어 후보마다 확률을 평균 (선택지 자리 쏠림 줄이기)
+  int cand_big = 4;              // --cand-big: 후보 상한 안에서 틈 큰 순으로 채우는 자리 수 (잠정 4, fuel 후보에만 — 옛 방식 무관)
   int cand_cap = 16;             // --cand-cap: fuel 후보 상한 (판단 모델 글자 A … 는 26 개까지)
   bool gt_bound = false;         // --gt-bound: 장면마다 정답 격자를 다 아는 순회의 시간 (시뮬 전용 진단 — 정답 지도를 씀, 판에는 안 씀)
   bool rule_cell = false;        // --rule-cell: 규칙 추종기(--policy 없음)에 후보 번호 대신 목표 칸을 줌 (follow 1 — fuel 과 같은 길, slot0 견줌용)
@@ -573,6 +574,7 @@ int run(const Args& a) {
                         [&, i, step_i](int cell) { return avoided(i, cell, step_i); }};
               in.cands = &fc[i];
               in.cand_cap = a.cand_cap;
+              in.cand_big = a.cand_big;
               in.people = &ppl[i];
               tcell[i] = fu::decide(in, a.fuel, fmem[i], f_works[t]);   // fuel 이 고른 것 (rich · 판단 모델이 덮어씀)
               if (tcell[i] < 0) fc[i].clear();
@@ -1578,6 +1580,7 @@ int main(int argc, char** argv) {
       else if (k == "--rich-w") a.rich_w = nx();
       else if (k == "--decider-cand") { const std::string v = nx(); if (v != "fuel" && v != "sim") throw std::runtime_error("--decider-cand fuel|sim"); a.dec_cand_fuel = v == "fuel"; }
       else if (k == "--cand-cap") a.cand_cap = std::stoi(nx());
+      else if (k == "--cand-big") a.cand_big = std::stoi(nx());
       else if (k == "--decider-log") a.dec_log = nx();
       else if (k == "--decider-orders") a.dec_orders = std::stoi(nx());
       else if (k == "--gt-tile") a.rule.tile_m = std::stof(nx());
