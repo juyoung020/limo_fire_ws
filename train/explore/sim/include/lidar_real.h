@@ -192,7 +192,7 @@ DEV void beam_center_hit(const SceneView& s, BeamGeom& g, float r, int tri) {
   g.hit = tri != -1;   // −2 − k = 사람 k (scene.h raycast)
   if (!g.hit) return;
   if (tri < -1) { const V3 hp = add(g.o, scale(g.d, g.r)); g.cosi = cyl_cos(s.cyl[-2 - tri], hp.x, hp.y, g.d.x, g.d.y, g.d.z); return; }   // 사람
-  const Tri& T = s.tris[tri];
+  const Tri& T = tri_at(s, tri);
   const V3 nrm = cross(sub(T.b, T.a), sub(T.c, T.a));
   g.cosi = dm::absf(dot(nrm, g.d)) / sqrtf(dot(nrm, nrm));
 }

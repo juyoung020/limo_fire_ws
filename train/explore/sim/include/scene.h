@@ -56,7 +56,15 @@ struct SceneView {
   const float* obj_size; // 물체마다 바닥 투영 크기(가로·세로 중 긴 쪽, m) — 큰 구조물(벽)인지 가린다
   const Cyl* cyl;        // 움직이는 사람 원기둥 (people_geom.h, 없으면 n_cyl 0) — 맞으면 hit_obj kObjPerson, hit_tri −2 − 번호
   int32_t n_cyl;
+  // 덧붙인 형상 (2026-11-15, 장치 메모리 — 같은 집 메시를 맵 여럿이 나눠 씀): 바탕 삼각형 [0, nb) 뒤에 덧 삼각형 [nb, nb + n2) 가 붙은 것처럼 번호를 매긴다.
+  // 덧 삼각형은 자기 BVH (nodes2) — 물체 번호는 바탕 물체 뒤로 이미 밀어 둠. tris2 == nullptr 이면 없음 (옛 장면 그대로)
+  const Node* nodes2;
+  const Tri* tris2;
+  const uint16_t* obj2;
+  int32_t nb;
 };
+// 번호 i 의 삼각형 (덧붙인 형상이면 nb 뒤는 덧 삼각형)
+DEV const Tri& tri_at(const SceneView& s, int i) { return (s.tris2 && i >= s.nb) ? s.tris2[i - s.nb] : s.tris[i]; }
 
 constexpr float kInf = 3.0e38f;
 constexpr int kStack = 64;   // 쌓기 깊이 한도. 장면을 만들 때 BVH 깊이 ≤ kMaxDepth 를 보장한다
@@ -228,7 +236,10 @@ DEV float trav_result(const RayTrav& r, int* hit_tri) {
   *hit_tri = r.best_tri;
   return r.best_tri != -1 ? r.best : kInf;
 }
-DEV uint16_t hit_obj_of(const SceneView& s, int tri) { return tri >= 0 ? s.obj[tri] : (tri < -1 ? kObjPerson : (uint16_t)0xffff); }
+DEV uint16_t hit_obj_of(const SceneView& s, int tri) {
+  if (tri >= 0) return (s.tris2 && tri >= s.nb) ? s.obj2[tri - s.nb] : s.obj[tri];
+  return tri < -1 ? kObjPerson : (uint16_t)0xffff;
+}
 
 // 가장 가까운 맞음까지 거리(d 단위). 없으면 kInf. hit_obj 에 물체 번호(사람이면 kObjPerson, 못 맞으면 0xffff), hit_tri 에 삼각형 번호(사람이면 −2 − 사람 번호, 못 맞으면 −1)
 DEV float raycast(const SceneView& s, V3 o, V3 d, float tmax, uint16_t* hit_obj, int* hit_tri = nullptr) {
@@ -237,7 +248,17 @@ DEV float raycast(const SceneView& s, V3 o, V3 d, float tmax, uint16_t* hit_obj,
   trav_init(r, k_, s, o, d, tmax);
   while (trav_step(r, k_, s)) {}
   int tri;
-  const float t = trav_result(r, &tri);
+  float t = trav_result(r, &tri);
+  if (s.tris2) {   // 덧붙인 형상: 덧 삼각형 번호는 모두 바탕 번호(< nb) 뒤라 (t, 번호) 사전순 최소 규칙에서 바탕·사람과 같은 t 면 짐 → 엄격히 가까울 때만 이김
+    const SceneView s2{s.nodes2, s.tris2, s.obj2, s.obj_size, nullptr, 0, nullptr, nullptr, nullptr, 0};
+    RayTrav r2;
+    TravStack k2;
+    trav_init(r2, k2, s2, o, d, tri != -1 ? t : tmax);   // best_tri = −1 로 시작 → 같은 t 는 안 바꿈
+    while (trav_step(r2, k2, s2)) {}
+    int tri2;
+    const float t2 = trav_result(r2, &tri2);
+    if (tri2 >= 0) { t = t2; tri = s.nb + tri2; }
+  }
   if (hit_obj) *hit_obj = hit_obj_of(s, tri);
   if (hit_tri) *hit_tri = tri;
   return t;

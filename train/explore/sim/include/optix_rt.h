@@ -31,7 +31,9 @@ struct RtParams {
   const float4* d;
   const int32_t* tri0;
   const unsigned long long* gas;   // OptixTraversableHandle [맵]
-  const void* const* tris;         // const Tri* [맵]
+  const void* const* tris;         // const Tri* [맵] (바탕)
+  const void* const* tris2;        // const Tri* [맵] 덧붙인 형상 (없으면 nullptr) — 그 맵의 순회 대상은 바탕 GAS + 덧 GAS 두 인스턴스(IAS, 인스턴스 번호 0·1)
+  const int32_t* nb;               // [맵] 바탕 삼각형 수 (덧 삼각형 번호 = nb + 덧 안 번호)
   float* out_t;                    // 못 맞으면 kInf
   int32_t* out_tri;
   int n;
@@ -42,8 +44,11 @@ struct RtParams {
 
 class OptixRt {
  public:
-  // 맵마다 GAS 하나 (scene.tris, 장치에 이미 올린 삼각형 포인터 dev_tris[맵])
-  OptixRt(const std::vector<const Scene*>& scenes, const std::vector<const void*>& dev_tris);
+  // 맵마다 GAS (scene.tris, 장치에 이미 올린 삼각형 포인터 dev_tris[맵]). exact: 정확한 길(삼각형마다 키운 상자) GAS, fast: 빠른 길(하드웨어 삼각형) GAS —
+  // 쓰는 길만 지어 장치 메모리를 아낀다 (2026-11-15). 안 지은 길로 launch 하면 예외
+  // extras·dev_tris2: 맵마다 덧붙인 형상 (없는 맵은 nullptr). 같은 dev_tris 포인터(같은 바탕)는 GAS 를 한 번만 짓는다
+  OptixRt(const std::vector<const Scene*>& scenes, const std::vector<const void*>& dev_tris, bool exact = true, bool fast = true,
+          const std::vector<const Scene*>* extras = nullptr, const std::vector<const void*>* dev_tris2 = nullptr);
   ~OptixRt();
   void launch(const RtParams& p, cudaStream_t st);   // p 의 gas·tris 는 무시하고 이 객체 것을 씀
   static bool available();

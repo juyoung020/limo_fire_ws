@@ -124,6 +124,7 @@ int main(int argc, char** argv) {
   // ---- 1. 광선
   {
     setenv("SIM_EXACT", "1", 1);
+    setenv("SIM_RT_BOTH", "1", 1);   // 같은 광선을 두 길로 쏘므로 두 GAS 다 (Env 는 기본으로 쓰는 길만 지음)
     sim::Env env(hc, worlds, lidar, n_env, 11, true);
     env.set_people_max(std::vector<int>(n_env, people));
     env.reset();

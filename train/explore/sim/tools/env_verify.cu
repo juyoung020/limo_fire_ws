@@ -451,7 +451,7 @@ int main(int argc, char** argv) {
       worlds = sim::load_scene_list(list, hc, &skipped);
       for (auto& s : skipped) std::printf("버림: %s\n", s.c_str());
     }
-    for (const auto& p : scenes) worlds.push_back(sim::build_world(p, sim::load_scene(p), hc));
+    for (const auto& p : scenes) worlds.push_back(sim::load_world(p, hc));
   } catch (const std::exception& ex) {
     std::fprintf(stderr, "env_verify: %s\n", ex.what());
     return 1;

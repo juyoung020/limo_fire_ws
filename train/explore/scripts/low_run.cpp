@@ -279,7 +279,7 @@ int run_stat(const Args& a) {
   Agg total;
   uint64_t h_all = 1469598103934665603ull;
   for (size_t wi = 0; wi < a.scenes.size(); ++wi) {
-    std::vector<sim::World> one{sim::build_world(stem(a.scenes[wi]), sim::load_scene(a.scenes[wi]), hc)};
+    std::vector<sim::World> one{sim::load_world(a.scenes[wi], hc, stem(a.scenes[wi]))};
     Agg agg;
     double succ = 0, wall = 0, person = 0, idle = 0, trunc = 0, t_sum = 0, cov = 0, n_ep = 0, pf = 0, pb = 0;
     for (uint64_t seed : a.seeds) {
@@ -381,7 +381,7 @@ int run_follow(const Args& a, bool verify) {
   std::printf("단독 과제 설정: 통과 반경 %.2f m · 정체 %d 걸음 동안 %.2f m · 시간 %d 걸음 · 목표 %d 개 · 앞 시야 ±%.1f 도 · 예열 %.0f~%.0f s · 경로 길이 구간 %.0f/%.0f/%.0f/%.0f m\n",
               c.low_pass_r, c.low_idle_steps, c.low_idle_d, c.low_time_steps, c.low_goals, c.low_front * 57.29578f, a.warm_lo, a.warm_hi, a.len[0], a.len[1], a.len[2], a.len[3]);
   for (size_t wi = 0; wi < a.scenes.size(); ++wi) {
-    std::vector<sim::World> one{sim::build_world(stem(a.scenes[wi]), sim::load_scene(a.scenes[wi]), hc)};
+    std::vector<sim::World> one{sim::load_world(a.scenes[wi], hc, stem(a.scenes[wi]))};
     const sim::World& W = one[0];
     const uint64_t seed = a.seeds[0] * 1000003ull + wi * 7919ull;
     std::vector<sim::Env*> envs;
@@ -1027,7 +1027,7 @@ int run_policy(const Args& a) {
   }
   for (int people : people_set)
   for (size_t wi = 0; wi < a.scenes.size(); ++wi) {
-    std::vector<sim::World> one{sim::build_world(stem(a.scenes[wi]), sim::load_scene(a.scenes[wi]), hc)};
+    std::vector<sim::World> one{sim::load_world(a.scenes[wi], hc, stem(a.scenes[wi]))};
     const sim::World& W = one[0];
     const uint64_t seed = a.seeds[0] * 1000003ull + wi * 7919ull;
     sim::Env env(hc, one, lidar, N, seed, true);

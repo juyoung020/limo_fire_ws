@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <fstream>
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -48,7 +50,10 @@ struct OptixRt::Impl {
   std::vector<void*> bufs;
   unsigned long long* gas = nullptr;
   unsigned long long* gas_fast = nullptr;   // 하드웨어 삼각형
+  bool has_exact = false, has_fast = false;   // 지은 길
   const void** tris = nullptr;
+  const void** tris2 = nullptr;   // [맵] 덧 삼각형 (없으면 nullptr)
+  int32_t* nb = nullptr;          // [맵] 바탕 삼각형 수
   RtParams* dparams = nullptr;   // prog 마다 한 칸 (kRtProgs)
   RtParams hparams[kRtProgs] = {};   // 장치 칸에 올라 있는 값 (같으면 다시 안 올림)
   bool hvalid[kRtProgs] = {};
@@ -60,7 +65,9 @@ bool OptixRt::available() {
   return optixInit() == OPTIX_SUCCESS;
 }
 
-OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<const void*>& dev_tris) : impl_(new Impl) {
+OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<const void*>& dev_tris, bool want_exact, bool want_fast,
+                 const std::vector<const Scene*>* extras, const std::vector<const void*>* dev_tris2) : impl_(new Impl) {
+  if (!want_exact && !want_fast) throw std::runtime_error("OptixRt: 정확한 길·빠른 길 중 하나는 지어야 함");
   Impl& I = *impl_;
   cudaFree(0);
   ox(optixInit(), "init");
@@ -92,7 +99,8 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
     I.bufs.push_back(comp);
     return (unsigned long long)h;
   };
-  for (const Scene* s : scenes) {
+  auto build_pair = [&](const Scene* s) -> std::pair<unsigned long long, unsigned long long> {   // (정확한 길, 빠른 길) GAS — 안 짓는 길은 0
+    unsigned long long hx = 0ull;
     const size_t nt = s->tris.size();
     // 삼각형 상자를 1 mm + 상대 1e−5 키움: 상자 시험 반올림으로 ray_tri 가 맞히는 삼각형을 놓치지 않게
     std::vector<OptixAabb> bb(nt);
@@ -110,18 +118,21 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
       }
       bb[k] = OptixAabb{lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]};
     }
+    unsigned flags = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
+    if (want_exact) {
     OptixAabb* dbb = dalloc<OptixAabb>(nt);
     cudaMemcpy(dbb, bb.data(), nt * sizeof(OptixAabb), cudaMemcpyHostToDevice);
     CUdeviceptr vb = (CUdeviceptr)dbb;
-    unsigned flags = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
     OptixBuildInput bi = {};
     bi.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
     bi.customPrimitiveArray.aabbBuffers = &vb;
     bi.customPrimitiveArray.numPrimitives = (unsigned)nt;
     bi.customPrimitiveArray.flags = &flags;
     bi.customPrimitiveArray.numSbtRecords = 1;
-    handles.push_back(build_gas(bi));
+    hx = build_gas(bi);
     cudaFree(dbb);
+    }
+    if (!want_fast) return {hx, 0ull};
     // 빠른 길: 같은 삼각형을 하드웨어 삼각형으로 (꼭짓점 3 개씩, 번호 = 삼각형 번호)
     float* dv = dalloc<float>(nt * 9);
     cudaMemcpy(dv, s->tris.data(), nt * 36, cudaMemcpyHostToDevice);
@@ -134,10 +145,60 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
     ti.triangleArray.vertexBuffers = &tv;
     ti.triangleArray.flags = &flags;
     ti.triangleArray.numSbtRecords = 1;
-    fast.push_back(build_gas(ti));
+    const unsigned long long hf = build_gas(ti);
     cudaFree(dv);
-  }
+    return {hx, hf};
+  };
 
+  // IAS 하나: 바탕 GAS(인스턴스 번호 0) + 덧 GAS(1), 같은 자리 (덧붙인 형상 맵)
+  auto build_ias = [&](unsigned long long h0, unsigned long long h1) -> unsigned long long {
+    OptixInstance ins[2] = {};
+    const unsigned long long hs[2] = {h0, h1};
+    for (int k = 0; k < 2; ++k) {
+      const float tf[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+      std::memcpy(ins[k].transform, tf, sizeof(tf));
+      ins[k].instanceId = (unsigned)k;
+      ins[k].visibilityMask = 255;
+      ins[k].sbtOffset = 0;
+      ins[k].flags = OPTIX_INSTANCE_FLAG_NONE;
+      ins[k].traversableHandle = hs[k];
+    }
+    OptixInstance* di = dalloc<OptixInstance>(2);
+    cudaMemcpy(di, ins, sizeof(ins), cudaMemcpyHostToDevice);
+    OptixBuildInput ib = {};
+    ib.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    ib.instanceArray.instances = (CUdeviceptr)di;
+    ib.instanceArray.numInstances = 2;
+    const unsigned long long h = build_gas(ib);   // 같은 짓기·compaction 길 (입력만 인스턴스)
+    I.bufs.push_back(di);   // IAS 는 인스턴스 배열을 짓는 동안만 읽지만 남겨 둠 (작음)
+    return h;
+  };
+  std::map<const void*, std::pair<unsigned long long, unsigned long long>> base_gas;   // 같은 바탕은 GAS 하나
+  bool any_extra = false;
+  std::vector<const void*> t2(scenes.size(), nullptr);
+  std::vector<int32_t> nbv(scenes.size(), 0);
+  for (size_t i = 0; i < scenes.size(); ++i) {
+    auto it = base_gas.find(dev_tris[i]);
+    if (it == base_gas.end()) it = base_gas.emplace(dev_tris[i], build_pair(scenes[i])).first;
+    nbv[i] = (int32_t)scenes[i]->tris.size();
+    const Scene* x = extras ? (*extras)[i] : nullptr;
+    if (!x) {
+      handles.push_back(it->second.first);
+      fast.push_back(it->second.second);
+      continue;
+    }
+    any_extra = true;
+    t2[i] = (*dev_tris2)[i];
+    const auto xp = build_pair(x);
+    handles.push_back(want_exact ? build_ias(it->second.first, xp.first) : 0ull);
+    fast.push_back(want_fast ? build_ias(it->second.second, xp.second) : 0ull);
+  }
+  I.tris2 = dalloc<const void*>(scenes.size());
+  cudaMemcpy(I.tris2, t2.data(), t2.size() * sizeof(void*), cudaMemcpyHostToDevice);
+  I.nb = dalloc<int32_t>(scenes.size());
+  cudaMemcpy(I.nb, nbv.data(), nbv.size() * sizeof(int32_t), cudaMemcpyHostToDevice);
+  I.has_exact = want_exact;
+  I.has_fast = want_fast;
   I.gas = dalloc<unsigned long long>(handles.size());
   cudaMemcpy(I.gas, handles.data(), handles.size() * 8, cudaMemcpyHostToDevice);
   I.gas_fast = dalloc<unsigned long long>(fast.size());
@@ -148,7 +209,7 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
   const std::string ir(reinterpret_cast<const char*>(kOptixRaysPtx), kOptixRaysPtxLen);
   OptixModuleCompileOptions mo = {};
   OptixPipelineCompileOptions po = {};
-  po.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+  po.traversableGraphFlags = any_extra ? OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY : OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;   // 덧붙인 형상 맵은 IAS
   po.numPayloadValues = 9;
   po.numAttributeValues = 2;
   po.pipelineLaunchParamsVariableName = "params";
@@ -186,7 +247,7 @@ OptixRt::OptixRt(const std::vector<const Scene*>& scenes, const std::vector<cons
     for (int k = 0; k < NG; ++k) ox(optixUtilAccumulateStackSizes(I.pg[k], &ss, I.pipe), "스택 크기");
     unsigned dc_trav = 0, dc_state = 0, cont = 0;
     ox(optixUtilComputeStackSizes(&ss, plo.maxTraceDepth, 0, 0, &dc_trav, &dc_state, &cont), "스택 크기 계산");
-    ox(optixPipelineSetStackSize(I.pipe, dc_trav, dc_state, cont, 1), "스택");
+    ox(optixPipelineSetStackSize(I.pipe, dc_trav, dc_state, cont, any_extra ? 2 : 1), "스택");   // 순회 깊이: IAS → GAS 면 2
   }
   Rec rec[NG];
   for (int k = 0; k < NG; ++k) ox(optixSbtRecordPackHeader(I.pg[k], &rec[k]), "SBT");
@@ -214,6 +275,8 @@ OptixRt::~OptixRt() {
   cudaFree(I.gas);
   cudaFree(I.gas_fast);
   cudaFree(I.tris);
+  cudaFree(I.tris2);
+  cudaFree(I.nb);
   cudaFree(I.dparams);
   delete impl_;
 }
@@ -221,8 +284,11 @@ OptixRt::~OptixRt() {
 void OptixRt::launch(const RtParams& p0, cudaStream_t st) {
   Impl& I = *impl_;
   RtParams p = p0;
+  if (p.fast ? !I.has_fast : !I.has_exact) throw std::runtime_error(p.fast ? "OptixRt: 빠른 길 GAS 를 안 지음" : "OptixRt: 정확한 길 GAS 를 안 지음 (SIM_EXACT=1 로 Env 를 만들 것)");
   p.gas = p.fast ? I.gas_fast : I.gas;
   p.tris = I.tris;
+  p.tris2 = I.tris2;
+  p.nb = I.nb;
   if (p.n <= 0) return;
   // 발사 인자는 prog 마다 장치 칸 하나에 둔다. 시뮬 걸음의 발사(prog 1 ~ 4)는 인자가 Env 하나 동안 안 바뀌므로 처음 한 번만 올린다
   // (전에는 발사마다 페이지 메모리 → 장치 복사 한 번 — 걸음마다 4 번, 호스트가 복사를 기다림. CUDA 그래프 캡처도 막았음)

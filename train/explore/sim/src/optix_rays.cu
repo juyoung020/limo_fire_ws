@@ -13,6 +13,18 @@ struct Hit {
   int tri;   // 삼각형 번호, 사람 −2 − k, 못 맞음 −1
 };
 
+// 맵 m 의 번호 i 삼각형 (덧붙인 형상이면 nb 뒤는 덧 삼각형 — scene.h tri_at 과 같은 번호)
+__forceinline__ __device__ sim::Tri rt_tri(int m, int i) {
+  const void* t2 = params.tris2 ? params.tris2[m] : nullptr;
+  const int nb = params.nb ? params.nb[m] : 0x7fffffff;
+  return (t2 && i >= nb) ? sim::load_tri((const sim::Tri*)t2, i - nb) : sim::load_tri((const sim::Tri*)params.tris[m], i);
+}
+// 인스턴스(0 바탕 · 1 덧)의 맞은 원시 번호 → 맵 안 삼각형 번호. 덧붙인 형상이 없는 맵(GAS 하나)은 인스턴스 번호를 안 읽는다 (IAS 밖에서는 값이 정해지지 않음)
+__forceinline__ __device__ int rt_index(int m, int prim) {
+  const void* t2 = params.tris2 ? params.tris2[m] : nullptr;
+  return (t2 && optixGetInstanceId() == 1u) ? params.nb[m] + prim : prim;
+}
+
 // 광선 하나: best·best_tri = 사람 원기둥까지 본 답(없으면 tmax, −1) — scene.h trav_init 과 같은 시작
 __forceinline__ __device__ Hit trace_best(int m, sim::V3 o, sim::V3 d, float best, int best_tri) {
   unsigned int p0 = __float_as_uint(best), p1 = (unsigned)best_tri, p2 = (unsigned)m;
@@ -25,7 +37,7 @@ __forceinline__ __device__ Hit trace_best(int m, sim::V3 o, sim::V3 d, float bes
     const int tri = (int)p1;
     float t = __uint_as_float(p0);
     if (tri >= 0) {
-      const float tm = sim::ray_tri(o, d, sim::load_tri((const sim::Tri*)params.tris[m], tri));
+      const float tm = sim::ray_tri(o, d, rt_tri(m, tri));
       if (tm < sim::kInf) t = tm;
     }
     return Hit{tri != -1 ? t : sim::kInf, tri};
@@ -149,11 +161,11 @@ extern "C" __global__ void __raygen__beam_side() {
 extern "C" __global__ void __miss__none() {}
 
 extern "C" __global__ void __intersection__tri() {
-  const int prim = (int)optixGetPrimitiveIndex();
+  const int m = (int)optixGetPayload_2();
+  const int prim = rt_index(m, (int)optixGetPrimitiveIndex());   // 맵 안 번호 (덧 삼각형은 nb 뒤 — 동점 규칙이 바탕 먼저)
   const sim::V3 o{__uint_as_float(optixGetPayload_3()), __uint_as_float(optixGetPayload_4()), __uint_as_float(optixGetPayload_5())};
   const sim::V3 d{__uint_as_float(optixGetPayload_6()), __uint_as_float(optixGetPayload_7()), __uint_as_float(optixGetPayload_8())};
-  const sim::Tri* tris = (const sim::Tri*)params.tris[optixGetPayload_2()];
-  const float t = sim::ray_tri(o, d, sim::load_tri(tris, prim));
+  const float t = sim::ray_tri(o, d, rt_tri(m, prim));
   const float best = __uint_as_float(optixGetPayload_0());
   const int bt = (int)optixGetPayload_1();
   if (t < best || (t == best && bt >= 0 && prim < bt)) {   // scene.h trav_tri 와 같은 규칙
@@ -166,5 +178,5 @@ extern "C" __global__ void __intersection__tri() {
 // 빠른 길: 하드웨어가 고른 가장 가까운 삼각형
 extern "C" __global__ void __closesthit__tri() {
   optixSetPayload_0(__float_as_uint(optixGetRayTmax()));
-  optixSetPayload_1((unsigned)optixGetPrimitiveIndex());
+  optixSetPayload_1((unsigned)rt_index((int)optixGetPayload_2(), (int)optixGetPrimitiveIndex()));
 }

@@ -67,7 +67,7 @@ DEV void depth_hole_probs(const SceneView& s, const DepthModel& M, V3 d, float z
   if (tri < -1) {
     *p_flat = M.other_hole;   // 사람: 바닥이 아닌 면 구멍 비율 (옷 재질은 아직 못 잼 📏)
   } else {
-    const Tri& T = s.tris[tri];
+    const Tri& T = tri_at(s, tri);
     const V3 nrm = cross(sub(T.b, T.a), sub(T.c, T.a));
     const float nn = sqrtf(dot(nrm, nrm));
     if (dm::absf(nrm.z) > 0.9f * nn) {   // 바닥 (수평 면)

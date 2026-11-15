@@ -166,7 +166,7 @@ void write_ppm(const sim::World& w, const std::vector<uint8_t>& lid, const std::
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string env_path = SIM_CONFIG_DIR "/env.yaml", in, out, boxes_path, ppm;
+  std::string env_path = SIM_CONFIG_DIR "/env.yaml", in, out, overlay, boxes_path, ppm;
   int sc = 4;
   float max_lost = 3.0f;
   int n_random = 0;
@@ -176,6 +176,7 @@ int main(int argc, char** argv) {
     if (a == "--env" && i + 1 < argc) env_path = argv[++i];
     else if (a == "--in" && i + 1 < argc) in = argv[++i];
     else if (a == "--out" && i + 1 < argc) out = argv[++i];
+    else if (a == "--overlay" && i + 1 < argc) overlay = argv[++i];   // 상자만 든 덧 장면도 씀 (목록 줄 "원본.scene+덧.scene" — 집 메시를 맵끼리 나눔)
     else if (a == "--boxes" && i + 1 < argc) boxes_path = argv[++i];
     else if (a == "--ppm" && i + 1 < argc) ppm = argv[++i];
     else if (a == "--ppm-scale" && i + 1 < argc) sc = std::max(1, std::atoi(argv[++i]));
@@ -184,7 +185,7 @@ int main(int argc, char** argv) {
     else if (a == "--seed" && i + 1 < argc) seed = (unsigned)std::atoi(argv[++i]);
     else { std::fprintf(stderr, "모르는 인자 %s\n", a.c_str()); return 2; }
   }
-  if (in.empty() || ((boxes_path.empty() && n_random <= 0) != out.empty())) {
+  if (in.empty() || ((boxes_path.empty() && n_random <= 0) != (out.empty() && overlay.empty()))) {
     std::fprintf(stderr, "scene_lowobs --in a.scene [--boxes boxes.tsv --out b.scene] [--env env.yaml] [--ppm out.ppm] [--ppm-scale 4] [--max-lost 3.0]\n");
     return 2;
   }
@@ -273,8 +274,20 @@ int main(int argc, char** argv) {
     if (lid_new > 0) throw std::runtime_error("라이다 높이에 새 형상이 생김");
     if (lost > max_lost) throw std::runtime_error("갈 수 있는 바닥이 --max-lost 넘게 줄어듦 — 상자가 길을 통째로 끊음");
     if (!ppm.empty()) write_ppm(w1, lid1, added, res, sc, ppm);
-    sim::save_scene(s, out);
-    std::printf("씀: %s\n", out.c_str());
+    if (!out.empty()) {
+      sim::save_scene(s, out);
+      std::printf("씀: %s\n", out.c_str());
+    }
+    if (!overlay.empty()) {   // 같은 상자만 (바탕 = --in 장면) — 확인은 위 합친 장면으로 이미 함
+      sim::Scene ov;
+      for (const Box& b : boxes) add_box(ov, b);
+      sim::build_bvh(ov);
+      sim::compute_obj_size(ov);
+      ov.start[0] = base.start[0];
+      ov.start[1] = base.start[1];
+      sim::save_scene(ov, overlay);
+      std::printf("덧 장면 씀: %s (삼각형 %zu)\n", overlay.c_str(), ov.tris.size());
+    }
   } catch (const std::exception& e) {
     std::fprintf(stderr, "scene_lowobs: %s\n", e.what());
     return 1;

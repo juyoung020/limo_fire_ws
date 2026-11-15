@@ -15,7 +15,9 @@ namespace sim {
 // 맵 하나: 장면 + 칸 격자 + 시작 칸
 struct World {
   std::string name;
-  Scene scene;
+  Scene scene;                          // 바탕 장면 (덧붙인 형상이 있으면 물체 이름·크기는 덧 물체까지 합친 것)
+  Scene extra;                          // 덧붙인 형상 (2026-11-15 — 목록 줄 "바탕.scene+덧.scene"): 삼각형 번호는 바탕 뒤, 물체 번호는 바탕 물체 뒤로 밀어 둠. 없으면 비어 있음
+  std::string base_key;                 // 장치에서 바탕 삼각형을 맵끼리 나눠 쓰는 열쇠 (바탕 장면 경로 — load_world·목록으로 읽은 맵. 비면 나누지 않음)
   std::vector<uint8_t> grid;            // kCell* 비트 (env.h)
   std::vector<int32_t> spawn;
   std::vector<uint8_t> clear;           // 칸마다 막힌 칸까지 거리 (cm) — 움직이는 사람 (people_host.cpp people_clearance)
@@ -30,6 +32,10 @@ struct World {
 // 장면 → 칸 격자 (env_host.cpp 위 설명). 집이 닫히지 않으면(갈 수 있는 바닥이 맵 테두리에 닿음) require_closed 면 예외,
 // 아니면 closed = false·leak 에 적고 돌려줌 (덮음을 안 쓰는 도구 — 실물 녹화 다시 돌리기처럼 일부만 그린 지도)
 World build_world(const std::string& name, Scene scene, const EnvHostCfg& hc, bool require_closed = true);
+// 바탕 + 덧붙인 형상 (낮은 상자 변형 — 집 메시를 맵끼리 나눔): 격자는 둘을 합친 삼각형으로, 장면은 바탕 · extra 로 나눠 둔다
+World build_world_overlay(const std::string& name, const std::string& base_key, Scene base, Scene extra, const EnvHostCfg& hc, bool require_closed = true);
+// 경로 하나 → 맵 ("바탕.scene+덧.scene" 이면 build_world_overlay, 아니면 build_world). name 이 비면 경로
+World load_world(const std::string& path, const EnvHostCfg& hc, const std::string& name = "", bool require_closed = true);
 
 // 장면 묶음 목록 파일 (env_host.cpp) — 줄마다 장면 하나: 경로(목록 파일 기준 상대·절대) [탭 넓이 탭 벽 칸 탭 등급 …] (S2 list.tsv 꼴,
 // 첫 열이 path 인 머리줄·# 주석·빈 줄 무시). skipped 를 주면 안 닫힌 장면은 버리고 이유를 넣음

@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -222,6 +223,17 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   b_.n_env = n_env;
   b_.n_maps = (int)worlds.size();
   std::vector<MapDev> maps;
+  // RT 코어(OptiX)를 쓰면 장치는 소프트웨어 BVH 마디를 안 읽는다 (광선은 OptiX GAS 가 순회, 삼각형만 교차 프로그램이 읽음) — 마디를 안 올려 장치 메모리를 아낌
+  // (2026-11-15: 학습 맵 648 개에서 마디 약 470 MB). 소프트웨어 순회(SIM_NO_OPTIX · OptiX 없음 · CPU 판)는 그대로 올림
+  bool rt_will = false;
+#ifdef SIM_OPTIX
+  rt_will = gpu_ && !std::getenv("SIM_NO_OPTIX") && OptixRt::available();
+#endif
+  bool any_extra = false;
+  for (const World& w : worlds) any_extra |= !w.extra.tris.empty();
+  if (gpu_ && any_extra && !rt_will) throw std::runtime_error("덧붙인 형상(바탕+덧 장면)은 GPU 에서 RT 코어(OptiX) 길로만 — 소프트웨어 광선 묶음은 안 받음");
+  struct SharedGeo { const Tri* tris; const uint16_t* obj; const Node* nodes; };
+  std::map<std::string, SharedGeo> shared;   // 바탕 장면 경로 → 장치 사본 (같은 집 메시를 맵끼리 나눔)
   for (const World& w : worlds) {
     MapDev m{};
     // BVH 상자를 RT 코어 경로(optix_rt.cpp)와 같게 키움: 1 mm + 상대 1e−5. 상자 반올림으로 ray_tri 가 맞히는 삼각형을 놓치지 않아 답이 (t, 번호) 최소로 정해진다
@@ -232,7 +244,28 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
         nd.lo[q] -= pad;
         nd.hi[q] += pad;
       }
-    m.scene = SceneView{upload(nodes), upload(w.scene.tris), upload(w.scene.obj), upload(w.scene.obj_size)};
+    SharedGeo sh{};
+    auto it = w.base_key.empty() ? shared.end() : shared.find(w.base_key);
+    if (it != shared.end()) {
+      sh = it->second;
+    } else {
+      sh = SharedGeo{upload(w.scene.tris), upload(w.scene.obj), rt_will ? nullptr : upload(nodes)};
+      if (!w.base_key.empty()) shared[w.base_key] = sh;
+    }
+    m.scene = SceneView{sh.nodes, sh.tris, sh.obj, upload(w.scene.obj_size)};
+    m.scene.nb = (int32_t)w.scene.tris.size();
+    if (!w.extra.tris.empty()) {
+      std::vector<Node> n2 = w.extra.nodes;   // 마디 상자를 바탕과 같게 키움
+      for (Node& nd : n2)
+        for (int q = 0; q < 3; ++q) {
+          const float pad = 1e-3f + 1e-5f * std::max(std::fabs(nd.lo[q]), std::fabs(nd.hi[q]));
+          nd.lo[q] -= pad;
+          nd.hi[q] += pad;
+        }
+      m.scene.nodes2 = rt_will ? nullptr : upload(n2);
+      m.scene.tris2 = upload(w.extra.tris);
+      m.scene.obj2 = upload(w.extra.obj);
+    }
     m.grid = upload(w.grid);
     m.spawn = upload(w.spawn);
     m.clear = upload(w.clear);
@@ -357,17 +390,21 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     b_.beam_jobs = alloc<int32_t>(4 * nb);
 #ifdef SIM_OPTIX
     // RT 코어: 맵마다 GAS. 환경 변수 SIM_NO_OPTIX 가 있으면 소프트웨어 순회 (A/B·확인용)
-    if (!std::getenv("SIM_NO_OPTIX") && OptixRt::available()) {
-      std::vector<const Scene*> sc;
-      std::vector<const void*> dt;
+    if (rt_will) {
+      std::vector<const Scene*> sc, sc2;
+      std::vector<const void*> dt, dt2;
       for (size_t i = 0; i < worlds.size(); ++i) {
         sc.push_back(&worlds[i].scene);
-        dt.push_back(maps[i].scene.tris);
+        dt.push_back(maps[i].scene.tris);   // 같은 바탕이면 같은 포인터 — OptixRt 가 GAS 를 하나만 지음
+        sc2.push_back(worlds[i].extra.tris.empty() ? nullptr : &worlds[i].extra);
+        dt2.push_back(maps[i].scene.tris2);
       }
-      rt_ = new OptixRt(sc, dt);
-      b_.rt = rt_;
       const char* ex = std::getenv("SIM_EXACT");
       b_.rt_fast = (ex && std::atoi(ex)) ? 0 : 1;   // 기본 빠른 길(CPU 와 통계로만 같음), SIM_EXACT=1 이면 정확한 길 — Env::ray_path
+      const char* both = std::getenv("SIM_RT_BOTH");   // 두 길을 다 짓기 (rt_fastcheck — 같은 광선을 두 길로 견줌)
+      const bool all = both && std::atoi(both);
+      rt_ = new OptixRt(sc, dt, all || !b_.rt_fast, all || b_.rt_fast, any_extra ? &sc2 : nullptr, any_extra ? &dt2 : nullptr);   // 쓰는 길의 GAS 만 (장치 메모리)
+      b_.rt = rt_;
     }
 #endif
     // 장치 사본 (OptiX raygen 이 읽음). 묶음은 여기서 다 정해지고 그 뒤 안 바뀐다
@@ -525,6 +562,51 @@ void Env::get_terms(std::vector<float>& terms) const { fetch(gpu_, b_.reward_ter
 void Env::get_ep(std::vector<EpInfo>& ep) const { fetch(gpu_, b_.ep, (size_t)b_.n_env, ep); }
 
 // 장면 묶음 목록 (env_api.h 위 설명). 등급(4 번째 열)이 있으면 커리큘럼 단계로.
+World build_world_overlay(const std::string& name, const std::string& base_key, Scene base, Scene extra, const EnvHostCfg& hc, bool require_closed) {
+  if (base.tris.empty() || extra.tris.empty() || base.nodes.empty() || extra.nodes.empty()) throw std::runtime_error(name + ": 바탕·덧 장면이 비었음");
+  const size_t nbo = std::max(base.obj_names.size(), base.obj_size.size());
+  for (uint16_t& o : extra.obj) {
+    if ((size_t)o + nbo >= 0xfffe) throw std::runtime_error(name + ": 물체 번호가 다 참");
+    o = (uint16_t)(o + nbo);
+  }
+  Scene comb;   // 격자 만들기용 (build_world 는 삼각형 · 뿌리 상자 · 출발점만 읽음)
+  comb.tris = base.tris;
+  comb.tris.insert(comb.tris.end(), extra.tris.begin(), extra.tris.end());
+  comb.obj = base.obj;
+  comb.obj.insert(comb.obj.end(), extra.obj.begin(), extra.obj.end());
+  comb.obj_names = base.obj_names;
+  comb.obj_names.resize(nbo);
+  comb.obj_names.insert(comb.obj_names.end(), extra.obj_names.begin(), extra.obj_names.end());
+  Node root = base.nodes[0];
+  for (int q = 0; q < 3; ++q) {
+    root.lo[q] = std::min(root.lo[q], extra.nodes[0].lo[q]);
+    root.hi[q] = std::max(root.hi[q], extra.nodes[0].hi[q]);
+  }
+  comb.nodes = {root};
+  comb.start[0] = base.start[0];
+  comb.start[1] = base.start[1];
+  compute_obj_size(comb);
+  World w = build_world(name, comb, hc, require_closed);
+  base.obj_names = comb.obj_names;
+  base.obj_size = comb.obj_size;   // 맞은 물체 번호(합친 번호)로 읽는 크기
+  w.scene = std::move(base);
+  w.extra = std::move(extra);
+  w.base_key = base_key;
+  return w;
+}
+
+World load_world(const std::string& path, const EnvHostCfg& hc, const std::string& name, bool require_closed) {
+  const std::string nm = name.empty() ? path : name;
+  const size_t plus = path.find(".scene+");
+  if (plus == std::string::npos) {   // 바탕 열쇠 = 경로 — 같은 집을 바탕으로 쓰는 덧붙인 형상 맵과 장치 사본을 나눔
+    World w = build_world(nm, load_scene(path), hc, require_closed);
+    w.base_key = path;
+    return w;
+  }
+  const std::string bp = path.substr(0, plus + 6), xp = path.substr(plus + 7);
+  return build_world_overlay(nm, bp, load_scene(bp), load_scene(xp), hc, require_closed);
+}
+
 std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCfg& hc, std::vector<std::string>* skipped) {
   std::ifstream f(list_file);
   if (!f) throw std::runtime_error(list_file + ": 장면 목록을 못 엶");
@@ -553,6 +635,12 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
     if (col.empty() || col[0].empty() || col[0] == "path") continue;
     std::string p = col[0];
     if (p[0] != '/') p = dir + p;
+    const size_t plus = p.find(".scene+");   // 바탕.scene+덧.scene (덧 경로도 목록 기준 상대)
+    if (plus != std::string::npos) {
+      std::string q = p.substr(plus + 7);
+      if (!q.empty() && q[0] != '/') q = dir + q;
+      p = p.substr(0, plus + 6) + "+" + q;
+    }
     items.push_back({p, (col.size() > 3 && !col[3].empty()) ? std::stoi(col[3]) : -1});
   }
   // 장면마다 읽기·BVH·격자 만들기는 서로 독립 → 호스트 스레드로 나눠 만든다 (맵 520 개에 한 줄로 ~25 s 걸리던 시작 시간).
@@ -564,7 +652,7 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
     auto work = [&]() {
       for (size_t k; (k = next.fetch_add(1)) < items.size();) {
         try {
-          built[k].reset(new World(build_world(items[k].path, load_scene(items[k].path), hc)));
+          built[k].reset(new World(load_world(items[k].path, hc)));
           if (items[k].stage >= 0) built[k]->stage = std::max(0, std::min(mdp::cur::kNumStages - 1, items[k].stage));
         } catch (const std::exception& ex) {
           errs[k] = ex.what();
