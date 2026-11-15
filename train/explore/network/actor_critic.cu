@@ -772,7 +772,7 @@ ACSpec explore_spec_hier() {
   return s;
 }
 
-ACSpec explore_spec_low(bool wide, int gru_h) {
+ACSpec explore_spec_low(bool wide, int gru_h, int d1d) {
   namespace o = mdp::obs;
   namespace l = mdp::low;
   ACSpec s;
@@ -788,7 +788,7 @@ ACSpec explore_spec_low(bool wide, int gru_h) {
   e.out = 0;
   s.enc = e;
   NetSpec a;
-  a.in1d = l::N1D;
+  a.in1d = d1d > 0 ? d1d : l::N1D;
   a.hidden = {256, 128, 64};   // 잠정 — 위층 MLP 의 반 (10 Hz 로 도는 쪽, network/README "아래층")
   a.out = l::ACT;
   NetSpec c = a;

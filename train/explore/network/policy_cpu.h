@@ -372,7 +372,7 @@ class LowPolicy {
       blk_[nm].assign(p.begin() + off, p.begin() + off + n);
       off += n;
     }
-    if (D < mdp::low::N1D) throw std::runtime_error("정규화 차원 < 아래층 1D");
+    if (D != mdp::low::N1D) throw std::runtime_error("정규화 차원이 아래층 1D(N1D) 와 다름 — 움직이는 것 칸 넷(N1D_MOV4) 정책은 실물 노드가 아직 관측을 안 만듦");
     if (!blk_.count("actor.gru.wh") || !blk_.count("enc.cnn3.conv0.w"))
       throw std::runtime_error("넓은 지도 가지·순환 핵 아래층 체크포인트가 아님 (train --low --gru, SIM_LOW_WIDE=1): " + path);
     H_ = (int)(blk_.at("actor.gru.bh").size() / 3);

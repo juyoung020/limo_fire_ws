@@ -91,6 +91,7 @@ struct EnvCfg {
   int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
   float lr_goal_dmin, lr_goal_dmax;   // 자동 목표 직선 거리 띠 (m — low_rl.h lowrl_goal_probe). 기본 kLrGoalD2 · kLrGoalDMax, 학습 커리큘럼이 Env::set_goal_band 로 바꿈
   int lo_cam_every;              // 깊이 카메라 장애물 층을 걸음마다 (SIM_LOW_CAM_EVERY, 기본 0 = 계획 주기 low_period 마다 — 옛 동작). 실물은 카메라 29 Hz 로 층을 갱신 (Nav2 VoxelLayer)
+  int lo_mov4;                   // 움직이는 것 칸 넷 (SIM_LOW_MOV4, 기본 0 — 1D 크기 kLow1d 그대로). 켜면 kLow1dMov4
   int lo_wide;                   // 넓은 지도 (SIM_LOW_WIDE, 기본 0): 아래층 그림 뒤에 로봇 지도 25.6 m 창 6 × 64 × 64 (low_task.h kLowWideOff, low_rl.h lowrl_wide)
   float lr_time_k;               // 시간 벌점 (걸음마다, low_rl.h kLrTimeK — SIM_LR_TIME_K 로 덮음)
   int lo_goal_term;              // 목표 하나 = 가치의 한 판 (SIM_LOW_GOAL_TERM, 기본 0 — 옛 동작: 판 끝까지 이어 부트스트랩)

@@ -134,6 +134,10 @@ constexpr int WIDE_C = 6, WIDE_HW = 64;
 constexpr int WIDE_OFF = IMG;
 constexpr int IMG_WIDE = WIDE_OFF + WIDE_C * WIDE_HW * WIDE_HW;   // 52736
 constexpr int N1D = 32;
+// 움직이는 것 칸 넷 (2026-11-15, 켤 때만 — SIM_LOW_MOV4=1, sim low_rl.h lowrl_pack): 1D 뒤에 칸마다 6 (있음 · 거리 · sin · cos · 속도 앞 · 왼쪽),
+// 가장 가까워질 때 간격이 작은 차례 (2 s 앞까지). 옛 칸(kLoMov, 가장 가까운 하나)은 그대로 — 끄면 1D 크기 N1D 그대로
+constexpr int MOV_SLOTS = 4, MOV_W = 6;
+constexpr int N1D_MOV4 = N1D + MOV_SLOTS * MOV_W;   // 56
 constexpr int CONT = 2;        // v, ω (옆 이동 없음)
 constexpr int ACT = CONT + 1;  // 신경망 출력 폭 (끝 칸 = 선언 로짓 자리)
 // 채널 값 꼴 (2026-11-15, 학습 롤아웃 그림을 줄여 담을 때 — ppo/README "롤아웃 그림 줄여 담기"): 0 = 아무 u8 값, 1 = 0 또는 255 만, 2 = 늘 0.

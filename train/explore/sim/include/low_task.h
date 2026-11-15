@@ -194,7 +194,9 @@ enum : int32_t {
   kLoRem = 23,         // 남은 경로 길이 / kLrGoalNorm
   kLoHasGoal = 24,     // 목적지 있음 0·1
   kLoMov = 25,         // (EnvCfg::lo_mov, 기본 꺼짐 = 0) 가장 가까운 움직이는 것: 있음 0·1, 거리 / 4 m, sin, cos, 속도 앞·왼쪽 성분 / 1.6 m/s
-  kLow1d = mdp::low::N1D          // 뒤는 예약 (0)
+  kLow1d = mdp::low::N1D,         // 뒤는 예약 (0)
+  kLoMov4 = mdp::low::N1D,        // (EnvCfg::lo_mov4) 움직이는 것 칸 넷 — 칸마다 kLoMov 와 같은 6 칸, 가장 가까워질 때 간격 차례
+  kLow1dMov4 = mdp::low::N1D_MOV4
 };
 
 }  // namespace sim

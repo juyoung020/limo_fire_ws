@@ -354,7 +354,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.map_eps = alloc<int32_t>((size_t)b_.n_maps);   // 맵 뽑기 우선순위 통계 (set_map_cdf 를 안 부르면 쓰이기만 하고 뽑기는 고르게)
       b_.map_hit = alloc<int32_t>((size_t)b_.n_maps);
       b_.low_img = alloc<uint8_t>((size_t)(b_.cfg.lo_wide ? kLowImgWide : kLowImg) * n_env);
-      b_.low_1d = alloc<float>((size_t)kLow1d * n_env);
+      b_.low_1d = alloc<float>((size_t)(b_.cfg.lo_mov4 ? kLow1dMov4 : kLow1d) * n_env);
       b_.low_vdone = alloc<int32_t>((size_t)n_env);
       if (b_.cfg.lo_wide) b_.low_wred = alloc<uint32_t>((size_t)(b_.cfg.size / 4) * (b_.cfg.size / 4) * n_env);
     }
@@ -520,7 +520,7 @@ void Env::get_low_rl(std::vector<LowRl>& out) const {
 void Env::get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const {
   if (!b_.lowrl) { img.clear(); o1d.clear(); return; }
   fetch(gpu_, b_.low_img, (size_t)(b_.cfg.lo_wide ? kLowImgWide : kLowImg) * b_.n_env, img);
-  fetch(gpu_, b_.low_1d, (size_t)kLow1d * b_.n_env, o1d);
+  fetch(gpu_, b_.low_1d, (size_t)(b_.cfg.lo_mov4 ? kLow1dMov4 : kLow1d) * b_.n_env, o1d);
 }
 void Env::take_map_stats(std::vector<int32_t>& eps, std::vector<int32_t>& hit) {
   if (!b_.map_eps) { eps.clear(); hit.clear(); return; }

@@ -331,7 +331,7 @@ int run_low(Args a) {
   env.sync();
   std::vector<sim::World> tests;
   for (auto& t : a.test) tests.push_back(sim::build_world(stem(t), sim::load_scene(t), hc));
-  const xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0, a.gru);   // --gru H: actor·critic 순환 핵 (은닉 H, 0 = 끔)
+  const xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0, a.gru, c.lo_mov4 ? mdp::low::N1D_MOV4 : mdp::low::N1D);   // --gru H: actor·critic 순환 핵 (은닉 H, 0 = 끔)
   cudaMemGetInfo(&mem_f1, &mem_t);
   xppo::PPO ppo(pc, spec, a.seed);
   cudaMemGetInfo(&mem_f2, &mem_t);

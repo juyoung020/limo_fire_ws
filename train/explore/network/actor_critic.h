@@ -201,7 +201,7 @@ ACSpec explore_spec();
 ACSpec explore_spec_hier();
 // 아래층 RL 구조 (obs_layout.h mdp::low): 가까운 지도·라이다 그림·깊이 CNN 가지 3 개(위층과 같은 꼴) + MLP [256, 128, 64], 연속 행동 2 (v, ω)
 // wide = true (SIM_LOW_WIDE=1): 넷째 가지 = 넓은 지도 6 × 64 × 64 (가까운 지도와 같은 꼴, 평탄화 512 — MLP 첫 층 입력이 그만큼 늘어남), 그림 간격 IMG_WIDE
-ACSpec explore_spec_low(bool wide = false, int gru_h = 0);
+ACSpec explore_spec_low(bool wide = false, int gru_h = 0, int d1d = 0);   // d1d: 1D 칸 수 (0 = mdp::low::N1D, 움직이는 것 칸 넷이면 N1D_MOV4)
 // 그래프 어텐션 구조 (obs_layout.h mdp::graph): HEADER 크기 (d 128, 인코더 6 층, 머리 8), 전역 벡터 GLOB, 가치 머리 MLP [128] (잠정)
 ACSpec explore_spec_graph();
 

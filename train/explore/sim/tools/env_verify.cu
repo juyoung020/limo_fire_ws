@@ -121,8 +121,9 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     mark(br, bad_rl, t);
     mark(bc, bad_cmd, t);
     for (int i = 0; i < n_env; ++i) {
-      const float* O = &lc1[(size_t)i * sim::kLow1d];
-      for (int k = 0; k < sim::kLow1d; ++k) {
+      const int n1 = (int)(lc1.size() / n_env);   // kLow1d · 움직이는 것 칸 넷이면 kLow1dMov4
+      const float* O = &lc1[(size_t)i * n1];
+      for (int k = 0; k < n1; ++k) {
         const float v = O[k];
         if (!std::isfinite(v)) { ++n_nan; continue; }
         float lo = -1.f, hi = 1.f;   // sin·cos·직전 행동
@@ -130,6 +131,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
         else if (k < sim::kLoAct) { if ((k - sim::kLoSub) % 3 == 0) lo = 0.f; }
         else if (k >= sim::kLoHasPath && k <= sim::kLoHasGoal) lo = 0.f;
         else if (k >= sim::kLoMov && k < sim::kLoMov + 6) { if (k <= sim::kLoMov + 1) lo = 0.f; }   // 움직이는 것 (EnvCfg::lo_mov — 끄면 0): 있음·거리는 0 ~ 1
+        else if (k >= sim::kLoMov4) { if ((k - sim::kLoMov4) % mdp::low::MOV_W <= 1) lo = 0.f; }   // 움직이는 것 칸 넷: 있음·거리 0 ~ 1
         else if (k > sim::kLoHasGoal) lo = hi = 0.f;
         if (v < lo || v > hi) {
           if (!bad_range) std::printf("범위 밖: 걸음 %d 환경 %d 숫자 칸 %d 값 %g (허용 %g~%g)\n", t, i, k, v, lo, hi);
@@ -188,7 +190,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     for (int i = 0; i < n_env; ++i) {
       float* q = &act[(size_t)A * i];
       for (int k = 0; k < A; ++k) q[k] = 0.f;
-      const float* O = &lc1[(size_t)i * sim::kLow1d];
+      const float* O = &lc1[(size_t)i * (lc1.size() / n_env)];
       if (host && i % 3 != 0) { q[0] = i % 3 == 1 ? 0.f : (float)(dm::splitmix64(rng) % (uint64_t)mdp::hier::K); continue; }
       if ((i / (host ? 3 : 1)) % 2 == 0 && O[sim::kLoHasPath] > 0.5f) {
         const float ang = std::atan2(O[sim::kLoSub + 1], O[sim::kLoSub + 2]);

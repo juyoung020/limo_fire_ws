@@ -738,6 +738,8 @@ DEV uint8_t lowrl_img(const EnvBatch& b, const EnvState& e, int env, int i) {
 }
 // 환경 하나 그림 바이트 수 (넓은 지도를 켜면 뒤에 붙음)
 DEV int low_img_n(const EnvCfg& c) { return c.lo_wide ? kLowImgWide : kLowImg; }
+// 환경 하나 1D 칸 수 (움직이는 것 칸 넷을 켜면 뒤에 붙음)
+DEV int low_1d_n(const EnvCfg& c) { return c.lo_mov4 ? kLow1dMov4 : kLow1d; }
 // 넓은 지도 1 단계 — 줄인 판 칸 하나 (k = 행 · (size/4) + 열): 로봇 지도 4 × 4 칸(0.2 m)을 모아 b.low_wred 에 32 비트로
 //   비트 0~15 아는 칸 로그 오즈 최댓값 + 32768 (모두 모름이면 0) · 16~20 아는 빈 칸 수(로그 오즈 < 0) · 21~25 모름 칸 수(맵 밖 포함) · 26 지나간 곳 · 27 깊이 카메라 장애물
 // 지도 줄 차례로 읽어(이웃 스레드 = 이웃 칸) 빠르다. 로봇 지도·지나간 곳·카메라 층만 (시뮬 정답 없음)
@@ -822,9 +824,10 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
     R.g_len = t.rem;
     if (b.lowcmd[env].follow == 2) b.lowstat[env].goals += 1;
   }
-  float* O = b.low_1d + (size_t)env * kLow1d;
+  const int n1d = low_1d_n(b.cfg);
+  float* O = b.low_1d + (size_t)env * n1d;
   const float* V = b.obs_1d + (size_t)env * b.o1d + mdp::obs::LIDAR + mdp::obs::INTENSITY;
-  for (int k = 0; k < kLow1d; ++k) O[k] = 0.f;
+  for (int k = 0; k < n1d; ++k) O[k] = 0.f;
   O[kLoWheelV] = V[mdp::obs::WHEEL_V];
   O[kLoGyro] = V[mdp::obs::GYRO_Z];
   O[kLoSlip] = V[mdp::obs::SLIP];
@@ -875,6 +878,31 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
       rel(M[bi].x, M[bi].y, kLrClusRange, O + kLoMov + 1);
       O[kLoMov + 4] = dm::clampf((co * M[bi].vx + s * M[bi].vy) / kLrMovVNorm, -1.f, 1.f);   // 로봇 앞쪽 성분
       O[kLoMov + 5] = dm::clampf((co * M[bi].vy - s * M[bi].vx) / kLrMovVNorm, -1.f, 1.f);   // 로봇 왼쪽 성분
+    }
+    if (b.cfg.lo_mov4 && nm > 0) {   // 움직이는 것 칸 넷: 2 s 앞까지 가장 가까워질 때 간격(몸통 반 길이 원 − 덩어리 반지름) 작은 차례, 같으면 그때까지 시간 · 번호
+      float s, co;
+      dm::sincosf_d(pth, &s, &co);
+      const float rvx = e.drive.wv * co, rvy = e.drive.wv * s;
+      float key[kLrMovers];
+      int ord[kLrMovers];
+      for (int i = 0; i < nm; ++i) {
+        const float qx = M[i].x - px, qy = M[i].y - py, ux = M[i].vx - rvx, uy = M[i].vy - rvy, u2 = ux * ux + uy * uy;
+        float tc = 0.f;
+        if (u2 > 1e-6f) tc = dm::clampf(-(qx * ux + qy * uy) / u2, 0.f, 2.f);
+        const float cx = qx + ux * tc, cy = qy + uy * tc;
+        key[i] = (sqrtf(cx * cx + cy * cy) - M[i].r - b.cfg.half_len) + 0.01f * tc;
+        ord[i] = i;
+      }
+      for (int i = 1; i < nm; ++i)   // 삽입 정렬 (같은 열쇠는 번호 차례 — 결정적)
+        for (int j = i; j > 0 && key[ord[j]] < key[ord[j - 1]]; --j) { const int t2 = ord[j]; ord[j] = ord[j - 1]; ord[j - 1] = t2; }
+      for (int k = 0; k < mdp::low::MOV_SLOTS && k < nm; ++k) {
+        const LrMover& m = M[ord[k]];
+        float* P = O + kLoMov4 + mdp::low::MOV_W * k;
+        P[0] = 1.f;
+        rel(m.x, m.y, kLrClusRange, P + 1);
+        P[4] = dm::clampf((co * m.vx + s * m.vy) / kLrMovVNorm, -1.f, 1.f);
+        P[5] = dm::clampf((co * m.vy - s * m.vx) / kLrMovVNorm, -1.f, 1.f);
+      }
     }
   }
 }

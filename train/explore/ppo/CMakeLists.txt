@@ -65,3 +65,5 @@ add_executable(gru_check ${NET_DIR}/tools/gru_check.cu ${NET_DIR}/tools/gru_chec
 target_link_libraries(gru_check explore_net gru_check64)
 # 아래층 체크포인트에 넓은 지도 가지를 더한다 (GPU 안 씀, 꼬리 0 — 처음 정책 = 옛 정책. ppo/README "넓은 지도 가지")
 add_executable(ckpt_add_wide tools/ckpt_add_wide.cpp)
+# 아래층 체크포인트 1D 뒤에 0 칸 더하기 (움직이는 것 칸 넷 — 처음 정책 그대로, ppo/README "1D 칸 더하기")
+add_executable(ckpt_add_1d tools/ckpt_add_1d.cpp)
