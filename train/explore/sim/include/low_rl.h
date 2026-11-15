@@ -10,6 +10,7 @@
 //           lowrl_pack       정책 관측 (low_img · low_1d) — 방금 짠 경로 기준
 // 준비 단계는 low_auto 면 env.step·reset 이 끝에서 부르고, 아니면 호스트가 LowCmd 를 넣은 뒤 Env::low_prepare 로 부른다 (위층이 1 Hz 로 목적지를 넣는 자리).
 #pragma once
+#include "goal_reach.h"   // 목적지만 목표 뽑기의 갈 수 있음 판 (로봇과 같은 덩어리)
 
 // ---------- 보상 (모두 잠정 — 짧은 학습으로 오르는 것만 확인한 값. 근거·출처는 mdp/README "아래층 RL") ----------
 // 꼴은 Long 외(arXiv 1709.10082, ICRA 2018)의 "목표 쪽 진행 + 도달 + 충돌 + 회전 벌점" 에 근접·후진 항을 더한 것. 진행은 직선 거리 대신
@@ -120,9 +121,14 @@ DEV bool lowrl_goal_new(const EnvBatch& b, int env) {
 // 경로 계획을 이번에 다시 하나: 보통은 lowrl_due 와 같다. 목적지만(SIM_LOW_GOALONLY, 2026-11-15 순수 RL)이면 목표가 새로 들어올 때만 —
 // 그때 한 번 짠 경로는 과제 만들기(로봇 지도에서 갈 수 있는 목표인지 · goal_cell)에만 쓰고, 목표마다 판 끝은 통과·시간·지도 자세 정체·닿음만 (low_step.h low_finish).
 // 깊이 카메라 층은 그대로 lowrl_due 차례마다 (관측이 씀)
+// 목적지만 · 환경이 뽑는 목표(low_auto 1 — 학습)의 정책 환경은 경로를 아예 안 짠다 (2026-11-15): 목표 뽑기가 로봇 덩어리 안 칸만 주므로(goal_reach.h) 갈 수 있음은
+// 이미 보장 — 목표를 받을 때 goal_only_issue 만. 호스트가 주는 목표(low_auto 0 — low_policy_run · combine_run)는 그대로 목표 줄 때 한 번 계획
+// (도구가 경로 있음·경로 길이 구간으로 목표를 거름 — 판 끝에는 안 씀), 규칙 추종 환경은 경로를 따라 몰아야 하므로 늘 lowrl_due 차례
+DEV bool lowrl_go_policy(const EnvBatch& b, int env) { return b.lowrl && b.cfg.lo_goalonly && b.cfg.low_auto == 1 && lowrl_policy(b, env); }
 DEV bool lowrl_replan(const EnvBatch& b, const EnvState& e, int env) {
   if (!lowrl_due(b, e, env)) return false;
-  return !b.lowrl || !b.cfg.lo_goalonly || lowrl_goal_new(b, env);
+  if (lowrl_go_policy(b, env)) return false;
+  return !b.lowrl || !b.cfg.lo_goalonly || lowrl_goal_new(b, env);   // 목적지만 (그 밖): 목표가 새로 들어올 때만
 }
 DEV void lowrl_planned(const EnvBatch& b, const EnvState& e, int env) {
   LowRl& R = b.lowrl[env];
@@ -134,7 +140,8 @@ DEV void lowrl_planned(const EnvBatch& b, const EnvState& e, int env) {
 // ---------- 자동 목표 ----------
 // j 번째 탐침: 아는 칸 상자 안 무작위 칸이 로봇 지도에서 설 수 있고(계획 반경) 깊이 카메라 층에 안 막혔으면 열쇠 (등급 · 난수 · 칸), 아니면 ~0.
 // 가장 작은 열쇠가 목표 — 차례와 무관 (GPU 는 스레드마다 하나씩 atomicMin)
-DEV uint64_t lowrl_goal_probe(const EnvBatch& b, const EnvState& e, int env, int j, mdp::Robot rb) {
+// reach: 목적지만(goal_reach.h)이면 로봇 덩어리 비트 판 [size][fmap_row] — 그 안 칸만 받음 (nullptr = 확인 안 함, 경로 판)
+DEV uint64_t lowrl_goal_probe(const EnvBatch& b, const EnvState& e, int env, int j, mdp::Robot rb, const uint32_t* reach = nullptr) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   if (e.kb_x1 < 0) return ~0ull;
@@ -146,6 +153,7 @@ DEV uint64_t lowrl_goal_probe(const EnvBatch& b, const EnvState& e, int env, int
   const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
   if (!mdp::standable(mdp::MapView{L, c.size, m.gw, m.gh}, x, y, rb)) return ~0ull;
   if (cam_lethal(b, env, x, y)) return ~0ull;
+  if (reach && !((reach[(size_t)y * fmap_row(c) + (x >> 5)] >> (x & 31)) & 1u)) return ~0ull;   // 로봇과 다른 덩어리 (못 감)
   const float dx = m.ox + ((float)x + 0.5f) * c.res - (e.x + e.ex), dy = m.oy + ((float)y + 0.5f) * c.res - (e.y + e.ey);
   const float d2 = dx * dx + dy * dy;
   if (d2 >= kLrGoalDMax * kLrGoalDMax || d2 < kLrGoalD2 * kLrGoalD2) return ~0ull;
@@ -587,7 +595,8 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     if (xm && reached) R.x_paid = 1;
     const bool off = !reached && L.hold != 0;                                   // 경로 끝에 왔는데 통과 반경 밖 (목적지만이면 low_finish 가 안 세움 → 늘 거짓)
     // 경로를 못 짬. 목적지만이면 목표를 받을 때 한 번 짠 계획(lowrl_replan)으로만 — 로봇 지도에서 못 가는 목표를 다시 뽑는 과제 만들기 (판정·보상 아님)
-    const bool nopath = !reached && !off && t.has_goal && !t.has_path;
+    // 목적지만 · 환경이 뽑는 목표는 경로가 없으므로 이 규칙을 안 쓴다 (목표는 뽑을 때 로봇 덩어리 안 — goal_reach.h)
+    const bool nopath = !lowrl_go_policy(b, env) && !reached && !off && t.has_goal && !t.has_path;
     float r[kLrTerms];
     for (int k = 0; k < kLrTerms; ++k) r[k] = 0.f;
     if (R.rem_ok && t.has_path) r[kLrProgress] = kLrProgressK * dm::clampf(R.rem_prev - t.rem, -kLrProgressClip, kLrProgressClip);
