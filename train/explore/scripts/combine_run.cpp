@@ -96,6 +96,7 @@ struct Args {
   std::string rich_w;            // --upper rich 의 가중 "opp=1,ab=1,clear=1,people=1,depth=1,room=1,hyst=0.2" (안 주면 모두 0 = 예상 관측량 ÷ 시간이 가장 큰 후보)
   bool dec_cand_fuel = false;    // --decider-cand fuel: 판단 모델에 fuel 후보(덩어리마다 시점, 수 가변 · 상한 --cand-cap)와 특징 표를 줌
   std::string dec_log;           // --decider-log <폴더>: fuel 후보 결정마다 요청 본문(그림 포함)·후보 특징·라벨(fuel·gpt 최대)·답·로봇 지도 아는 칸 수 — 위층 판단 모델 LoRA 학습 데이터
+  int dec_orders = 1;            // --decider-orders 2: fuel 후보를 거꾸로 차례(글자 다시 붙임, 그림도 다시)로 한 번 더 물어 후보마다 확률을 평균 (선택지 자리 쏠림 줄이기)
   int cand_cap = 16;             // --cand-cap: fuel 후보 상한 (판단 모델 글자 A … 는 26 개까지)
   bool gt_bound = false;         // --gt-bound: 장면마다 정답 격자를 다 아는 순회의 시간 (시뮬 전용 진단 — 정답 지도를 씀, 판에는 안 씀)
   bool rule_cell = false;        // --rule-cell: 규칙 추종기(--policy 없음)에 후보 번호 대신 목표 칸을 줌 (follow 1 — fuel 과 같은 길, slot0 견줌용)
@@ -242,6 +243,7 @@ int run(const Args& a) {
   const bool fcand = upper == kRich || (upper == kDecider && a.dec_cand_fuel);   // fuel 후보 + 특징을 씀
   const RichW rw = parse_rich(a.rich_w);
   if (a.dec_cand_fuel && (upper != kDecider || dec_in != dec::kAll || prune || score || a.dec_finish || !a.video.empty())) throw std::runtime_error("--decider-cand fuel 은 --decider-input all · --decider-mode choice 만 (끝 선언·녹화 없이)");
+  if (a.dec_orders != 1 && (a.dec_orders != 2 || !a.dec_cand_fuel)) throw std::runtime_error("--decider-orders 는 1 · 2 (2 는 --decider-cand fuel 과 같이)");
   if (a.cand_cap < 2 || a.cand_cap > 26) throw std::runtime_error("--cand-cap 은 2 … 26");
   if ((upper == kFuel || fcand) && (!(a.fuel.v_eff > 0.f) || !(a.fuel.w_eff > 0.f) || a.fuel.max_nodes < 1)) throw std::runtime_error("--fuel-v · --fuel-w > 0, --fuel-nodes ≥ 1");
   if (a.rule_cell && use_pol) throw std::runtime_error("--rule-cell 은 --policy 없이 (규칙 추종기)");
@@ -739,6 +741,25 @@ int run(const Args& a) {
           dump[q] = !a.dec_dump.empty() && n_dump < a.dec_dump_n && i < 3 && n_dec[i] % 40 == 5;
           n_dump += dump[q];
         }
+        // 거꾸로 차례 요청 (글자를 거꾸로 다시 붙이고 그림도 다시) — --decider-orders 2 의 두 번째 물음 · --decider-log 의 차례 섞기 증강
+        const auto rev_body = [&](size_t q, std::vector<dec::Cand>& r2) {
+          const int i = askq[q];
+          const sim::EnvState& s = st[i];
+          r2.assign(cs[q].rbegin(), cs[q].rend());
+          std::vector<int> cells2;
+          std::vector<float> wxy2;
+          for (size_t k = 0; k < r2.size(); ++k) {
+            r2[k].key = (char)('A' + k);
+            const int vp = fc[i][r2[k].slot].vp;
+            cells2.push_back(vp % W.gw); cells2.push_back(vp / W.gw);
+            wxy2.push_back(W.ox + ((float)(vp % W.gw) + 0.5f) * c.res); wxy2.push_back(W.oy + ((float)(vp / W.gw) + 0.5f) * c.res);
+          }
+          env.get_map_env(i, lmap);
+          int kb[4] = {s.kb_x0, s.kb_y0, s.kb_x1, s.kb_y1};
+          const std::vector<uint8_t> png2 = dec::render_png(lmap.data(), c.size, W.gw, W.gh, sim::kUnknown, mdp::kOccL, kb, (s.x + s.ex - W.ox) / c.res, (s.y + s.ey - W.oy) / c.res, s.th + s.eth, r2, cells2, a.dec_px);
+          const std::vector<uint8_t> cam2 = dec::render_cam_png(cam, s.x, s.y, s.th, ray, r2, wxy2, nullptr);
+          return dec::build_body_all(dec_mode, a.dec_prompt, r2, cam2, png2, c.cand_v2 != 0, 0, nullptr);
+        };
         const auto w0 = std::chrono::steady_clock::now();
         std::vector<dec::Reply> rep;
         if (dec_none) {   // 서버 없이: 답 = fuel 이 고른 후보 (확률 없음)
@@ -747,6 +768,34 @@ int run(const Args& a) {
             rep[q].ok = true;
             for (size_t k = 0; k < cs[q].size(); ++k) if (fc[askq[q]][cs[q][k].slot].fuel) rep[q].choice = (int)k;
             if (rep[q].choice < 0) rep[q].choice = 0;
+          }
+        } else if (a.dec_orders == 2) {   // 거꾸로 차례 한 번 더: 같은 후보에 글자를 거꾸로 붙이고 그림도 다시 그려 물은 뒤 후보마다 확률 평균
+          std::vector<std::string> b2 = bodies;
+          std::vector<std::vector<dec::Cand>> c2 = cs;
+          b2.resize(2 * askq.size());
+          c2.resize(2 * askq.size());
+          for (size_t q = 0; q < askq.size(); ++q) b2[askq.size() + q] = rev_body(q, c2[askq.size() + q]);
+          const std::vector<dec::Reply> both = client->ask(b2, c2, {}, false, false, 0);
+          rep.assign(both.begin(), both.begin() + askq.size());
+          for (size_t q = 0; q < askq.size(); ++q) {
+            const dec::Reply& r2 = both[askq.size() + q];
+            dec::Reply& r1 = rep[q];
+            const size_t n = cs[q].size();
+            if (!r1.ok && r2.ok) {   // 한쪽만 답: 그 답을 원래 차례로
+              r1 = r2;
+              r1.probs.assign(n, -1.f);
+              for (size_t k = 0; k < n && k < r2.probs.size(); ++k) r1.probs[n - 1 - k] = r2.probs[k];
+              r1.choice = r2.choice >= 0 ? (int)(n - 1 - r2.choice) : -1;
+            } else if (r1.ok && r2.ok && r1.probs.size() == n && r2.probs.size() == n) {
+              int bk = 0;
+              for (size_t k = 0; k < n; ++k) {
+                r1.probs[k] = 0.5f * (r1.probs[k] + r2.probs[n - 1 - k]);
+                if (r1.probs[k] > r1.probs[bk]) bk = (int)k;
+              }
+              r1.choice = bk;
+              r1.p = r1.probs[bk];
+              r1.ms = std::max(r1.ms, r2.ms);
+            }
           }
         } else rep = score ? client->ask(bodies, cs, {}, false, false, SL) : prune ? client->ask(bodies, cs, nq, a.dec_prompt == 2, a.dec_finish) : client->ask(bodies, cs, {}, false, a.dec_finish, a.dec_finish ? LL : 0);
         if (!a.dec_log.empty()) {   // 학습 데이터: 결정마다 한 줄 (요청 본문은 따로 파일)
@@ -758,6 +807,12 @@ int run(const Args& a) {
             const int i = askq[q];
             const std::string rq = W.name + "_s" + std::to_string(a.seed) + "_e" + std::to_string(i) + "_d" + std::to_string(n_dec[i]) + ".request.json";
             dec::write_file(a.dec_log + "/" + rq, bodies[q].data(), bodies[q].size());
+            {   // 차례 섞기 증강: 거꾸로 차례 요청도 (정답 번호는 n − 1 − 원래)
+              std::vector<dec::Cand> r2;
+              const std::string b2 = rev_body(q, r2);
+              const std::string rq2 = rq.substr(0, rq.size() - 13) + ".rev.request.json";
+              dec::write_file(a.dec_log + "/" + rq2, b2.data(), b2.size());
+            }
             int lf = -1;
             for (size_t k = 0; k < cs[q].size(); ++k) if (fc[i][cs[q][k].slot].fuel) lf = (int)k;
             std::fprintf(dlog, "{\"scene\":\"%s\",\"seed\":%llu,\"env\":%d,\"dec\":%d,\"step\":%d,\"t_s\":%.1f,\"known_cells\":%ld,\"request\":\"%s\",\"n\":%zu,\"label_fuel\":%d,\"label_gpt\":0,\"model\":%d,\"probs\":[",
@@ -1505,6 +1560,7 @@ int main(int argc, char** argv) {
       else if (k == "--decider-cand") { const std::string v = nx(); if (v != "fuel" && v != "sim") throw std::runtime_error("--decider-cand fuel|sim"); a.dec_cand_fuel = v == "fuel"; }
       else if (k == "--cand-cap") a.cand_cap = std::stoi(nx());
       else if (k == "--decider-log") a.dec_log = nx();
+      else if (k == "--decider-orders") a.dec_orders = std::stoi(nx());
       else if (k == "--gt-tile") a.rule.tile_m = std::stof(nx());
       else if (k == "--branch-dec") a.br_dec = std::stoi(nx());
       else if (k == "--branch-k") a.br_k = std::stoi(nx());
