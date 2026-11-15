@@ -2,6 +2,7 @@
 // 층 계산은 llama.cpp src/models/lfm2.cpp (graph) · lfm-base.cpp build_lfm_shortconv · build_lfm_dense_ffn 과 같게 (d1_ref.h).
 #pragma once
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>

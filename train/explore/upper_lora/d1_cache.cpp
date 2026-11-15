@@ -50,7 +50,7 @@ std::string slurp(const std::string& p) { std::ifstream f(p, std::ios::binary); 
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string model, mmproj, out, list;
+  std::string model, mmproj, out, list, lora;   // --lora: LoRA GGUF 를 켜고 돌림 (lora_export 결과 확인용 — 은닉은 28 층 입력이라 LoRA 와 무관, 로짓만 달라짐)
   std::vector<std::string> reqs;
   std::vector<int> tgt;
   int ngl = 99, nctx = 8192;
@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     else if (k == "--mmproj") mmproj = argv[++i];
     else if (k == "--out") out = argv[++i];
     else if (k == "--list") list = argv[++i];
+    else if (k == "--lora") lora = argv[++i];
     else if (k == "-ngl") ngl = std::stoi(argv[++i]);
     else if (k == "-c") nctx = std::stoi(argv[++i]);
     else reqs.push_back(k);
@@ -89,6 +90,11 @@ int main(int argc, char** argv) {
   cp.cb_eval = cb_eval;
   cp.cb_eval_user_data = &cap;
   llama_context* ctx = llama_init_from_model(m, cp);
+  if (!lora.empty()) {
+    llama_adapter_lora* ad = llama_adapter_lora_init(m, lora.c_str());
+    float sc = 1.f;
+    if (!ad || llama_set_adapters_lora(ctx, &ad, 1, &sc) != 0) { std::fprintf(stderr, "LoRA 를 못 붙임\n"); return 1; }
+  }
   mtmd_context_params mcp = mtmd_context_params_default();
   mcp.use_gpu = ngl > 0;
   mcp.media_marker = get_media_marker();   // 서버와 같은 표지 (server-context.cpp)

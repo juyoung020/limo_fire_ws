@@ -3,9 +3,25 @@
 #include <cstring>
 #include "d1_ref.h"
 int main(int argc, char** argv) {
-  if (argc < 3) { std::fprintf(stderr, "head_check model.gguf cache.bin\n"); return 2; }
+  if (argc < 3) { std::fprintf(stderr, "head_check model.gguf cache.bin [adapter.bin]\n"); return 2; }
   d1::Gguf G(argv[1]);
   const d1::Weights W = d1::load(G);
+  d1::Lora lo;   // 선택: lora_train 어댑터 (llama.cpp 가 --lora 로 낸 로짓과 견줌)
+  if (argc > 3) {
+    std::FILE* fa = std::fopen(argv[3], "rb");
+    float alpha;
+    if (!fa || std::fread(&lo.r, 4, 1, fa) != 1 || std::fread(&alpha, 4, 1, fa) != 1) { std::fprintf(stderr, "어댑터를 못 읽음\n"); return 1; }
+    lo.scale = alpha / lo.r;
+    for (int l = 0; l < 2; ++l) for (int m = 0; m < d1::kMats; ++m) {
+      int on = 0;
+      if (std::fread(&on, 4, 1, fa) != 1) return 1;
+      if (!on) continue;
+      std::vector<float> a((size_t)lo.r * d1::mat_in(m)), b((size_t)d1::mat_out(m) * lo.r);
+      if (std::fread(a.data(), 4, a.size(), fa) != a.size() || std::fread(b.data(), 4, b.size(), fa) != b.size()) return 1;
+      lo.A[l][m].assign(a.begin(), a.end()); lo.B[l][m].assign(b.begin(), b.end());
+    }
+    std::fclose(fa);
+  }
   std::FILE* f = std::fopen(argv[2], "rb");
   double worst = 0;
   int ns = 0, agree = 0;
@@ -18,7 +34,7 @@ int main(int argc, char** argv) {
     std::vector<uint32_t> grp(no); std::vector<int32_t> tok(nt); std::vector<float> lg(nt), h((size_t)d1::kT * d1::kD);
     if (std::fread(grp.data(), 4, no, f) != no || std::fread(tok.data(), 4, nt, f) != nt || std::fread(lg.data(), 4, nt, f) != nt || std::fread(h.data(), 4, h.size(), f) != h.size()) break;
     const std::vector<float> E = d1::head_rows(G, std::vector<int>(tok.begin(), tok.end()));
-    const std::vector<double> me = d1::logits(W, nullptr, h.data(), E, (int)nt);
+    const std::vector<double> me = d1::logits(W, lo.r > 0 ? &lo : nullptr, h.data(), E, (int)nt);
     double md = 0;
     for (uint32_t k = 0; k < nt; ++k) md = std::max(md, std::fabs(me[k] - lg[k]));
     // 선택지 점수 = 묶음 최댓값 → 고른 것 비교
