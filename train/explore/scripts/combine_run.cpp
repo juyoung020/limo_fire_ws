@@ -101,7 +101,8 @@ struct Args {
   int cand_cap = 16;             // --cand-cap: fuel 후보 상한 (판단 모델 글자 A … 는 26 개까지)
   bool gt_bound = false;         // --gt-bound: 장면마다 정답 격자를 다 아는 순회의 시간 (시뮬 전용 진단 — 정답 지도를 씀, 판에는 안 씀)
   bool rule_cell = false;        // --rule-cell: 규칙 추종기(--policy 없음)에 후보 번호 대신 목표 칸을 줌 (follow 1 — fuel 과 같은 길, slot0 견줌용)
-  int br_dec = -1, br_k = 0;     // --branch-dec d --branch-k k: 환경마다 d 째 결정에서 유효 후보 k 째를 골라 도착·포기까지 붙듦 (나머지는 위층 규칙 그대로) — 갈래 굴리기 (상한 측정, slot0 만)
+  int br_dec = -1, br_k = 0;
+  uint64_t br_reseed = 0;        // --branch-reseed r (> 0): 갈래를 딴 결정에서 그 환경의 난수 상태를 r 로 섞음 — 같은 결정 상태에서 뒤만 다른 우연(센서 잡음·바닥·사람)으로 여러 번 굴리기     // --branch-dec d --branch-k k: 환경마다 d 째 결정에서 유효 후보 k 째를 골라 도착·포기까지 붙듦 (나머지는 위층 규칙 그대로) — 갈래 굴리기 (상한 측정, slot0 만)
   std::string dec_url, dec_input = "text", dec_dump;
   int dec_prompt = 1, dec_timeout_ms = 10000, dec_parallel = 16, dec_px = 384, dec_dump_n = 6;
   bool dec_shuffle = false;
@@ -1089,6 +1090,12 @@ int run(const Args& a) {
             fmem[i].vp = fc[i][kk].vp; fmem[i].anc = fc[i][kk].anc;
             br_until[i] = s.step + (int)std::lround(30.0 / dt);
             br_app[i] = 1; br_k_used[i] = kk; br_n[i] = (int)fc[i].size(); br_fuelk[i] = -1;
+            if (a.br_reseed > 0) {   // 뒤의 우연만 바꿈 (그 앞 궤적은 같은 씨앗이라 같음)
+              sim::EnvState s2 = st[i];
+              s2.rng = mix(s2.rng ^ mix(a.br_reseed * 0x9e3779b97f4a7c15ull + (uint64_t)i));
+              env.set_state(i, s2);
+              st[i].rng = s2.rng;
+            }
             for (size_t k = 0; k < fc[i].size(); ++k) if (fc[i][k].fuel) br_fuelk[i] = (int)k;
           }
         } else if (a.br_dec >= 0 && n_dec[i] == a.br_dec && nv[i] > a.br_k) {   // 갈래: 이 결정에서 유효 후보 br_k 째, 도착·포기·30 s 까지 붙듦
@@ -1586,6 +1593,7 @@ int main(int argc, char** argv) {
       else if (k == "--gt-tile") a.rule.tile_m = std::stof(nx());
       else if (k == "--branch-dec") a.br_dec = std::stoi(nx());
       else if (k == "--branch-k") a.br_k = std::stoi(nx());
+      else if (k == "--branch-reseed") a.br_reseed = std::stoull(nx());
       else if (k == "--decider-url") { a.dec_url = nx(); a.upper = "decider"; }
       else if (k == "--decider-input") a.dec_input = nx();
       else if (k == "--decider-prompt") a.dec_prompt = std::stoi(nx());
