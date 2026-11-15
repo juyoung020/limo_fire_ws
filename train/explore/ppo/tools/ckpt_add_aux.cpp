@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "../../mdp/ckpt_cfg.h"   // 설정 꼬리: 있으면 바뀐 열쇠만 고쳐 다시 붙임 (없으면 없이)
 #include "../../mdp/obs_layout.h"
 
 namespace {
@@ -73,6 +74,11 @@ int main(int argc, char** argv) try {
   blk.push_back({"aux.b", K});
   for (auto* q : {&p, &m, &v}) q->insert(q->end(), add, 0.f);
   const int64_t P2 = P + add;
+  ckcfg::Kv ck = ckcfg::read(argv[1]);   // 설정 꼬리 (mdp/ckpt_cfg.h): 보조 머리 · 보조 재료
+  if (!ck.empty()) {
+    ckcfg::set(ck, "aux_out", std::to_string(K));
+    ckcfg::set(ck, "SIM_LOW_AUX", "1");
+  }
   const std::string tmp = std::string(argv[2]) + ".tmp";
   {
     std::ofstream g(tmp, std::ios::binary);
@@ -95,6 +101,10 @@ int main(int argc, char** argv) try {
     w(mean.data(), D * 4);
     w(var.data(), D * 4);
     w(tail, sizeof tail);
+    if (!ck.empty()) {
+      const std::string t = ckcfg::trailer(ck);
+      w(t.data(), t.size());
+    }
     if (!g) throw std::runtime_error("쓰기 실패");
   }
   if (std::rename(tmp.c_str(), argv[2]) != 0) throw std::runtime_error("이름 바꾸기 실패");

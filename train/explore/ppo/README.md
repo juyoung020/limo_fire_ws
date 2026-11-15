@@ -221,6 +221,17 @@ A/B 대신 바로 본 학습(`explore_v9`, explore_v8_cur 7400 체크포인트·
 (학습 롤아웃 성공 0.47 → 0.43, 충돌 0.30 → 0.33). σ 가 상한에 붙으면 행동이 자주 잘려 다시 나빠질 수 있다 — 그때는 엔트로피를 0.003~0.005 로 낮춰 이어 학습(잠정).
 가설(표류)의 직접 증거는 아니다 — 세 값을 함께 바꿨고 씨앗 하나라 어느 것이 효과인지는 나누지 않았다.
 
+## 체크포인트 설정 꼬리 (2026-11-16)
+
+아래층 체크포인트(`train --low`)는 형식 3 내용 뒤에 **정책 입력을 바꾸는 설정과 구조**를 `KEY=VALUE` 줄로 붙인다 (`mdp/ckpt_cfg.h` 꼴 — 줄들 · 바이트 수 · 매직 `XCFG`,
+열쇠는 `sim/include/low_ckpt_cfg.h`): `SIM_LOW_WIDE · GOALONLY · OBS_MOV · MOV4 · CAM_EVERY · NOBACK · AUX · TRACK_GATE·SZ·QA·MISS·CONF·DISP·SAG·W0` 의 학습 때 실제 값과
+`gru_h · d1d · aux_out`. `run.json` 에도 같은 것(`obs_cfg`)과 시작 때 `SIM_*` 환경변수 전부(`sim_env`)를 적는다.
+- 읽는 쪽: `train --low --resume`(`--gru` 도 체크포인트 값이 기본) · `low_policy_run` · `combine_run` · 실물 `low_rl` 노드가 `load_env_cfg` 앞에 꼬리 값을 환경변수로 넣는다.
+  **환경변수(또는 `--gru`)를 다른 값으로 명시하면 멈춘다.** 꼬리 없는 옛 체크포인트는 그대로 환경변수로.
+- 형식 3 을 읽는 쪽(`PPO::load` · `network/policy_cpu.h` · 옛 바이너리)은 고정 꼬리까지만 읽어 이 꼬리를 무시한다. `ckpt_add_1d · _aux · _wide` 는 꼬리가 있으면
+  바뀐 열쇠(`d1d`·`SIM_LOW_MOV4` · `aux_out`·`SIM_LOW_AUX` · `SIM_LOW_WIDE`·`gru_h`)만 고쳐 다시 붙이고, 꼬리 없는 입력은 꼬리 없이 (출력 바이트 옛 도구와 같음).
+- 보상 설정(`SIM_LR_*`)은 정책 입력이 아니라 꼬리에 없다 (`run.json sim_env` 에만).
+
 ## 인코더 나눔·체크포인트 형식 3 (2026-11-08)
 
 - actor·critic 이 같은 구조의 합성곱 인코더를 따로 가진다(`ACSpec::split_enc`, 이름 `enc.*` = actor, `enc_c.*` = critic). 각 인코더 기울기는 자기 손실에서만,

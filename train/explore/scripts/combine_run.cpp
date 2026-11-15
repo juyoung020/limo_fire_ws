@@ -68,6 +68,7 @@
 
 #include "actor_critic.h"
 #include "ckpt_meta.h"
+#include "ckpt_cfg.h"   // mdp/ — 체크포인트 관측 설정 꼬리
 #include "cand_rules.h"
 #include "decider.h"
 #include "env_api.h"
@@ -1631,6 +1632,11 @@ int main(int argc, char** argv) {
     return 2;
   }
   try {
+    if (!a.policy.empty()) {   // 아래층 관측 설정(SIM_LOW_*)은 체크포인트 꼬리를 기본으로 — 환경변수가 명시적으로 다르면 멈춤 (sim/include/low_ckpt_cfg.h)
+      std::string log;
+      ckcfg::apply(a.policy, &log);
+      std::printf("%s\n", log.c_str());
+    }
     return run(a);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "combine_run: %s\n", e.what());

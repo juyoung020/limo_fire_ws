@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "../../mdp/ckpt_cfg.h"   // 설정 꼬리: 있으면 바뀐 열쇠만 고쳐 다시 붙임 (없으면 없이)
 #include "../../mdp/obs_layout.h"
 
 namespace {
@@ -178,6 +179,11 @@ int main(int argc, char** argv) try {
   if ((int64_t)nm.size() != P2 || (int64_t)nv.size() != P2 || P2 != P + added_conv + added_mlp + added_gru) throw std::runtime_error("새 변수 수 계산이 안 맞음");
   if ((!has_wide && added_conv == 0) || added_mlp == 0 || (gru_h > 0 && added_gru == 0)) throw std::runtime_error("인코더 꼬리나 MLP 첫 층을 못 찾음 (아래층 체크포인트?)");
 
+  ckcfg::Kv ck = ckcfg::read(argv[1]);   // 설정 꼬리 (mdp/ckpt_cfg.h): 넓은 지도 · 순환 핵
+  if (!ck.empty()) {
+    ckcfg::set(ck, "SIM_LOW_WIDE", "1");
+    if (gru_h > 0) ckcfg::set(ck, "gru_h", std::to_string(gru_h));
+  }
   const std::string tmp = std::string(argv[2]) + ".tmp";
   {
     std::ofstream g(tmp, std::ios::binary);
@@ -200,6 +206,10 @@ int main(int argc, char** argv) try {
     w(mean.data(), D * 4);
     w(var.data(), D * 4);
     w(tail, sizeof tail);
+    if (!ck.empty()) {
+      const std::string t = ckcfg::trailer(ck);
+      w(t.data(), t.size());
+    }
     if (!g) throw std::runtime_error("쓰기 실패");
   }
   if (std::rename(tmp.c_str(), argv[2]) != 0) throw std::runtime_error("이름 바꾸기 실패");

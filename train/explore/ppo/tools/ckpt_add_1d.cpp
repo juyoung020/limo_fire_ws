@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "../../mdp/ckpt_cfg.h"   // 설정 꼬리: 있으면 바뀐 열쇠만 고쳐 다시 붙임 (없으면 없이)
 #include "../../mdp/obs_layout.h"
 
 namespace {
@@ -103,6 +104,11 @@ int main(int argc, char** argv) try {
   const int32_t D2 = D + ext;
   mean.insert(mean.end(), ext, 0.f);
   var.insert(var.end(), ext, 1.f);
+  ckcfg::Kv ck = ckcfg::read(argv[1]);   // 설정 꼬리 (mdp/ckpt_cfg.h): 1D 칸 수 · 움직이는 것 칸 넷
+  if (!ck.empty()) {
+    ckcfg::set(ck, "d1d", std::to_string(D2));
+    if (D2 == mdp::low::N1D_MOV4) ckcfg::set(ck, "SIM_LOW_MOV4", "1");
+  }
   const std::string tmp = std::string(argv[2]) + ".tmp";
   {
     std::ofstream g(tmp, std::ios::binary);
@@ -125,6 +131,10 @@ int main(int argc, char** argv) try {
     w(mean.data(), D2 * 4);
     w(var.data(), D2 * 4);
     w(tail, sizeof tail);
+    if (!ck.empty()) {
+      const std::string t = ckcfg::trailer(ck);
+      w(t.data(), t.size());
+    }
     if (!g) throw std::runtime_error("쓰기 실패");
   }
   if (std::rename(tmp.c_str(), argv[2]) != 0) throw std::runtime_error("이름 바꾸기 실패");

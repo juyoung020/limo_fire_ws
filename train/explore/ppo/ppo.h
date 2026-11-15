@@ -172,7 +172,7 @@ class PPO {
   void act_inference(const GraphObs& o, real* actions, int n = -1, int64_t sample_call = -1);
 
   // 체크포인트: 가중치·Adam(m, v, 걸음)·정규화 통계·반복 수·학습률·난수 계수. 롤아웃 도중 저장은 안 됨.
-  void save(const std::string& path) const;
+  void save(const std::string& path, const std::string& extra = std::string()) const;   // extra: 형식 3 뒤에 붙이는 꼬리 바이트 (mdp/ckpt_cfg.h — 읽는 쪽은 무시)
   void load(const std::string& path);
   // 형식 2(공유 인코더) 체크포인트를 형식 3(인코더 나눔)으로 바꿔 불러옴 — 이 길로만 옛 체크포인트를 받는다.
   // 공유 인코더 가중치·Adam m/v 를 actor 인코더(enc)와 critic 인코더(enc_c)에 그대로 복사, MLP·log σ·정규화·반복 수·학습률은 그대로,

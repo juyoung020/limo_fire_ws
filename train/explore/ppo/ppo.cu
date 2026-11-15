@@ -1803,7 +1803,7 @@ constexpr uint32_t kVersion = 3;  // 3: actor·critic 인코더 나눔(+ 프론�
 constexpr uint32_t kVersionShared = 2;
 }  // namespace
 
-void PPO::save(const std::string& path) const {
+void PPO::save(const std::string& path, const std::string& extra) const {
   if (step_ != 0) throw std::runtime_error("PPO::save: 롤아웃 도중엔 저장 안 함");
   CK(cudaStreamSynchronize(ac_->stream));
   long P = ac_->n_params;
@@ -1850,6 +1850,7 @@ void PPO::save(const std::string& path) const {
     uint64_t ac = act_calls_, sd = seed_;
     w(&ac, 8);
     w(&sd, 8);
+    if (!extra.empty()) w(extra.data(), extra.size());   // 설정 꼬리 (mdp/ckpt_cfg.h) — 같은 임시 파일에 써서 이름 바꾸기로 한 번에
     if (!f) throw std::runtime_error("체크포인트 쓰기 실패");
   }
   if (std::rename(tmp.c_str(), path.c_str()) != 0) throw std::runtime_error("체크포인트 이름 바꾸기 실패");

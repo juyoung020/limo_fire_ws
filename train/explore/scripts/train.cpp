@@ -43,10 +43,12 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>   // environ (run.json 에 SIM_* 환경변수)
 #include <vector>
 
 #include "curriculums.h"
 #include "env_api.h"
+#include "low_ckpt_cfg.h"   // 체크포인트 관측 설정 꼬리 (mdp/ckpt_cfg.h)
 #include "ppo.h"
 #include "rewards.h"
 #include "runfolder.h"
@@ -103,7 +105,7 @@ struct Args {
   int low_eval_steps = 3000;  // --low-eval-steps: 탐사 판 평가의 걸음 상한
   bool lean = true;           // --no-lean: 아래층 단독 과제에서도 프론티어 요약 커널을 돌림 (Env::set_lean_low — 결과는 같고 느림)
   bool step_sync = false;
-  int gru = 0;                // --gru H (--low): actor·critic 순환 핵 GRU 은닉 H (0 = 끔). 순서 미니배치 (ppo/README "순환 핵")
+  int gru = -1;               // --gru H (--low): actor·critic 순환 핵 GRU 은닉 H (0 = 끔). 순서 미니배치 (ppo/README "순환 핵")
   bool roll_graph = false;    // --rollout-graph: 아래층 롤아웃을 CUDA Graph 하나로 (실험 — 2026-11-15 OptiX 9 optixLaunch 가 스트림 캡처 안에서 OPTIX_ERROR_CUDA_ERROR(7900, CUDA 쪽 오류는 없음)로 실패해 기본 끔. GPU 가 이미 99 % 바빠 얻을 몫도 작음)     // --step-sync: 아래층 롤아웃 걸음마다 호스트가 GPU 를 기다림 (옛 방식 — act·sim 시간을 호스트 시계로 가름). 끄면 CUDA 이벤트로 잼
   bool graph = false;  // --graph: 그래프 모드 (이웃 노드 하나 — sim kActPath + graph_on, PPO 그래프 어텐션 정책). 결정 하나 = env.step 한 번, 걸음 수는 가변
   int graph_share = -1;   // --graph-share 0|1 (음수 = ACSpec 기본: 가치 몸통 따로)
@@ -286,6 +288,22 @@ struct LowSum {   // LowRlStat 여러 환경 합
 };
 
 int run_low(Args a) {
+  // 이어 학습: 체크포인트 꼬리의 관측 설정(SIM_LOW_*)·구조(GRU)를 기본으로 — 환경변수·--gru 가 명시적으로 다르면 멈춤 (sim/include/low_ckpt_cfg.h)
+  ckcfg::Kv resume_kv;
+  if (a.resume) {
+    const std::string p = a.root + "/" + a.name + "/ckpt/model_latest.bin";
+    if (file_exists(p)) {
+      std::string log;
+      resume_kv = ckcfg::apply(p, &log);
+      std::fprintf(stderr, "이어 학습 %s\n", log.c_str());
+      const std::string g = ckcfg::get(resume_kv, "gru_h");
+      if (!g.empty()) {
+        if (a.gru >= 0 && a.gru != std::stoi(g)) throw std::runtime_error("--gru " + std::to_string(a.gru) + " 가 체크포인트 구조 gru_h=" + g + " 와 다름");
+        a.gru = std::stoi(g);
+      }
+    }
+  }
+  if (a.gru < 0) a.gru = 0;
   sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
   hc.cfg.action_mode = sim::kActPath;
   hc.cfg.curriculum = 0;   // 모든 맵 고르게 (단계 커리큘럼은 탐사 판의 것 — 아래층은 목표 거리 등급이 그 자리, low_rl.h lowrl_goal_probe)
@@ -365,6 +383,17 @@ int run_low(Args a) {
       .set("ppo", rf::Json::object().set("epochs", pc.epochs).set("minibatches", pc.minibatches).set("clip", pc.clip).set("gamma", pc.gamma).set("lam", pc.lam)
                       .set("entropy_coef", pc.entropy_coef).set("lr_max", pc.lr_max).set("desired_kl", pc.desired_kl).set("std_min", pc.std_min)
                       .set("std_max", pc.std_max).set("bound_coef", pc.bound_coef));
+  {   // 정책 입력을 바꾸는 설정·구조 (체크포인트 꼬리와 같은 것) + 시작 때 SIM_* 환경변수 전부 (보상 등 학습 설정까지 — 다시 돌리기용)
+    rf::Json oc = rf::Json::object();
+    for (const auto& [k, v] : sim::low_ckpt_kv(c, a.gru, spec.actor.in1d, spec.aux_out)) oc.set(k, v);
+    rf::Json ev = rf::Json::object();
+    for (char** e = environ; e && *e; ++e) {
+      const std::string kv = *e;
+      const size_t q = kv.find('=');
+      if (kv.rfind("SIM_", 0) == 0 && q != std::string::npos) ev.set(kv.substr(0, q), kv.substr(q + 1));
+    }
+    meta.set("obs_cfg", oc).set("sim_env", ev);
+  }
   rf::RunFolder::Options opt;
   opt.every_s = 0;
   if (a.resume) { opt.resume = true; opt.resume_iter = ppo.iteration(); }
@@ -509,9 +538,11 @@ int run_low(Args a) {
     std::fprintf(stderr, "  탐사 판 평가 반복 %d: 성공 %.3f 벽 충돌 %.3f 닫힘까지 %.1f s (%.1f s)\n", it, a_n > 0 ? a_ok / a_n : 0.0, a_n > 0 ? a_wall / a_n : 0.0,
                  a_ok > 0 ? a_t / a_ok : 0.0, ms_since(t0) / 1000);
   };
+  // 체크포인트 꼬리: 이 학습의 관측 설정·구조 (평가·이어 학습·실물 노드가 읽음 — sim/include/low_ckpt_cfg.h)
+  const std::string ck_tail = ckcfg::trailer(sim::low_ckpt_kv(c, a.gru, spec.actor.in1d, spec.aux_out));
   auto save = [&](bool numbered) {
-    ppo.save(ckdir + "/model_latest.bin");
-    if (numbered) ppo.save(ckdir + "/model_" + std::to_string(ppo.iteration()) + ".bin");
+    ppo.save(ckdir + "/model_latest.bin", ck_tail);
+    if (numbered) ppo.save(ckdir + "/model_" + std::to_string(ppo.iteration()) + ".bin", ck_tail);
   };
   if (!a.eval_ckpt.empty()) {
     ppo.load(a.eval_ckpt);

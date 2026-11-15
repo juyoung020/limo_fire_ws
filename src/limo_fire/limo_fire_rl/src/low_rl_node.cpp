@@ -4,7 +4,8 @@
 // 걸음 차례 (시뮬 env_ref.cpp step_env + low_prepare_env 와 같게 — limo_fire_rl/README "아래층 정책 관측"):
 //   장 k: step(감각, 장 k) → 깊이 → [새 목적지면 set_goal] → low_obs → 정책 → low_act (명령 = 다음 걸음 명령, 사람 추적 포함) → ~/cmd_debug
 // 목적지: ~/goal (geometry_msgs/PoseStamped, map 틀). 위치가 NaN 이면 목적지 없음. 목적지가 없으면 정책 환경이 아니라 명령 0 (시뮬은 규칙 추종기).
-// 관측 설정(넓은 지도·움직이는 것 칸·깊이 층 주기·추적 값 …)은 학습처럼 환경변수 SIM_LOW_* 로 읽는다 (env_cfg.cpp) — 학습 판과 같은 값을 export 할 것.
+// 관측 설정(넓은 지도·움직이는 것 칸·깊이 층 주기·추적 값 …)은 체크포인트 꼬리(sim/include/low_ckpt_cfg.h — 학습기가 적음)를 기본으로 쓰고, 환경변수 SIM_LOW_* 가
+// 명시적으로 다르면 시작하지 않는다. 꼬리 없는 옛 체크포인트는 환경변수 그대로 (학습 판과 같은 값을 export 할 것).
 // record:=<파일> 이면 받은 입력과 만든 관측·명령을 sim/tools/low_node_rec.h 꼴로 녹화 (low_node_replay 로 다시 돌려 같은지·시간).
 #include <chrono>
 #include <cmath>
@@ -27,6 +28,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
+#include "ckpt_cfg.h"   // train/explore/mdp — 체크포인트 관측 설정 꼬리
 #include "limo_fire_rl/robot_env.h"
 #include "low_node_rec.h"
 #include "policy_cpu.h"
@@ -52,6 +54,11 @@ class LowRlNode : public rclcpp::Node {
     const std::string info_topic = declare_parameter<std::string>("depth_info_topic", "/camera/depth/camera_info");
     if (!dry_run_) throw std::runtime_error("low_rl: 실제 주행(dry_run:=false)은 아직 없음 — 명령은 ~/cmd_debug 에만 낸다");
     if (ckpt_.empty()) throw std::runtime_error("checkpoint 파라미터 (아래층 체크포인트 .bin — train --low --gru, SIM_LOW_WIDE=1) 가 비었음");
+    {
+      std::string log;
+      ckcfg::apply(ckpt_, &log);   // load_env_cfg 앞에 — 체크포인트 관측 설정을 환경변수로 (다르게 명시한 환경변수면 멈춤)
+      RCLCPP_INFO(get_logger(), "%s", log.c_str());
+    }
     hc_ = sim::load_env_cfg(env_yaml_);
     if (!camera_layer) hc_.cfg.cam_on = 0;
     env_ = std::make_unique<RobotEnv>(hc_, true);

@@ -145,8 +145,9 @@ ros2 bag play ~/limo_bags/1103_M_drive1 --clock
 `lowrl_pack`·`lowrl_img`·`lowrl_wred`·`lowrl_wide`). 경로 계획은 없다(학습 판 정책 환경도 안 짬). 보조 예측 재료(`SIM_LOW_AUX`)는 학습 전용이라 안 만든다.
 
 `low_rl` 노드는 이 관측으로 아래층 정책(`LowPolicy`)을 돌려 명령을 **`~/cmd_debug`(TwistStamped)에만** 낸다 — `/cmd_vel` 발행자가 없고
-`dry_run:=false` 면 시작하지 않는다. 목적지는 `~/goal`(PoseStamped, `map` 틀, 위치 NaN = 없음). 관측 설정은 학습처럼 환경변수로 읽으므로 **학습 판과 같은 값을 export**
-(지금 low_w3: `SIM_LOW_WIDE=1 SIM_LOW_GOALONLY=1 SIM_LOW_OBS_MOV=1 SIM_LOW_MOV4=1 SIM_LOW_CAM_EVERY=1 SIM_LOW_TRACK_MISS=20`); 체크포인트 1D 칸 수가 설정과 다르면 멈춘다.
+`dry_run:=false` 면 시작하지 않는다. 목적지는 `~/goal`(PoseStamped, `map` 틀, 위치 NaN = 없음). 관측 설정(`SIM_LOW_*`)은 **체크포인트 꼬리에서 읽는다**
+(학습기가 적음 — ppo/README "체크포인트 설정 꼬리"). 환경변수를 다른 값으로 명시하면 시작하지 않는다. 꼬리 없는 옛 체크포인트는 환경변수 그대로라
+학습 판과 같은 값을 export (low_w3 옛 체크포인트: `SIM_LOW_WIDE=1 SIM_LOW_GOALONLY=1 SIM_LOW_OBS_MOV=1 SIM_LOW_MOV4=1 SIM_LOW_CAM_EVERY=1 SIM_LOW_TRACK_MISS=20`); 체크포인트 1D 칸 수가 설정과 다르면 멈춘다.
 `record:=<파일>` 이면 입력·관측·명령을 녹화한다(`low_node_replay` 로 다시 돌려 같은지·시간).
 
 | 확인 | 결과 |

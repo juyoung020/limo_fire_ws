@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "ckpt_meta.h"
+#include "ckpt_cfg.h"   // mdp/ — 체크포인트 관측 설정 꼬리
 #include "env_api.h"
 #include "frontier.h"
 #include "frontier_explorer.h"
@@ -1388,7 +1389,14 @@ int main(int argc, char** argv) {
   try {
     if (a.mode == "stat") return run_stat(a);
 #ifdef LOW_RUN_POLICY
-    if (a.mode == "follow" && (!a.policy.empty() || a.step)) return run_policy(a);
+    if (a.mode == "follow" && (!a.policy.empty() || a.step)) {
+      if (!a.policy.empty()) {   // 관측 설정(SIM_LOW_*)은 체크포인트 꼬리를 기본으로 — 환경변수가 명시적으로 다르면 멈춤 (sim/include/low_ckpt_cfg.h)
+        std::string log;
+        ckcfg::apply(a.policy, &log);
+        std::printf("%s\n", log.c_str());
+      }
+      return run_policy(a);
+    }
 #else
     if (!a.policy.empty() || a.step) { std::fprintf(stderr, "--policy · --step 은 low_policy_run 에만 있음 (scripts/CMakeLists.txt)\n"); return 2; }
 #endif
