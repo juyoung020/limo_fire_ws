@@ -239,7 +239,8 @@ int run(const Args& a) {
   const bool all = dec_in == dec::kAll, prune = dec_mode == dec::kPrune, score = dec_mode == dec::kScore;
   const int n_thr = std::max(1u, std::min(12u, std::thread::hardware_concurrency()));
   if (upper < 0) throw std::runtime_error("--upper 는 slot0 · random · decider · cand_tsp · fuel");
-  if (a.br_dec >= 0 && (upper != kSlot0 || !use_pol || a.br_k < 0 || a.br_k >= K)) throw std::runtime_error("--branch-dec 는 slot0 · --policy 와 같이, --branch-k 는 0 … K − 1");
+  if (a.br_dec >= 0 && !(use_pol && ((upper == kSlot0 && a.br_k >= 0 && a.br_k < K) || (upper == kDecider && a.dec_cand_fuel && a.br_k >= -1))))
+    throw std::runtime_error("--branch-dec 는 --policy 와 같이: slot0 (--branch-k 0 … K − 1) 또는 --decider-cand fuel (--branch-k −1 = fuel 이 고른 것, 0 … = 예상 관측량 ÷ 시간 차례)");
   const bool fcand = upper == kRich || (upper == kDecider && a.dec_cand_fuel);   // fuel 후보 + 특징을 씀
   const RichW rw = parse_rich(a.rich_w);
   if (a.dec_cand_fuel && (upper != kDecider || dec_in != dec::kAll || prune || score || a.dec_finish || !a.video.empty())) throw std::runtime_error("--decider-cand fuel 은 --decider-input all · --decider-mode choice 만 (끝 선언·녹화 없이)");
@@ -263,7 +264,7 @@ int run(const Args& a) {
   if (!a.gt_base.empty() && a.gt_base.size() != a.scenes.size()) throw std::runtime_error("--gt-base 는 --scenes 와 같은 수");
   std::unique_ptr<dec::Client> client;
   const bool dec_none = a.dec_url == "none";   // --decider-url none: 서버에 안 묻고 fuel 이 고른 것으로 (요청 본문은 만들어 --decider-log 에 — 학습 데이터 모으기)
-  if (dec_none && (!a.dec_cand_fuel || a.dec_log.empty())) throw std::runtime_error("--decider-url none 은 --decider-cand fuel · --decider-log 와 같이");
+  if (dec_none && !a.dec_cand_fuel) throw std::runtime_error("--decider-url none 은 --decider-cand fuel 과 같이");
   if (!a.dec_log.empty() && !a.dec_cand_fuel) throw std::runtime_error("--decider-log 는 --decider-cand fuel 과 같이");
   if (upper == kDecider && !dec_none) client.reset(new dec::Client(a.dec_url, a.dec_timeout_ms, a.dec_parallel));
   const float bl_r = c.rec_bl_r > 0.f ? c.rec_bl_r : 0.5f;
@@ -363,7 +364,7 @@ int run(const Args& a) {
     std::vector<std::vector<fu::CandOut>> fc(N);   // fcand: 환경마다 fuel 후보 (gpt 큰 순)
     long fc_n = 0, fc_dec = 0, fc_cur = 0, fc_fuel = 0;   // 후보 수 합 · 결정 수 · 지금 목표 고름 · fuel 과 같은 것 고름
     std::vector<fu::Mem> fmem(N); std::vector<fu::Work> f_works(n_thr); std::vector<int> tcell(N, -1); long f_fall = 0;   // fuel 만
-    std::vector<int> br_cell(N, -1), br_until(N, 0), br_app(N, 0);   // 갈래 굴리기 (--branch-dec)
+    std::vector<int> br_cell(N, -1), br_until(N, 0), br_app(N, 0), br_k_used(N, -1), br_n(N, 0), br_fuelk(N, -1);   // 갈래 굴리기 (--branch-dec)
     std::vector<int> lg_tgt(N, -1), lg_step(N, 0);   // --leg-log: 지금 구간 목표 · 시작 걸음 · 첫 회전각 · 시작 직선 거리
     std::vector<float> lg_dth(N, -1.f), lg_d0(N, 0.f), lg_len(N, -1.f);
     std::FILE* flg = nullptr;
@@ -1077,7 +1078,18 @@ int run(const Args& a) {
         const bool forced = redo[i] != 0 && n_dec[i] > 0;
         redo[i] = 0;
         last_dec[i] = s.step;
-        if (a.br_dec >= 0 && n_dec[i] == a.br_dec && nv[i] > a.br_k) {   // 갈래: 이 결정에서 유효 후보 br_k 째, 도착·포기·30 s 까지 붙듦
+        if (a.br_dec >= 0 && n_dec[i] == a.br_dec && a.dec_cand_fuel) {   // 갈래 (fuel 후보): 이 결정에서 fc 의 br_k 째 (−1 = fuel 이 고른 것), 도착·포기·30 s 까지 붙듦
+          int kk = -1;
+          if (a.br_k >= 0 && a.br_k < (int)fc[i].size()) kk = a.br_k;
+          else if (a.br_k == -1) for (size_t k = 0; k < fc[i].size(); ++k) if (fc[i][k].fuel) kk = (int)k;
+          if (kk >= 0 && fc[i].size() >= 2) {
+            br_cell[i] = fc[i][kk].vp;
+            fmem[i].vp = fc[i][kk].vp; fmem[i].anc = fc[i][kk].anc;
+            br_until[i] = s.step + (int)std::lround(30.0 / dt);
+            br_app[i] = 1; br_k_used[i] = kk; br_n[i] = (int)fc[i].size(); br_fuelk[i] = -1;
+            for (size_t k = 0; k < fc[i].size(); ++k) if (fc[i][k].fuel) br_fuelk[i] = (int)k;
+          }
+        } else if (a.br_dec >= 0 && n_dec[i] == a.br_dec && nv[i] > a.br_k) {   // 갈래: 이 결정에서 유효 후보 br_k 째, 도착·포기·30 s 까지 붙듦
           pick[i] = vslot[(size_t)i * K + a.br_k];
           br_cell[i] = cand[(size_t)i * K + pick[i]];
           br_until[i] = s.step + (int)std::lround(30.0 / dt);
@@ -1486,7 +1498,7 @@ int run(const Args& a) {
     }
     if (a.br_dec >= 0 && !a.out.empty()) {
       std::FILE* fb = std::fopen((a.out + "_" + W.name + "_branch.tsv").c_str(), "w");
-      if (fb) { std::fputs("env\tapplied\n", fb); for (int i = 0; i < N; ++i) std::fprintf(fb, "%d\t%d\n", i, br_app[i]); std::fclose(fb); }
+      if (fb) { std::fputs("env\tapplied\tk\tn_cand\tfuel_k\n", fb); for (int i = 0; i < N; ++i) std::fprintf(fb, "%d\t%d\t%d\t%d\t%d\n", i, br_app[i], br_k_used[i], br_n[i], br_fuelk[i]); std::fclose(fb); }
     }
     if (flg) std::fclose(flg);
     if (dlog) {   // 판 끝: 환경마다 끝 코드·시각 (학습 데이터의 결과 줄)

@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
     if (!ad || llama_set_adapters_lora(ctx, &ad, 1, &sc) != 0) { std::fprintf(stderr, "LoRA 를 못 붙임\n"); return 1; }
   }
   mtmd_context_params mcp = mtmd_context_params_default();
-  mcp.use_gpu = ngl > 0;
+  mcp.use_gpu = false;   // 그림 인코더는 CPU (GPU 메모리 아낌 — 캐시는 한 번만 만듦)
   mcp.media_marker = get_media_marker();   // 서버와 같은 표지 (server-context.cpp)
   { common_params cpar; mcp.image_min_tokens = cpar.image_min_tokens; mcp.image_max_tokens = cpar.image_max_tokens; mcp.batch_max_tokens = cpar.mtmd_batch_max_tokens; }
   mtmd_context* mctx = mtmd_init_from_file(mmproj.c_str(), m, mcp);
