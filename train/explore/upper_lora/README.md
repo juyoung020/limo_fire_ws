@@ -16,6 +16,7 @@ d1-3B 는 lfm2(층 30 개)이고 28·29 층은 커널 3 의 인과 shortconv 층
 | `d1_cache` | 요청 본문(`combine_run --decider-log` 의 `*.request.json`, 서버에 보내는 것과 같은 꼴)마다 서버 코드(`server_decision_context::fill_task` — llama.cpp `tools/server` 를 그대로 링크)로 프롬프트를 만들고 모델을 돌려 28 층 입력 마지막 5 토큰 · 선택지 글자 토큰 묶음 · 그 로짓 · 정답 번호를 저장 |
 | `head_check` | CPU 참조(`d1_ref.h`, double)로 캐시에서 다시 계산한 로짓이 llama.cpp 로짓과 같은지 |
 | `lora_train` | GPU(f32, cuBLAS + 손으로 쓴 역전파 커널) LoRA 학습. `--gradcheck` 은 CPU 참조의 유한 차분과 해석 기울기를 견줌 |
+| `lora_train --pred p.txt` | 끝난 어댑터로 검증 표본마다 `정답 n p_0 … p_{n−1}` 한 줄 — 차례 두 가지 확률 평균 · 정보 뺀 묶음과의 비교용 (`--epochs 0 --init <어댑터>` 면 평가만) |
 | `lora_export` | 어댑터 → llama.cpp LoRA GGUF (`llama-server --lora`, 텐서 `blk.N.….weight.lora_a/b`) |
 
 확인한 것 (2026-11-15): `head_check` — 받은 요청 4 개에서 다시 계산한 로짓과 llama.cpp 로짓 차 최대 0.023(로짓 크기 14~18, Q8_0 활성 양자화 몫), 고른 것 4/4 같음.

@@ -5,7 +5,7 @@
 // LoRA: 층마다 in_proj · out_proj · gate · up · down 중 --mats 로 고른 것에 W + (α/r)·B·A (A 작은 무작위 · B 0 으로 시작 — Hu et al. 2021).
 //
 //   lora_train --model d1.gguf --gradcheck cache.bin                         CPU 참조(double, 유한 차분)와 GPU 해석 기울기 견줌
-//   lora_train --model d1.gguf --train a.bin --val b.bin --out adapter.bin [--r 8] [--alpha 16] [--lr 1e-3] [--epochs 5] [--batch 16] [--mats in,out,gate,up,down]
+//   lora_train --model d1.gguf --train a.bin --val b.bin --out adapter.bin [--r 8] [--alpha 16] [--lr 1e-3] [--epochs 5] [--batch 16] [--mats in,out,gate,up,down] [--pred p.txt]
 //              [--shuffle-aug]  선택지 차례 섞기 증강은 캐시 단계에서(다른 차례로 만든 요청을 같이 캐시) — 여기서는 표본을 그대로 씀
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
@@ -266,6 +266,7 @@ struct Model {
   int Bmax = 0, nE = 0;
   std::map<int, int> erow;                      // 토큰 → E 줄
   std::vector<double>* last_d = nullptr;        // DPO 기준값 재기: 표본마다 s_w − s_l 을 여기에
+  std::FILE* pred = nullptr;                    // --pred: 검증 표본마다 "정답 n p_0 … p_{n−1}" 한 줄 (마지막 평가에서만)
 };
 double run(Model& M, const std::vector<const Sample*>& S, bool backward, int* correct) {
   const int B = (int)S.size();
@@ -305,6 +306,11 @@ double run(Model& M, const std::vector<const Sample*>& S, bool backward, int* co
       dlg[(size_t)s * M.nE + am[x.lose]] -= (float)g;
       if (M.last_d) (*M.last_d)[s] = sc[x.win] - sc[x.lose];
       continue;
+    }
+    if (M.pred) {
+      std::fprintf(M.pred, "%d %d", x.target, x.no);
+      for (double v : sc) std::fprintf(M.pred, " %.5f", std::exp(v - mx) / den);
+      std::fprintf(M.pred, "\n");
     }
     loss += -(sc[x.target] - mx - std::log(den));
     ok += std::max_element(sc.begin(), sc.end()) - sc.begin() == x.target;
@@ -395,7 +401,7 @@ double ref_loss(const d1::Weights& W, const d1::Lora& lo, const Sample& s, const
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string model, gc, train, val, out = "adapter.bin", mats = "in,out,gate,up,down", init, pairs, vpairs;
+  std::string model, gc, train, val, out = "adapter.bin", mats = "in,out,gate,up,down", init, pairs, vpairs, predf;
   float beta = 0.1f;
   int r = 8, epochs = 5, batch = 16;
   float alpha = 16.f, lr = 1e-3f;
@@ -405,6 +411,7 @@ int main(int argc, char** argv) {
     if (k == "--model") model = nx(); else if (k == "--gradcheck") gc = nx(); else if (k == "--train") train = nx(); else if (k == "--val") val = nx();
     else if (k == "--out") out = nx(); else if (k == "--r") r = std::stoi(nx()); else if (k == "--alpha") alpha = std::stof(nx()); else if (k == "--lr") lr = std::stof(nx());
     else if (k == "--epochs") epochs = std::stoi(nx());
+    else if (k == "--pred") predf = nx();
     else if (k == "--init") init = nx(); else if (k == "--pairs") pairs = nx(); else if (k == "--val-pairs") vpairs = nx(); else if (k == "--beta") beta = std::stof(nx()); else if (k == "--batch") batch = std::stoi(nx()); else if (k == "--mats") mats = nx();
     else { std::fprintf(stderr, "모르는 인자 %s\n", k.c_str()); return 2; }
   }
@@ -553,6 +560,12 @@ int main(int argc, char** argv) {
     const size_t nbt = std::max<size_t>(1, ord.size() / batch);
     std::printf("에폭 %d: 학습 손실 %.4f · 학습 맞춤 %.3f | 검증 손실 %.4f · 맞춤 %.3f\n", ep + 1, tl / nbt, (double)tok_ / (nbt * batch), e.first, e.second);
     std::fflush(stdout);
+  }
+  if (!predf.empty()) {   // 끝난 어댑터로 검증 표본마다 선택지 확률을 씀 (차례 두 가지 합치기 · 정보 빼기 분석용)
+    M.pred = std::fopen(predf.c_str(), "w");
+    if (!M.pred) { std::fprintf(stderr, "%s 를 못 엶\n", predf.c_str()); return 1; }
+    eval(VA);
+    std::fclose(M.pred); M.pred = nullptr;
   }
   // 어댑터 저장 (간단한 바이너리 — GGUF LoRA 로 바꾸는 것은 lora_export 몫)
   std::FILE* f = std::fopen(out.c_str(), "wb");
