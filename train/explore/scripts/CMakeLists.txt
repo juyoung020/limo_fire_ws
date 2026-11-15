@@ -8,6 +8,7 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
   set(CMAKE_CUDA_ARCHITECTURES 86)  # RTX 3060
 endif()
 project(limo_fire_explore_train LANGUAGES CXX CUDA)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../cmake/cuda_strict.cmake)   # 장치 코드의 호스트 함수 부름 = 오류 (저장소 cmake/cuda_strict.cmake)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CUDA_STANDARD 20)
 if(NOT CMAKE_BUILD_TYPE)

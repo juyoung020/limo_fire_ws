@@ -2,6 +2,7 @@
 # llama.cpp 는 저장소 밖 빌드를 씀 (LLAMA_DIR: 소스 + build/ — 서버를 돌리는 것과 같은 판). 받는 법은 scripts/README "준비: 모델과 서버"
 cmake_minimum_required(VERSION 3.20)
 project(upper_lora LANGUAGES C CXX CUDA)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../cmake/cuda_strict.cmake)   # 장치 코드의 호스트 함수 부름 = 오류 (저장소 cmake/cuda_strict.cmake)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 if(NOT CMAKE_BUILD_TYPE)

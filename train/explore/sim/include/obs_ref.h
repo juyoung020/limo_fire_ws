@@ -92,12 +92,52 @@ inline void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, const
   mdp::obsgen::obs_finish(b, e, env, sh, rch);
 }
 
+// 아래 참조판 함수들이 HD 템플릿(cam_pixel · mdp/graph.h)에 넘기는 함수 객체 — 람다 대신 DEV operator() (2026-11-16): .cu 번역 단위(env_verify 등)가 이 머리를
+// 포함하면 호스트 람다를 HD 템플릿에 넘긴 것이 nvcc 20013 진단이 되는데, 저장소는 그 진단을 오류로 한다 (cmake/cuda_strict.cmake — 장치 쪽 값이 틀리게 나온 일)
+struct CamClear {
+  uint8_t* V;
+  DEV void operator()(int ci, uint8_t bit) const { V[ci] &= (uint8_t)~bit; }
+};
+struct CamMark {
+  uint8_t* V;
+  DEV void operator()(int ci, uint8_t bit) const { V[ci] |= bit; }
+};
+// 그래프 모드 칸 판정 (graph_ref · gdec_step_ref 의 옛 람다 in_map · free · pass · front 와 같은 식)
+struct GraphCells {
+  const EnvCfg* c;
+  mdp::MapView mv;
+  mdp::Robot rb;
+  int gw, gh;
+  const EnvState* e;
+  const uint32_t* gf;
+  int tws;
+  DEV bool in_map(int x, int y) const { return x >= 0 && y >= 0 && x < gw && y < gh; }
+  DEV bool free(int x, int y) const { return in_map(x, y) && mdp::cls_at(mv, x, y) == mdp::kFree; }
+  DEV bool pass(int x, int y) const { return c->graph_stand ? (in_map(x, y) && mdp::standable(mv, x, y, rb)) : free(x, y); }
+  DEV bool front(int x, int y) const {
+    if (!c->graph_open) return mdp::frontier_cell(mv, x, y);
+    return x >= e->kb_x0 && x <= e->kb_x1 && y >= e->kb_y0 && y <= e->kb_y1 && mdp::plane_bit(gf, tws, x, y);
+  }
+};
+struct GraphFree {
+  const GraphCells* g;
+  DEV bool operator()(int x, int y) const { return g->free(x, y); }
+};
+struct GraphPass {
+  const GraphCells* g;
+  DEV bool operator()(int x, int y) const { return g->pass(x, y); }
+};
+struct GraphFront {
+  const GraphCells* g;
+  DEV bool operator()(int x, int y) const { return g->front(x, y); }
+};
+
 // 깊이 카메라 장애물 층 갱신 (GPU env_camlayer_kernel 과 같은 차례: 모든 픽셀 지우기 → 모든 픽셀 표시 → 몸통 밑 지우기 — 끄기·켜기라 픽셀 차례와 무관)
 inline void camlayer_ref(const EnvBatch& b, const EnvState& e, int env) {
   if (!b.cvox) return;
   uint8_t* V = b.cvox + (size_t)env * b.cfg.size * b.cfg.size;
-  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) cam_pixel(b, e, env, i, 0, [&](int ci, uint8_t bit) { V[ci] &= (uint8_t)~bit; });
-  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) cam_pixel(b, e, env, i, 1, [&](int ci, uint8_t bit) { V[ci] |= bit; });
+  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) cam_pixel(b, e, env, i, 0, CamClear{V});
+  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) cam_pixel(b, e, env, i, 1, CamMark{V});
   for (int col = 0; col < mdp::obs::DEPTH_W; ++col) cam_column(b, e, env, col);
   cam_compact(b, env);
   const int nfp = cam_fp_cells(b.cfg);
@@ -117,15 +157,12 @@ inline bool graph_ref(const EnvBatch& b, EnvState& e, int env, bool finish = fal
   const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
   const mdp::Robot rb = mdp::obsgen::reach_robot(c);
   const mdp::graphgen::Params p = graph_params(c, m, e);
-  const auto in_map = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh; };
-  const auto free = [&](int x, int y) { return in_map(x, y) && mdp::cls_at(mv, x, y) == mdp::kFree; };
-  const auto pass = [&](int x, int y) { return c.graph_stand ? (in_map(x, y) && mdp::standable(mv, x, y, rb)) : free(x, y); };
   const int tws = fmap_row(c);
   const uint32_t* gf = b.gfront + (size_t)env * c.size * tws;   // 닫힘을 막는 칸 (reach_obs 가 이번 관측에 씀)
-  const auto front = [&](int x, int y) {
-    if (!c.graph_open) return mdp::frontier_cell(mv, x, y);
-    return x >= e.kb_x0 && x <= e.kb_x1 && y >= e.kb_y0 && y <= e.kb_y1 && mdp::plane_bit(gf, tws, x, y);
-  };
+  const GraphCells gc{&c, mv, rb, m.gw, m.gh, &e, gf, tws};
+  const GraphPass pass{&gc};
+  const GraphFree free{&gc};
+  const GraphFront front{&gc};
   uint32_t* vis = b.gvis + (size_t)env * (mdp::graph::N / 32);
   if (e.step == 0)
     for (int i = 0; i < mdp::graph::N / 32; ++i) vis[i] = 0u;
@@ -150,10 +187,8 @@ inline void gdec_step_ref(const EnvBatch& b, const EnvState& e, int env, int sub
   const MapDev& m = b.maps[e.map];
   const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
   const mdp::Robot rb = mdp::obsgen::reach_robot(c);
-  const auto in_map = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh; };
-  gdec_step(b, e, env, sub, [&](int x, int y) {
-    return in_map(x, y) && (c.graph_stand ? mdp::standable(mv, x, y, rb) : mdp::cls_at(mv, x, y) == mdp::kFree);
-  });
+  const GraphCells gc{&c, mv, rb, m.gw, m.gh, &e, nullptr, 0};
+  gdec_step(b, e, env, sub, GraphPass{&gc});   // 칸 안 · (graph_stand ? 설 수 있음 : 빈 칸) — 옛 람다와 같은 식
 }
 
 }  // namespace sim

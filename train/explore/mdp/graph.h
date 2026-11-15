@@ -195,6 +195,16 @@ DEV void write_feat(uint8_t* F, int i, int cur, bool valid, int util, bool guide
   F[F_LGUIDE] = guide ? 255 : 0;
 }
 
+// graph_build 가 HD 템플릿(find_cur · cover_pick)에 넘기는 함수 객체 — 람다 대신 DEV operator() (2026-11-16): .cu 에서 호스트 람다를 HD 템플릿에 넘기면
+// nvcc 20013 진단인데 저장소는 그것을 오류로 한다 (cmake/cuda_strict.cmake — 장치 쪽 값이 틀리게 나온 일). 식은 옛 람다와 같음
+struct NodeValid {
+  const uint8_t* v;
+  DEV bool operator()(int i) const { return v[i] != 0; }
+};
+struct NodeVisited {
+  const uint32_t* vis;
+  DEV bool operator()(int i) const { return ((vis[i >> 5] >> (i & 31)) & 1u) != 0u; }
+};
 // CPU 참조·실물 노드: 한 환경 그래프 전부. vis: 방문 노드 비트 [N / 32] (호출자가 판 시작 때 비움, 여기서 cur 를 더함).
 // feat [N · FEAT], edge [N], cand [NB] (cur 의 스텐실 k 번 이웃 칸 y · gw + x, 간선 없으면 −1), util [N] (날 수 — 도구·시험용, nullptr 가능).
 // prev [kVoxMax] (nullptr 가능): 지난 관측의 복셀 대표 칸 — 사라진 수(대표 칸이 있었는데 지금 다름 — 전작 env.py 의 집합 차)를 *n_gone 에 주고 지금 값으로 덮어씀
@@ -213,7 +223,7 @@ inline int graph_build(const Params& p, int rx, int ry, P pass, Fr free, Fn fron
     dist[i] = kInf;
   }
   int forced = 0;
-  const int cur = find_cur(p, rx, ry, [&](int i) { return valid[i] != 0; }, pass, &forced);
+  const int cur = find_cur(p, rx, ry, NodeValid{valid}, pass, &forced);
   valid[cur] = 1;
   vis[cur >> 5] |= 1u << (cur & 31);
   for (int i = 0; i < N; ++i) {
@@ -259,7 +269,7 @@ inline int graph_build(const Params& p, int rx, int ry, P pass, Fr free, Fn fron
   }
   if (p.cover && nu == 0 && nf > 0) {   // 6b 남은 프론티어 맡기기 (우리 수정)
     for (int f = 0; f < nf; ++f) {
-      const int j = cover_pick(p, cur, reps[f], [&](int i) { return valid[i] != 0; }, [&](int i) { return ((vis[i >> 5] >> (i & 31)) & 1u) != 0u; }, free);
+      const int j = cover_pick(p, cur, reps[f], NodeValid{valid}, NodeVisited{vis}, free);
       if (j >= 0) util[j] += 1;
     }
     for (int i = 0; i < N; ++i) nu += util[i] > 0;

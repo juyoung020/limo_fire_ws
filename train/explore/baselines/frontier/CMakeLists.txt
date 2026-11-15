@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 #   export PATH=/usr/local/cuda-13.0/bin:$PATH
 #   cmake -S train/explore/baselines/frontier -B <빌드> -DCMAKE_CUDA_ARCHITECTURES=86 && cmake --build <빌드> -j
 project(limo_fire_frontier LANGUAGES CXX CUDA)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../../cmake/cuda_strict.cmake)   # 장치 코드의 호스트 함수 부름 = 오류 (저장소 cmake/cuda_strict.cmake)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 if(NOT CMAKE_BUILD_TYPE)

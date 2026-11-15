@@ -7,6 +7,7 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 87)  # Jetson Orin
 endif()
 project(limo_fire_perception LANGUAGES CXX CUDA)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../cmake/cuda_strict.cmake)   # 장치 코드의 호스트 함수 부름 = 오류 (저장소 cmake/cuda_strict.cmake)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)

@@ -12,6 +12,7 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
   endif()
 endif()
 project(limo_fire_sim LANGUAGES CXX CUDA)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../cmake/cuda_strict.cmake)   # 장치 코드의 호스트 함수 부름 = 오류 (저장소 cmake/cuda_strict.cmake)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 if(NOT CMAKE_BUILD_TYPE)
@@ -104,7 +105,7 @@ if(SIM_OPTIX AND EXISTS ${OPTIX_INC}/optix.h)
   endif()
   set(OPTIX_PTX ${CMAKE_CURRENT_BINARY_DIR}/optix_rays.ptx)
   add_custom_command(OUTPUT ${OPTIX_PTX}
-    COMMAND ${CMAKE_CUDA_COMPILER} -ptx -arch=sm_${OPTIX_PTX_ARCH} --fmad=false -prec-div=true -prec-sqrt=true -ftz=false -std=c++17
+    COMMAND ${CMAKE_CUDA_COMPILER} -ptx -arch=sm_${OPTIX_PTX_ARCH} ${LIMO_CUDA_STRICT} --fmad=false -prec-div=true -prec-sqrt=true -ftz=false -std=c++17
             -I${OPTIX_INC} -I${CMAKE_CURRENT_SOURCE_DIR}/include -I${CMAKE_CURRENT_SOURCE_DIR}/../mdp ${CMAKE_CURRENT_SOURCE_DIR}/src/optix_rays.cu -o ${OPTIX_PTX}
     DEPENDS src/optix_rays.cu ${SIM_HEADERS})
   # PTX 를 바이너리 안에 (2026-11-15): 예전에는 실행 때 빌드 폴더의 PTX 파일을 절대 경로로 읽어, 그 폴더를 다시 지으면(EnvCfg 배치가 바뀐 PTX) 따로 복사해 둔
