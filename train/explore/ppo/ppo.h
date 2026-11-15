@@ -69,6 +69,9 @@ struct PPOConfig {
   // 값은 옛 길과 비트까지 같다(같은 식·같은 더하기 차례 — ppo/README "장치 갱신"). false 면 옛 길 (A/B 확인용)
   bool device_update = true;
   bool graph_update = true;
+  // 롤아웃 그림 줄여 담기 (아래층 그림 배치일 때만 — mdp/obs_layout.h low NEAR_KIND·WIDE_KIND): 0/255 채널은 비트 판, 늘 0 채널은 안 담음.
+  // 융합 합성곱이 그 꼴을 바로 읽어 결과는 비트까지 같다. 담을 때마다 꼴이 맞는지 보고 어긋나면 update 가 멈춘다 (ppo/README "롤아웃 그림 줄여 담기")
+  bool pack_img = true;
 };
 
 // 그래프 모드(train --graph, 그래프 어텐션 정책) PPO 설정 — 한곳. 위 기본값(직접 제어·계층형)과 다른 것만 바꾼다.
@@ -249,6 +252,16 @@ class PPO {
   void* upd_exec_[2] = {nullptr, nullptr};   // cudaGraphExec_t — critic_only 0/1
   cudaEvent_t ev_upd_ = nullptr;
   void push_dev_state();
+  // 롤아웃 그림 줄여 담기 (PPOConfig::pack_img)
+  bool packed_ = false;
+  int IMGP_ = 0;                 // 담은 그림 한 행 바이트 (줄이지 않으면 IMG_)
+  XNET_NS::ImgPack pack_;        // 합성곱이 읽는 배치
+  int nseg_ = 0, pack_units_ = 0;
+  int* d_seg_ = nullptr;         // 담기 구간 [nseg][5] (꼴, 원래 자리, 담는 자리, 바이트, 작업 칸 시작)
+  int* d_pack_bad_ = nullptr;    // 꼴이 어긋난 바이트 수 (장치)
+  int* h_pack_bad_ = nullptr;    // pinned
+  void pack_build(const XNET_NS::ACSpec& spec);
+  void check_pack();             // 반복 끝에 어긋남이 있었으면 예외
   void make_perm(int* out) const;   // 이번 반복 미니배치 순열 [S] (finish_update · 장치 갱신이 같이 씀)          // 호스트 계수 → 장치 (생성·불러오기 뒤)
   void update_body_dev();         // 장치 갱신 본문 (캡처 대상): 마지막 가치·GAE·미니배치 루프
   UpdateStats finish_update_dev();

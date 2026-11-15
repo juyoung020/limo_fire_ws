@@ -108,6 +108,40 @@ __global__ void k_gather_seq(const int* idx, int n, int B, int H, const real* s_
   }
 }
 
+// 롤아웃 그림 줄여 담기 (PPOConfig::pack_img): 구간마다 [꼴, 원래 자리, 담는 자리, 바이트, 작업 칸 시작].
+// 꼴 0 = u8 그대로(낱말 복사), 1 = 0/255 → 비트 (담는 바이트 하나 = 원래 8 바이트, 낮은 비트부터), 2 = 늘 0 (안 담고 0 인지 보기만).
+// 꼴이 어긋나면(1 에 0·255 아닌 값, 2 에 0 아닌 값) bad 를 올린다 — update 가 반복 끝에 보고 멈춘다
+__global__ void k_pack_img(const uint8_t* __restrict__ src, int src_stride, uint8_t* __restrict__ dst, int dst_stride, int n, const int* __restrict__ seg,
+                           int nseg, int units, int* bad) {
+  const long t = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (t >= (long)n * units) return;
+  const int i = (int)(t / units), u = (int)(t % units);
+  int g = 0;
+  while (g + 1 < nseg && u >= seg[(g + 1) * 5 + 4]) ++g;
+  const int* S = seg + g * 5;
+  const int k = u - S[4];
+  const uint8_t* s0 = src + (long)i * src_stride + S[1];
+  uint8_t* d0 = dst + (long)i * dst_stride + S[2];
+  if (S[0] == 0) {
+    reinterpret_cast<uint32_t*>(d0)[k] = reinterpret_cast<const uint32_t*>(s0)[k];
+  } else if (S[0] == 1) {
+    const uint2 v = reinterpret_cast<const uint2*>(s0)[k];
+    uint32_t o = 0u;
+    int nb = 0;
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+      const uint32_t x = ((j < 4 ? v.x : v.y) >> (8 * (j & 3))) & 255u;
+      o |= (x != 0u ? 1u : 0u) << j;
+      nb += x != 0u && x != 255u;
+    }
+    d0[k] = (uint8_t)o;
+    if (nb) atomicAdd(bad, nb);
+  } else {
+    const uint32_t v = reinterpret_cast<const uint32_t*>(s0)[k];
+    if (v) atomicAdd(bad, 1);
+  }
+}
+
 // GAE: rsl_rl storage/rollout_storage.py:145-167, 환경마다 스레드 하나가 뒤에서부터
 __global__ void k_gae(const real* rew, const real* done, const real* val, const real* last_val, int T, int N,
                       real gamma, real lam, real* ret, real* adv) {
@@ -696,7 +730,9 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   v_ = dmalloc<real>(P, b);
   CK(cudaMemset(m_, 0, P * sizeof(real)));
   CK(cudaMemset(v_, 0, P * sizeof(real)));
-  s_img_ = dmalloc<uint8_t>((long)S_ * IMG_, b);
+  IMGP_ = IMG_;
+  if (cfg_.pack_img && !graph_) pack_build(spec);   // 아래층 그림 배치면 줄여 담기 (IMGP_ · pack_)
+  s_img_ = dmalloc<uint8_t>((long)S_ * IMGP_, b);
   s_obs_ = dmalloc<real>((long)S_ * D_, b);
   s_act_ = dmalloc<real>((long)S_ * A_, b);
   s_logp_ = dmalloc<real>(S_, b);
@@ -774,6 +810,8 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   CK(cudaMallocHost(&h_mbrec_, sizeof(double) * ((nmb + 1) * kRec + 4 * kRedNB)));
   CK(cudaMallocHost(&h_bc_, sizeof(float) * 2 * nmb));
   CK(cudaMallocHost(&h_perm_, sizeof(int) * S_));
+  CK(cudaMallocHost(&h_pack_bad_, sizeof(int)));
+  *h_pack_bad_ = 0;
   CK(cudaEventCreateWithFlags(&ev_upd_, cudaEventDisableTiming));
   push_dev_state();
 }
@@ -783,9 +821,9 @@ PPO::~PPO() {
                                               s_rew_, s_done_, s_ret_, s_adv_, raw_, last_obs_, last_val_, c_img_,
                                               c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_,
                                               s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_, c_gred_,
-                                              d_st_, d_part_, d_mbrec_, d_bc_, h_a_, h_c_, s_h0a_, s_h0c_, h_tmp_, h_ia_, s_reset_, c_reset_, c_h0a_, c_h0c_})
+                                              d_st_, d_part_, d_mbrec_, d_bc_, d_seg_, d_pack_bad_, h_a_, h_c_, s_h0a_, s_h0c_, h_tmp_, h_ia_, s_reset_, c_reset_, c_h0a_, c_h0c_})
     cudaFree(p);
-  for (void* p : std::initializer_list<void*>{h_mbrec_, h_bc_, h_perm_}) cudaFreeHost(p);
+  for (void* p : std::initializer_list<void*>{h_mbrec_, h_bc_, h_perm_, h_pack_bad_}) cudaFreeHost(p);
   for (void* g : upd_exec_)
     if (g) cudaGraphExecDestroy((cudaGraphExec_t)g);
   if (ev_upd_) cudaEventDestroy(ev_upd_);
@@ -824,14 +862,17 @@ void PPO::act(const uint8_t* img, const real* obs1d, real* actions) {
   k_norm_update_dev<<<(ac_->norm.dim + 31) / 32, dim3(32, kNormG2), 0, st>>>(obs1d, N_, D_, ac_->norm.dim, ac_->norm.d_mean, ac_->norm.d_var, &d_st_->norm_count);
   ac_->norm.count += N_;   // 호스트 거울 (체크포인트용)
   ac_->norm.apply(obs1d, N_, D_, obs, D_, st);
-  CK(cudaMemcpyAsync(s_img_ + k0 * IMG_, img, (size_t)N_ * IMG_, cudaMemcpyDeviceToDevice, st));
+  if (packed_)   // 줄여 담기 (정방향은 아래에서 환경 그림을 그대로 읽음 — 같은 바이트)
+    k_pack_img<<<nblk((long)N_ * pack_units_), 256, 0, st>>>(img, IMG_, s_img_ + k0 * IMGP_, IMGP_, N_, d_seg_, nseg_, pack_units_, d_pack_bad_);
+  else
+    CK(cudaMemcpyAsync(s_img_ + k0 * IMG_, img, (size_t)N_ * IMG_, cudaMemcpyDeviceToDevice, st));
   if (H_ > 0 && step_ == 0) {   // 롤아웃 시작 h (갱신의 순서 정방향 h0)
     CK(cudaMemcpyAsync(s_h0a_, h_a_, sizeof(real) * N_ * H_, cudaMemcpyDeviceToDevice, st));
     CK(cudaMemcpyAsync(s_h0c_, h_c_, sizeof(real) * N_ * H_, cudaMemcpyDeviceToDevice, st));
   }
   for (int c0 = 0; c0 < N_; c0 += cfg_.chunk) {
     int n = std::min(cfg_.chunk, N_ - c0);
-    const uint8_t* im = s_img_ + (k0 + c0) * IMG_;
+    const uint8_t* im = packed_ ? img + (long)c0 * IMG_ : s_img_ + (k0 + c0) * IMG_;
     const real* ob = obs + (long)c0 * D_;
     ac_->fork();   // 나눔: critic 인코더·MLP 는 stream2 에서 actor 쪽과 겹쳐 돈다 (버퍼·기울기 칸이 안 겹침)
     if (ac_->split) encode_c(n, im, nullptr, ob);
@@ -979,6 +1020,10 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
     // 합성곱이 융합 커널이면 롤아웃 이미지를 색인으로 바로 읽는다 (모으기 복사 없음)
     const bool by_idx = ac.enc.cnn_reads_index();
     const uint8_t* im = by_idx ? s_img_ : c_img_;
+    if (packed_) {   // 롤아웃 그림은 줄여 담은 배치 — 합성곱이 그대로 읽음 (이 미니배치 끝에 되돌림)
+      ac.enc.set_img_pack(&pack_);
+      if (ac.split) ac.enc_c.set_img_pack(&pack_);
+    }
     const int* imx = by_idx ? ix : nullptr;
     if (!by_idx)
       k_gather_img<<<nblk((long)n * IMG_ / 4), 256, 0, st>>>((const uint32_t*)s_img_, IMG_ / 4, ix, n,
@@ -1048,6 +1093,10 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
       if (!ac.split) ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), ac.critic.dx0(), ac.critic.feat());
       if (NC_ > 0) col_sum(c_dls_, n, NC_, NC_, ac.log_std_grad(), true, st);
     }
+    if (packed_) {
+      ac.enc.set_img_pack(nullptr);
+      if (ac.split) ac.enc_c.set_img_pack(nullptr);
+    }
     col_sum(c_stat_, n, NS, NS, c_red_, false, st);
     if (dev_mb_) {   // 장치 갱신: 통계는 장치에서 더함 (호스트 왕복 없음 — k_upd_ctrl 이 읽음)
       k_stat_acc<<<1, 32, 0, st>>>(c_red_, NS, d_st_->stats, c0 == 0);
@@ -1112,7 +1161,59 @@ void PPO::inference_reset_all() {
   CK(cudaMemsetAsync(h_ia_, 0, sizeof(real) * N_ * H_, ac_->stream));
 }
 
+// 아래층 그림 배치(가까운 지도 · 라이다 · 깊이 [· 넓은 지도])면 줄여 담는 배치를 만든다: u8 채널 판을 차례로 앞에, 0/255 채널은 뒤에 비트 판, 늘 0 채널은 안 담음.
+// 합성곱이 모두 융합 커널(색인으로 읽음)일 때만. 그 밖의 구조는 그대로 (packed_ 거짓)
+void PPO::pack_build(const ACSpec& spec) {
+  namespace l = mdp::low;
+  const auto& im = spec.enc.imgs;
+  const bool wide = spec.enc.img_stride == l::IMG_WIDE;
+  if (!(spec.enc.img_stride == l::IMG || wide)) return;
+  const size_t nb = wide ? 4 : 3;
+  if (im.size() != nb || im[0].off != 0 || im[1].off != l::LIDAR_OFF || im[2].off != l::DEPTH_OFF || (wide && im[3].off != l::WIDE_OFF)) return;
+  if (!(ac_->enc.cnn_reads_index() && (!ac_->split || ac_->enc_c.cnn_reads_index()))) return;
+  std::vector<std::array<int, 8>> kinds(nb);
+  for (auto& k : kinds) k.fill(0);
+  for (int c = 0; c < 6; ++c) kinds[0][c] = l::NEAR_KIND[c];
+  if (wide)
+    for (int c = 0; c < 6; ++c) kinds[3][c] = l::WIDE_KIND[c];
+  pack_.kind.assign(nb, {});
+  pack_.off.assign(nb, {});
+  std::vector<int> seg;   // [꼴, 원래 자리, 담는 자리, 바이트, 작업 칸 시작]
+  int at = 0, units = 0;
+  for (int pass = 0; pass < 3; ++pass)   // 0: u8 판 · 1: 비트 판 · 2: 늘 0 (보기만)
+    for (size_t bi = 0; bi < nb; ++bi)
+      for (int c = 0; c < im[bi].c; ++c) {
+        const int k = kinds[bi][c], hw = im[bi].h * im[bi].w, so = im[bi].off + c * hw;
+        if (k != pass) continue;
+        if (hw % 8) throw std::runtime_error("pack_build: 채널 판이 8 의 배수가 아님");
+        pack_.kind[bi][c] = (int8_t)k;
+        pack_.off[bi][c] = k == 2 ? 0 : at;
+        seg.insert(seg.end(), {k, so, at, hw, units});
+        units += k == 1 ? hw / 8 : hw / 4;
+        at += k == 0 ? hw : (k == 1 ? hw / 8 : 0);
+      }
+  IMGP_ = (at + 7) / 8 * 8;
+  pack_.stride = IMGP_;
+  nseg_ = (int)seg.size() / 5;
+  pack_units_ = units;
+  CK(cudaMalloc(&d_seg_, seg.size() * sizeof(int)));
+  CK(cudaMemcpy(d_seg_, seg.data(), seg.size() * sizeof(int), cudaMemcpyHostToDevice));
+  CK(cudaMalloc(&d_pack_bad_, sizeof(int)));
+  CK(cudaMemset(d_pack_bad_, 0, sizeof(int)));
+  packed_ = true;
+  std::fprintf(stderr, "롤아웃 그림 줄여 담기: 샘플당 %d → %d 바이트 (0/255 채널 비트 판, 늘 0 채널 안 담음)\n", IMG_, IMGP_);
+}
+
+void PPO::check_pack() {
+  if (!packed_) return;
+  CK(cudaMemcpy(h_pack_bad_, d_pack_bad_, sizeof(int), cudaMemcpyDeviceToHost));
+  if (*h_pack_bad_)
+    throw std::runtime_error("롤아웃 그림 줄여 담기: 0/255·늘 0 이어야 할 채널에 다른 값 " + std::to_string(*h_pack_bad_) +
+                             " 바이트 — 관측이 mdp/obs_layout.h low NEAR_KIND·WIDE_KIND 와 다름 (PPOConfig::pack_img 를 끄거나 꼴 표를 고칠 것)");
+}
+
 UpdateStats PPO::update(const uint8_t* img, const real* obs1d) {
+  check_pack();   // 이번 롤아웃 그림이 꼴에 맞았나 (어긋나면 줄여 담은 그림이 원래와 다르므로 갱신 전에 멈춤)
   if (cfg_.device_update && !disc_ && !graph_) {   // 장치 갱신 (연속 행동 판)
     upd_img_ = img;
     upd_obs_ = obs1d;

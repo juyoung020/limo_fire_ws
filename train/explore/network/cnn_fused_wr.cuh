@@ -122,12 +122,15 @@ struct In {
     for (int r = 0; r < 2; ++r) {
       const long gp = u * 16 + g + 8 * r;
       const bool ok = gp < total;
-      const uint8_t* base = a.img;
+      const uint8_t* rec = a.img;
+      int row = 0, col = 0;
       if (ok) {
         long s = gp / PPS;
         const int pix = (int)(gp % PPS), py = pix / WP, px = pix % WP;
         if (a.idx) s = __ldg(a.idx + s);
-        base = a.img + s * a.img_stride + a.img_off + (py * 8 + qy * 4 + (q & 1)) * W + px * 8 + qx * 4 + (q >> 1) * H * W;
+        rec = a.img + s * a.img_stride;   // 샘플 행 (채널 판 자리는 담음꼴 a.co — 옛 배치면 img_off + c·H·W)
+        row = py * 8 + qy * 4 + (q & 1);
+        col = px * 8 + qx * 4;
       }
 #pragma unroll
       for (int cy = 0; cy < 2; ++cy)
@@ -137,8 +140,7 @@ struct In {
           for (int h = 0; h < 2; ++h) {
             const int c0 = 4 * kb + 2 * h;  // 이 레인의 cin = c0 + (q >> 1)
             uint32_t x = 0u;
-            if (c0 < CIN && ok && c0 + (q >> 1) < CIN)
-              x = __ldg(reinterpret_cast<const uint32_t*>(base + c0 * H * W + cy * 2 * W));
+            if (c0 < CIN && ok && c0 + (q >> 1) < CIN) x = ch_load4(a, rec, c0 + (q >> 1), row + cy * 2, col);
             v[r][cy][kb][h] = x;
           }
     }
@@ -151,12 +153,15 @@ struct In {
     for (int r = 0; r < 2; ++r) {
       const long gp = u * 16 + g + 8 * r;
       const bool ok = gp < total;
-      const uint8_t* base = a.img;
+      const uint8_t* rec = a.img;
+      int row = 0, col = 0;
       if (ok) {
         long s = gp / PPS;
         const int pix = (int)(gp % PPS), py = pix / WP, px = pix % WP;
         if (a.idx) s = __ldg(a.idx + s);
-        base = a.img + s * a.img_stride + a.img_off + (py * 8 + qy * 4 + (q & 1)) * W + px * 8 + qx * 4 + (q >> 1) * H * W;
+        rec = a.img + s * a.img_stride;
+        row = py * 8 + qy * 4 + (q & 1);
+        col = px * 8 + qx * 4;
       }
 #pragma unroll
       for (int cy = 0; cy < 2; ++cy)
@@ -166,8 +171,12 @@ struct In {
           for (int h = 0; h < 2; ++h) {
             const int c0 = 4 * kb + 2 * h, i = ((r * 2 + cy) * S::NKB0 + kb) * 2 + h;
             if (c0 < CIN) {
-              const bool v = ok && c0 + (q >> 1) < CIN;
-              cpa<4>(slot + i * 32 + l, v ? base + c0 * H * W + cy * 2 * W : a.img, v);
+              const int ch = c0 + (q >> 1);
+              const bool v = ok && ch < CIN;
+              if (v && a.ck[ch] != kChU8)   // 비트 판·0 판: 바로 풀어 이 레인 칸에 (읽는 것도 이 레인뿐 — cp.async 와 섞어도 차례 문제 없음)
+                slot[i * 32 + l] = ch_load4(a, rec, ch, row + cy * 2, col);
+              else
+                cpa<4>(slot + i * 32 + l, v ? rec + a.co[ch] + (row + cy * 2) * W + col : a.img, v);
             }
           }
     }

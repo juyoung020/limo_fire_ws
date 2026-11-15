@@ -2,6 +2,7 @@
 // 같은 씨앗 → 같은 입력·같은 초기 가중치(float 로 뽑음) → 두 정밀도의 기울기를 원소끼리 비교할 수 있다.
 #pragma once
 
+#include "../../mdp/obs_layout.h"
 #include <algorithm>
 #include <cstdlib>
 #include <cmath>
@@ -95,6 +96,23 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   auto fill_obs = [&]() {
     ++fill_t;
     for (auto& v : himg) v = (uint8_t)U8(rng);
+    // 아래층 그림 배치면 채널 꼴(mdp/obs_layout.h low NEAR_KIND·WIDE_KIND)에 맞춘다 — 학습기가 롤아웃 그림을 줄여 담으므로(0/255 채널 비트 판, 늘 0 채널 안 담음)
+    if (IMG == mdp::low::IMG || IMG == mdp::low::IMG_WIDE)
+      for (int i = 0; i < N; ++i) {
+        const int hw = 64 * 64;
+        for (int c = 0; c < 6; ++c) {
+          const int kn = mdp::low::NEAR_KIND[c], kw = mdp::low::WIDE_KIND[c];
+          for (int q = 0; q < hw; ++q) {
+            uint8_t& x = himg[(size_t)i * IMG + c * hw + q];
+            if (kn == 1) x = x & 1 ? 255 : 0;
+            if (kn == 2) x = 0;
+            if (IMG == mdp::low::IMG_WIDE) {
+              uint8_t& y = himg[(size_t)i * IMG + mdp::low::WIDE_OFF + c * hw + q];
+              if (kw == 1) y = y & 1 ? 255 : 0;
+            }
+          }
+        }
+      }
     for (auto& v : h1) v = 2.f * G(rng) + 0.5f;
     if (spec.n_slots > 0)   // 후보 있음 칸(특징 마지막) 0/1: 샘플 i 슬롯 k 는 (i + k) % 3 ≠ 0 이면 있음, i % 5 == 4 는 모두 빈 칸(고를 것 없음)
       for (int i = 0; i < N; ++i)

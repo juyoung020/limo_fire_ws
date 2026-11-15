@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <random>
 #include <string>
+#include <array>
 #include <vector>
 
 #include "cnn_fused.cuh"
@@ -26,6 +27,14 @@ extern bool g_break_elu_grad;
 
 struct ImgIn {
   int off, c, h, w;  // 환경 하나 u8 관측 안의 바이트 오프셋, 채널·행·열
+};
+
+// 줄여 담은 그림 배치 (2026-11-15, ppo/README "롤아웃 그림 줄여 담기"): 가지마다 채널 담음꼴(cnn_fused.cuh kChU8·kChBit·kChZero)·
+// 판 시작(샘플 행 기준 바이트), 담은 행 길이. 융합 합성곱 첫 층이 이 꼴을 바로 읽는다 (풀어 놓는 버퍼 없음)
+struct ImgPack {
+  int stride = 0;
+  std::vector<std::array<int8_t, 8>> kind;   // [가지][채널]
+  std::vector<std::array<int32_t, 8>> off;
 };
 
 struct NetSpec {
@@ -87,6 +96,8 @@ class Net {
   size_t ws_bytes() const { return ws_bytes_; }
   // 합성곱 가지를 텐서 코어(bf16 입력·fp32 누산) 융합 커널로. 끄면 fp32 융합 커널(정확 경로). PPOConfig::cnn_bf16 가 정한다.
   bool cnn_bf16 = false;
+  // 그림 배치: nullptr = 옛 배치 ([n][img_stride] u8), 아니면 줄여 담은 배치 (ImgPack — 모든 가지가 융합 커널일 때만). 부르는 쪽이 정방향·역방향 전에 정한다
+  void set_img_pack(const ImgPack* p) { pack_ = p; }
   // MLP 계산 방식: 0 = cuBLAS sgemm + 편향·ELU 커널 따로(옛 길), 1 = 직접 짠 융합 GEMM fp32(정확 모드),
   // 2 = 융합 GEMM bf16 텐서 코어(fp32 누산). fp64 빌드는 늘 0.
   int mlp_mode = 0;
@@ -122,6 +133,7 @@ class Net {
   };
   NetSpec s_;
   std::vector<Branch> br_;
+  const ImgPack* pack_ = nullptr;
   std::vector<LinL> lin_;
   long feat_img_ = 0, feat_ = 0;
   int grad_cols_ = 0;

@@ -166,6 +166,8 @@ struct Args {
   const uint8_t* img;
   long img_off;
   int img_stride, H, W, n;
+  int8_t ck[8];    // 채널 담음꼴 (CnnBranch ch_kind — 옛 배치면 모두 u8)
+  int32_t co[8];   // 채널 판 시작 (샘플 행 기준 바이트 — 옛 배치면 img_off + c·H·W)
   const int* idx;  // 샘플 i 의 입력 행 = idx[i] (nullptr 이면 i) — 미니배치를 복사 없이 롤아웃에서 바로 읽기
   long feat, flat_off;
   float* X0;
@@ -186,6 +188,25 @@ __device__ __forceinline__ void load_v(const float* __restrict__ src, float* dst
   for (int e = threadIdx.x; e < n; e += NT) dst[e] = src[e];
 }
 
+// 담음꼴 읽기: 비트 니블·바이트 → 0/255 바이트들 (u8 판에서 읽은 것과 같은 바이트)
+__device__ __forceinline__ uint32_t expand4(uint32_t n) { return ((n | (n << 7) | (n << 14) | (n << 21)) & 0x01010101u) * 255u; }
+// 샘플 행 rec 의 채널 ch, 행 row, 열 col..col+3 (col 은 4 의 배수) 의 바이트 4 개 (u8 판에서 u32 로 읽은 것과 같은 값)
+__device__ __forceinline__ uint32_t ch_load4(const Args& a, const uint8_t* rec, int ch, int row, int col) {
+  const int k = a.ck[ch];
+  if (k == kChU8) return __ldg(reinterpret_cast<const uint32_t*>(rec + a.co[ch] + row * a.W + col));
+  if (k == kChZero) return 0u;
+  const int bi = row * a.W + col;
+  return expand4(((uint32_t)__ldg(rec + a.co[ch] + (bi >> 3)) >> (bi & 7)) & 15u);
+}
+// 같은 것, 열 col..col+7 (col 은 8 의 배수)
+__device__ __forceinline__ uint2 ch_load8(const Args& a, const uint8_t* rec, int ch, int row, int col) {
+  const int k = a.ck[ch];
+  if (k == kChU8) return *reinterpret_cast<const uint2*>(rec + a.co[ch] + row * a.W + col);
+  if (k == kChZero) return make_uint2(0u, 0u);
+  const uint32_t b = rec[a.co[ch] + ((row * a.W + col) >> 3)];
+  return make_uint2(expand4(b & 15u), expand4(b >> 4));
+}
+
 // u8 타일 → Xs [TP·16][K0] (조각 안 계층 배치). 범위 밖 조각은 0.
 template <int CIN>
 __device__ __forceinline__ void load_x(const Args& a, long g0, long total, uint8_t* Xs) {
@@ -199,8 +220,7 @@ __device__ __forceinline__ void load_x(const Args& a, long g0, long total, uint8
       long s = g / PPS;
       int pix = (int)(g % PPS), py = pix / WP, px = pix % WP;
       if (a.idx) s = a.idx[s];
-      const uint8_t* src = a.img + s * a.img_stride + a.img_off + ((long)ci * a.H + py * 8 + y) * a.W + px * 8;
-      v = *reinterpret_cast<const uint2*>(src);
+      v = ch_load8(a, a.img + s * a.img_stride, ci, py * 8 + y, px * 8);
     }
     const int q1y = (y >> 2) & 1, c1y = (y >> 1) & 1, c0y = y & 1;
 #pragma unroll
@@ -438,6 +458,10 @@ Args make_args(const CnnBranch& b, const float* P, const uint8_t* img, const int
   a.img_stride = b.img_stride;
   a.H = b.h;
   a.W = b.w;
+  for (int c = 0; c < 8; ++c) {
+    a.ck[c] = b.packed ? b.ch_kind[c] : (int8_t)kChU8;
+    a.co[c] = b.packed ? b.ch_off[c] : (int32_t)(b.img_off + (long)c * b.h * b.w);
+  }
   a.n = n;
   a.feat = b.feat;
   a.flat_off = b.flat_off;

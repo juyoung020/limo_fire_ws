@@ -136,6 +136,12 @@ constexpr int IMG_WIDE = WIDE_OFF + WIDE_C * WIDE_HW * WIDE_HW;   // 52736
 constexpr int N1D = 32;
 constexpr int CONT = 2;        // v, ω (옆 이동 없음)
 constexpr int ACT = CONT + 1;  // 신경망 출력 폭 (끝 칸 = 선언 로짓 자리)
+// 채널 값 꼴 (2026-11-15, 학습 롤아웃 그림을 줄여 담을 때 — ppo/README "롤아웃 그림 줄여 담기"): 0 = 아무 u8 값, 1 = 0 또는 255 만, 2 = 늘 0.
+// 학습기는 1·2 채널을 비트 판·안 담음으로 저장하고 담을 때마다 이 꼴이 맞는지 본다 (어긋나면 학습을 멈춤). 관측을 바꾸면 여기도 고칠 것
+// 가까운 지도: 0 막힘 확률 · 1 지나간 곳 · 2 깊이 카메라 층(sim low_rl.h kLowCamCh) · 3·4 물체(예약, 늘 0) · 5 프론티어
+constexpr int NEAR_KIND[6] = {0, 1, 1, 2, 2, 1};
+// 넓은 지도: 0 막힘 확률 최댓값 · 1 아는 빈 몫(65 단계) · 2 모름 몫(65 단계) · 3 지나간 곳 · 4 목적지 점 · 5 깊이 카메라 층
+constexpr int WIDE_KIND[6] = {0, 0, 0, 1, 1, 1};
 }  // namespace mdp::low
 
 namespace mdp::act {

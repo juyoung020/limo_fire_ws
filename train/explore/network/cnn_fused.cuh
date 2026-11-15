@@ -13,11 +13,17 @@
 
 namespace XNET_NS {
 
+// 입력 채널 담음꼴 (2026-11-15, 롤아웃 그림 줄여 담기): 0 = u8 판 (채널 판이 그 자리에 H·W 바이트), 1 = 비트 판 (값 0/255 만 — 칸 y·W + x 가 비트, 바이트 안 낮은 비트부터),
+// 2 = 늘 0 (안 담음). 기본(packed 거짓)은 옛 배치: 채널 c 가 img_off + c·H·W 의 u8 판
+enum : int8_t { kChU8 = 0, kChBit = 1, kChZero = 2 };
 struct CnnBranch {
   int cin, h, w, c0, c1, c2;  // 입력 채널·크기, 층 채널
   long img_off;               // 환경 하나 u8 관측 안 오프셋
   int img_stride;
   long feat, flat_off;        // X0 행 길이, 이 가지 평탄화 시작 열
+  bool packed = false;        // 참이면 채널마다 담음꼴 ch_kind·ch_off (샘플 행 시작 기준 바이트 오프셋) — img_stride 는 담은 행 길이
+  int8_t ch_kind[8] = {};
+  int32_t ch_off[8] = {};
 };
 
 #ifndef XNET_FP64

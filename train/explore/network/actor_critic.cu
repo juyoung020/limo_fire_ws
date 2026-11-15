@@ -312,7 +312,17 @@ CnnBranch Net::desc(const Branch& B) const {
   // 앞 세 층 출력은 가지 버퍼 F3 [n][h3·w3·c] 로 (넷째 층이 읽음)
   const auto& C3 = B.L.back();
   const long f3 = (long)C3.oh * C3.ow * C3.cout;
-  return CnnBranch{B.in.c, B.in.h, B.in.w, B.L[0].cout, B.L[1].cout, B.L[2].cout, B.in.off, s_.img_stride, f3, 0};
+  CnnBranch d{B.in.c, B.in.h, B.in.w, B.L[0].cout, B.L[1].cout, B.L[2].cout, B.in.off, s_.img_stride, f3, 0};
+  if (pack_) {   // 줄여 담은 배치 (ImgPack): 담은 행 길이 · 이 가지의 채널 담음꼴
+    const size_t bi = (size_t)(&B - br_.data());
+    d.packed = true;
+    d.img_stride = pack_->stride;
+    for (int c = 0; c < 8; ++c) {
+      d.ch_kind[c] = pack_->kind[bi][c];
+      d.ch_off[c] = pack_->off[bi][c];
+    }
+  }
+  return d;
 }
 
 void Net::bind(real* params, real* grads, int max_n) {
@@ -495,6 +505,7 @@ void Net::forward(cublasHandle_t h, cudaStream_t st, int n, const uint8_t* img, 
       continue;
     }
 #endif
+    if (pack_) throw std::runtime_error("Net::forward: 줄여 담은 그림은 융합 합성곱만 읽음");
     long tot = (long)n * B.in.c * B.in.h * B.in.w;
     k_reorder_u8<<<nblk(tot), 256, 0, st>>>(img + B.in.off, s_.img_stride, B.in.c, B.in.h, B.in.w, (int)B.L.size(), n, B.X);
     for (size_t l = 0; l < B.L.size(); ++l) {
