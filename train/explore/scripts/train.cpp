@@ -789,7 +789,10 @@ int run_low(Args a) {
       r.last("train/aux_valid_b", us.aux_vb);
       r.last("train/aux_valid_c", us.aux_vc);
       r.last("train/aux_contact_pos", us.aux_pos);
+      r.last("train/aux_contact_p_pos", us.aux_p_pos);   // 1 s 안 닿은 행의 예측 확률 평균
+      r.last("train/aux_contact_p_neg", us.aux_p_neg);   // 안 닿은 행의 예측 확률 평균
     }
+    r.last("low/contact_per_goal", s.goals > 0 ? (s.hit_wall + s.hit_person) / s.goals : 0.0);   // 닿음(센서)으로 끝난 판 / 받은 목표
     r.last(rf::key::GPU_MEM_MB, (tot - fr) / 1048576.0);
     const int it_now = ppo.iteration();
     std::fprintf(stderr,

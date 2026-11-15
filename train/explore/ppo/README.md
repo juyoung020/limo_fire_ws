@@ -780,7 +780,7 @@ nsys 커널 시간 (train 3 반복 전체 합 ÷ 3 = 반복당, 롤아웃 act �
   (c) 5 걸음(0.5 s) 뒤 최신 라이다 구역 8 개(±110°) 최소 거리/4 m — 칸 평균 제곱 오차. 몸 둘레 간격(`SIM_LOW_BODY=1`)을 켜면 (c) 는 0.5 s 뒤 몸 둘레 360° 8 구역 간격/1 m (mdp/README "몸 둘레 간격").
 - 가림: 정답이 롤아웃(24 걸음) 밖이거나 사이에 판이 바뀌면 그 행은 뺌 ((a) 는 창 끝이 롤아웃 안일 때만 — 결과로 행을 고르는 치우침 없음). 실측 정답 있는 행 비율 a 0.63 · b 0.56 · c 0.78.
 - 손실 = `aux_coef` (기본 0.1, 잠정) × 미니배치 평균 [(a) + (b) + (c)]. 기울기 노름 자르기·Adam 은 PPO 손실과 같이. 가치만 맞추기 동안은 aux 블록도 안 고침.
-- 기록: `train/aux_contact_bce · aux_mover_mse · aux_lidar_mse` (정답 있는 행 평균), `aux_valid_a/b/c`, `aux_contact_pos` (닿음 정답 1 비율), 기록 줄 끝 "보조 닿음 · 사람 · 라이다".
+- 기록: `train/aux_contact_bce · aux_mover_mse · aux_lidar_mse` (정답 있는 행 평균), `aux_valid_a/b/c`, `aux_contact_pos` (닿음 정답 1 비율), `aux_contact_p_pos · p_neg` (1 s 안 닿은 행 · 안 닿은 행의 예측 확률 평균 — 차이가 클수록 정책 핵이 닿음을 미리 앎). 러너는 `low/contact_per_goal` (닿음으로 끝난 판 / 받은 목표), 기록 줄 끝 "보조 닿음 · 사람 · 라이다".
 - 이어 학습: `tools/ckpt_add_aux` 가 블록 둘을 0 으로 붙임 (정책·가치 그대로). 평가 도구는 체크포인트에서 머리 크기를 읽어 같은 구조로 만든다 (머리는 안 씀).
 - 검증: `gradcheck --low --gru --aux` 통과 (fp64 해석 vs 차분 최대 1.6e-6, aux.w 2.9e-8), `--aux-negative` (h 로 가는 보조 기울기를 뺌) 은 인코더·순환 핵에서 넘음 (9.8e-2 ~). `env_verify` 보조 재료 GPU == CPU, 끄면 지문 같음.
 
