@@ -1,5 +1,8 @@
 # Isaac Sim 교차 검증 (연기 모드 초음파)
 
+> 2026-11-15: 여기서 시험한 `sonar`(초음파 스캔을 AMCL 에)는 지웠고 연기 모드 초음파 위치 방식은 `wall`(벽 맞추기)로 바뀌었다([benchmarks 결과 7](benchmarks/README.md)). 아래는 그때의 기록이다.
+> 다시 교차 검증하면 `smoke_localization:=wall` 로 돌린다.
+
 연기 모드 검증 현황의 "다른 시뮬레이터와 교차 검증" 항목을 한 문서로 정리한다. 무엇을·왜·어떻게 했는지, 어디까지 믿을 수 있는지를 적는다.
 숫자 결과는 [benchmarks/README.md](benchmarks/README.md) "결과 4"(초음파 3 개, 옛 설계) 와 "결과 6"(**현재 설계 2 개 재실행**), [20261113_0650_nav_isaac_cross_check.csv](benchmarks/20261113_0650_nav_isaac_cross_check.csv)·[20261114_1724_nav_isaac_sonar2_cross_check.csv](benchmarks/20261114_1724_nav_isaac_sonar2_cross_check.csv) 에 있다.
 

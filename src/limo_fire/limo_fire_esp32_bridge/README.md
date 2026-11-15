@@ -6,7 +6,7 @@ ESP32(펌웨어 [firmware/limo_fire_esp32](../../../firmware/limo_fire_esp32/REA
 |---|---|---|
 | `/ultrasonic/front_left` · `/ultrasonic/front_right` | `sensor_msgs/Range` (ULTRASOUND, 시야 15°, 0.02~4.0 m) | `ultrasonic_<이름>_link` (URDF `ultrasonic.xacro`) |
 
-- 시뮬(Webots `LimoFire` `ultrasonic TRUE`)과 같은 토픽·프레임이라 연기 모드(`limo_fire_navigation` `sonar_scan` · `smoke_mode` `smoke_localization: sonar`)가 그대로 쓴다.
+- 시뮬(Webots `LimoFire` `ultrasonic TRUE`)과 같은 토픽·프레임이라 연기 모드(`limo_fire_navigation` `smoke_mode` — 장애물·감속·`smoke_localization: wall`)가 그대로 쓴다.
 - 메아리 없음 → `range = +inf` (sensor_msgs/Range 규약: 고정 거리 안에 물체 없음).
 - 체크섬이 틀리거나 반쪽인 줄은 버린다. 포트가 없거나 끊기면 알리고 1 초마다 다시 연다. 살아 있음 줄이 3 s 넘게 없으면 알린다.
 

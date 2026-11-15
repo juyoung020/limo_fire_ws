@@ -2,8 +2,9 @@
 # navigation.launch.xml 이 저장 지도 위치 추정(localization:=true)일 때 늘 띄운다. 켜기: ros2 service call /smoke_mode/set std_srvs/srv/SetBool "{data: true}"
 smoke_mode:
   ros__parameters:
-    # 연기 속 위치: hold = 바퀴 + IMU 만(들어갈 때 위치를 붙잡음) · sonar = AMCL 에 초음파 스캔(아래 sonar_scan)
-    #   · wall = 최근 초음파 메아리를 저장 지도의 벽에 맞춰 벽에 수직인 방향만 조금씩 고침(아래 wall). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
+    # 연기 속 위치: hold = 바퀴 + IMU 만(들어갈 때 위치를 붙잡음)
+    #   · wall = 거기에 최근 초음파 메아리를 저장 지도의 벽에 맞춰 벽에 수직인 방향만 조금씩 고침(아래 wall). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
+    #   (초음파를 AMCL 에 넣던 sonar 는 2026-11-15 에 지움 — 비슷한 복도로 뛰어 위치를 잃었다, docs/benchmarks 결과 5~7)
     smoke_localization: hold
     # wall: 최근 window 초 메아리(각각 그 시각 odom 자세와 함께)를 지금 추정 근처에서 벽 면에 맞춘다
     #   (include/limo_fire_navigation/sonar_wall.hpp). 값은 모두 잠정 — 시뮬 HC-SR04 모델 기준, 실물 메아리 잡음은 아직 안 쟀다
@@ -31,17 +32,11 @@ smoke_mode:
       max_step_xy: 0.10    # m, 한 번에 고치는 최대
       max_step_yaw: 0.05   # rad
       iterations: 3        # 가우스-뉴턴 횟수
-    # sonar 일 때 초음파 AMCL 자세를 받는 문 (잠정): 바퀴 + IMU 추정과 0.5 m · 0.3 rad 안일 때만 30 % 씩 끌어당김,
-    # 5 번 잇달아 어긋나면 AMCL 을 지금 추정 자리로 다시 놓음. 2026-11-06 엔 그대로 믿어 office·warehouse 에서 위치를 잃었다
-    # 앞쪽 초음파(slow_topics) 중 하나라도 0.6 m 보다 가까우면 연기 모드 속도 한도를 0.05 m/s 로 (장애물을 늦게 봐 상자를 못 피함)
-    sonar:
-      gate_xy: 0.5
-      gate_yaw: 0.3
-      blend: 0.3
-      reseed_after: 5
-      slow_topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
-      slow_distance: 0.6
-      slow_speed: 0.05
+    # 앞쪽 초음파(topics) 중 하나라도 0.6 m 보다 가까우면 연기 모드 속도 한도를 0.05 m/s 로 (장애물을 늦게 봐 상자를 못 피함, 잠정)
+    slow:
+      topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
+      distance: 0.6
+      speed: 0.05
     global_frame: map
     odom_frame: odom
     base_frame: base_link
@@ -78,13 +73,3 @@ smoke_mode:
     bump:
       accel: 4.0
       holdoff: 1.0               # s, 한 번 부딪힘을 여러 번 알리지 않게
-
-# 초음파 3 개 → base_link 스캔 (sonar_scan 노드, docs/smoke_mode_plan.md 3 단계)
-sonar_scan:
-  ros__parameters:
-    range_topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
-    base_frame: base_link
-    bins: 60            # AMCL max_beams(60) 이하 — 넘으면 AMCL 이 솎으며 몇 안 되는 유효 칸을 버린다
-    rays_per_cone: 3    # 원뿔(15°) 폭에 점 3 개 (어디서 반사됐는지 모르므로)
-    rate: 10.0          # 초음파 10 Hz 와 같게
-    max_age: 0.5        # 이보다 오래된 거리는 안 씀 (센서 끊김)

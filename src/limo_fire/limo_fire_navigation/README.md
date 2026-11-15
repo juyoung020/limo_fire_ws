@@ -7,9 +7,10 @@ Nav2·Cartographer 파라미터(`config/`), 저장 지도(`maps/`), 연기 모�
 
 연기 속에서 저장 지도 위를 **바퀴 오도메트리 + IMU 만으로** 움직인다. 라이다·카메라는 쓰지 않는다.
 
-![연기 모드 maze: hold 대 sonar](../../../docs/assets/smoke_maze_hold_vs_sonar.gif)
+![연기 모드 창고: hold 대 wall](../../../docs/assets/smoke_warehouse_hold_vs_wall.gif)
 
-시뮬(Webots 덕트호스 미로, 초음파 2 개, 12 배속). 왼쪽 기본 `hold` 는 실제 위치(초록)와 로봇이 생각한 위치(빨강)가 끝까지 붙어 간다. 오른쪽 `sonar`(초음파로 위치 보정)는 중간에 갈라진다 — [benchmarks 결과 5](../../../docs/benchmarks/README.md).
+시뮬(Webots 창고, 라이다·카메라 끔, 초음파 2 개, 12 배속). 왼쪽 기본 `hold`(바퀴 + IMU 만)는 로봇이 생각한 위치(빨강)가 실제 위치(초록)에서 조금씩 벌어지고(최대 0.29 m),
+오른쪽 `wall`(초음파를 지도 벽에 맞춰 보정, 하늘색 점 = 고친 곳)은 끝까지 붙어 간다(최대 0.20 m) — [benchmarks 결과 7](../../../docs/benchmarks/README.md).
 
 ```bash
 ros2 service call /smoke_mode/set std_srvs/srv/SetBool "{data: true}"    # 켬
@@ -30,7 +31,7 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 | IMU | 빛을 안 써서 영향 없음 | **씀** — 방향(EKF), 부딪힘 감지 |
 | 2D 라이다 YDLIDAR T-mini Plus | 연기 입자에 반사돼 거리가 틀어짐 | 안 씀 |
 | 깊이·컬러 카메라 Orbbec Dabai DC1 | 보이는 빛·적외선 패턴이 연기에 가림 | 안 씀 |
-| 초음파 HC-SR04 × 2 (앞 범퍼 아래 좌우 ±20°) | 빛이 아니라 소리라 덜 막힐 것으로 본다(잠정 — Starr & Lattimer 2014 시험 대상에 sonar 2 종이 있으나 결과 수치는 원문 확인 필요, 열기·기류 영향도 확인 필요) | **`smoke_localization: sonar` 일 때 씀** — AMCL 위치 보정, 장애물. 시뮬엔 있음, 실물은 장착 전([limo_fire_esp32_bridge](../limo_fire_esp32_bridge/README.md)) |
+| 초음파 HC-SR04 × 2 (앞 범퍼 아래 좌우 ±20°) | 빛이 아니라 소리라 덜 막힐 것으로 본다(잠정 — Starr & Lattimer 2014 시험 대상에 sonar 2 종이 있으나 결과 수치는 원문 확인 필요, 열기·기류 영향도 확인 필요) | **씀** — 장애물·감속, `smoke_localization: wall` 이면 위치 보정도. 시뮬엔 있음, 실물은 장착 전([limo_fire_esp32_bridge](../limo_fire_esp32_bridge/README.md)) |
 | 레이더·열화상 | — | 아직 안 달아서 다루지 않음 (부품 대기, [spec.md](../../../docs/spec.md#연기-모드)) |
 
 근거: Starr & Lattimer, "Evaluation of Navigation Sensors in Fire Smoke Environments", *Fire Technology* 50, 2014
@@ -45,22 +46,21 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 
 | 할 일 | 평상시 | 연기 모드 |
 |---|---|---|
-| `map → odom` TF | AMCL 자세(`/amcl_pose`)로 계산해 냄 | `hold`: 들어갈 때 값을 붙잡아 냄 → 위치는 EKF(바퀴 + IMU) 만 따라감 · `wall`: `hold` 에 더해 초음파 메아리를 저장 지도의 벽에 맞춰 조금씩 고침(아래) · `sonar`: 바퀴 + IMU 추정과 가까운 AMCL 자세만 조금씩 반영(`sonar.gate_*`·`blend`), 잇달아 어긋나면 AMCL 을 추정 자리로 다시 놓음 |
-| AMCL 이 받는 스캔 `scan_localization` | `/scan` 그대로 | `hold`·`wall`: 끊음 · `sonar`: 초음파 스캔(`sonar_scan`) |
+| `map → odom` TF | AMCL 자세(`/amcl_pose`)로 계산해 냄 | `hold`: 들어갈 때 값을 붙잡아 냄 → 위치는 EKF(바퀴 + IMU) 만 따라감 · `wall`: `hold` 에 더해 초음파 메아리를 저장 지도의 벽에 맞춰 조금씩 고침(아래) |
+| AMCL 이 받는 스캔 `scan_localization` | `/scan` 그대로 | 끊음 |
 | 장애물 지도가 받는 라이다 `scan_obstacles` | `/scan` 그대로 | 저장 지도에서 광선을 쏜 **가상 스캔** — 지도의 벽만 남고 연기가 찍은 가짜 장애물은 지워짐 |
-| 최고 속도 (`speed_limit`) | 한도 없음 | 0.13 m/s, 앞 초음파 0.6 m 안이면 0.05 m/s (잠정) |
+| 최고 속도 (`speed_limit`) | 한도 없음 | 0.13 m/s, 앞 초음파 0.6 m 안이면 0.05 m/s (`slow.*`, 잠정) |
 | 추정 자세 `smoke_mode/pose` | — | 자세 + 이동·회전에 비례해 커지는 불확실성 |
 | 부딪힘 `smoke_mode/bump` | — | IMU 수평 가속도가 4 m/s² (잠정) 넘으면 그 지도 위치 |
 
-- 연기 속 위치 방식 `smoke_localization`(`config/smoke_mode.yaml`, 기본 `hold`) — `hold` · `wall` · `sonar`. 연기 모드가 꺼져 있을 때만 바꿀 수 있다: `ros2 param set /smoke_mode smoke_localization wall`.
+- 연기 속 위치 방식 `smoke_localization`(`config/smoke_mode.yaml`, 기본 `hold`) — `hold` · `wall`. 연기 모드가 꺼져 있을 때만 바꿀 수 있다: `ros2 param set /smoke_mode smoke_localization wall`.
 - `wall`(초음파 벽 맞추기, `include/limo_fire_navigation/sonar_wall.hpp`, 값은 `config/smoke_mode.yaml` `wall.*`):
   최근 4 초 메아리를 각각 그 시각 odom 자세와 함께 모아, 2 Hz 로 **지금 추정 근처에서만** 저장 지도 벽 면에 맞춘다(점-면 가우스-뉴턴).
   - 메아리마다 지금 추정에서 "보여야 할 거리"를 지도로 구하고, 잰 거리와 0.25 m 넘게 다르면 버린다 — 지도에 없는 물체·다른 벽.
-  - 고침은 보인 벽에 **수직인 방향만** 정보가 있다. 긴 복도를 따라가는 방향은 그대로 둔다 → AMCL(`sonar`)처럼 비슷한 복도의 엉뚱한 자리로 뛰지 않는다.
+  - 고침은 보인 벽에 **수직인 방향만** 정보가 있다. 긴 복도를 따라가는 방향은 그대로 둔다 → 지도 전체에서 다시 찾는 AMCL 처럼 비슷한 복도의 엉뚱한 자리로 뛰지 않는다.
   - 추정 불확실성을 같이 든다: 움직인 만큼 커지고(`q_xy`·`q_yaw`) 맞출 때마다 줄어든다. 이것이 사전이라 지도와 조금 다른 물체가
     같은 쪽으로 계속 당겨도 추정이 끝없이 밀려가지 않는다. 한 번에 0.1 m · 0.05 rad 넘게 고치지 않는다.
   - 맞추기마다 `smoke_mode/wall_fix`(`std_msgs/Float64MultiArray`: 쓴 메아리 · 모은 메아리 · 고치기 전·후 잔차 · dx · dy · dyaw · 고쳤나 · 정보 · 사전 σ)를 낸다.
-- `sonar_scan` 노드: 초음파 2 개 Range → base_link 기준 60 칸 스캔(원뿔 15° 폭에 점 3 개, 나머지 칸 +inf = AMCL 이 안 씀). 칸 수가 AMCL `max_beams`(60) 이하라야 AMCL 이 몇 안 되는 점을 버리지 않는다.
 - 초음파는 장애물 지도(전역·지역)의 `range_layer`(`nav2_costmap_2d::RangeSensorLayer`, 확률로 찍고 지움)로도 들어간다 — 연기 속 지도에 없는 장애물(4 단계).
 - `map → odom` 은 이 노드 하나만 낸다. 그래서 AMCL 은 `tf_broadcast: false` 다(`nav2_params.yaml`).
 - 들어갈 때·나올 때 장애물 지도를 비운다(연기 전·후의 라이다 흔적을 지움).
@@ -82,12 +82,9 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 - 2026-11-05 (로봇 Jetson, Humble + Webots R2025a, `nav_benchmark`): Webots 맵 4 개 순찰점 46 개를 (a) 라이다 켬 · (b) 연기 모드(바퀴 + IMU 만)
   두 조건으로 다 도착. 결과와 한계는 [docs/benchmarks "주행 벤치마크"](../../../docs/benchmarks/README.md#주행-벤치마크-연기-모드).
 - 부딪힘 감지는 미로 맵 (b) 에서 15 번 떴고 모두 오탐(실제 충돌 0) — 제자리 회전·출발 가속에 걸린다. 문턱(잠정 4 m/s²)을 다시 정해야 한다.
-- 2026-11-13: 초음파를 실물 받침대대로 2 개(앞 좌우 ±20°)로 바꾸니 `hold` 는 네 맵 다 도착, `sonar` 는 더 나빠짐(maze·office 에서 위치를 잃음) — [benchmarks 결과 5](../../../docs/benchmarks/README.md).
-- 2026-11-06 (로봇 Jetson, 거리 −3 % · 초음파 켬): **`smoke_localization: sonar` 가 `hold` 보다 네 맵 모두 나빴다**(office·warehouse 에서 위치를 잃음),
-  지도에 없는 상자는 초음파를 켜도 못 피했다 → [docs/benchmarks "결과 2"](../../../docs/benchmarks/README.md). `sonar` 는 실험 단계 — 연기 모드 기본은 `hold`.
-- 2026-11-06 오후 (같은 조건, 고친 뒤): `hold` 는 네 맵 다 끝까지 갔다. `sonar` 는 나아졌지만 여전히 네 맵 모두 `hold` 보다 부정확했다(warehouse 11/13, 최대 1.70 m).
-  상자는 초음파 끔 3/3 닿음 → 초음파 켬 1/3 닿음(`hold`·`sonar` 같음). 물체가 있어도 초음파 메아리가 없는 때가 21~39 % 다 → [docs/benchmarks "결과 3"](../../../docs/benchmarks/README.md). 다음 할 일: [smoke_mode_plan.md "다음에 볼 것"](../../../docs/smoke_mode_plan.md).
-- 2026-11-15 (데스크톱, Jazzy + Webots R2025a, 거리 −3 %): 새 `wall` 이 네 맵 모두 끝까지 갔고 추정 오차 평균이 `hold` 보다 작았다. `sonar` 는 같은 조건에서 maze 8/13 — 로봇 Jetson 결과 5 와 같은 경향 → [benchmarks 결과 7](../../../docs/benchmarks/README.md).
+- 2026-11-06 ~ 11-14: 초음파를 AMCL 에 넣는 방식(`sonar`)은 초음파 3 개·2 개, Webots·Isaac Sim 모두에서 `hold` 보다 나빴다(비슷한 복도로 뛰어 위치를 잃음) → 2026-11-15 에 지우고 `wall` 로 바꿈.
+  기록은 [benchmarks 결과 2~6](../../../docs/benchmarks/README.md). 지도에 없는 상자: 초음파 끔 3/3 닿음 → 켬(장애물 지도) 1/3(결과 3, 3 개), 2 개는 0/3 이나 간격 2 cm 안팎(결과 5). 물체가 있어도 메아리가 없는 때가 2 개 배치에서 45~50 %.
+- 2026-11-15 (데스크톱, Jazzy + Webots R2025a, 거리 −3 %): 새 `wall` 이 네 맵 8 판 모두 끝까지 갔고 추정 오차 평균이 8 판 중 7 판에서 `hold` 보다 작았다 → [benchmarks 결과 7](../../../docs/benchmarks/README.md).
   첫 판(불확실성 없이 매번 같은 사전)은 warehouse 에서 위치를 잃어(8/13, 2.26 m) 불확실성을 넣고 다시 쟀다. 시뮬 초음파 모델이 잠정이라 실물 확인 전까지 기본은 `hold`.
 - **아직 안 함**: 실물 주행, 실물 수준 오도메트리 오차에서의 측정.
 

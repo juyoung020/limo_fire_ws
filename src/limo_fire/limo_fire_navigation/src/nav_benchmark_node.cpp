@@ -63,7 +63,7 @@ class Bench : public rclcpp::Node {
     report_dir_ = declare_parameter<std::string>("report_dir", ".");
     truth_topic_ = declare_parameter<std::string>("truth_topic", "/sim/ground_truth");
     max_goals_ = declare_parameter<int>("max_goals", 0);
-    smoke_loc_ = declare_parameter<std::string>("smoke_localization", "hold");   // smoke:=true 일 때 연기 속 위치 (hold · sonar · wall)
+    smoke_loc_ = declare_parameter<std::string>("smoke_localization", "hold");   // smoke:=true 일 때 연기 속 위치 (hold · wall)
     // 지도에 없는 장애물(4 단계): Webots 세계 좌표 [x, y, 가로, 세로] (m, 축 정렬). 비면 안 잰다.
     // 몸통 사각형(footprint, 자세 방향)과 상자 사이 가장 좁은 간격을 재고, collide_gap 보다 작으면 부딪힘으로 센다.
     // (2026-11-06 판은 몸통 가운데 거리 0.12 m 로 셌다 — 앞 범퍼가 가운데에서 0.16 m 라 닿아도 안 닿았다고 나왔다)
