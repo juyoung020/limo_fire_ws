@@ -345,6 +345,12 @@ const char* kCamLegend =
 const char* kMapLegend2 =
     "The SECOND image is the robot's current occupancy map seen from above: white = free space, black = wall or obstacle, gray = not mapped yet. The blue arrow is the robot, "
     "pointing where it is heading. Each candidate frontier is a small yellow dot; its letter is in the red circle joined to that dot by a red line.";
+const char* kRichGuide =
+    "Candidate fields: travel_time_s = estimated driving time there including turning; expected_new_area_ratio = share of the area around that spot (8 m disk) that is still unmapped "
+    "and visible from it; new_area_per_second = that ratio divided by travel time; extra_total_time_if_chosen_first_s = how much longer a full tour over all frontiers becomes if this "
+    "candidate is visited first (0 for the best first stop); open_depth_beyond_m = how far free or unknown space continues beyond the opening (short = closet or corner, long = room "
+    "or corridor); other_frontiers_in_its_room = other candidates in the same room; narrowest_gap_on_way_m = smallest distance from the way to a mapped obstacle; clutter_on_way = "
+    "share of mapped obstacle cells near the way; people_near_way = tracked people within 1 m of the way.";
 const char* kLowNote =
     "The map is made by a flat 2D laser scanner 0.11 m above the floor, so obstacles lower than that (boxes, sills, steps) do NOT appear on the map. The robot cannot drive over "
     "anything taller than 3 cm. Such low obstacles are visible only in the camera image, so a way that looks free on the map can in fact be blocked.";
@@ -358,6 +364,22 @@ json cand_json(const Cand& c, bool v2) {
   else o["frontier_cells_within_2m"] = (int)std::lround(c.util);
   o["is_current_target"] = c.cur;
   o["marked_in_camera_image"] = c.in_cam;
+  if (c.rich) {   // fuel 후보 (kRichGuide 에 뜻)
+    const auto r1 = [](float v) { return std::round(v * 10.0) / 10.0; };
+    const auto r2 = [](float v) { return std::round(v * 100.0) / 100.0; };
+    o.erase("frontier_cells_within_2m");
+    o["travel_time_s"] = r1(c.t_s);
+    o["expected_new_area_ratio"] = r2(c.gain);
+    o["new_area_per_second"] = std::round(c.gpt * 1000.0) / 1000.0;
+    o["extra_total_time_if_chosen_first_s"] = r1(c.opp_s);
+    o["open_depth_beyond_m"] = r1(c.depth_m);
+    o["same_room_as_robot"] = c.same_room;
+    o["other_frontiers_in_its_room"] = c.room_left;
+    o["narrowest_gap_on_way_m"] = r2(c.clear_m);
+    o["clutter_on_way"] = r2(c.clutter);
+    o["people_near_way"] = c.people;
+    if (c.tried >= 0) { o["times_tried_as_goal"] = c.tried; o["times_abandoned_no_progress_or_path_lost"] = c.abandoned; }
+  }
   if (c.tried >= 0) {   // 끝 선언을 물을 때만 (로봇이 스스로 센 값)
     o["times_tried_as_goal"] = c.tried;
     o["times_abandoned_no_progress_or_path_lost"] = c.abandoned;
@@ -379,6 +401,7 @@ std::string build_body_all(int mode, int prompt, const std::vector<Cand>& cand, 
   st["camera_image"] = kCamLegend;
   st["map_image"] = kMapLegend2;
   if (mode == kPrune || prompt == 2) st["warning"] = kLowNote;
+  if (!cand.empty() && cand[0].rich) st["candidate_fields"] = kRichGuide;
   st["candidates"] = json::array();
   for (const Cand& c : cand) st["candidates"].push_back(cand_json(c, v2));
   if (fin) {

@@ -93,6 +93,10 @@ struct Args {
   cr::Opt rule;                  // cand_tsp: --rule-stick · --rule-turn (scripts/cand_rules.h, frontier_run 과 같은 뜻)
   fu::Opt fuel;                  // fuel: --fuel-* (scripts/fuel_upper.h)
   std::string leg_log;           // --leg-log <파일>: 목표 구간마다 (계획 길이 · 첫 회전각 · 걸린 시간) — fuel 의 v_eff · ω_eff 맞춤용 (기록만)
+  std::string rich_w;            // --upper rich 의 가중 "opp=1,ab=1,clear=1,people=1,depth=1,room=1,hyst=0.2" (안 주면 모두 0 = 예상 관측량 ÷ 시간이 가장 큰 후보)
+  bool dec_cand_fuel = false;    // --decider-cand fuel: 판단 모델에 fuel 후보(덩어리마다 시점, 수 가변 · 상한 --cand-cap)와 특징 표를 줌
+  std::string dec_log;           // --decider-log <폴더>: fuel 후보 결정마다 요청 본문(그림 포함)·후보 특징·라벨(fuel·gpt 최대)·답·로봇 지도 아는 칸 수 — 위층 판단 모델 LoRA 학습 데이터
+  int cand_cap = 16;             // --cand-cap: fuel 후보 상한 (판단 모델 글자 A … 는 26 개까지)
   bool gt_bound = false;         // --gt-bound: 장면마다 정답 격자를 다 아는 순회의 시간 (시뮬 전용 진단 — 정답 지도를 씀, 판에는 안 씀)
   bool rule_cell = false;        // --rule-cell: 규칙 추종기(--policy 없음)에 후보 번호 대신 목표 칸을 줌 (follow 1 — fuel 과 같은 길, slot0 견줌용)
   int br_dec = -1, br_k = 0;     // --branch-dec d --branch-k k: 환경마다 d 째 결정에서 유효 후보 k 째를 골라 도착·포기까지 붙듦 (나머지는 위층 규칙 그대로) — 갈래 굴리기 (상한 측정, slot0 만)
@@ -122,7 +126,24 @@ std::string stem(const std::string& p) {
   return k == std::string::npos ? b : b.substr(0, k);
 }
 
-enum Upper { kSlot0, kRandom, kDecider, kTsp, kFuel };
+enum Upper { kSlot0, kRandom, kDecider, kTsp, kFuel, kRich };
+// --upper rich: fuel 후보 가운데 점수가 가장 큰 것. 점수 = 예상 관측량 / (가는 시간 + t0 + opp·떠나는 값 + ab·10 s·포기 수 + clear·10 s·(0.45 − 가장 좁은 틈)+/0.45 + people·5 s·사람 수)
+//   × (1 + depth·min(틈 너머 트임, 4 m)/4) × (1 + room·같은 방). hyst > 0 이면 지금 목표 점수가 가장 큰 점수 / (1 + hyst) 이상일 때 그대로. 모두 0 = 예상 관측량 ÷ 시간 최대 (잠정 가중)
+struct RichW { float opp = 0, ab = 0, clear = 0, people = 0, depth = 0, room = 0, hyst = 0; };
+RichW parse_rich(const std::string& s) {
+  RichW w;
+  size_t p = 0;
+  while (p < s.size()) {
+    const size_t e = s.find(',', p), q = s.find('=', p);
+    const std::string k = s.substr(p, q - p);
+    const float v = std::stof(s.substr(q + 1, (e == std::string::npos ? s.size() : e) - q - 1));
+    if (k == "opp") w.opp = v; else if (k == "ab") w.ab = v; else if (k == "clear") w.clear = v; else if (k == "people") w.people = v;
+    else if (k == "depth") w.depth = v; else if (k == "room") w.room = v; else if (k == "hyst") w.hyst = v; else throw std::runtime_error("--rich-w 모르는 이름 " + k);
+    if (e == std::string::npos) break;
+    p = e + 1;
+  }
+  return w;
+}
 uint64_t mix(uint64_t x) {   // splitmix64
   x += 0x9e3779b97f4a7c15ull;
   x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ull;
@@ -211,14 +232,18 @@ int run(const Args& a) {
   const int N = a.episodes, AW = mdp::act::DIM, PW = mdp::low::ACT, K = mdp::hier::K, DS = c.decide_steps;
   const double dt = (double)c.substeps * c.dt;
   const bool use_pol = !a.policy.empty();
-  const int upper = a.upper == "slot0" ? kSlot0 : a.upper == "random" ? kRandom : a.upper == "decider" ? kDecider : a.upper == "cand_tsp" ? kTsp : a.upper == "fuel" ? kFuel : -1;
+  const int upper = a.upper == "slot0" ? kSlot0 : a.upper == "random" ? kRandom : a.upper == "decider" ? kDecider : a.upper == "cand_tsp" ? kTsp : a.upper == "fuel" ? kFuel : a.upper == "rich" ? kRich : -1;
   const int dec_in = dec::input_of(a.dec_input);
   const int dec_mode = a.dec_mode == "choice" ? dec::kChoice : a.dec_mode == "prune" ? dec::kPrune : a.dec_mode == "score" ? dec::kScore : -1;
   const bool all = dec_in == dec::kAll, prune = dec_mode == dec::kPrune, score = dec_mode == dec::kScore;
   const int n_thr = std::max(1u, std::min(12u, std::thread::hardware_concurrency()));
   if (upper < 0) throw std::runtime_error("--upper 는 slot0 · random · decider · cand_tsp · fuel");
   if (a.br_dec >= 0 && (upper != kSlot0 || !use_pol || a.br_k < 0 || a.br_k >= K)) throw std::runtime_error("--branch-dec 는 slot0 · --policy 와 같이, --branch-k 는 0 … K − 1");
-  if (upper == kFuel && (!(a.fuel.v_eff > 0.f) || !(a.fuel.w_eff > 0.f) || a.fuel.max_nodes < 1)) throw std::runtime_error("--fuel-v · --fuel-w > 0, --fuel-nodes ≥ 1");
+  const bool fcand = upper == kRich || (upper == kDecider && a.dec_cand_fuel);   // fuel 후보 + 특징을 씀
+  const RichW rw = parse_rich(a.rich_w);
+  if (a.dec_cand_fuel && (upper != kDecider || dec_in != dec::kAll || prune || score || a.dec_finish || !a.video.empty())) throw std::runtime_error("--decider-cand fuel 은 --decider-input all · --decider-mode choice 만 (끝 선언·녹화 없이)");
+  if (a.cand_cap < 2 || a.cand_cap > 26) throw std::runtime_error("--cand-cap 은 2 … 26");
+  if ((upper == kFuel || fcand) && (!(a.fuel.v_eff > 0.f) || !(a.fuel.w_eff > 0.f) || a.fuel.max_nodes < 1)) throw std::runtime_error("--fuel-v · --fuel-w > 0, --fuel-nodes ≥ 1");
   if (a.rule_cell && use_pol) throw std::runtime_error("--rule-cell 은 --policy 없이 (규칙 추종기)");
   if (upper != kSlot0 && a.autox) throw std::runtime_error("--auto 는 slot0 규칙만");
   if (upper == kDecider && (a.dec_url.empty() || dec_in < 0 || a.dec_prompt < 1 || a.dec_prompt > 3)) throw std::runtime_error("decider: --decider-url · --decider-input text|image|both · --decider-prompt 1~3");
@@ -235,7 +260,10 @@ int run(const Args& a) {
   const int SL = (int)sc.levels.size(), LL = (int)sc.left_levels.size();
   if (!a.gt_base.empty() && a.gt_base.size() != a.scenes.size()) throw std::runtime_error("--gt-base 는 --scenes 와 같은 수");
   std::unique_ptr<dec::Client> client;
-  if (upper == kDecider) client.reset(new dec::Client(a.dec_url, a.dec_timeout_ms, a.dec_parallel));
+  const bool dec_none = a.dec_url == "none";   // --decider-url none: 서버에 안 묻고 fuel 이 고른 것으로 (요청 본문은 만들어 --decider-log 에 — 학습 데이터 모으기)
+  if (dec_none && (!a.dec_cand_fuel || a.dec_log.empty())) throw std::runtime_error("--decider-url none 은 --decider-cand fuel · --decider-log 와 같이");
+  if (!a.dec_log.empty() && !a.dec_cand_fuel) throw std::runtime_error("--decider-log 는 --decider-cand fuel 과 같이");
+  if (upper == kDecider && !dec_none) client.reset(new dec::Client(a.dec_url, a.dec_timeout_ms, a.dec_parallel));
   const float bl_r = c.rec_bl_r > 0.f ? c.rec_bl_r : 0.5f;
   const int bl_steps = c.rec_bl_steps > 0 ? c.rec_bl_steps : (int)std::lround(10.0 / dt);
   std::unique_ptr<xppo::PPO> ppo;
@@ -253,7 +281,7 @@ int run(const Args& a) {
   if (upper == kDecider)
     std::printf("위층 고르기: 판단 모델 서버 %s · 입력 %s · 프롬프트 %d · 글자 섞기 %s · 시간 끝 %d ms · 동시 %d 개 · 사진 %d px — 판단 시간은 시뮬 시계에 안 들어감\n", a.dec_url.c_str(), a.dec_input.c_str(),
                 a.dec_prompt, a.dec_shuffle ? "켬" : "끔", a.dec_timeout_ms, a.dec_parallel, a.dec_px);
-  else std::printf("위층 고르기: %s\n", upper == kRandom ? "유효 후보 가운데 아무거나 (random)" : upper == kTsp ? "후보를 모두 도는 가장 짧은 차례의 첫 후보 (cand_tsp, 로봇 지도만)" : upper == kFuel ? "프론티어 덩어리 순회의 첫 시점 (fuel, 로봇 지도만)" : "유효 후보 가운데 번호가 가장 작은 것 (slot0)");
+  else std::printf("위층 고르기: %s\n", upper == kRandom ? "유효 후보 가운데 아무거나 (random)" : upper == kTsp ? "후보를 모두 도는 가장 짧은 차례의 첫 후보 (cand_tsp, 로봇 지도만)" : upper == kFuel ? "프론티어 덩어리 순회의 첫 시점 (fuel, 로봇 지도만)" : upper == kRich ? "fuel 후보 가운데 점수 최대 (rich, 로봇 지도만)" : "유효 후보 가운데 번호가 가장 작은 것 (slot0)");
   std::printf("위층: 0 번 후보 규칙 · 결정 %d 걸음마다 · 막힘 신호 피하기 %s (반경 %.2f m · %.0f s) · 바로 다시 고름 %s · 목표 이어 가기 %s · 목표 붙들기 %d 걸음 | 정체 = %.0f s 동안 %.2f m · 통과 반경 %.2f m · 판 상한 %.0f s · 사람 %d\n",
               DS, a.avoid ? "켬" : "끔", bl_r, bl_steps * dt, a.redecide ? "켬" : "끔", a.stick ? "켬" : "끔", a.hold, c.low_idle_steps * dt, c.low_idle_d, c.low_pass_r, c.max_steps * dt, a.people);
   if (upper == kFuel)
@@ -330,6 +358,8 @@ int run(const Args& a) {
     std::vector<int8_t> ogrid;
     std::vector<int16_t> lmap;
     std::vector<int16_t> r_map; std::vector<uint32_t> r_trail; std::vector<uint8_t> r_cam; std::vector<float> r_pts; cr::Work r_work;   // cand_tsp 만
+    std::vector<std::vector<fu::CandOut>> fc(N);   // fcand: 환경마다 fuel 후보 (gpt 큰 순)
+    long fc_n = 0, fc_dec = 0, fc_cur = 0, fc_fuel = 0;   // 후보 수 합 · 결정 수 · 지금 목표 고름 · fuel 과 같은 것 고름
     std::vector<fu::Mem> fmem(N); std::vector<fu::Work> f_works(n_thr); std::vector<int> tcell(N, -1); long f_fall = 0;   // fuel 만
     std::vector<int> br_cell(N, -1), br_until(N, 0), br_app(N, 0);   // 갈래 굴리기 (--branch-dec)
     std::vector<int> lg_tgt(N, -1), lg_step(N, 0);   // --leg-log: 지금 구간 목표 · 시작 걸음 · 첫 회전각 · 시작 직선 거리
@@ -450,6 +480,8 @@ int run(const Args& a) {
     };
     std::vector<float> o1d;
     std::vector<double> lat;   // 요청 지연 (ms, 성공한 것)
+    std::FILE* dlog = nullptr;   // --decider-log
+    long u_pickfuel = 0, u_pickcur = 0, u_fq = 0;   // --decider-cand fuel: 모델이 고른 것이 fuel 과 같음 · 지금 목표 · 답한 결정 수
     long u_ask = 0, u_fall = 0, u_fall_curl = 0, u_fall_http = 0, u_fall_shape = 0, u_first = 0, u_mismatch = 0, u_batches = 0;
     long u_rank[mdp::hier::K] = {0}, u_slot[mdp::hier::K] = {0}, u_nv = 0;
     double u_wall = 0.0, u_conf = 0.0, u_p = 0.0;
@@ -518,6 +550,63 @@ int run(const Args& a) {
         if (score && a.dec_finish && nv[i] == 0 && nskip[i] == 0 && !h_try[i].empty()) {   // 이 판에서 목표를 한 번이라도 잡은 뒤에만 (판 첫 걸음에는 후보가 아직 없음)
           u_fin_nocand += 1; declare(i, -1.f); }   // 점수 방식의 끝: 후보가 하나도 없음 (피하는 칸이라 뺀 후보만 남은 때는 선언 안 함)
       }
+      if (fcand) {   // fuel 후보 + 특징 (rich · 판단 모델 fuel 후보): 결정하는 모든 환경
+        bool any = false;
+        for (int i = 0; i < N; ++i) any = any || need[i];
+        if (any) { env.get_map(r_map); env.get_trail(r_trail); env.get_camlayer(r_cam, r_pts); }
+        const size_t tws = (size_t)(c.size + 31) / 32, per_trail = 2 * c.size * tws, per_map = (size_t)c.size * c.size;
+        std::vector<std::vector<float>> ppl(N);   // 아래층 라이다 사람 추적(LowRl::tk_*)이 걷는 사람으로 본 것 — 로봇이 아는 값
+        for (int i = 0; i < N && i < (int)rl.size(); ++i)
+          for (int k = 0; k < rl[i].tk_n && k < sim::kLrTrk; ++k)
+            if (rl[i].tk_mov[k] > 0) { ppl[i].push_back(rl[i].tk_x[k]); ppl[i].push_back(rl[i].tk_y[k]); }
+        std::atomic<int> nx{0};
+        std::vector<std::thread> th;
+        for (int t = 0; t < n_thr; ++t)
+          th.emplace_back([&, t]() {
+            for (int i; (i = nx.fetch_add(1)) < N;) {
+              if (!need[i]) continue;
+              const int step_i = st[i].step;
+              fu::In in{&c, &W, &r_map[i * per_map], &r_trail[i * per_trail], r_cam.empty() ? nullptr : &r_cam[i * per_map], &st[i], &cand[(size_t)i * K],
+                        [&, i, step_i](int cell) { return avoided(i, cell, step_i); }};
+              in.cands = &fc[i];
+              in.cand_cap = a.cand_cap;
+              in.people = &ppl[i];
+              tcell[i] = fu::decide(in, a.fuel, fmem[i], f_works[t]);   // fuel 이 고른 것 (rich · 판단 모델이 덮어씀)
+              if (tcell[i] < 0) fc[i].clear();
+            }
+          });
+        for (auto& x : th) x.join();
+        const float qr = bl_r / c.res;
+        for (int i = 0; i < N; ++i) {
+          if (!need[i]) continue;
+          if (fc[i].empty()) { tcell[i] = -1; f_fall += 1; continue; }
+          fc_n += (long)fc[i].size(); fc_dec += 1;
+          int best = 0;
+          if (upper == kRich) {
+            std::vector<double> sc_(fc[i].size());
+            for (size_t k = 0; k < fc[i].size(); ++k) {
+              const fu::CandOut& q = fc[i][k];
+              int ab = 0;
+              for (int h : h_ab[i]) { const int dx = q.vp % W.gw - h % W.gw, dy = q.vp / W.gw - h / W.gw; ab += (float)(dx * dx + dy * dy) <= qr * qr; }
+              const double den = q.t_s + a.fuel.t0 + rw.opp * q.opp_s + rw.ab * 10.0 * ab + rw.clear * 10.0 * std::max(0.0, 0.45 - (double)q.clear_m) / 0.45 + rw.people * 5.0 * q.people;
+              sc_[k] = q.gain / den * (1.0 + rw.depth * std::min(4.0, (double)q.depth_m) / 4.0) * (1.0 + rw.room * (q.same_room ? 1.0 : 0.0));
+              if (sc_[k] > sc_[best]) best = (int)k;
+            }
+            if (rw.hyst > 0)
+              for (size_t k = 0; k < fc[i].size(); ++k)
+                if (fc[i][k].cur && sc_[k] * (1.0 + rw.hyst) >= sc_[best]) best = (int)k;
+          } else {
+            for (size_t k = 0; k < fc[i].size(); ++k) if (fc[i][k].fuel) best = (int)k;   // 판단 모델 답이 없으면 fuel 이 고른 것
+          }
+          fc_cur += fc[i][best].cur; fc_fuel += fc[i][best].fuel;
+          tcell[i] = fc[i][best].vp;
+          fmem[i].vp = fc[i][best].vp; fmem[i].anc = fc[i][best].anc;
+        }
+        if (upper == kDecider) {   // 판단 모델에는 후보가 2 개 이상인 결정만
+          askq.clear();
+          for (int i = 0; i < N; ++i) if (need[i] && fc[i].size() >= 2) askq.push_back(i);
+        }
+      }
       if (upper == kTsp && !ask.empty()) {   // cand_tsp (scripts/cand_rules.h): 규칙이 고른 후보가 피하는 칸이면 slot0 차례 그대로
         env.get_map(r_map); env.get_trail(r_trail); env.get_camlayer(r_cam, r_pts);
         const size_t tws = (size_t)(c.size + 31) / 32, per_trail = 2 * c.size * tws, per_map = (size_t)c.size * c.size;
@@ -567,7 +656,33 @@ int run(const Args& a) {
           for (int v = 0; v < nv[i]; ++v) perm[v] = v;
           if (a.dec_shuffle && !prune)
             for (int v = nv[i] - 1; v > 0; --v) { r = mix(r); std::swap(perm[v], perm[r % (uint64_t)(v + 1)]); }
-          for (int v = 0; v < nv[i]; ++v) {   // 글자 차례로: 글자 v 는 유효 후보 perm[v]
+          if (a.dec_cand_fuel) {   // fuel 후보: 글자 v = gpt 큰 순 v 째 (slot = fc 안 번호)
+            const float qr = bl_r / c.res;
+            for (size_t v = 0; v < fc[i].size(); ++v) {
+              const fu::CandOut& f = fc[i][v];
+              dec::Cand cd;
+              cd.key = (char)('A' + v);
+              cd.slot = (int)v;
+              cd.path_m = f.len_m;
+              cd.bearing = f.bearing;
+              cd.size_m = f.open_m;
+              cd.util = f.gain;
+              cd.cur = f.cur;
+              cd.rich = true;
+              cd.t_s = f.t_s; cd.gain = f.gain; cd.gpt = f.gpt; cd.opp_s = f.opp_s; cd.clear_m = f.clear_m; cd.clutter = f.clutter; cd.depth_m = f.depth_m;
+              cd.room_left = f.room_left; cd.people = f.people; cd.same_room = f.same_room;
+              const auto near = [&](int h) { const int dx = f.vp % W.gw - h % W.gw, dy = f.vp / W.gw - h / W.gw; return (float)(dx * dx + dy * dy) <= qr * qr; };
+              cd.tried = cd.abandoned = 0;
+              for (int h : h_try[i]) cd.tried += near(h);
+              for (int h : h_ab[i]) cd.abandoned += near(h);
+              cs[q].push_back(cd);
+              cells.push_back(f.vp % W.gw);
+              cells.push_back(f.vp / W.gw);
+              wxy[q].push_back(W.ox + ((float)(f.vp % W.gw) + 0.5f) * c.res);
+              wxy[q].push_back(W.oy + ((float)(f.vp / W.gw) + 0.5f) * c.res);
+            }
+          }
+          for (int v = 0; v < nv[i] && !a.dec_cand_fuel; ++v) {   // 글자 차례로: 글자 v 는 유효 후보 perm[v]
             const int j = vslot[(size_t)i * K + perm[v]];
             const float* f = F + j * mdp::hier::FEAT;
             if (f[mdp::hier::F_VALID] < 0.5f) u_mismatch += 1;   // 후보 특징과 후보 칸이 어긋남 (없어야 함)
@@ -625,7 +740,39 @@ int run(const Args& a) {
           n_dump += dump[q];
         }
         const auto w0 = std::chrono::steady_clock::now();
-        const std::vector<dec::Reply> rep = score ? client->ask(bodies, cs, {}, false, false, SL) : prune ? client->ask(bodies, cs, nq, a.dec_prompt == 2, a.dec_finish) : client->ask(bodies, cs, {}, false, a.dec_finish, a.dec_finish ? LL : 0);
+        std::vector<dec::Reply> rep;
+        if (dec_none) {   // 서버 없이: 답 = fuel 이 고른 후보 (확률 없음)
+          rep.resize(askq.size());
+          for (size_t q = 0; q < askq.size(); ++q) {
+            rep[q].ok = true;
+            for (size_t k = 0; k < cs[q].size(); ++k) if (fc[askq[q]][cs[q][k].slot].fuel) rep[q].choice = (int)k;
+            if (rep[q].choice < 0) rep[q].choice = 0;
+          }
+        } else rep = score ? client->ask(bodies, cs, {}, false, false, SL) : prune ? client->ask(bodies, cs, nq, a.dec_prompt == 2, a.dec_finish) : client->ask(bodies, cs, {}, false, a.dec_finish, a.dec_finish ? LL : 0);
+        if (!a.dec_log.empty()) {   // 학습 데이터: 결정마다 한 줄 (요청 본문은 따로 파일)
+          if (!dlog) {
+            dlog = std::fopen((a.dec_log + "/" + W.name + "_s" + std::to_string(a.seed) + ".jsonl").c_str(), "w");
+            if (!dlog) throw std::runtime_error("--decider-log 폴더에 못 씀");
+          }
+          for (size_t q = 0; q < askq.size(); ++q) {
+            const int i = askq[q];
+            const std::string rq = W.name + "_s" + std::to_string(a.seed) + "_e" + std::to_string(i) + "_d" + std::to_string(n_dec[i]) + ".request.json";
+            dec::write_file(a.dec_log + "/" + rq, bodies[q].data(), bodies[q].size());
+            int lf = -1;
+            for (size_t k = 0; k < cs[q].size(); ++k) if (fc[i][cs[q][k].slot].fuel) lf = (int)k;
+            std::fprintf(dlog, "{\"scene\":\"%s\",\"seed\":%llu,\"env\":%d,\"dec\":%d,\"step\":%d,\"t_s\":%.1f,\"known_cells\":%ld,\"request\":\"%s\",\"n\":%zu,\"label_fuel\":%d,\"label_gpt\":0,\"model\":%d,\"probs\":[",
+                         W.name.c_str(), (unsigned long long)a.seed, i, n_dec[i], st[i].step, st[i].step * dt, known(i, st[i].step), rq.c_str(), cs[q].size(), lf, dec_none ? -1 : rep[q].choice);
+            for (size_t k = 0; k < rep[q].probs.size(); ++k) std::fprintf(dlog, "%s%.4f", k ? "," : "", rep[q].probs[k]);
+            std::fputs("],\"cands\":[", dlog);
+            for (size_t k = 0; k < cs[q].size(); ++k) {
+              const fu::CandOut& f = fc[i][cs[q][k].slot];
+              std::fprintf(dlog, "%s{\"vp\":%d,\"t_s\":%.2f,\"gain\":%.3f,\"gpt\":%.4f,\"opp_s\":%.2f,\"depth_m\":%.2f,\"room_left\":%d,\"same_room\":%d,\"clear_m\":%.2f,\"clutter\":%.3f,\"people\":%d,\"cur\":%d,\"fuel\":%d,\"tried\":%d,\"abandoned\":%d}",
+                           k ? "," : "", f.vp, f.t_s, f.gain, f.gpt, f.opp_s, f.depth_m, f.room_left, (int)f.same_room, f.clear_m, f.clutter, f.people, (int)f.cur, (int)f.fuel, cs[q][k].tried, cs[q][k].abandoned);
+            }
+            std::fputs("]}\n", dlog);
+          }
+          std::fflush(dlog);
+        }
         u_wall += std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
         u_batches += 1;
         for (size_t q = 0; q < askq.size(); ++q) {
@@ -686,7 +833,10 @@ int run(const Args& a) {
             if (k >= nq[q]) { u_allveto += 1; k = nv[i] > nq[q] ? nq[q] : 0; }   // 물은 후보가 다 막혔다: 안 물은 다음 후보, 없으면 규칙의 첫 후보
             pick[i] = vslot[(size_t)i * K + k];
           } else if (r.ok) {
-            if (r.choice >= 0) pick[i] = cs[q][r.choice].slot;   // FINISH·CONTINUE 를 골랐으면 (끝 선언) 고르기는 규칙 그대로
+            if (r.choice >= 0 && a.dec_cand_fuel) {   // fuel 후보: 그 시점 칸으로
+              const fu::CandOut& f = fc[i][cs[q][r.choice].slot];
+              tcell[i] = f.vp; fmem[i].vp = f.vp; fmem[i].anc = f.anc; u_pickfuel += f.fuel; u_pickcur += f.cur; u_fq += 1;
+            } else if (r.choice >= 0) pick[i] = cs[q][r.choice].slot;   // FINISH·CONTINUE 를 골랐으면 (끝 선언) 고르기는 규칙 그대로
             lat.push_back(r.ms);
             u_conf += r.conf;
             u_p += r.p;
@@ -720,7 +870,7 @@ int run(const Args& a) {
               lkn[i].push_back(kn_now);
             }
           }
-          if (vrec && i == ve) {   // 녹화: 보낸 후보(글자 그대로)와 답
+          if (vrec && i == ve && !a.dec_cand_fuel) {   // 녹화: 보낸 후보(글자 그대로)와 답
             vcap = true;
             vok = r.ok;
             vms = r.ms;
@@ -884,7 +1034,7 @@ int run(const Args& a) {
         n_dec[i] += 1;
         slot[i] = k;
         int tgt = k >= 0 ? cand[(size_t)i * K + k] : -1;
-        const bool fz = upper == kFuel && tcell[i] >= 0;   // fuel 이 낸 목표 칸 (못 내면 slot0 차례 그대로)
+        const bool fz = (upper == kFuel || fcand) && tcell[i] >= 0;   // fuel 이 낸 목표 칸 (못 내면 slot0 차례 그대로)
         if (fz) tgt = tcell[i];
         if (br_cell[i] >= 0) tgt = br_cell[i];
         if (use_pol && (fz || br_cell[i] >= 0)) {   // fuel · 갈래: 목표 칸 그대로 (붙들기는 fuel 이 · 갈래는 위에서)
@@ -1266,7 +1416,11 @@ int run(const Args& a) {
       std::printf("[%s %s] 끝 선언 판 평균: 끝 시각 %.1f s · 선언 때 지도 안 늘어난 시간 %.1f s · 규칙 대기 대비 아낀 시간 추정 %.1f s (맞은 선언 판 평균 = %.0f s − 선언 때 시계, 0 아래는 0 — 추정) · [시뮬 전용 진단, 판정에 안 씀] 정답 벽 덮음 %.3f\n",
                   tag, W.name.c_str(), nm > 0 ? t_m / nm : 0.0, nm > 0 ? idle_m / nm : 0.0, m_ok > 0 ? saved / m_ok : 0.0, c.close_idle_s, nm > 0 ? cov_m / nm : 0.0);
     }
-    if (upper == kFuel) {
+    if (fcand) std::printf("[%s %s] fuel 후보: 결정 %ld 개 · 후보 평균 %.1f 개 (상한 %d) · 고른 것이 지금 목표 %.3f · fuel 과 같음 %.3f%s\n", use_pol ? "rl" : "rule", W.name.c_str(), fc_dec, fc_dec ? (double)fc_n / fc_dec : 0.0,
+                           a.cand_cap, fc_dec ? (double)fc_cur / fc_dec : 0.0, fc_dec ? (double)fc_fuel / fc_dec : 0.0, upper == kDecider ? " (판단 모델 답 전 — fuel 기본값)" : "");
+    if (upper == kDecider && a.dec_cand_fuel) std::printf("[%s %s] 판단 모델 (fuel 후보): 답한 결정 %ld · fuel 과 같은 후보 %.3f · 지금 목표 %.3f\n", use_pol ? "rl" : "rule", W.name.c_str(), u_fq,
+                                                          u_fq > 0 ? (double)u_pickfuel / u_fq : 0.0, u_fq > 0 ? (double)u_pickcur / u_fq : 0.0);
+    if (upper == kFuel || fcand) {
       fu::Stat F;
       for (fu::Work& fw : f_works) { F.add(fw.st); fw.st = fu::Stat(); }
       const double fd = std::max(1L, F.dec);
@@ -1280,6 +1434,11 @@ int run(const Args& a) {
       if (fb) { std::fputs("env\tapplied\n", fb); for (int i = 0; i < N; ++i) std::fprintf(fb, "%d\t%d\n", i, br_app[i]); std::fclose(fb); }
     }
     if (flg) std::fclose(flg);
+    if (dlog) {   // 판 끝: 환경마다 끝 코드·시각 (학습 데이터의 결과 줄)
+      for (int i = 0; i < N; ++i)
+        std::fprintf(dlog, "{\"scene\":\"%s\",\"seed\":%llu,\"env\":%d,\"end\":%d,\"t_end_s\":%.1f}\n", W.name.c_str(), (unsigned long long)a.seed, i, fin[i] ? first[i].done : mdp::cur::kTruncated, fin[i] ? first[i].t : nsteps[i] * dt);
+      std::fclose(dlog);
+    }
     {
       double qa = 0, qs = 0;
       for (int i = 0; i < N; ++i) { qa += n_asked[i]; if (fin[i] && first[i].done == mdp::cur::kDeclareOk) qs += n_asked[i]; }
@@ -1342,6 +1501,10 @@ int main(int argc, char** argv) {
       else if (k == "--leg-log") a.leg_log = nx();
       else if (k == "--rule-cell") a.rule_cell = true;
       else if (k == "--gt-bound") a.gt_bound = true;
+      else if (k == "--rich-w") a.rich_w = nx();
+      else if (k == "--decider-cand") { const std::string v = nx(); if (v != "fuel" && v != "sim") throw std::runtime_error("--decider-cand fuel|sim"); a.dec_cand_fuel = v == "fuel"; }
+      else if (k == "--cand-cap") a.cand_cap = std::stoi(nx());
+      else if (k == "--decider-log") a.dec_log = nx();
       else if (k == "--gt-tile") a.rule.tile_m = std::stof(nx());
       else if (k == "--branch-dec") a.br_dec = std::stoi(nx());
       else if (k == "--branch-k") a.br_k = std::stoi(nx());

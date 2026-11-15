@@ -36,6 +36,11 @@ struct Cand {
   bool in_cam = false; // 카메라 그림 안에 보임 (render_cam_png 가 채움 — 그 칸 바닥 점이 시야 안이고 안 가려짐)
   int cu = 0, cv = 0;  // 카메라 그림 안 자리
   int tried = -1, abandoned = 0;   // 이 판에서 이 후보 자리(반경 안)를 목표로 삼은 횟수 · 가다가 포기한 횟수 (−1 = 안 적음 — 끝 선언을 물을 때만 채움)
+  // fuel 후보 (combine_run --decider-cand fuel — fuel_upper.h CandOut 값, 로봇이 아는 것만). rich 면 표에 아래 값을 더 적음
+  bool rich = false;
+  float t_s = 0, gain = 0, gpt = 0, opp_s = 0, clear_m = 0, clutter = 0, depth_m = 0;
+  int room_left = 0, people = 0;
+  bool same_room = false;
 };
 
 // 로봇 지도 사진: 건드린 칸 범위(+ 로봇·후보)를 정사각형으로 잘라 px × px 로. 흰색 = 빈 곳, 검정 = 막힘, 회색 = 모름, 파란 화살표 = 로봇(머리 방향),

@@ -73,6 +73,26 @@ struct Work {
   }
 };
 
+// 후보 하나와 그 특징 (decide 의 In::cands 를 주면 채움 — 판단 모델·규칙 견줌용, 로봇 지도·지도 자세·로봇이 추적한 사람만 씀)
+struct CandOut {
+  int vp = -1, anc = -1;       // 목표 칸(덩어리마다 고른 시점) · 덩어리의 가장 가까운 프론티어 칸
+  float len_m = 0;             // 로봇 → 시점 길 (8 이웃 모따기, m)
+  float turn_rad = 0;          // 첫 걸음 방향과 지금 머리 방향 차 (rad)
+  float t_s = 0;               // 가는 시간 = len / v_eff + turn / ω_eff (s, 실측 맞춤 값)
+  float gain = 0;              // 시점에서 예상 새로 보이는 모름 넓이 / 원 넓이 (frontier.h cand_gain_ray, 360°)
+  float gpt = 0;               // gain / (t_s + t0)
+  float open_m = 0;            // 덩어리(열린 틈) 길이 = 프론티어 칸 수 × 칸 (m)
+  float depth_m = 0;           // 틈 너머 트임: 시점에서 볼 방향 ±60° 광선 9 개가 막힘에 닿기까지 평균 길이 (모름은 지나감, 8 m 상한) — 벽장 ≈ 짧음, 방·복도 ≈ 김
+  int room_left = 0;           // 같은 방(좁은 곳에서 나눈 로봇 지도)의 다른 후보 덩어리 수
+  bool same_room = false;      // 로봇과 같은 방
+  float opp_s = 0;             // 떠나는 값: 이 후보로 시작하는 가장 좋은 순회 − 가장 좋은 순회 (s)
+  float clear_m = 0;           // 길 위 가장 좁은 틈: 길 칸에서 가장 가까운 막힘 칸까지 거리의 최솟값 (0.6 m 상한)
+  float clutter = 0;           // 길 둘레 0.5 m 안 막힘 칸 비율 평균 (가구 밀도)
+  int people = 0;              // 길에서 1 m 안의 추적된 사람 수 (In::people — 로봇 라이다 추적)
+  float bearing = 0;           // 시점 방향, 로봇 머리 기준 (rad, 왼쪽 +)
+  bool cur = false, fuel = false;   // 지금 목표 덩어리 · fuel 순회가 고른 것
+};
+
 struct In {
   const sim::EnvCfg* c;
   const sim::World* W;
@@ -82,6 +102,9 @@ struct In {
   const sim::EnvState* s;
   const int32_t* cand;       // 시뮬 후보 칸 K 개 (global 끔일 때 순회 대상)
   std::function<bool(int)> avoided;   // 피하는 칸 둘레인가 (combine_run Avoid)
+  std::vector<CandOut>* cands = nullptr;      // 주면 후보 특징을 채움 (gpt 큰 순, cand_cap 개 — 지금 목표·fuel 고른 것은 늘 넣음)
+  int cand_cap = 16;
+  const std::vector<float>* people = nullptr;   // 추적된 사람 자리 (x, y 세계 m 쌍)
 };
 
 namespace detail {
@@ -354,7 +377,7 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   if (m == 0) { mem = Mem(); st.fallback += 1; return done(-1); }
   // ---- 로봇에서 거리 (time 이면 모따기 거리, 아니면 BFS 칸 거리)
   std::vector<int32_t> cells0(w.qa.begin(), w.qa.begin() + nr0);
-  if (o.time || o.vp) detail::chamfer(r.start, gw, gh, pass, cells0, nr0, w.cd, w.bk);
+  if (o.time || o.vp || in.cands) detail::chamfer(r.start, gw, gh, pass, cells0, nr0, w.cd, w.bk);
   const double res = c.res;
   const auto len0 = [&](int idx) -> double {   // 로봇 → 칸 길이 (m), 못 닿음 1e6
     if (o.time || o.vp) return w.cd[idx] >= 0 ? w.cd[idx] * 0.2 * res : 1e6;
@@ -456,12 +479,14 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   }
   // ---- 방 마무리 (room): 좁은 칸(벽까지 거리 < door_m)을 빼고 갈 수 있는 칸을 4 이웃으로 나눔 → 로봇 방
   std::vector<uint8_t> inroom(m, 0);
-  if (o.room) {
+  std::vector<int> rid(m, -1);
+  int rroom = -1;
+  if (o.room || in.cands) {
     const int Rd = (int)std::ceil(o.door_m * c.inv_res);
     const mdp::Robot rd = mdp::robot_cells(o.door_m, c.res);
     (void)Rd;
     for (int q = 0; q < nr0; ++q) { const int idx = w.qa[q]; w.narrow[idx] = mdp::standable(mv, idx % gw, idx / gw, rd) ? 0 : 1; w.room[idx] = -1; }
-    int nroom = 0, rroom = -1;
+    int nroom = 0;
     for (int q = 0; q < nr0; ++q) {
       const int s0 = w.qa[q];
       if (w.narrow[s0] || w.room[s0] >= 0) continue;
@@ -498,7 +523,7 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
           }
       return -1;
     };
-    for (int k = 0; k < m; ++k) inroom[k] = rroom >= 0 && room_of(nodes[k].vp) == rroom;
+    for (int k = 0; k < m; ++k) { rid[k] = room_of(nodes[k].vp); inroom[k] = o.room && rroom >= 0 && rid[k] == rroom; }
   }
   // ---- 비용 행렬 (0 = 로봇, 1 … m = 노드). 식 5: 노드 → 로봇 0
   const int S = m + 1;
@@ -569,6 +594,88 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
       }
     }
     if (ns > 0) { st.slot_n += 1; if (hit >= 0) { st.slot_in += 1; st.slot_d += bd; st.slot_vp += bd <= 0.5; } }
+  }
+  if (in.cands) {   // ---- 후보 특징 (판단 모델·규칙 견줌용)
+    std::vector<CandOut> all(m);
+    const int R6 = (int)std::lround(0.6 / res), R5 = (int)std::lround(0.5 / res);
+    for (int k = 0; k < m; ++k) {
+      CandOut& q = all[k];
+      const Node& nd = nodes[k];
+      q.vp = nd.vp; q.anc = nd.anc; q.cur = k == cur; q.fuel = k == pick;
+      q.len_m = w.cd[nd.vp] >= 0 ? (float)(w.cd[nd.vp] * 0.2 * res) : 1e6f;
+      q.turn_rad = (float)detail::wrap(first_dir(nd.vp) - th);
+      q.t_s = q.len_m / o.v_eff + q.turn_rad / o.w_eff;
+      q.gain = (float)gain(nd.vp);
+      q.gpt = q.gain / (q.t_s + o.t0);
+      q.open_m = (float)(nd.cells.size() * res);
+      q.bearing = (float)std::atan2(std::sin(std::atan2(nd.vp / gw + 0.5 - ryf, nd.vp % gw + 0.5 - rxf) - th), std::cos(std::atan2(nd.vp / gw + 0.5 - ryf, nd.vp % gw + 0.5 - rxf) - th));
+      double dsum = 0;
+      for (int a = -4; a <= 4; ++a) {   // 틈 너머 트임
+        const double ang = nd.yaw + a * (M_PI / 12), ca = std::cos(ang), sa = std::sin(ang);
+        int t = 1;
+        const int T = (int)(8.0 / res);
+        for (; t <= T; ++t) {
+          const int x = nd.vp % gw + (int)std::lround(t * ca), y = nd.vp / gw + (int)std::lround(t * sa);
+          if (x < 0 || y < 0 || x >= gw || y >= gh || mdp::cls_at(mv, x, y) == mdp::kOcc) break;
+        }
+        dsum += (t - 1) * res;
+      }
+      q.depth_m = (float)(dsum / 9);
+      q.same_room = rroom >= 0 && rid[k] == rroom;
+      for (int j = 0; j < m; ++j) q.room_left += j != k && rid[j] >= 0 && rid[j] == rid[k];
+      // 길: 시점에서 로봇 쪽으로 모따기 거리를 거슬러 감 (2 칸마다 표본)
+      double cmin = 0.6, csum = 0;
+      int ns = 0, np = 0;
+      std::vector<uint8_t> near_p(in.people ? in.people->size() / 2 : 0, 0);
+      int at = nd.vp;
+      for (int g = 0; g < 4 * n && at >= 0 && w.cd[at] > 0; ++g) {
+        if (g % 2 == 0) {
+          const int x = at % gw, y = at / gw;
+          int occ = 0, tot = 0;
+          for (int dy = -R6; dy <= R6; ++dy)
+            for (int dx = -R6; dx <= R6; ++dx) {
+              const int u = x + dx, v = y + dy;
+              if (u < 0 || v < 0 || u >= gw || v >= gh) continue;
+              const bool oc = mdp::cls_at(mv, u, v) == mdp::kOcc;
+              if (oc) cmin = std::min(cmin, std::hypot(dx, dy) * res);
+              if (std::abs(dx) <= R5 && std::abs(dy) <= R5) { occ += oc; ++tot; }
+            }
+          csum += tot ? (double)occ / tot : 0;
+          ++ns;
+          for (size_t pi = 0; pi < near_p.size(); ++pi) {
+            const double px = ((*in.people)[2 * pi] - W.ox) * c.inv_res, py = ((*in.people)[2 * pi + 1] - W.oy) * c.inv_res;
+            if (std::hypot(px - (x + 0.5), py - (y + 0.5)) * res <= 1.0) near_p[pi] = 1;
+          }
+        }
+        const int x = at % gw, y = at / gw;
+        int bj = -1, bv = w.cd[at];
+        for (int dy = -1; dy <= 1; ++dy)
+          for (int dx = -1; dx <= 1; ++dx) {
+            const int u = x + dx, v = y + dy;
+            if ((!dx && !dy) || u < 0 || v < 0 || u >= gw || v >= gh) continue;
+            const int j = v * gw + u;
+            if (pass(j) && w.cd[j] >= 0 && w.cd[j] < bv) { bv = w.cd[j]; bj = j; }
+          }
+        at = bj;
+      }
+      for (uint8_t b : near_p) np += b;
+      q.clear_m = (float)cmin;
+      q.clutter = ns ? (float)(csum / ns) : 0.f;
+      q.people = np;
+    }
+    std::vector<int> ord(m);
+    for (int k = 0; k < m; ++k) ord[k] = k;
+    std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return all[a].gpt > all[b].gpt; });
+    std::vector<int> keep;
+    for (int k : ord) if ((int)keep.size() < in.cand_cap || all[k].cur || all[k].fuel) keep.push_back(k);
+    in.cands->clear();
+    for (int k : keep) {   // 떠나는 값: 이 후보로 시작하는 순회 − 가장 좋은 순회
+      std::vector<int> o3;
+      bool ex = false;
+      const double ck = m > 1 ? detail::tour(C, m, k + 1, o3, &ex) : best;
+      all[k].opp_s = (float)std::max(0.0, ck - best);
+      in.cands->push_back(all[k]);
+    }
   }
   mem.vp = nodes[pick].vp;
   mem.anc = nodes[pick].anc;
