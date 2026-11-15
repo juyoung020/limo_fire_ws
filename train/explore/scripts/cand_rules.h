@@ -144,7 +144,7 @@ inline GtMap build_gt(const sim::World& W, const sim::EnvCfg& c, const Opt& o) {
 // 실제로 갈 수 있는 길 하나의 길이라 참 최솟값 ≤ 이 값).
 //   시점 = 타일 닻. 닻마다 GT 에서 360° · 사거리 R 칸 안에 가림 없이 보이는 need 칸을 세고(맞은 벽 칸까지), 새로 보이는 칸이 가장 많은 닻을 차례로 고름(탐욕 집합 덮기),
 //   남은 이득 < tile_min 이면 끝(시작 칸과 이어진 구역 안에서만). 시작 칸마다 고른 닻을 모두 도는 열린 길(최근접 이웃 + 2-opt, GT 최단거리)의 길이를 평균. 220° 시야는 제자리 회전(거리 0)으로 채운다고 봄.
-struct GtTour { int n_view = 0; double cover = 0, len_m = 0; };
+struct GtTour { int n_view = 0; double cover = 0, len_m = 0, turn_rad = 0; };   // turn_rad: 다리 사이 직선 방향이 바뀐 각의 합 (첫 다리 앞 머리 방향은 셈 안 함)
 inline GtTour gt_tour(const sim::World& W, const sim::EnvCfg& c, const GtMap& G, const Opt& o) {
   GtTour T;
   const int n = W.gw * W.gh, A = G.nA(), R = (int)((o.range_m > 0 ? o.range_m : c.map_max_range) * c.inv_res), nr = std::max(8, (int)std::ceil(2 * M_PI * R));
@@ -231,14 +231,22 @@ inline GtTour gt_tour(const sim::World& W, const sim::EnvCfg& c, const GtMap& G,
         }
       if (!ch) break;
     }
-    double len = 0;
-    for (int t = 0; t < m; ++t) len += dprev(t);
+    double len = 0, turn = 0, prev = 0;
+    int px = sc % W.gw, py = sc / W.gw;
+    for (int t = 0; t < m; ++t) {
+      len += dprev(t);
+      const int a = G.anchor[view[tour[t]]], ax = a % W.gw, ay = a / W.gw;
+      const double h = std::atan2((double)(ay - py), (double)(ax - px));
+      if (t > 0) turn += std::fabs(std::remainder(h - prev, 2 * M_PI));
+      prev = h; px = ax; py = ay;
+    }
     T.len_m += len * c.res;
+    T.turn_rad += turn;
     T.cover += covers[rep];
     T.n_view += m;
     ++ns;
   }
-  if (ns > 0) { T.len_m /= ns; T.cover /= ns; T.n_view = (int)std::lround((double)T.n_view / ns); }
+  if (ns > 0) { T.len_m /= ns; T.cover /= ns; T.turn_rad /= ns; T.n_view = (int)std::lround((double)T.n_view / ns); }
   return T;
 }
 

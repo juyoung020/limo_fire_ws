@@ -53,8 +53,10 @@ struct Mem {
 
 struct Stat {
   long dec = 0, nodes = 0, kept = 0, sw = 0, fallback = 0, exact = 0;
+  long slot_n = 0, slot_in = 0, slot_vp = 0;   // 후보 칸으로 나타낼 수 있나: 시뮬 후보가 있는 결정 수 · 고른 덩어리가 후보 K 개 중 하나의 덩어리 · 그 후보 칸에서 0.5 m 안이 목표 칸
+  double slot_d = 0;                           // slot_in 결정에서 목표 칸과 그 후보 칸 사이 거리 합 (m)
   double ms = 0, ms_max = 0;
-  void add(const Stat& o) { dec += o.dec; nodes += o.nodes; kept += o.kept; sw += o.sw; fallback += o.fallback; exact += o.exact; ms += o.ms; ms_max = std::max(ms_max, o.ms_max); }
+  void add(const Stat& o) { slot_n += o.slot_n; slot_in += o.slot_in; slot_vp += o.slot_vp; slot_d += o.slot_d; dec += o.dec; nodes += o.nodes; kept += o.kept; sw += o.sw; fallback += o.fallback; exact += o.exact; ms += o.ms; ms_max = std::max(ms_max, o.ms_max); }
 };
 
 struct Work {
@@ -548,6 +550,26 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   }
   if (cur >= 0 && pick == cur) st.kept += 1;
   if (cur >= 0 && pick != cur) st.sw += 1;
+  {   // 후보 칸으로 나타낼 수 있나 (재기만): 고른 덩어리 칸의 라벨을 가진 후보, 없으면 덩어리 칸에서 merge_m 안 후보
+    int ns = 0, hit = -1;
+    double bd = 1e18;
+    const int Rm = (int)(o.merge_m * c.inv_res + 0.5f);
+    for (int k = 0; k < mdp::hier::K; ++k) {
+      const int cell = in.cand[k];
+      if (cell < 0 || cell >= n) continue;
+      ++ns;
+      for (int idx : nodes[pick].cells) {
+        const bool same = (w.flag[cell] & 2) && (w.flag[idx] & 2) && w.label[cell] == w.label[idx];
+        const int dx = idx % gw - cell % gw, dy = idx / gw - cell / gw;
+        if (same || dx * dx + dy * dy <= Rm * Rm) {
+          const double d = std::hypot(nodes[pick].vp % gw - cell % gw, nodes[pick].vp / gw - cell / gw) * res;
+          if (d < bd) { bd = d; hit = k; }
+          break;
+        }
+      }
+    }
+    if (ns > 0) { st.slot_n += 1; if (hit >= 0) { st.slot_in += 1; st.slot_d += bd; st.slot_vp += bd <= 0.5; } }
+  }
   mem.vp = nodes[pick].vp;
   mem.anc = nodes[pick].anc;
   return done(nodes[pick].vp);

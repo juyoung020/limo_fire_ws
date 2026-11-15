@@ -93,6 +93,7 @@ struct Args {
   cr::Opt rule;                  // cand_tsp: --rule-stick · --rule-turn (scripts/cand_rules.h, frontier_run 과 같은 뜻)
   fu::Opt fuel;                  // fuel: --fuel-* (scripts/fuel_upper.h)
   std::string leg_log;           // --leg-log <파일>: 목표 구간마다 (계획 길이 · 첫 회전각 · 걸린 시간) — fuel 의 v_eff · ω_eff 맞춤용 (기록만)
+  bool gt_bound = false;         // --gt-bound: 장면마다 정답 격자를 다 아는 순회의 시간 (시뮬 전용 진단 — 정답 지도를 씀, 판에는 안 씀)
   bool rule_cell = false;        // --rule-cell: 규칙 추종기(--policy 없음)에 후보 번호 대신 목표 칸을 줌 (follow 1 — fuel 과 같은 길, slot0 견줌용)
   int br_dec = -1, br_k = 0;     // --branch-dec d --branch-k k: 환경마다 d 째 결정에서 유효 후보 k 째를 골라 도착·포기까지 붙듦 (나머지는 위층 규칙 그대로) — 갈래 굴리기 (상한 측정, slot0 만)
   std::string dec_url, dec_input = "text", dec_dump;
@@ -266,6 +267,13 @@ int run(const Args& a) {
     std::vector<sim::World> one{sim::build_world(stem(a.scenes[wi]), sim::load_scene(a.scenes[wi]), hc)};
     const sim::World& W = one[0];
     const uint64_t seed = a.eval_seed ? a.seed * 7919ull + 17 + wi : a.seed * 1000003ull + wi * 7919ull;
+    if (a.gt_bound) {   // 시뮬 전용 진단 (정답 지도): cand_rules.h gt_tour — 1.5 m 타일 닻 탐욕 덮기 + 최근접 이웃·2-opt, 360° · 지도 사거리, 시간 = 길이 / v_eff + 회전 / ω_eff (fuel 맞춤 값)
+      const cr::GtMap gm = cr::build_gt(W, hc.cfg, a.rule);
+      const cr::GtTour t = cr::gt_tour(W, hc.cfg, gm, a.rule);
+      std::printf("[%s] 정답 지도를 다 아는 순회 (시뮬 전용 진단 · 정답 사용): 시점 %d 개 · 덮음 %.3f · 길이 %.1f m · 회전 %.1f rad → 시간 %.1f s (v %.2f m/s · ω %.2f rad/s)\n", W.name.c_str(), t.n_view, t.cover,
+                  t.len_m, t.turn_rad, t.len_m / a.fuel.v_eff + t.turn_rad / a.fuel.w_eff, a.fuel.v_eff, a.fuel.w_eff);
+      std::fflush(stdout);
+    }
     sim::Env env(hc, one, lidar, N, seed, true);
     env.reset();
     env.sync();
@@ -1264,6 +1272,8 @@ int run(const Args& a) {
       const double fd = std::max(1L, F.dec);
       std::printf("[%s %s] fuel: 결정 %ld 개 · 노드 평균 %.1f 개 · 정확한 순회 %.3f · 지금 목표 덩어리를 찾은 결정 중 그대로 %ld · 바꿈 %ld · slot0 로 떨어짐 %ld | CPU %.2f ms/결정 (최대 %.1f ms, 한 스레드)\n", tag, W.name.c_str(), F.dec, F.nodes / fd,
                   F.exact / fd, F.kept, F.sw, f_fall, F.ms / fd, F.ms_max);
+      std::printf("[%s %s] fuel 목표를 후보 칸으로 나타낼 수 있나 (시뮬 후보가 있는 결정 %ld 개): 고른 덩어리가 후보 %d 개 안 %.3f · 그 후보 칸 0.5 m 안이 목표 %.3f · 목표–후보 칸 평균 거리 %.2f m\n", tag, W.name.c_str(),
+                  F.slot_n, K, F.slot_n ? (double)F.slot_in / F.slot_n : 0.0, F.slot_n ? (double)F.slot_vp / F.slot_n : 0.0, F.slot_in ? F.slot_d / F.slot_in : 0.0);
     }
     if (a.br_dec >= 0 && !a.out.empty()) {
       std::FILE* fb = std::fopen((a.out + "_" + W.name + "_branch.tsv").c_str(), "w");
@@ -1331,6 +1341,8 @@ int main(int argc, char** argv) {
       else if (k == "--fuel-door") a.fuel.door_m = std::stof(nx());
       else if (k == "--leg-log") a.leg_log = nx();
       else if (k == "--rule-cell") a.rule_cell = true;
+      else if (k == "--gt-bound") a.gt_bound = true;
+      else if (k == "--gt-tile") a.rule.tile_m = std::stof(nx());
       else if (k == "--branch-dec") a.br_dec = std::stoi(nx());
       else if (k == "--branch-k") a.br_k = std::stoi(nx());
       else if (k == "--decider-url") { a.dec_url = nx(); a.upper = "decider"; }
