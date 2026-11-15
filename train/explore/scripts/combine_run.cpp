@@ -278,7 +278,7 @@ int run(const Args& a) {
     const LowCkptMeta km = read_low_ckpt_meta(a.policy);   // 넓은 지도·순환 핵은 체크포인트 구조를 따른다 (넓은 지도는 관측도 켜져 있어야)
     if (km.d1d != (c.lo_mov4 ? mdp::low::N1D_MOV4 : mdp::low::N1D)) throw std::runtime_error("체크포인트 1D 칸 수와 SIM_LOW_MOV4 가 안 맞음");
     if (km.wide != (c.lo_wide != 0)) throw std::runtime_error(km.wide ? "넓은 지도 정책인데 SIM_LOW_WIDE=1 이 아님" : "넓은 지도 없는 정책인데 SIM_LOW_WIDE=1");
-    ppo.reset(new xppo::PPO(pc, xnet::explore_spec_low(km.wide, km.gru_h, km.d1d), 1));
+    ppo.reset(new xppo::PPO(pc, [&] { auto sp = xnet::explore_spec_low(km.wide, km.gru_h, km.d1d); sp.aux_out = km.aux; return sp; }(), 1));
     ppo->load(a.policy);
     std::printf("아래층: RL 정책 %s (반복 %d) — 결정적(평균 행동)\n", a.policy.c_str(), ppo->iteration());
   } else {

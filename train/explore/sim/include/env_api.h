@@ -53,6 +53,8 @@ struct StepOut {
   const uint8_t* low_img = nullptr;   // 아래층 RL 정책 관측 [N][low_img_n(cfg)] (넓은 지도 끄면 kLowImg) (cfg.low_rl 일 때만 — include/low_task.h)
   const float* low_1d = nullptr;      // [N][kLow1d] (움직이는 것 칸 넷이면 [N][kLow1dMov4])
   const int32_t* low_vdone = nullptr; // [N] 학습기 판 끝 칸 (PPO 꼴: 0 · 1 끝 · 3 끊김 · 8 목표 경계 — low_rl.h lowrl_finish)
+  const float* low_aux = nullptr;     // [N][kLowAuxSrc] 보조 예측 재료 (SIM_LOW_AUX — 관측과 같은 때, low_task.h kAux*)
+  const float* low_hit = nullptr;     // [N] 이 걸음에 닿음으로 끝 (SIM_LOW_AUX)
 };
 
 // 그래프 모드 관측 (cfg.graph_on — mdp/obs_layout.h mdp::graph, mdp/graph.h). StepOut 처럼 장치 포인터(CPU 판이면 호스트), 그래프 모드가 아니면 nullptr
@@ -122,6 +124,8 @@ class Env {
   void get_low_cmd(std::vector<LowCmd>& out) const;
   void get_low_rl(std::vector<LowRl>& out) const;
   void get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
+  // 보조 예측 재료 [N][kLowAuxSrc] 뒤에 닿음 [N] (SIM_LOW_AUX 일 때만, 아니면 빈 것)
+  void get_low_aux(std::vector<float>& out) const;
   void take_low_stat(std::vector<LowRlStat>& out);   // 누적을 가져가며 0 으로
   // 맵 뽑기 우선순위 (train --map-prio): 맵마다 끝난 판 수·닿음으로 끝난 판 수를 가져가며 0 으로 · 리셋 때 맵을 뽑을 누적 분포 [n_maps] (빈 것 = 고르게)
   void take_map_stats(std::vector<int32_t>& eps, std::vector<int32_t>& hit);

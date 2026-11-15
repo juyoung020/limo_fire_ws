@@ -10,6 +10,7 @@
 struct LowCkptMeta {
   bool wide = false;   // 넓은 지도 가지 (enc.cnn3.*)
   int gru_h = 0;       // 순환 핵 은닉 크기 (actor.gru.wh = 3H × H 원소), 없으면 0
+  int aux = 0;         // 보조 예측 머리 출력 칸 (aux.b 원소 수, 없으면 0 — 평가는 안 쓰지만 변수 배치가 맞아야 읽힘)
   int d1d = 0;         // 1D 칸 수 (actor.mlp0.w 열 − 합성곱 특징 − h — mdp::low::N1D 또는 N1D_MOV4)
 };
 inline LowCkptMeta read_low_ckpt_meta(const std::string& path) {
@@ -36,6 +37,7 @@ inline LowCkptMeta read_low_ckpt_meta(const std::string& path) {
     if (name == "actor.gru.wh") m.gru_h = (int)std::lround(std::sqrt((double)n / 3.0));
     if (name == "actor.mlp0.w") w0 = n;
     if (name == "actor.mlp0.b") b0 = n;
+    if (name == "aux.b") m.aux = (int)n;
   }
   if (w0 > 0 && b0 > 0) m.d1d = (int)(w0 / b0 - (m.wide ? 1536 : 1024) - m.gru_h);   // 합성곱 특징: 가지 3 개 1024, 넓은 지도 더하면 1536 (explore_spec_low)
   return m;

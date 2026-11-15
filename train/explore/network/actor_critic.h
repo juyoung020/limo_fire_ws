@@ -182,6 +182,9 @@ struct ACSpec {
   // 순환 핵 (2026-11-15, network/README "순환 핵", gru.cuh): gru_h > 0 이면 actor·critic 이 GRU 한 층(은닉 gru_h)을 따로 가진다 (rsl_rl ActorCriticRecurrent 꼴).
   // GRU 입력 = [F | 1D], MLP 입력 = [F | h | 1D] (h 는 F 바로 뒤 — ActorCritic::nx 열이 1D 앞). 0 = 끔 (옛 구조 그대로)
   int gru_h = 0;
+  // 보조 예측 머리 (2026-11-16, ppo/README "보조 예측 머리"): aux_out > 0 이면 actor 순환 핵 h → 선형 aux_out 칸 (블록 aux.w [aux_out][gru_h] · aux.b, log_std 뒤).
+  // 정책·가치 출력에는 안 들어가고 PPO 보조 손실로만 h 를 가르친다. 0 = 끔
+  int aux_out = 0;
   // 계층형 (mdp/README "계층형", slot_head.cuh): n_slots > 0 이면 행동 = 후보 슬롯 하나 (가린 범주 분포). actor 출력은 상태 임베딩(actor.out 칸),
   // 머리가 슬롯마다 [임베딩 ; 정규화 1D 의 slot_off + k·slot_feat 칸] → 로짓. 이때 n_cont = 0 (σ 없음), 선언 로짓 없음
   int n_slots = 0, slot_feat = 0, slot_off = 0, slot_hidden = 64;
@@ -231,6 +234,7 @@ class ActorCritic {
   bool split = false;
   int nf = 0;              // 인코더 특징 수
   int nx = 0;              // MLP 입력에서 1D 앞 열 수 = nf + gru_h (순환 핵이 없으면 nf)
+  long aux_w_off = -1, aux_b_off = -1;   // spec.aux_out > 0 일 때만: 보조 머리 변수 자리 (W [aux_out][gru_h], b [aux_out])
   Gru gru_a, gru_c;        // spec.gru_h > 0 일 때만: actor·critic 순환 핵 (입력 = MLP 입력 버퍼 행의 F · 1D 열, 출력 h → 그 행의 nf 열부터)
   Normalizer norm;
   std::vector<ParamBlock> blocks;

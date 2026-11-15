@@ -909,6 +909,11 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   logstd_off = cur;
   if (sp.n_cont > 0) blocks.push_back({cur, sp.n_cont, PKind::LogStd, "log_std"});
   cur += sp.n_cont;
+  if (sp.aux_out > 0) {   // 보조 예측 머리 (0 으로 시작 — 처음엔 h 로 기울기를 안 돌림, 이어 학습 변환 ppo/tools/ckpt_add_aux 와 같음)
+    if (sp.gru_h <= 0) throw std::runtime_error("ACSpec aux_out: 순환 핵(gru_h > 0) 이 있어야");
+    aux_w_off = cur; blocks.push_back({cur, (long)sp.aux_out * sp.gru_h, PKind::LinW, "aux.w"}); cur += (long)sp.aux_out * sp.gru_h;
+    aux_b_off = cur; blocks.push_back({cur, sp.aux_out, PKind::LinB, "aux.b"}); cur += sp.aux_out;
+  }
   n_params = cur;
   alloc_common();
   enc.bind(d_params, d_grads, mc);

@@ -91,6 +91,7 @@ struct EnvCfg {
   int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
   float lr_goal_dmin, lr_goal_dmax;   // 자동 목표 직선 거리 띠 (m — low_rl.h lowrl_goal_probe). 기본 kLrGoalD2 · kLrGoalDMax, 학습 커리큘럼이 Env::set_goal_band 로 바꿈
   int lo_cam_every;              // 깊이 카메라 장애물 층을 걸음마다 (SIM_LOW_CAM_EVERY, 기본 0 = 계획 주기 low_period 마다 — 옛 동작). 실물은 카메라 29 Hz 로 층을 갱신 (Nav2 VoxelLayer)
+  int lo_aux;                    // 보조 예측 재료를 내보냄 (SIM_LOW_AUX, 기본 0 — 관측·보상·끝 판정 그대로). low_aux · low_hit
   int lo_mov4;                   // 움직이는 것 칸 넷 (SIM_LOW_MOV4, 기본 0 — 1D 크기 kLow1d 그대로). 켜면 kLow1dMov4
   int lo_wide;                   // 넓은 지도 (SIM_LOW_WIDE, 기본 0): 아래층 그림 뒤에 로봇 지도 25.6 m 창 6 × 64 × 64 (low_task.h kLowWideOff, low_rl.h lowrl_wide)
   float lr_time_k;               // 시간 벌점 (걸음마다, low_rl.h kLrTimeK — SIM_LR_TIME_K 로 덮음)
@@ -445,6 +446,8 @@ struct EnvBatch {
   LowRlStat* lowstat;
   uint8_t* low_img;
   float* low_1d;
+  float* low_aux;       // 아래층 RL · lo_aux: 보조 예측 재료 [env][kLowAuxSrc] (관측과 같은 때 — lowrl_pack)
+  float* low_hit;       // 아래층 RL · lo_aux: 이 걸음에 닿음(센서)으로 끝 [env] (lowrl_finish)
   int32_t* low_vdone;   // 아래층 RL: 학습기 판 끝 칸 [env] (low_rl.h lowrl_finish — 0 · 1 · 3 · 8 목표 경계)
   uint32_t* low_wred;   // 넓은 지도 (lo_wide 일 때만): 로봇 지도 4 × 4 칸(0.2 m) 줄인 판 [env · (size/4)²] — low_rl.h lowrl_wred
 };

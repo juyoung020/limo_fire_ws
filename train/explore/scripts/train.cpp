@@ -94,6 +94,7 @@ struct Args {
   int low_people = 2;  // --people: 아래층 RL 판마다 사람 0 ~ 이 수
   bool map_prio = false;  // --map-prio (--low): 맵 뽑기를 최근 닿음 비율이 높은 맵 쪽으로 — 확률 ∝ 0.5 + 맵의 닿음으로 끝난 판 비율 (판 수 지수 이동 합, 반감 ~14 반복)
   double goal_curr_up = 0.8;   // --goal-curr-up R: 다음 단계로 넘어가는 지난 50 반복 학습 도달률 문턱 (잠정 — 학습 도달률은 샘플 행동이라 결정적 평가보다 낮음)
+  float aux = 0.f;               // --aux C (--low --gru): 보조 예측 머리 손실 계수 (0 = 끔, ppo/README "보조 예측 머리" — SIM_LOW_AUX=1 · SIM_LOW_OBS_MOV=1 필요)
   bool entropy_skip_v = false;   // --entropy-skip-v: 엔트로피 보너스를 v 성분에 안 줌 (v 는 [0, 1] 로 잘려 σ_v 가 계속 커짐)
   int goal_curr = -1;   // --goal-curr [단계]: 목표 거리·사람 커리큘럼 시작 단계 (−1 = 끔)
   int people_ramp = 0;  // --people-ramp N: 이어 학습 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → --people 로 곧게 올림 (0 = 처음부터 --people)
@@ -313,7 +314,8 @@ int run_low(Args a) {
   if (a.entropy >= 0) pc.entropy_coef = a.entropy;
   if (a.desired_kl >= 0) pc.desired_kl = a.desired_kl;
   if (a.std_min > 0) pc.std_min = a.std_min;
-  if (a.entropy_skip_v) pc.entropy_from = 1;   // 아래층: v(성분 0) 에는 엔트로피 보너스를 안 줌
+  if (a.entropy_skip_v) pc.entropy_from = 1;
+  if (a.aux > 0) pc.aux_coef = a.aux;   // 아래층: v(성분 0) 에는 엔트로피 보너스를 안 줌
   if (a.bound_coef >= 0) pc.bound_coef = a.bound_coef;
   if (a.chunk > 0) pc.chunk = a.chunk;
   if (a.steps > 0) pc.steps_per_env = a.steps;
@@ -331,7 +333,13 @@ int run_low(Args a) {
   env.sync();
   std::vector<sim::World> tests;
   for (auto& t : a.test) tests.push_back(sim::build_world(stem(t), sim::load_scene(t), hc));
-  const xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0, a.gru, c.lo_mov4 ? mdp::low::N1D_MOV4 : mdp::low::N1D);   // --gru H: actor·critic 순환 핵 (은닉 H, 0 = 끔)
+  xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0, a.gru, c.lo_mov4 ? mdp::low::N1D_MOV4 : mdp::low::N1D);   // --gru H: actor·critic 순환 핵 (은닉 H, 0 = 끔)
+  if (a.aux > 0) {   // 보조 예측 머리: 재료는 시뮬이 관측과 같이 내보냄 (SIM_LOW_AUX), 추적 움직이는 것은 관측 칸(SIM_LOW_OBS_MOV)이 켜야 만들어짐
+    if (a.gru <= 0 || !c.lo_aux || !c.lo_mov) throw std::runtime_error("--aux: --gru 와 SIM_LOW_AUX=1 · SIM_LOW_OBS_MOV=1 이 필요");
+    spec.aux_out = mdp::low::AUX_OUT;
+  } else if (c.lo_aux) {
+    throw std::runtime_error("SIM_LOW_AUX=1 인데 --aux 없음");
+  }
   cudaMemGetInfo(&mem_f1, &mem_t);
   xppo::PPO ppo(pc, spec, a.seed);
   cudaMemGetInfo(&mem_f2, &mem_t);
@@ -564,6 +572,7 @@ int run_low(Args a) {
         auto t0 = std::chrono::steady_clock::now();
         const sim::StepOut o = env.outputs();
         ppo.act(o.low_img, o.low_1d, d_act);
+        ppo.store_aux_src(o.low_aux);   // 보조 예측 재료 (켰을 때만 — 이 걸음 관측과 같은 때)
         cudaDeviceSynchronize();
         t_act += ms_since(t0);
         t0 = std::chrono::steady_clock::now();
@@ -571,6 +580,7 @@ int run_low(Args a) {
         env.sync();
         const sim::StepOut o2 = env.outputs();
         k_map_done_low<<<(N + 255) / 256, 256>>>(o2.done, N, d_done);
+        ppo.store_aux_hit(o2.low_hit);
         ppo.store(o2.reward, c.lo_goal_term ? (const int*)o2.low_vdone : d_done);   // 목표 경계(8)까지 담은 판 끝 칸 (SIM_LOW_GOAL_TERM)
         cudaDeviceSynchronize();
         t_sim += ms_since(t0);
@@ -586,10 +596,12 @@ int run_low(Args a) {
         for (int t = 0; t < pc.steps_per_env; ++t) {
           const sim::StepOut o = env.outputs();
           ppo.act(o.low_img, o.low_1d, d_act);
+          ppo.store_aux_src(o.low_aux);
           env.step(d_act, st);
           const sim::StepOut o2 = env.outputs();
           k_map_done_low<<<(N + 255) / 256, 256, 0, st>>>(o2.done, N, d_done);
-          ppo.store(o2.reward, c.lo_goal_term ? (const int*)o2.low_vdone : d_done);   // 목표 경계(8)까지 담은 판 끝 칸 (SIM_LOW_GOAL_TERM)
+          ppo.store_aux_hit(o2.low_hit);
+        ppo.store(o2.reward, c.lo_goal_term ? (const int*)o2.low_vdone : d_done);   // 목표 경계(8)까지 담은 판 끝 칸 (SIM_LOW_GOAL_TERM)
         }
         CKR(cudaStreamEndCapture(st, &g));
         CKR(cudaGraphInstantiate(&roll_exec, g, 0));
@@ -611,10 +623,12 @@ int run_low(Args a) {
         cudaEventRecord(ev_roll[2 * t], 0);
         const sim::StepOut o = env.outputs();
         ppo.act(o.low_img, o.low_1d, d_act);
+        ppo.store_aux_src(o.low_aux);
         cudaEventRecord(ev_roll[2 * t + 1], 0);
         env.step(d_act);
         const sim::StepOut o2 = env.outputs();
         k_map_done_low<<<(N + 255) / 256, 256>>>(o2.done, N, d_done);
+        ppo.store_aux_hit(o2.low_hit);
         ppo.store(o2.reward, c.lo_goal_term ? (const int*)o2.low_vdone : d_done);   // 목표 경계(8)까지 담은 판 끝 칸 (SIM_LOW_GOAL_TERM)
       }
       cudaEventRecord(ev_roll[2 * pc.steps_per_env], 0);
@@ -729,13 +743,24 @@ int run_low(Args a) {
     r.last(rf::key::LOG_STD, (ls[0] + ls[1]) / 2.0);
     r.last("train/std_v", std::exp(ls[0]));
     r.last("train/std_w", std::exp(ls[1]));
+    if (ppo.aux_on()) {   // 보조 예측: 손실 (가림 아닌 행 평균) · 정답 있는 행 비율 · (a) 닿음 정답 비율
+      r.last("train/aux_contact_bce", us.aux_a);
+      r.last("train/aux_mover_mse", us.aux_b);
+      r.last("train/aux_lidar_mse", us.aux_c);
+      r.last("train/aux_valid_a", us.aux_va);
+      r.last("train/aux_valid_b", us.aux_vb);
+      r.last("train/aux_valid_c", us.aux_vc);
+      r.last("train/aux_contact_pos", us.aux_pos);
+    }
     r.last(rf::key::GPU_MEM_MB, (tot - fr) / 1048576.0);
     const int it_now = ppo.iteration();
     std::fprintf(stderr,
                  "반복 %d: 목표 %.0f 도달률 %.3f 속도 %.3f m/s 벽 %.3f·사람 %.3f /100 m 정체 %.0f 시간끝 %.0f 후진 %.3f 걸음보상 %.4f | value %.4f kl %.4f lr %.2e "
-                 "σ %.3f %.3f | act %.0f sim %.0f update %.0f ms (%.0f 걸음/s)\n",
+                 "σ %.3f %.3f | act %.0f sim %.0f update %.0f ms (%.0f 걸음/s)%s\n",
                  it, s.goals, s.reach_rate(), s.speed(dt_act), s.wall100(), s.person100(), s.stall, s.timeout, s.back / ns, step_rew / ns, us.value,
-                 us.kl, us.lr, std::exp(ls[0]), std::exp(ls[1]), t_act, t_sim, t_upd, iter_steps / (t_iter / 1000));
+                 us.kl, us.lr, std::exp(ls[0]), std::exp(ls[1]), t_act, t_sim, t_upd, iter_steps / (t_iter / 1000),
+                 ppo.aux_on() ? (" | 보조 닿음 " + std::to_string(us.aux_a).substr(0, 6) + " 사람 " + std::to_string(us.aux_b).substr(0, 6) + " 라이다 " +
+                                 std::to_string(us.aux_c).substr(0, 6)).c_str() : "");
     if (a.eval_every > 0 && it_now % a.eval_every == 0) { evaluate(it_now, false); if (a.low_explore) evaluate_x(it_now); else evaluate(it_now, true); }
     run.end_update();
     if (a.ckpt_every > 0 && it_now % a.ckpt_every == 0) save(true);
@@ -788,6 +813,7 @@ int main(int argc, char** argv) {
       else if (k == "--people-ramp") a.people_ramp = std::stoi(nx());
       else if (k == "--goal-curr-up") a.goal_curr_up = std::stod(nx());
       else if (k == "--entropy-skip-v") a.entropy_skip_v = true;
+      else if (k == "--aux") a.aux = std::stof(nx());
       else if (k == "--goal-curr") a.goal_curr = (i + 1 < argc && argv[i + 1][0] != '-') ? std::stoi(nx()) : 0;
       else if (k == "--map-prio") a.map_prio = true;
       else if (k == "--low-explore") a.low_explore = true;

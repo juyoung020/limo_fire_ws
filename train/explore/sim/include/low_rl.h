@@ -43,6 +43,7 @@ constexpr int kLrMovers = 8;             //   움직이는 덩어리(사람) 수
 constexpr float kLrClusJump = 0.15f;     //   이웃 칸 거리 차가 이보다 크면 다른 덩어리 (m)
 constexpr float kLrClusW0 = 0.10f, kLrClusW1 = 0.65f;   //   덩어리 폭 (m): 사람 원기둥 지름 0.4 ~ 0.6 이 보이는 현 길이
 constexpr float kLrClusRange = 4.0f;     //   이 거리 안 덩어리만 (m)
+constexpr float kAuxLidRange = mdp::low::AUX_RANGE;   // 보조 예측 (c) 라이다 구역 최소 거리 상한 (m)
 constexpr float kLrMovVNorm = 1.6f;      // 관측 "움직이는 것" 속도 정규화 (m/s) — 추적이 사람으로 치는 속도 상한
 constexpr float kLrClusSag = 0.15f;      //   칼만 추적: 둥근 덩어리의 활꼴 높이 / 현 길이 하한 — 잠정 (원기둥 ±50° 만 보여도 0.23)
 constexpr float kLrClusRound0 = 0.25f;   //   칼만 추적: 둥근 덩어리의 현 길이 하한 (m) — 사람 원기둥 지름 0.4 ~ 0.6 — 잠정
@@ -697,6 +698,7 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     }
     b.low_vdone[env] = v;
   }
+  if (b.low_hit) b.low_hit[env] = (e.done == mdp::cur::kCollision || e.done == mdp::cur::kCollisionPerson) ? 1.f : 0.f;   // 보조 예측 (a) 정답 재료
   if (e.done) lowrl_clear(R);
 }
 
@@ -878,6 +880,24 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
       rel(M[bi].x, M[bi].y, kLrClusRange, O + kLoMov + 1);
       O[kLoMov + 4] = dm::clampf((co * M[bi].vx + s * M[bi].vy) / kLrMovVNorm, -1.f, 1.f);   // 로봇 앞쪽 성분
       O[kLoMov + 5] = dm::clampf((co * M[bi].vy - s * M[bi].vx) / kLrMovVNorm, -1.f, 1.f);   // 로봇 왼쪽 성분
+    }
+    if (b.low_aux) {   // 보조 예측 재료 (low_task.h kAux*): 지도 자세 · 추적 움직이는 것 · 최신 라이다 구역 최소
+      float* X = b.low_aux + (size_t)env * kLowAuxSrc;
+      X[kAuxPose] = px;
+      X[kAuxPose + 1] = py;
+      X[kAuxPose + 2] = pth;
+      const int na = nm < kAuxMovMax ? nm : kAuxMovMax;
+      X[kAuxNMov] = (float)na;
+      for (int i = 0; i < kAuxMovMax; ++i) {
+        X[kAuxMov + 2 * i] = i < na ? M[i].x : 0.f;
+        X[kAuxMov + 2 * i + 1] = i < na ? M[i].y : 0.f;
+      }
+      const float* L = b.lidar_ring + ((size_t)env * kLidarRing + e.lid_head) * mdp::obs::LIDAR_BINS;
+      for (int s2 = 0; s2 < kAuxLidSec; ++s2) {
+        float m = kAuxLidRange;
+        for (int k = s2 * mdp::obs::LIDAR_BINS / kAuxLidSec; k < (s2 + 1) * mdp::obs::LIDAR_BINS / kAuxLidSec; ++k) m = dm::minf(m, L[k]);
+        X[kAuxLid + s2] = m / kAuxLidRange;
+      }
     }
     if (b.cfg.lo_mov4 && nm > 0) {   // 움직이는 것 칸 넷: 2 s 앞까지 가장 가까워질 때 간격(몸통 반 길이 원 − 덩어리 반지름) 작은 차례, 같으면 그때까지 시간 · 번호
       float s, co;

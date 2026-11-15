@@ -198,5 +198,10 @@ enum : int32_t {
   kLoMov4 = mdp::low::N1D,        // (EnvCfg::lo_mov4) 움직이는 것 칸 넷 — 칸마다 kLoMov 와 같은 6 칸, 가장 가까워질 때 간격 차례
   kLow1dMov4 = mdp::low::N1D_MOV4
 };
+// 보조 예측 정답의 재료 (EnvCfg::lo_aux, 2026-11-16 — 학습기 ppo 보조 머리가 앞 걸음 값으로 정답을 만든다. 로봇이 아는 값만: 지도 자세 · 추적 · 라이다)
+enum : int {
+  kAuxPose = mdp::low::AUX_POSE, kAuxNMov = mdp::low::AUX_NMOV, kAuxMov = mdp::low::AUX_MOV, kAuxMovMax = mdp::low::AUX_MOV_MAX,
+  kAuxLid = mdp::low::AUX_LID, kAuxLidSec = mdp::low::AUX_LID_SEC, kLowAuxSrc = mdp::low::AUX_SRC   // 칸 뜻은 mdp/obs_layout.h AUX_*
+};
 
 }  // namespace sim

@@ -60,12 +60,23 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
     spec.gru_h = full ? 256 : 32;   // GRU 문 커널은 은닉 32 의 배수
     spec.split_enc = true;          // 순환 핵은 인코더 나눔 구조에서만 (explore_spec_low 와 같음)
   }
+  // 보조 예측 머리 (GC_LOW_AUX=1, gradcheck --low --gru --aux): actor h → 선형 머리 + 앞 걸음 정답 (롤아웃 4 걸음, 지평 2·2·1 로 줄여 정답 있는 행을 만듦)
+  const bool aux = gru && std::getenv("GC_LOW_AUX") != nullptr;
+  if (aux) spec.aux_out = mdp::low::AUX_OUT;
   spec.declare_bias = 0.f;  // 검사에서는 선언 확률을 중간으로 (−7 이면 베르누이 기울기가 거의 0)
   PPOConfig cfg;
   cfg.num_envs = 6;
   cfg.steps_per_env = 2;
   cfg.minibatches = 1;
-  cfg.chunk = gru ? 12 : 4;  // S=12 를 4 개씩 3 덩이 → 덩이 누적도 검사 (순환 핵은 순서 하나를 한 번에 — chunk ≥ 미니배치)
+  cfg.chunk = gru ? 12 : 4;
+  if (aux) {
+    cfg.steps_per_env = 4;
+    cfg.chunk = 24;
+    cfg.aux_ka = 2;
+    cfg.aux_kb = 2;
+    cfg.aux_kc = 1;
+    cfg.aux_coef = 0.5f;   // 검사에서 보이게 크게
+  }  // S=12 를 4 개씩 3 덩이 → 덩이 누적도 검사 (순환 핵은 순서 하나를 한 번에 — chunk ≥ 미니배치)
   cfg.tf32 = false;  // fp32 정확 모드로 검사
   cfg.cnn_bf16 = false;
   cfg.mlp = mlp;
@@ -93,6 +104,13 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   CK(cudaMalloc(&dr, N * sizeof(real)));
   CK(cudaMalloc(&dd, N * sizeof(int)));
   int fill_t = 0;
+  real *dsrc = nullptr, *dhit = nullptr;
+  std::vector<real> hsrc, hhit(N);
+  if (aux) {
+    hsrc.resize((size_t)N * mdp::low::AUX_SRC);
+    CK(cudaMalloc(&dsrc, hsrc.size() * sizeof(real)));
+    CK(cudaMalloc(&dhit, N * sizeof(real)));
+  }
   auto fill_obs = [&]() {
     ++fill_t;
     for (auto& v : himg) v = (uint8_t)U8(rng);
@@ -124,9 +142,29 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   for (int t = 0; t < cfg.steps_per_env; ++t) {
     fill_obs();
     ppo.act(d_img, d1, dact);
+    if (aux) {   // 재료: 자세 · 움직이는 것 (로봇 3 m 안) · 라이다 구역, 닿음 — float 로 뽑아 두 정밀도에서 같게
+      std::uniform_real_distribution<float> Uf(-1.f, 1.f);
+      for (int i = 0; i < N; ++i) {
+        real* x = &hsrc[(size_t)i * mdp::low::AUX_SRC];
+        x[0] = 2.f * Uf(rng); x[1] = 2.f * Uf(rng); x[2] = 3.f * Uf(rng);
+        const int nm = (i + t) % (mdp::low::AUX_MOV_MAX + 1);
+        x[mdp::low::AUX_NMOV] = (real)nm;
+        for (int m = 0; m < mdp::low::AUX_MOV_MAX; ++m) {
+          x[mdp::low::AUX_MOV + 2 * m] = m < nm ? x[0] + 3.f * Uf(rng) : 0.f;
+          x[mdp::low::AUX_MOV + 2 * m + 1] = m < nm ? x[1] + 3.f * Uf(rng) : 0.f;
+        }
+        for (int k = 0; k < mdp::low::AUX_LID_SEC; ++k) x[mdp::low::AUX_LID + k] = 0.5f + 0.5f * Uf(rng);
+        hhit[i] = (i + 2 * t) % 3 == 0 ? 1.f : 0.f;
+      }
+      CK(cudaMemcpy(dsrc, hsrc.data(), hsrc.size() * sizeof(real), cudaMemcpyHostToDevice));
+      CK(cudaMemcpy(dhit, hhit.data(), N * sizeof(real), cudaMemcpyHostToDevice));
+      ppo.store_aux_src(dsrc);
+      ppo.store_aux_hit(dhit);
+    }
     for (int i = 0; i < N; ++i) {
       hr[i] = G(rng);
       hd[i] = (i % 5 == 1) ? 1 : (i % 5 == 3 ? 3 : 0);  // 진행·종료·끊김 섞기
+      if (aux) hd[i] = (i == 1 && t == 1) ? 1 : (i == 3 && t == 2 ? 3 : 0);   // 보조: 판 경계를 드물게 (정답 있는 행이 남게)
     }
     CK(cudaMemcpy(dr, hr.data(), N * sizeof(real), cudaMemcpyHostToDevice));
     CK(cudaMemcpy(dd, hd.data(), N * sizeof(int), cudaMemcpyHostToDevice));
@@ -212,6 +250,8 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   cudaFree(dr);
   cudaFree(dd);
   cudaFree(didx);
+  if (dsrc) cudaFree(dsrc);
+  if (dhit) cudaFree(dhit);
   return out;
 }
 

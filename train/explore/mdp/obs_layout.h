@@ -138,6 +138,12 @@ constexpr int N1D = 32;
 // 가장 가까워질 때 간격이 작은 차례 (2 s 앞까지). 옛 칸(kLoMov, 가장 가까운 하나)은 그대로 — 끄면 1D 크기 N1D 그대로
 constexpr int MOV_SLOTS = 4, MOV_W = 6;
 constexpr int N1D_MOV4 = N1D + MOV_SLOTS * MOV_W;   // 56
+// 보조 예측 (2026-11-16, 켤 때만 — sim SIM_LOW_AUX=1 · train --aux, ppo/README "보조 예측 머리"): actor 순환 핵 h → 선형 머리 AUX_OUT 칸.
+// 정답은 앞 걸음의 로봇 값만으로 학습기가 만든다 (시뮬 정답 없음). 재료 한 행 AUX_SRC = [지도 자세 x, y, θ | 추적 수 | 추적 x, y × AUX_MOV_MAX | 라이다 구역 최소/AUX_RANGE × AUX_LID_SEC]
+// 머리 출력 = [(a) 1 s 안 닿음 로짓 | (b) 1 s 뒤 추적 움직이는 것 — 지금 로봇 기준 방향 구역 AUX_MOV_SEC 개마다 가까움 max(0, 1 − d/AUX_RANGE) | (c) 0.5 s 뒤 라이다 구역 최소/AUX_RANGE]
+constexpr int AUX_POSE = 0, AUX_NMOV = 3, AUX_MOV = 4, AUX_MOV_MAX = 8, AUX_LID = AUX_MOV + 2 * AUX_MOV_MAX, AUX_LID_SEC = 8, AUX_SRC = AUX_LID + AUX_LID_SEC;
+constexpr int AUX_MOV_SEC = 8, AUX_OUT = 1 + AUX_MOV_SEC + AUX_LID_SEC;   // 17
+constexpr float AUX_RANGE = 4.0f;   // m (움직이는 것 관측 범위 kLrClusRange 와 같게 — 잠정)
 constexpr int CONT = 2;        // v, ω (옆 이동 없음)
 constexpr int ACT = CONT + 1;  // 신경망 출력 폭 (끝 칸 = 선언 로짓 자리)
 // 채널 값 꼴 (2026-11-15, 학습 롤아웃 그림을 줄여 담을 때 — ppo/README "롤아웃 그림 줄여 담기"): 0 = 아무 u8 값, 1 = 0 또는 255 만, 2 = 늘 0.

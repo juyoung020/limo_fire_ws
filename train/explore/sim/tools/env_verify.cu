@@ -102,6 +102,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   size_t nz_wide[sim::kLowWideC] = {}, n_wide = 0;
   size_t nz_cam = 0, nz_lidar = 0, nz_depth = 0, n_path = 0, n_goal = 0, n_obs = 0, n_pol = 0;
   const auto mark = [&](size_t n, size_t& acc, int t) { acc += n; if (n && first_bad < 0) first_bad = t; };
+  size_t aux_mv = 0, aux_hit = 0, aux_n = 0;   // 보조 재료 통계 (SIM_LOW_AUX)
   const auto cmp_low = [&](int t) {   // 아래층 관측·걸음 사이 값·목표
     gpu.get_low_obs(lgi, lg1);
     cpu.get_low_obs(lci, lc1);
@@ -112,6 +113,19 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     size_t bo = 0;
     for (size_t i = 0; i < lci.size(); ++i) bo += lgi[i] != lci[i];
     for (size_t i = 0; i < lc1.size(); ++i) bo += std::memcmp(&lg1[i], &lc1[i], 4) != 0;
+    {   // 보조 예측 재료 (SIM_LOW_AUX) 도 비트 같아야
+      std::vector<float> ag, ac;
+      gpu.get_low_aux(ag);
+      cpu.get_low_aux(ac);
+      if (ag.size() != ac.size()) bo += 1;
+      else for (size_t i = 0; i < ag.size(); ++i) bo += std::memcmp(&ag[i], &ac[i], 4) != 0;
+      if (!ac.empty()) {
+        size_t nm = 0, nh = 0;
+        for (int i = 0; i < n_env; ++i) nm += ac[(size_t)i * sim::kLowAuxSrc + sim::kAuxNMov] > 0.f;
+        for (int i = 0; i < n_env; ++i) nh += ac[(size_t)n_env * sim::kLowAuxSrc + i] != 0.f;
+        aux_mv += nm; aux_hit += nh; aux_n += (size_t)n_env;
+      }
+    }
     mark(bo, bad_low, t);
     size_t br = 0, bc = 0;
     for (int i = 0; i < n_env; ++i) {
@@ -314,6 +328,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
               "지도 칸 다름 %zu, 카메라 층 다름 %zu (처음 걸음 %d)\n", bad_state, bad_reward, bad_obs, bad_low, bad_rl, bad_cmd, bad_ep, bad_stat, bad_map, bad_cam, first_bad);
   const bool same = !(bad_state || bad_reward || bad_obs || bad_low || bad_rl || bad_cmd || bad_ep || bad_stat || bad_map || bad_cam);
   const bool range_ok = n_nan == 0 && bad_range == 0;
+  if (aux_n) std::printf("보조 재료: 환경·걸음 %zu 중 움직이는 것 있음 %zu · 닿음 %zu\n", aux_n, aux_mv, aux_hit);
   std::printf("%s\n", same ? "아래층 RL 통과: GPU == CPU (비트 같음)" : "다름");
   std::printf("%s\n", range_ok ? "관측 범위 통과" : "관측 범위 실패");
   return negative ? (same ? 1 : 0) : (same && range_ok ? 0 : 1);

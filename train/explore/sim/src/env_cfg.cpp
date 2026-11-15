@@ -320,7 +320,8 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lr_goal_dmin = envf("SIM_LR_GOAL_DMIN", kLrGoalD2);   // 자동 목표 직선 거리 띠 (커리큘럼 — train --goal-curr 가 바꿈)
       c.lr_goal_dmax = envf("SIM_LR_GOAL_DMAX", kLrGoalDMax);
       c.lo_cam_every = (int)envf("SIM_LOW_CAM_EVERY", 0.f);   // 깊이 카메라 층 걸음마다 (2026-11-15 — 시험 세트 HSSD 벽 충돌의 절반이 닿는 순간 라이다·깊이 둘 다 못 보는 곳)
-      c.lo_mov4 = (int)envf("SIM_LOW_MOV4", 0.f);   // 2026-11-15: 사람 충돌 대책 — 추적한 사람 넷까지 관측에
+      c.lo_mov4 = (int)envf("SIM_LOW_MOV4", 0.f);
+      c.lo_aux = (int)envf("SIM_LOW_AUX", 0.f);   // 2026-11-16: 보조 예측 머리 정답 재료 (학습기 --aux)   // 2026-11-15: 사람 충돌 대책 — 추적한 사람 넷까지 관측에
       c.lo_wide = (int)envf("SIM_LOW_WIDE", 0.f);   // 넓은 지도 (2026-11-15 — 목적지만 정책이 ±3.2 m 창 밖 길을 못 찾아서)
       c.lr_time_k = envf("SIM_LR_TIME_K", kLrTimeK);   // 2026-11-15: 검증 세트 2 사람 적은 판(p2)도 평균 속도 0.55~0.66 (기준 0.676), 트인 곳에서도 0.75 m/s
       c.lo_goal_term = (int)envf("SIM_LOW_GOAL_TERM", 0.f);   // 2026-11-15 독립 검토: 통과가 가치 끝이 아니라 시간 벌점이 상수가 됨

@@ -73,6 +73,10 @@ struct PPOConfig {
   // 롤아웃 그림 줄여 담기 (아래층 그림 배치일 때만 — mdp/obs_layout.h low NEAR_KIND·WIDE_KIND): 0/255 채널은 비트 판, 늘 0 채널은 안 담음.
   // 융합 합성곱이 그 꼴을 바로 읽어 결과는 비트까지 같다. 담을 때마다 꼴이 맞는지 보고 어긋나면 update 가 멈춘다 (ppo/README "롤아웃 그림 줄여 담기")
   bool pack_img = true;
+  // 보조 예측 머리 (2026-11-16, ppo/README "보조 예측 머리" — ACSpec::aux_out > 0 일 때만): 손실 aux_coef × 행 평균 [(a) 닿음 BCE + (b) · (c) 칸 평균 제곱 오차].
+  // 정답 지평 (걸음): (a) 앞 aux_ka 걸음 안 닿음, (b) aux_kb 걸음 뒤 추적 움직이는 것, (c) aux_kc 걸음 뒤 라이다 구역 — 롤아웃 안·같은 판일 때만 (아니면 가림)
+  float aux_coef = 0.1f;        // 잠정 (작게 — 기록 train/aux_*)
+  int aux_ka = 10, aux_kb = 10, aux_kc = 5;   // 10 Hz: 1 s · 1 s · 0.5 s
 };
 
 // 그래프 모드(train --graph, 그래프 어텐션 정책) PPO 설정 — 한곳. 위 기본값(직접 제어·계층형)과 다른 것만 바꾼다.
@@ -109,7 +113,9 @@ struct UpdateStats {
   float mean_value = 0, mean_return = 0;
   // 진단: kl0 = 첫 미니배치(걸음 전) KL — 0 이 아니면 롤아웃·갱신 정방향이 다름(수치). 계층형 롤아웃 로짓: 공통 성분 |l̄|·있는 칸 표준편차·max |l| 의 샘플 평균
   float kl0 = 0, logit_cm = 0, logit_spread = 0, logit_absmax = 0;
-  float value0 = 0;   // 첫 미니배치(걸음 전) 가치 손실 — 롤아웃을 만든 가치가 그 수익에서 얼마나 틀렸나 (가치만 맞추기 전후 비교용)
+  float value0 = 0;
+  float aux_a = 0, aux_b = 0, aux_c = 0;   // 보조 손실 (가림 아닌 행 평균: 닿음 BCE · 움직이는 것 칸 평균 제곱 오차 · 라이다 구역 칸 평균 제곱 오차) — 모든 미니배치 평균
+  float aux_va = 0, aux_vb = 0, aux_vc = 0, aux_pos = 0;   // 정답 있는 행 비율 (a · b · c), (a) 정답 1 비율   // 첫 미니배치(걸음 전) 가치 손실 — 롤아웃을 만든 가치가 그 수익에서 얼마나 틀렸나 (가치만 맞추기 전후 비교용)
 };
 
 // 그래프 어텐션 정책(ACSpec::graph)의 관측 한 묶음 (모두 GPU, 환경 n 개 — mdp/obs_layout.h mdp::graph):
@@ -134,6 +140,10 @@ class PPO {
   void act(const uint8_t* img, const real* obs1d, real* actions);
   // reward float [N], done int [N]. 끊김(3)이면 rsl_rl 처럼 r += γ·V(s_t).
   void store(const real* reward, const int* done);
+  // 보조 예측 (ACSpec::aux_out > 0): 이번 걸음 관측과 같은 때 재료 [N][mdp::low::AUX_SRC] — act 뒤 env.step 전에. 닿음 [N] (0/1) — env.step 뒤 store 전에
+  void store_aux_src(const real* src);
+  void store_aux_hit(const real* hit);
+  bool aux_on() const { return AUXK_ > 0; }
   // 바로 앞 act 의 환경 0 … n−1 선언 로짓·가치를 호스트로 (뷰어 재생용 — store 전에 부른다)
   void last_act_info(int n, real* logit, real* value) const;
   // 롤아웃이 가득 찬 뒤 마지막 관측으로 가치를 메워 GAE (update 가 부른다; 검사 도구도 따로 부른다)
@@ -233,6 +243,16 @@ class PPO {
   uint64_t act_calls_ = 0;
   // 순환 핵 (spec.gru_h > 0): H_ = 은닉, NFE_ = 인코더 특징 수 (MLP 입력 [F (NFE_) | h (H_) | 1D] — NF_ = NFE_ + H_ 가 1D 앞 열 수)
   int H_ = 0, NFE_ = 0;
+  bool aux_break_ = false;
+  int AUXK_ = 0;                                // 보조 머리 출력 칸 (0 = 끔)
+  real *s_auxsrc_ = nullptr, *s_auxhit_ = nullptr, *s_auxlm_ = nullptr;   // 롤아웃 재료 [S][AUX_SRC] · 닿음 [S] · 정답|가림 [S][AUXK + 3]
+  real *c_auxlm_ = nullptr, *c_auxdy_ = nullptr, *c_auxst_ = nullptr, *c_auxpart_ = nullptr;   // 미니배치 [C][AUXK+3] · dy [C][AUXK] · 통계 [C][8] · dW 부분합
+  double* d_auxacc_ = nullptr;                  // 보조 통계 합 [8] (장치 갱신)
+  double aux_host_[8] = {0};
+  double* aux_loss_out_ = nullptr;              // loss_and_grad 동안: 보조 손실 (호스트 길) 을 여기에                    // 보조 통계 합 (호스트 갱신 길)
+  void aux_labels();                            // 롤아웃 → s_auxlm_ (update · loss_and_grad 앞)
+  void aux_minibatch(int n, const int* ix, int mb, bool backward);   // 모으기 · 머리 정방향 · (역방향) · 통계
+  void aux_read(UpdateStats& o);
   real *h_a_ = nullptr, *h_c_ = nullptr;        // 롤아웃 h [N][H] (actor · critic) — 판이 끝난 환경은 store 가 0 으로
   real *s_h0a_ = nullptr, *s_h0c_ = nullptr;    // 롤아웃 시작 h [N][H] (갱신의 순서 정방향 h0)
   real* s_reset_ = nullptr;                     // [T][N] 그 걸음에 판이 새로 시작 (앞 걸음 done) — 0 걸음 행은 0

@@ -108,6 +108,130 @@ __global__ void k_gather_seq(const int* idx, int n, int B, int H, const real* s_
   }
 }
 
+// ---- 보조 예측 머리 (ppo/README "보조 예측 머리", mdp/obs_layout.h AUX_*) ----
+// 정답·가림: 행 r = t·N + i. 재료는 그 걸음 관측과 같은 때(s_auxsrc), 닿음은 그 걸음 행동 뒤(s_auxhit), 판 경계는 s_reset (그 걸음에 새 판).
+// 정답이 롤아웃 밖이거나 판이 바뀌면 가림 — (a) 는 창 끝이 롤아웃 안일 때만 (창 안에서 판이 끝나면 그때까지로 정함), 결과로 고르는 치우침 없음
+constexpr int kAuxK = mdp::low::AUX_OUT, kAuxW = kAuxK + 3, kAuxRB = 64;
+__global__ void k_aux_labels(int N, int T, const real* src, const real* hit, const real* reset, int ka, int kb, int kc, real* lm) {
+  const long r = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (r >= (long)N * T) return;
+  namespace L = mdp::low;
+  const int t = (int)(r / N), i = (int)(r % N);
+  real* o = lm + r * kAuxW;
+  for (int k = 0; k < kAuxW; ++k) o[k] = 0.f;
+  auto cont = [&](int k) {   // t → t + k 가 롤아웃 안 · 같은 판
+    if (t + k > T - 1) return false;
+    for (int j = t + 1; j <= t + k; ++j)
+      if (reset[(long)j * N + i] != 0.f) return false;
+    return true;
+  };
+  if (t + ka - 1 <= T - 1) {   // (a) 앞 ka 걸음 (이 걸음 포함) 안에 닿음으로 끝
+    real y = 0.f;
+    for (int j = t; j < t + ka; ++j) {
+      if (j > t && reset[(long)j * N + i] != 0.f) break;   // 닿지 않고 판 끝
+      if (hit[(long)j * N + i] != 0.f) { y = 1.f; break; }
+    }
+    o[0] = y;
+    o[kAuxK] = 1.f;
+  }
+  if (cont(kb)) {   // (b) kb 걸음 뒤 추적 움직이는 것 → 지금 지도 자세 기준 방향 구역마다 가까움
+    const real* a = src + r * L::AUX_SRC;
+    const real* b = src + ((long)(t + kb) * N + i) * L::AUX_SRC;
+    const float c = cosf((float)a[L::AUX_POSE + 2]), s = sinf((float)a[L::AUX_POSE + 2]);
+    const int nm = (int)b[L::AUX_NMOV];
+    for (int m = 0; m < nm && m < L::AUX_MOV_MAX; ++m) {
+      const float dx = (float)(b[L::AUX_MOV + 2 * m] - a[L::AUX_POSE]), dy = (float)(b[L::AUX_MOV + 2 * m + 1] - a[L::AUX_POSE + 1]);
+      const float fx = c * dx + s * dy, fy = c * dy - s * dx;
+      const float d = sqrtf(fx * fx + fy * fy), ang = atan2f(fy, fx);   // (−π, π]
+      int sec = (int)floorf((ang + 3.14159265f) * (float)L::AUX_MOV_SEC / 6.28318531f);
+      sec = sec < 0 ? 0 : (sec >= L::AUX_MOV_SEC ? L::AUX_MOV_SEC - 1 : sec);
+      const float v = fmaxf(0.f, 1.f - d / L::AUX_RANGE);
+      if (v > (float)o[1 + sec]) o[1 + sec] = v;
+    }
+    o[kAuxK + 1] = 1.f;
+  }
+  if (cont(kc)) {   // (c) kc 걸음 뒤 라이다 구역 최소 (그때 로봇 기준)
+    const real* b = src + ((long)(t + kc) * N + i) * L::AUX_SRC;
+    for (int k = 0; k < L::AUX_LID_SEC; ++k) o[1 + L::AUX_MOV_SEC + k] = b[L::AUX_LID + k];
+    o[kAuxK + 2] = 1.f;
+  }
+}
+__global__ void k_aux_gather(const int* idx, int n, const real* s, real* c) {
+  const long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
+  if (k >= (long)n * kAuxW) return;
+  c[k] = s[(long)idx[k / kAuxW] * kAuxW + k % kAuxW];
+}
+// 머리 정방향 + 손실 기울기 dy (행마다 워프 하나 — 칸 j = lane + 32·q, 나비 합으로 고정 순서). backward 면 h 기울기 dh += dy·W
+// 손실 (행) = coef·[ma·BCE(y0, l0) + mb·Σ(y−l)²/8 (b 칸) + mc·Σ(y−l)²/8 (c 칸)], 통계 칸 = [ma·BCE, ma, mb·mse, mb, mc·mse, mc, ma·l0, 0]
+__global__ void k_aux_fwd(int n, int H, const real* h, long ldh, const real* W, const real* bias, const real* lm, real coef, real* dy, real* st,
+                          real* dh, long lddh) {
+  const int lane = threadIdx.x & 31;
+  const long r = (blockIdx.x * (long)blockDim.x + threadIdx.x) >> 5;
+  if (r >= n) return;
+  const real* hr = h + r * ldh;
+  real acc[kAuxK];
+  for (int k = 0; k < kAuxK; ++k) acc[k] = 0;
+  for (int j = lane; j < H; j += 32) {
+    const real x = hr[j];
+    for (int k = 0; k < kAuxK; ++k) acc[k] += W[(long)k * H + j] * x;
+  }
+  for (int k = 0; k < kAuxK; ++k)
+    for (int o = 16; o > 0; o >>= 1) acc[k] += __shfl_xor_sync(0xffffffffu, acc[k], o);
+  const real* l = lm + r * kAuxW;
+  const real ma = l[kAuxK], mb = l[kAuxK + 1], mc = l[kAuxK + 2];
+  constexpr int B0 = 1, C0 = 1 + mdp::low::AUX_MOV_SEC;
+  real g[kAuxK];
+  const real z = acc[0] + bias[0];
+  const real sg = (real)1 / ((real)1 + exp(-z));
+  const real bce = (z > 0 ? z : (real)0) - z * l[0] + log1p(exp(-fabs(z)));
+  g[0] = coef * ma * (sg - l[0]);
+  real eb = 0, ec = 0;
+  for (int k = B0; k < C0; ++k) {
+    const real e = acc[k] + bias[k] - l[k];
+    eb += e * e;
+    g[k] = coef * mb * (real)2 * e / (real)mdp::low::AUX_MOV_SEC;
+  }
+  for (int k = C0; k < kAuxK; ++k) {
+    const real e = acc[k] + bias[k] - l[k];
+    ec += e * e;
+    g[k] = coef * mc * (real)2 * e / (real)mdp::low::AUX_LID_SEC;
+  }
+  if (lane == 0) {
+    for (int k = 0; k < kAuxK; ++k) dy[r * kAuxK + k] = g[k];
+    real* s = st + r * 8;
+    s[0] = ma * bce; s[1] = ma; s[2] = mb * eb / (real)mdp::low::AUX_MOV_SEC; s[3] = mb; s[4] = mc * ec / (real)mdp::low::AUX_LID_SEC; s[5] = mc;
+    s[6] = ma * l[0]; s[7] = 0;
+  }
+  if (dh)
+    for (int j = lane; j < H; j += 32) {
+      real d = 0;
+      for (int k = 0; k < kAuxK; ++k) d += g[k] * W[(long)k * H + j];
+      dh[r * lddh + j] += d;
+    }
+}
+// dW [K][H] · db [K] 부분합: 칸 q < K·H 는 (k = q / H, j = q % H), q ≥ K·H 는 편향 k. 행 묶음 y 가 r = y, y + RB, … 를 차례로 더함
+__global__ void k_aux_dw_part(int n, int H, const real* h, long ldh, const real* dy, real* part) {
+  const int q = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y;
+  const int nq = kAuxK * (H + 1);
+  if (q >= nq) return;
+  const bool isb = q >= kAuxK * H;
+  const int k = isb ? q - kAuxK * H : q / H, j = isb ? 0 : q % H;
+  real a = 0;
+  for (long r = y; r < n; r += kAuxRB) a += dy[r * kAuxK + k] * (isb ? (real)1 : h[r * ldh + j]);
+  part[(long)y * nq + q] = a;
+}
+__global__ void k_aux_dw_sum(int H, const real* part, real* grad) {   // grad = aux.w 기울기 자리 (aux.b 가 바로 뒤)
+  const int q = blockIdx.x * blockDim.x + threadIdx.x, nq = kAuxK * (H + 1);
+  if (q >= nq) return;
+  real a = 0;
+  for (int y = 0; y < kAuxRB; ++y) a += part[(long)y * nq + q];
+  grad[q] += a;
+}
+__global__ void k_aux_acc(const real* red, double* acc) {
+  const int k = threadIdx.x;
+  if (k < 8) acc[k] += (double)red[k];
+}
+
 // 롤아웃 그림 줄여 담기 (PPOConfig::pack_img): 구간마다 [꼴, 원래 자리, 담는 자리, 바이트, 작업 칸 시작].
 // 꼴 0 = u8 그대로(낱말 복사), 1 = 0/255 → 비트 (담는 바이트 하나 = 원래 8 바이트, 낮은 비트부터), 2 = 늘 0 (안 담고 0 인지 보기만).
 // 꼴이 어긋나면(1 에 0·255 아닌 값, 2 에 0 아닌 값) bad 를 올린다 — update 가 반복 끝에 보고 멈춘다
@@ -805,6 +929,23 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
     c_h0a_ = dmalloc<real>((long)C * H_, b);
     c_h0c_ = dmalloc<real>((long)C * H_, b);
   }
+  if (spec.aux_out > 0) {   // 보조 예측 머리 (순환 핵 위 — ActorCritic 이 확인)
+    if (spec.aux_out != mdp::low::AUX_OUT) throw std::runtime_error("PPO: 보조 머리 출력 칸은 mdp::low::AUX_OUT");
+    if (!(cfg_.aux_ka >= 1 && cfg_.aux_kb >= 1 && cfg_.aux_kc >= 1)) throw std::runtime_error("PPO: 보조 정답 지평 ≥ 1 걸음");
+    AUXK_ = spec.aux_out;
+    aux_break_ = std::getenv("GC_AUX_BREAK") != nullptr;   // 기울기 검사 음성 시험: h 로 가는 보조 기울기를 일부러 뺌 (gradcheck --aux-negative)
+    s_auxsrc_ = dmalloc<real>((long)S_ * mdp::low::AUX_SRC, b);
+    s_auxhit_ = dmalloc<real>(S_, b);
+    s_auxlm_ = dmalloc<real>((long)S_ * kAuxW, b);
+    CK(cudaMemset(s_auxsrc_, 0, sizeof(real) * S_ * mdp::low::AUX_SRC));
+    CK(cudaMemset(s_auxhit_, 0, sizeof(real) * S_));
+    c_auxlm_ = dmalloc<real>((long)C * kAuxW, b);
+    c_auxdy_ = dmalloc<real>((long)C * kAuxK, b);
+    c_auxst_ = dmalloc<real>((long)C * 8, b);
+    c_auxpart_ = dmalloc<real>((long)kAuxRB * kAuxK * (H_ + 1), b);
+    d_auxacc_ = dmalloc<double>(8, b);
+    CK(cudaMemset(d_auxacc_, 0, sizeof(double) * 8));
+  }
   // 장치 갱신 상태 (DevState · 부분합 · 미니배치 기록 · 편향 보정) 와 pinned 사본 — 반복 동안 새로 잡지 않음
   d_st_ = dmalloc<DevState>(1, b);
   d_part_ = dmalloc<double>((long)kPartSlots * kRedNB, b);
@@ -825,7 +966,8 @@ PPO::~PPO() {
                                               s_rew_, s_done_, s_ret_, s_adv_, raw_, last_obs_, last_val_, c_img_,
                                               c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_,
                                               s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_, c_gred_,
-                                              d_st_, d_part_, d_mbrec_, d_bc_, d_seg_, d_pack_bad_, h_a_, h_c_, s_h0a_, s_h0c_, h_tmp_, h_ia_, s_reset_, c_reset_, c_h0a_, c_h0c_})
+                                              d_st_, d_part_, d_mbrec_, d_bc_, d_seg_, d_pack_bad_, h_a_, h_c_, s_h0a_, s_h0c_, h_tmp_, h_ia_, s_reset_, c_reset_, c_h0a_, c_h0c_,
+                                              s_auxsrc_, s_auxhit_, s_auxlm_, c_auxlm_, c_auxdy_, c_auxst_, c_auxpart_, d_auxacc_})
     cudaFree(p);
   cudaFree(d_ev_);
   for (void* p : std::initializer_list<void*>{h_mbrec_, h_bc_, h_perm_, h_pack_bad_}) cudaFreeHost(p);
@@ -938,6 +1080,59 @@ void PPO::store(const real* reward, const int* done) {
   if (H_ > 0)   // 판이 끝난 환경: h → 0 (다음 걸음이 새 판), 다음 걸음 행 reset
     k_h_done<<<nblk((long)N_ * H_), 256, 0, ac_->stream>>>(done, N_, H_, h_a_, h_c_, step_ + 1 < T_ ? s_reset_ + k0 + N_ : nullptr);
   ++step_;
+}
+
+void PPO::store_aux_src(const real* src) {
+  if (!AUXK_) return;
+  CK(cudaMemcpyAsync(s_auxsrc_ + (long)step_ * N_ * mdp::low::AUX_SRC, src, sizeof(real) * N_ * mdp::low::AUX_SRC, cudaMemcpyDeviceToDevice, ac_->stream));
+}
+void PPO::store_aux_hit(const real* hit) {
+  if (!AUXK_) return;
+  CK(cudaMemcpyAsync(s_auxhit_ + (long)step_ * N_, hit, sizeof(real) * N_, cudaMemcpyDeviceToDevice, ac_->stream));
+}
+void PPO::aux_labels() {
+  if (!AUXK_) return;
+  k_aux_labels<<<nblk(S_), 256, 0, ac_->stream>>>(N_, T_, s_auxsrc_, s_auxhit_, s_reset_, cfg_.aux_ka, cfg_.aux_kb, cfg_.aux_kc, s_auxlm_);
+  CK(cudaMemsetAsync(d_auxacc_, 0, sizeof(double) * 8, ac_->stream));
+  std::fill(aux_host_, aux_host_ + 8, 0.0);
+}
+// 미니배치 덩이 하나 (행 n, 색인 ix, 평균 분모 mb): actor 순환 핵 h (c_x_ 의 NFE_ 열) → 머리 → 손실 기울기. backward 면 actor MLP 역방향 뒤에 불러
+// h 기울기(dx0 의 h 열)에 더하고 머리 변수 기울기를 더한다 — gru_a.backward_seq 가 그 합을 받는다
+void PPO::aux_minibatch(int n, const int* ix, int mb, bool backward) {
+  auto st = ac_->stream;
+  auto& ac = *ac_;
+  k_aux_gather<<<nblk((long)n * kAuxW), 256, 0, st>>>(ix, n, s_auxlm_, c_auxlm_);
+  k_aux_fwd<<<nblk((long)n * 32), 256, 0, st>>>(n, H_, c_x_ + NFE_, NF_ + D_, ac.d_params + ac.aux_w_off, ac.d_params + ac.aux_b_off, c_auxlm_,
+                                                  (real)(cfg_.aux_coef / mb), c_auxdy_, c_auxst_, backward && !aux_break_ ? ac.actor.dx0() + NFE_ : nullptr,
+                                                  ac.actor.feat());
+  if (backward) {
+    const int nq = kAuxK * (H_ + 1);
+    k_aux_dw_part<<<dim3((nq + 255) / 256, kAuxRB), 256, 0, st>>>(n, H_, c_x_ + NFE_, NF_ + D_, c_auxdy_, c_auxpart_);
+    k_aux_dw_sum<<<(nq + 255) / 256, 256, 0, st>>>(H_, c_auxpart_, ac.d_grads + ac.aux_w_off);
+  }
+  col_sum(c_auxst_, n, 8, 8, c_red_ + 8, false, st);
+  if (dev_mb_) {
+    k_aux_acc<<<1, 32, 0, st>>>(c_red_ + 8, d_auxacc_);
+  } else {
+    real hs[8];
+    CK(cudaMemcpyAsync(hs, c_red_ + 8, sizeof(hs), cudaMemcpyDeviceToHost, st));
+    CK(cudaStreamSynchronize(st));
+    for (int k = 0; k < 8; ++k) aux_host_[k] += (double)hs[k];
+  }
+}
+void PPO::aux_read(UpdateStats& o) {
+  if (!AUXK_) return;
+  double a[8];
+  CK(cudaMemcpy(a, d_auxacc_, sizeof(a), cudaMemcpyDeviceToHost));
+  for (int k = 0; k < 8; ++k) a[k] += aux_host_[k];
+  const double rows = (double)S_ * cfg_.epochs;   // 갱신 동안 본 행 수 (에포크마다 롤아웃 전체)
+  o.aux_a = (float)(a[0] / std::max(a[1], 1.0));
+  o.aux_b = (float)(a[2] / std::max(a[3], 1.0));
+  o.aux_c = (float)(a[4] / std::max(a[5], 1.0));
+  o.aux_va = (float)(a[1] / rows);
+  o.aux_vb = (float)(a[3] / rows);
+  o.aux_vc = (float)(a[5] / rows);
+  o.aux_pos = (float)(a[6] / std::max(a[1], 1.0));
 }
 
 void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, int n_all, int64_t sample_call) {
@@ -1078,6 +1273,7 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
                  c_da_, c_dv_, c_dls_, c_stat_};
       k_loss<<<nblk(n, 128), 128, 0, st>>>(p);
     }
+    if (AUXK_ && !backward) aux_minibatch(n, ix, mb, false);
     if (backward) {
       ac.fork();
       ac.critic.backward(ac.cublas2, ac.stream2, n, nullptr, c_dv_);
@@ -1088,6 +1284,7 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
       } else if (ac.split) ac.enc_c.backward_feat(ac.cublas2, ac.stream2, n, im, imx, ac.critic.dx0(), ac.critic.feat(), nullptr, 0);   // critic 손실만
       if (disc_) ac.head.backward(ac.cublas, st, n, c_aout_, AO_, ac.d_params, ac.d_grads, c_G_, c_da_, AO_);   // 머리 → 임베딩 기울기 c_da_
       ac.actor.backward(ac.cublas, st, n, nullptr, c_da_);
+      if (AUXK_) aux_minibatch(n, ix, mb, true);   // 보조 머리: h 열 기울기에 더함 (gru_a 역방향 전)
       if (H_ > 0) {
         ac.gru_a.backward_seq(ac.cublas, st, T_, B, c_x_, NF_ + D_, NF_, c_reset_, ac.actor.dx0() + NFE_, ac.actor.feat(), ac.gru_a.dxf_buf());
         ac.enc.backward_feat(ac.cublas, st, n, im, imx, ac.actor.dx0(), ac.actor.feat(), ac.gru_a.dxf_buf(), NFE_);
@@ -1124,7 +1321,8 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
     return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * stats[3] / mb + cfg_.slot_cm_coef * stats[4] / mb;
   }
   if (backward) if (NC_ > cfg_.entropy_from) k_add_const<<<1, 32, 0, st>>>(ac.log_std_grad() + cfg_.entropy_from, NC_ - cfg_.entropy_from, -cfg_.entropy_coef * ((real)n_all / mb));
-  stats[3] = ent * n_all;  // 엔트로피 합 자리로 바꿔 쓴다 (ratio 는 안 씀)
+  stats[3] = ent * n_all;
+  if (AUXK_ && aux_loss_out_) *aux_loss_out_ = cfg_.aux_coef * (aux_host_[0] + aux_host_[2] + aux_host_[4]) / mb;  // 엔트로피 합 자리로 바꿔 쓴다 (ratio 는 안 씀)
   return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * ent * n_all / mb;
 }
 
@@ -1132,7 +1330,12 @@ double PPO::loss_and_grad(const int* d_idx, int n, bool backward) {
   ac_->params_changed();  // 검사 도구가 d_params 를 직접 바꾼다
   if (backward) ac_->zero_grad();
   double st[5];
-  return minibatch(d_idx, n, n, backward, st);
+  aux_labels();
+  double aux = 0;
+  aux_loss_out_ = &aux;
+  const double L = minibatch(d_idx, n, n, backward, st);
+  aux_loss_out_ = nullptr;
+  return L + aux;
 }
 
 namespace {
@@ -1219,13 +1422,18 @@ void PPO::check_pack() {
 
 UpdateStats PPO::update(const uint8_t* img, const real* obs1d) {
   check_pack();   // 이번 롤아웃 그림이 꼴에 맞았나 (어긋나면 줄여 담은 그림이 원래와 다르므로 갱신 전에 멈춤)
+  aux_labels();   // 보조 정답 (켰을 때만 — 롤아웃 재료 → s_auxlm_, 통계 합 0)
+  UpdateStats o;
   if (cfg_.device_update && !disc_ && !graph_) {   // 장치 갱신 (연속 행동 판)
     upd_img_ = img;
     upd_obs_ = obs1d;
-    return finish_update_dev();
+    o = finish_update_dev();
+  } else {
+    compute_returns(img, obs1d);
+    o = finish_update();
   }
-  compute_returns(img, obs1d);
-  return finish_update();
+  aux_read(o);
+  return o;
 }
 
 // 장치 갱신 본문 (캡처 대상 — 호스트가 읽는 값 없음): 마지막 가치·GAE → 가치·수익 부분합 → 미니배치 루프 (통계·KL 학습률·기울기 노름·Adam 모두 장치)
