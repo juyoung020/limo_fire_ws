@@ -106,6 +106,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   size_t nz_cam = 0, nz_lidar = 0, nz_depth = 0, n_path = 0, n_goal = 0, n_obs = 0, n_pol = 0;
   const auto mark = [&](size_t n, size_t& acc, int t) { acc += n; if (n && first_bad < 0) first_bad = t; };
   size_t aux_mv = 0, aux_hit = 0, aux_n = 0;   // 보조 재료 통계 (SIM_LOW_AUX)
+  double body_sum = 0; size_t body_lt1 = 0, body_n = 0;   // 몸 둘레 간격 칸 통계 (SIM_LOW_BODY)
   const auto cmp_low = [&](int t) {   // 아래층 관측·걸음 사이 값·목표
     gpu.get_low_obs(lgi, lg1);
     cpu.get_low_obs(lci, lc1);
@@ -129,6 +130,11 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
         aux_mv += nm; aux_hit += nh; aux_n += (size_t)n_env;
       }
     }
+    if (c.lo_body && !lc1.empty()) {
+      const int n1 = (int)(lc1.size() / n_env), o = mdp::low::body_off(c.lo_mov4 != 0);
+      for (int i = 0; i < n_env; ++i)
+        for (int k = 0; k < mdp::low::BODY_SEC; ++k) { const float v = lc1[(size_t)i * n1 + o + k]; body_sum += v; body_lt1 += v < 1.f; ++body_n; }
+    }
     mark(bo, bad_low, t);
     size_t br = 0, bc = 0;
     for (int i = 0; i < n_env; ++i) {
@@ -148,6 +154,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
         else if (k < sim::kLoAct) { if ((k - sim::kLoSub) % 3 == 0) lo = 0.f; }
         else if (k >= sim::kLoHasPath && k <= sim::kLoHasGoal) lo = 0.f;
         else if (k >= sim::kLoMov && k < sim::kLoMov + 6) { if (k <= sim::kLoMov + 1) lo = 0.f; }   // 움직이는 것 (EnvCfg::lo_mov — 끄면 0): 있음·거리는 0 ~ 1
+        else if (c.lo_body && k >= mdp::low::body_off(c.lo_mov4 != 0)) lo = 0.f;   // 몸 둘레 간격 0 ~ 1
         else if (k >= sim::kLoMov4) { if ((k - sim::kLoMov4) % mdp::low::MOV_W <= 1) lo = 0.f; }   // 움직이는 것 칸 넷: 있음·거리 0 ~ 1
         else if (k > sim::kLoHasGoal) lo = hi = 0.f;
         if (v < lo || v > hi) {
@@ -194,7 +201,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   };
   if (g_mov_dump) {
     const int32_t hd[8] = {0x564F4D4C, (int32_t)sizeof(sim::EnvCfg), (int32_t)sizeof(sim::EnvState), (int32_t)sizeof(LowRl),
-                           sim::kLidarRing * mdp::obs::LIDAR_BINS, c.lo_mov4 ? sim::kLow1dMov4 : sim::kLow1d, n_env, n_steps + 1};
+                           sim::kLidarRing * mdp::obs::LIDAR_BINS, mdp::low::n1d_of(c.lo_mov4 != 0, c.lo_body != 0), n_env, n_steps + 1};
     std::fwrite(hd, sizeof(hd), 1, g_mov_dump);
     std::fwrite(&c, sizeof(sim::EnvCfg), 1, g_mov_dump);
   }
@@ -354,6 +361,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
               "지도 칸 다름 %zu, 카메라 층 다름 %zu (처음 걸음 %d)\n", bad_state, bad_reward, bad_obs, bad_low, bad_rl, bad_cmd, bad_ep, bad_stat, bad_map, bad_cam, first_bad);
   const bool same = !(bad_state || bad_reward || bad_obs || bad_low || bad_rl || bad_cmd || bad_ep || bad_stat || bad_map || bad_cam);
   const bool range_ok = n_nan == 0 && bad_range == 0;
+  if (body_n) std::printf("몸 둘레 간격: 칸 %zu 개 평균 %.3f · 1 m 안 막힘 %.1f %%\n", body_n, body_sum / body_n, 100.0 * body_lt1 / body_n);
   if (aux_n) std::printf("보조 재료: 환경·걸음 %zu 중 움직이는 것 있음 %zu · 닿음 %zu\n", aux_n, aux_mv, aux_hit);
   std::printf("%s\n", same ? "아래층 RL 통과: GPU == CPU (비트 같음)" : "다름");
   std::printf("%s\n", range_ok ? "관측 범위 통과" : "관측 범위 실패");

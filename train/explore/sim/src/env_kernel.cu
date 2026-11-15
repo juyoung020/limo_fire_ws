@@ -1620,6 +1620,26 @@ __global__ void __launch_bounds__(kLowPackT) env_low_pack_kernel(EnvBatch b) {
     for (int k = tid; k < kLowWideHW * kLowWideHW; k += kLowPackT) lowrl_wide(b, e, env, k, O + kLowWideOff);
   }
 }
+// 몸 둘레 간격 (low_rl.h lowrl_body_*, 켰을 때만): env_low_pack_kernel 뒤 따로 (lowrl_pack 이 1D 를 비운 뒤).
+// 점을 스레드가 나눠 구역 최솟값 → 공유 메모리 최솟값(양수 float 비트 = 값 차례, 차례 무관) → 스레드 0 이 씀
+constexpr int kLowBodyT = 128;
+__global__ void __launch_bounds__(kLowBodyT) env_low_body_kernel(EnvBatch b) {
+  const int env = blockIdx.x, tid = threadIdx.x;
+  const EnvState& e = b.st[env];
+  __shared__ int sb[mdp::low::BODY_SEC];
+  float best[mdp::low::BODY_SEC];
+  if (tid < mdp::low::BODY_SEC) sb[tid] = __float_as_int(mdp::low::BODY_RANGE);
+  __syncthreads();
+  lowrl_body_part(b, e, env, tid, kLowBodyT, best);
+  for (int k = 0; k < mdp::low::BODY_SEC; ++k)
+    if (best[k] < mdp::low::BODY_RANGE) atomicMin(&sb[k], __float_as_int(best[k]));
+  __syncthreads();
+  if (tid == 0) {
+    float v[mdp::low::BODY_SEC];
+    for (int k = 0; k < mdp::low::BODY_SEC; ++k) v[k] = __int_as_float(sb[k]);
+    lowrl_body_write(b, env, v);
+  }
+}
 __global__ void env_low_clear_kernel(EnvBatch b) {
   const int env = blockIdx.x * blockDim.x + threadIdx.x;
   if (env < b.n_env) lowrl_clear(b.lowrl[env]);
@@ -2097,6 +2117,7 @@ void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t s
   if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b);
   env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions);
   env_low_pack_kernel<<<b.n_env, kLowPackT, 0, st>>>(b);
+  if (b.cfg.lo_body) env_low_body_kernel<<<b.n_env, kLowBodyT, 0, st>>>(b);   // 몸 둘레 간격 (lowrl_pack 이 1D 를 비운 뒤)
 }
 
 void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st, bool lean) {

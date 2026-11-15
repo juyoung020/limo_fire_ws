@@ -373,7 +373,7 @@ class LowPolicy {
       off += n;
     }
     // 1D 칸 수: N1D (32) 또는 움직이는 것 칸 넷을 켠 N1D_MOV4 (56 — 관측은 sim low_rl.h lowrl_mov_slots 와 같은 함수로, 실물은 같은 라이다 추적 lowrl_trk)
-    if (D != mdp::low::N1D && D != mdp::low::N1D_MOV4) throw std::runtime_error("정규화 차원이 아래층 1D(N1D 또는 N1D_MOV4) 와 다름: " + std::to_string(D));
+    if (D != mdp::low::n1d_of(false, false) && D != mdp::low::n1d_of(true, false) && D != mdp::low::n1d_of(false, true) && D != mdp::low::n1d_of(true, true)) throw std::runtime_error("정규화 차원이 아래층 1D(N1D 또는 N1D_MOV4) 와 다름: " + std::to_string(D));
     d1d_ = D;
     if (!blk_.count("actor.gru.wh") || !blk_.count("enc.cnn3.conv0.w"))
       throw std::runtime_error("넓은 지도 가지·순환 핵 아래층 체크포인트가 아님 (train --low --gru, SIM_LOW_WIDE=1): " + path);

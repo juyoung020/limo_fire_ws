@@ -399,6 +399,7 @@ static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
     lowrl_planned(b, e, env);
   }
   lowrl_pack(b, e, env);
+  lowrl_body_clear(b, e, env);   // 몸 둘레 간격 (켰을 때만 — GPU 는 env_low_pack_kernel 이 블록으로 나눠)
   const int n = low_img_n(c);
   for (int i = 0; i < kLowImg; ++i) b.low_img[(size_t)env * n + i] = lowrl_img(b, e, env, i);
   if (c.lo_wide) {

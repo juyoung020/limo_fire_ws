@@ -741,7 +741,9 @@ DEV uint8_t lowrl_img(const EnvBatch& b, const EnvState& e, int env, int i) {
 // 환경 하나 그림 바이트 수 (넓은 지도를 켜면 뒤에 붙음)
 DEV int low_img_n(const EnvCfg& c) { return c.lo_wide ? kLowImgWide : kLowImg; }
 // 환경 하나 1D 칸 수 (움직이는 것 칸 넷을 켜면 뒤에 붙음)
-DEV int low_1d_n(const EnvCfg& c) { return c.lo_mov4 ? kLow1dMov4 : kLow1d; }
+// (mdp::low::n1d_of · body_off 와 같은 식 — 그쪽은 host constexpr 라 장치 코드에서 부르면 안 됨: nvcc 경고 20013 뒤 값이 틀림, 2026-11-16 GPU != CPU 원인)
+DEV int low_body_off(const EnvCfg& c) { return kLow1d + (c.lo_mov4 ? mdp::low::MOV_SLOTS * mdp::low::MOV_W : 0); }   // 몸 둘레 간격 첫 칸
+DEV int low_1d_n(const EnvCfg& c) { return low_body_off(c) + (c.lo_body ? mdp::low::BODY_SEC : 0); }   // 몸 둘레 간격을 켜면 그 뒤에 8 칸
 // 넓은 지도 1 단계 — 줄인 판 칸 하나 (k = 행 · (size/4) + 열): 로봇 지도 4 × 4 칸(0.2 m)을 모아 b.low_wred 에 32 비트로
 //   비트 0~15 아는 칸 로그 오즈 최댓값 + 32768 (모두 모름이면 0) · 16~20 아는 빈 칸 수(로그 오즈 < 0) · 21~25 모름 칸 수(맵 밖 포함) · 26 지나간 곳 · 27 깊이 카메라 장애물
 // 지도 줄 차례로 읽어(이웃 스레드 = 이웃 칸) 빠르다. 로봇 지도·지나간 곳·카메라 층만 (시뮬 정답 없음)
@@ -868,6 +870,89 @@ DEV void lowrl_mov_slots(const LrMover* M, int nm, float px, float py, float pth
   }
 }
 
+// 몸 둘레 간격 (EnvCfg::lo_body, mdp/obs_layout.h BODY_*): 몸통 사각형(반 길이 half_len · 반 폭 half_wid) 밖 막힘까지 거리를 360° 구역 BODY_SEC 개로.
+// 구역 = 점 방향(몸통 중심 기준, 로봇 앞 0 · 왼쪽 +) — 구역 k 중심 k · 45°. 거리 = 사각형까지 거리, BODY_RANGE 로 나눠 자름 1 (없으면 1).
+// 막힘 점: 로봇 지도 막힘 칸(mdp::cell_class == kOcc)·깊이 카메라 층 칸(칸 중심), 최신 라이다 장의 점(그 장 지도 자세 · mount) — 모두 로봇이 아는 값 (지도 자세 기준).
+// 세 토막: lowrl_body_part (점 번호가 stride 로 나눠 t0 남는 점만 — 구역마다 최솟값을 best 에. 최솟값이라 나눠 모아도 같다) ·
+// lowrl_body_write (best → 1D 칸 · 보조 (c) 재료) · lowrl_body_clear (직렬: 둘을 차례로 — CPU 판 env_ref · 실물 노드가 lowrl_pack 뒤에 부름).
+// GPU env_low_pack_kernel 은 블록 스레드가 part 를 나눠 하고 공유 메모리 최솟값(양수 float 비트 = 정수 차례) 뒤 스레드 0 이 write
+DEV int lowrl_body_n(const EnvBatch& b, const EnvState& e, int* x0, int* y0, int* nx) {   // 지도 창 (칸 수 nx · ny) — 점 번호 = 창 칸 · 그 뒤 라이다 칸
+  const EnvCfg& c = b.cfg;
+  const MapDev& m = b.maps[e.map];
+  const float px = e.x + e.ex, py = e.y + e.ey, rad = sqrtf(c.half_len * c.half_len + c.half_wid * c.half_wid) + mdp::low::BODY_RANGE;
+  int x1, y1;
+  cell_of(c, m, px - rad, py - rad, x0, y0);
+  cell_of(c, m, px + rad, py + rad, &x1, &y1);
+  *x0 = *x0 < 0 ? 0 : *x0;
+  *y0 = *y0 < 0 ? 0 : *y0;
+  x1 = x1 >= m.gw ? m.gw - 1 : x1;
+  y1 = y1 >= m.gh ? m.gh - 1 : y1;
+  *nx = x1 >= *x0 ? x1 - *x0 + 1 : 0;
+  const int ny = y1 >= *y0 ? y1 - *y0 + 1 : 0;
+  return *nx * ny;
+}
+DEV void lowrl_body_part(const EnvBatch& b, const EnvState& e, int env, int t0, int stride, float* best) {
+  namespace L = mdp::low;
+  const EnvCfg& c = b.cfg;
+  const float hl = c.half_len, hw = c.half_wid, R = L::BODY_RANGE;
+  for (int k = 0; k < L::BODY_SEC; ++k) best[k] = R;
+  const float px = e.x + e.ex, py = e.y + e.ey;
+  float ps, pc;
+  dm::sincosf_d(e.th + e.eth, &ps, &pc);
+  const float kSec = (float)L::BODY_SEC / 6.28318531f, half = 3.14159265f / (float)L::BODY_SEC;
+  const auto add = [&](float wx, float wy) {   // 지도 점 → 지금 몸통 기준 (u 앞, v 왼쪽)
+    const float dx = wx - px, dy = wy - py;
+    const float u = pc * dx + ps * dy, v = pc * dy - ps * dx;
+    const float au = dm::absf(u) - hl, av = dm::absf(v) - hw;
+    if (au <= 0.f && av <= 0.f) return;   // 몸통 안 (지도 칸 크기·자세 오차) — 셈 안 함
+    const float qu = au > 0.f ? au : 0.f, qv = av > 0.f ? av : 0.f, d = sqrtf(qu * qu + qv * qv);
+    if (d >= R) return;
+    float a = dm::atan2f_d(v, u) + half;   // 구역 0 이 앞 (−22.5° ~ 22.5°)
+    if (a < 0.f) a += 6.28318531f;
+    int k = (int)(a * kSec);
+    k = k < 0 ? 0 : (k >= L::BODY_SEC ? L::BODY_SEC - 1 : k);
+    if (d < best[k]) best[k] = d;
+  };
+  const MapDev& m = b.maps[e.map];
+  const int16_t* Lm = b.lmap + (size_t)env * c.size * c.size;
+  int x0, y0, nx;
+  const int nm = lowrl_body_n(b, e, &x0, &y0, &nx);
+  const int slot = e.lid_head;
+  const float* Rr = b.lidar_ring + ((size_t)env * kLidarRing + slot) * mdp::obs::LIDAR_BINS;
+  const float fx = e.lid_pose[3 * slot], fy = e.lid_pose[3 * slot + 1];
+  float fs, fc;
+  dm::sincosf_d(e.lid_pose[3 * slot + 2], &fs, &fc);
+  const float rad = sqrtf(hl * hl + hw * hw) + R;
+  for (int i = t0; i < nm + mdp::obs::LIDAR_BINS; i += stride) {
+    if (i < nm) {   // 지도·카메라 층 칸
+      const int x = x0 + i % nx, y = y0 + i / nx;
+      if (mdp::cell_class(Lm[y * c.size + x]) != mdp::kOcc && !cam_lethal(b, env, x, y)) continue;
+      add(m.ox + ((float)x + 0.5f) * c.res, m.oy + ((float)y + 0.5f) * c.res);
+    } else {        // 최신 라이다 장 (지도에 아직 안 쌓인 가까운 것)
+      const int k = i - nm;
+      const float r = Rr[k];
+      if (!(r < c.map_max_range) || r > rad + 0.2f) continue;
+      float s, co;
+      dm::sincosf_d(mdp::obs::kLidarMin + ((float)k + 0.5f) * mdp::obs::kLidarBin, &s, &co);
+      const float bx = c.mount_x + r * co, by = c.mount_y + r * s;
+      add(fx + (fc * bx - fs * by), fy + (fs * bx + fc * by));
+    }
+  }
+}
+DEV void lowrl_body_write(const EnvBatch& b, int env, const float* best) {
+  namespace L = mdp::low;
+  float* O = b.low_1d + (size_t)env * low_1d_n(b.cfg) + low_body_off(b.cfg);
+  for (int k = 0; k < L::BODY_SEC; ++k) O[k] = best[k] / L::BODY_RANGE;
+  if (b.low_aux)   // 보조 (c) 재료 = 몸 둘레 간격 (켜면 — 라이다 구역 대신)
+    for (int k = 0; k < kAuxLidSec; ++k) b.low_aux[(size_t)env * kLowAuxSrc + kAuxLid + k] = O[k];
+}
+DEV void lowrl_body_clear(const EnvBatch& b, const EnvState& e, int env) {
+  if (!b.cfg.lo_body) return;
+  float best[mdp::low::BODY_SEC];
+  lowrl_body_part(b, e, env, 0, 1, best);
+  lowrl_body_write(b, env, best);
+}
+
 DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
   LowRl& R = b.lowrl[env];
   LowTrack t;
@@ -933,11 +1018,14 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
         X[kAuxMov + 2 * i] = i < na ? M[i].x : 0.f;
         X[kAuxMov + 2 * i + 1] = i < na ? M[i].y : 0.f;
       }
-      const float* L = b.lidar_ring + ((size_t)env * kLidarRing + e.lid_head) * mdp::obs::LIDAR_BINS;
-      for (int s2 = 0; s2 < kAuxLidSec; ++s2) {
-        float m = kAuxLidRange;
-        for (int k = s2 * mdp::obs::LIDAR_BINS / kAuxLidSec; k < (s2 + 1) * mdp::obs::LIDAR_BINS / kAuxLidSec; ++k) m = dm::minf(m, L[k]);
-        X[kAuxLid + s2] = m / kAuxLidRange;
+      if (b.cfg.lo_body) {   // (c) 재료 = 몸 둘레 간격 — lowrl_body_write 가 씀 (lowrl_pack 뒤)
+      } else {
+        const float* L = b.lidar_ring + ((size_t)env * kLidarRing + e.lid_head) * mdp::obs::LIDAR_BINS;
+        for (int s2 = 0; s2 < kAuxLidSec; ++s2) {
+          float m = kAuxLidRange;
+          for (int k = s2 * mdp::obs::LIDAR_BINS / kAuxLidSec; k < (s2 + 1) * mdp::obs::LIDAR_BINS / kAuxLidSec; ++k) m = dm::minf(m, L[k]);
+          X[kAuxLid + s2] = m / kAuxLidRange;
+        }
       }
     }
   }

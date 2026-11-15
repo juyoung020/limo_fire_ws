@@ -138,9 +138,17 @@ constexpr int N1D = 32;
 // 가장 가까워질 때 간격이 작은 차례 (2 s 앞까지). 옛 칸(kLoMov, 가장 가까운 하나)은 그대로 — 끄면 1D 크기 N1D 그대로
 constexpr int MOV_SLOTS = 4, MOV_W = 6;
 constexpr int N1D_MOV4 = N1D + MOV_SLOTS * MOV_W;   // 56
+// 몸 둘레 간격 (2026-11-16, 켤 때만 — SIM_LOW_BODY=1, sim low_rl.h lowrl_body_clear): 1D 끝(움직이는 것 칸 넷 뒤)에 BODY_SEC 칸 =
+// 몸통 사각형 둘레 360° 구역마다 가장 가까운 막힘까지 거리 / BODY_RANGE (자름 1, 없으면 1). 구역 k 중심 = 로봇 앞에서 왼쪽으로 k · 45° (0 앞 · 2 왼쪽 · 4 뒤 · 6 오른쪽).
+// 막힘 = 로봇 지도(지도 자세) 막힘 칸 · 깊이 카메라 층 · 최신 라이다 점 (시뮬 정답 없음)
+constexpr int BODY_SEC = 8;
+constexpr float BODY_RANGE = 1.0f;   // m (잠정 — 0.1 s 에 0.1 m 남짓 움직이므로 1 s 거리)
+constexpr int n1d_of(bool mov4, bool body) { return N1D + (mov4 ? MOV_SLOTS * MOV_W : 0) + (body ? BODY_SEC : 0); }
+constexpr int body_off(bool mov4) { return N1D + (mov4 ? MOV_SLOTS * MOV_W : 0); }
 // 보조 예측 (2026-11-16, 켤 때만 — sim SIM_LOW_AUX=1 · train --aux, ppo/README "보조 예측 머리"): actor 순환 핵 h → 선형 머리 AUX_OUT 칸.
 // 정답은 앞 걸음의 로봇 값만으로 학습기가 만든다 (시뮬 정답 없음). 재료 한 행 AUX_SRC = [지도 자세 x, y, θ | 추적 수 | 추적 x, y × AUX_MOV_MAX | 라이다 구역 최소/AUX_RANGE × AUX_LID_SEC]
 // 머리 출력 = [(a) 1 s 안 닿음 로짓 | (b) 1 s 뒤 추적 움직이는 것 — 지금 로봇 기준 방향 구역 AUX_MOV_SEC 개마다 가까움 max(0, 1 − d/AUX_RANGE) | (c) 0.5 s 뒤 라이다 구역 최소/AUX_RANGE]
+// (c) 재료 칸 AUX_LID: 몸 둘레 간격을 켜면(SIM_LOW_BODY) 그 8 칸 (360° 몸 둘레, /BODY_RANGE), 아니면 라이다 ±110° 를 고르게 나눈 8 구역
 constexpr int AUX_POSE = 0, AUX_NMOV = 3, AUX_MOV = 4, AUX_MOV_MAX = 8, AUX_LID = AUX_MOV + 2 * AUX_MOV_MAX, AUX_LID_SEC = 8, AUX_SRC = AUX_LID + AUX_LID_SEC;
 constexpr int AUX_MOV_SEC = 8, AUX_OUT = 1 + AUX_MOV_SEC + AUX_LID_SEC;   // 17
 constexpr float AUX_RANGE = 4.0f;   // m (움직이는 것 관측 범위 kLrClusRange 와 같게 — 잠정)

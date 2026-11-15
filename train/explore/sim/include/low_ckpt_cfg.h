@@ -20,7 +20,7 @@ inline ckcfg::Kv low_obs_cfg_kv(const EnvCfg& c) {
   const auto i = [](int v) { return std::to_string(v); };
   return {{"SIM_LOW_WIDE", i(c.lo_wide)},          {"SIM_LOW_GOALONLY", i(c.lo_goalonly)}, {"SIM_LOW_OBS_MOV", i(c.lo_mov)},
           {"SIM_LOW_MOV4", i(c.lo_mov4)},          {"SIM_LOW_CAM_EVERY", i(c.lo_cam_every)}, {"SIM_LOW_NOBACK", i(c.lg_noback)},
-          {"SIM_LOW_AUX", i(c.lo_aux)},            {"SIM_LOW_TRACK_GATE", f(c.tk_gate)},   {"SIM_LOW_TRACK_SZ", f(c.tk_sz)},
+          {"SIM_LOW_AUX", i(c.lo_aux)},            {"SIM_LOW_BODY", i(c.lo_body)},            {"SIM_LOW_TRACK_GATE", f(c.tk_gate)},   {"SIM_LOW_TRACK_SZ", f(c.tk_sz)},
           {"SIM_LOW_TRACK_QA", f(c.tk_qa)},        {"SIM_LOW_TRACK_MISS", i(c.tk_miss)},   {"SIM_LOW_TRACK_CONF", i(c.tk_conf)},
           {"SIM_LOW_TRACK_DISP", f(c.tk_disp)},    {"SIM_LOW_TRACK_SAG", f(c.tk_sag)},     {"SIM_LOW_TRACK_W0", f(c.tk_w0)}};
 }

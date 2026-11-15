@@ -1,5 +1,6 @@
 // 아래층 체크포인트의 1D 관측 뒤에 칸을 더한다 (움직이는 것 칸 넷 — mdp/obs_layout.h N1D_MOV4) — GPU 없이 파일 → 파일.
-//   ckpt_add_1d 입력.bin 출력.bin [더할 칸 수, 기본 N1D_MOV4 − N1D]
+//   ckpt_add_1d 입력.bin 출력.bin [더할 칸 수, 기본 N1D_MOV4 − N1D] [설정 꼬리에 1 로 적을 열쇠, 예 SIM_LOW_BODY]
+//   몸 둘레 간격: ckpt_add_1d 입력.bin 출력.bin 8 SIM_LOW_BODY (mdp/obs_layout.h BODY_SEC — 1D 끝에 붙음)
 // 하는 일: 1D 를 읽는 층의 1D 열 뒤에 0 열을 끼움 — actor·critic MLP 첫 층 [out][F | h | 1D] (행마다 끝), 순환 핵 입력 Wx [3H][F | 1D] (행마다 끝).
 //   정규화 평균·분산 뒤에 (0, 1) 칸을 더함. 새 자리 Adam m·v 0, 나머지는 바이트 그대로 → 새 칸 값과 무관하게 처음 정책·가치는 옛 것과 같다.
 // 형식은 ppo.cu save/load (형식 3, fp32), 블록 이름은 network/actor_critic.cu · gru.cu.
@@ -21,11 +22,11 @@ struct Blk { std::string name; int64_t n; };
 }  // namespace
 
 int main(int argc, char** argv) try {
-  if (argc < 3 || argc > 4 || std::string(argv[1]) == argv[2]) {
-    std::fprintf(stderr, "사용: ckpt_add_1d 입력.bin 출력.bin [더할 칸 수] (입력과 다른 경로)\n");
+  if (argc < 3 || argc > 5 || std::string(argv[1]) == argv[2]) {
+    std::fprintf(stderr, "사용: ckpt_add_1d 입력.bin 출력.bin [더할 칸 수] [꼬리 열쇠] (입력과 다른 경로)\n");
     return 2;
   }
-  const int ext = argc == 4 ? std::atoi(argv[3]) : mdp::low::N1D_MOV4 - mdp::low::N1D;
+  const int ext = argc >= 4 ? std::atoi(argv[3]) : mdp::low::N1D_MOV4 - mdp::low::N1D;
   if (ext <= 0) throw std::runtime_error("더할 칸 수 > 0");
   std::ifstream f(argv[1], std::ios::binary);
   if (!f) throw std::runtime_error(std::string("체크포인트 없음: ") + argv[1]);
@@ -107,7 +108,8 @@ int main(int argc, char** argv) try {
   ckcfg::Kv ck = ckcfg::read(argv[1]);   // 설정 꼬리 (mdp/ckpt_cfg.h): 1D 칸 수 · 움직이는 것 칸 넷
   if (!ck.empty()) {
     ckcfg::set(ck, "d1d", std::to_string(D2));
-    if (D2 == mdp::low::N1D_MOV4) ckcfg::set(ck, "SIM_LOW_MOV4", "1");
+    if (argc == 5) ckcfg::set(ck, argv[4], "1");
+    else if (D2 == mdp::low::N1D_MOV4) ckcfg::set(ck, "SIM_LOW_MOV4", "1");
   }
   const std::string tmp = std::string(argv[2]) + ".tmp";
   {
