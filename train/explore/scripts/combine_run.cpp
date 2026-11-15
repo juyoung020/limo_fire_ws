@@ -1493,6 +1493,13 @@ int run(const Args& a) {
       const double fd = std::max(1L, F.dec);
       std::printf("[%s %s] fuel: 결정 %ld 개 · 노드 평균 %.1f 개 · 정확한 순회 %.3f · 지금 목표 덩어리를 찾은 결정 중 그대로 %ld · 바꿈 %ld · slot0 로 떨어짐 %ld | CPU %.2f ms/결정 (최대 %.1f ms, 한 스레드)\n", tag, W.name.c_str(), F.dec, F.nodes / fd,
                   F.exact / fd, F.kept, F.sw, f_fall, F.ms / fd, F.ms_max);
+      if (F.g_dec > 0) {
+        const double gd = (double)F.g_dec;
+        std::printf("[%s %s] fuel 후보 모음 (전역 결정 %ld 개): 원래 덩어리 평균 %.1f (최대 %ld) → 합침·나눔 뒤 %.1f (최대 %ld) | 상한 %d 에 걸린 결정 %.3f · 빠진 덩어리 %ld 개 — 길 평균 %.1f m (최대 %.1f) · 크기 평균 %.2f m (최대 %.2f)"
+                    " | 후보 상한 %d 에 걸린 결정 %.3f · 빠진 후보 %ld 개 — 길 평균 %.1f m (최대 %.1f) · 틈 평균 %.2f m (최대 %.2f)\n", tag, W.name.c_str(), F.g_dec, F.g_raw / gd, F.g_rawmax, F.g_mid / gd, F.g_midmax,
+                    a.fuel.max_nodes, F.cap_dec / gd, F.cap_drop, F.cap_drop ? F.cap_d / F.cap_drop : 0.0, F.cap_dmax, F.cap_drop ? F.cap_s / F.cap_drop : 0.0, F.cap_smax,
+                    a.cand_cap, F.cc_dec / gd, F.cc_drop, F.cc_drop ? F.cc_d / F.cc_drop : 0.0, F.cc_dmax, F.cc_drop ? F.cc_s / F.cc_drop : 0.0, F.cc_smax);
+      }
       std::printf("[%s %s] fuel 목표를 후보 칸으로 나타낼 수 있나 (시뮬 후보가 있는 결정 %ld 개): 고른 덩어리가 후보 %d 개 안 %.3f · 그 후보 칸 0.5 m 안이 목표 %.3f · 목표–후보 칸 평균 거리 %.2f m\n", tag, W.name.c_str(),
                   F.slot_n, K, F.slot_n ? (double)F.slot_in / F.slot_n : 0.0, F.slot_n ? (double)F.slot_vp / F.slot_n : 0.0, F.slot_in ? F.slot_d / F.slot_in : 0.0);
     }

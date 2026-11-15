@@ -31,6 +31,9 @@ using d1::kT;
 
 struct Sample {
   int no = 0, target = -1;
+  int win = -1, lose = -1;   // 선호 쌍 (DPO): 이긴 · 진 선택지 (−1 이면 교차 엔트로피 표본)
+  double dref = 0;           // 기준 모델(시작 어댑터)의 (log p_win − log p_lose)
+  double beta = 0.1;
   std::vector<int> grp, tok;
   std::vector<float> h;   // [5][D]
 };
@@ -262,6 +265,7 @@ struct Model {
   float *z, *zinv, *lg, *dlg, *dz, *dfin, *E;   // E: 머리 줄 [nE][D]
   int Bmax = 0, nE = 0;
   std::map<int, int> erow;                      // 토큰 → E 줄
+  std::vector<double>* last_d = nullptr;        // DPO 기준값 재기: 표본마다 s_w − s_l 을 여기에
 };
 double run(Model& M, const std::vector<const Sample*>& S, bool backward, int* correct) {
   const int B = (int)S.size();
@@ -292,6 +296,16 @@ double run(Model& M, const std::vector<const Sample*>& S, bool backward, int* co
     const double mx = *std::max_element(sc.begin(), sc.end());
     double den = 0;
     for (double v : sc) den += std::exp(v - mx);
+    if (x.win >= 0) {   // DPO (Rafailov et al. 2023): L = −log σ(β((s_w − s_l) − Δ_ref)) — log p 차는 점수 차와 같음(정규화 항이 지워짐)
+      const double d = (sc[x.win] - sc[x.lose]) - x.dref, z = x.beta * d, sg = 1.0 / (1.0 + std::exp(-z));
+      loss += -std::log(std::max(1e-12, sg));
+      ok += d > 0;
+      const double g = -x.beta * (1.0 - sg) / B;
+      dlg[(size_t)s * M.nE + am[x.win]] += (float)g;
+      dlg[(size_t)s * M.nE + am[x.lose]] -= (float)g;
+      if (M.last_d) (*M.last_d)[s] = sc[x.win] - sc[x.lose];
+      continue;
+    }
     loss += -(sc[x.target] - mx - std::log(den));
     ok += std::max_element(sc.begin(), sc.end()) - sc.begin() == x.target;
     for (int o = 0; o < x.no; ++o) dlg[(size_t)s * M.nE + am[o]] += (float)((std::exp(sc[o] - mx) / den - (o == x.target)) / B);
@@ -381,7 +395,8 @@ double ref_loss(const d1::Weights& W, const d1::Lora& lo, const Sample& s, const
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string model, gc, train, val, out = "adapter.bin", mats = "in,out,gate,up,down";
+  std::string model, gc, train, val, out = "adapter.bin", mats = "in,out,gate,up,down", init, pairs, vpairs;
+  float beta = 0.1f;
   int r = 8, epochs = 5, batch = 16;
   float alpha = 16.f, lr = 1e-3f;
   for (int i = 1; i < argc; ++i) {
@@ -389,7 +404,8 @@ int main(int argc, char** argv) {
     auto nx = [&]() { return std::string(argv[++i]); };
     if (k == "--model") model = nx(); else if (k == "--gradcheck") gc = nx(); else if (k == "--train") train = nx(); else if (k == "--val") val = nx();
     else if (k == "--out") out = nx(); else if (k == "--r") r = std::stoi(nx()); else if (k == "--alpha") alpha = std::stof(nx()); else if (k == "--lr") lr = std::stof(nx());
-    else if (k == "--epochs") epochs = std::stoi(nx()); else if (k == "--batch") batch = std::stoi(nx()); else if (k == "--mats") mats = nx();
+    else if (k == "--epochs") epochs = std::stoi(nx());
+    else if (k == "--init") init = nx(); else if (k == "--pairs") pairs = nx(); else if (k == "--val-pairs") vpairs = nx(); else if (k == "--beta") beta = std::stof(nx()); else if (k == "--batch") batch = std::stoi(nx()); else if (k == "--mats") mats = nx();
     else { std::fprintf(stderr, "모르는 인자 %s\n", k.c_str()); return 2; }
   }
   std::vector<bool> use(d1::kMats, false);
@@ -448,11 +464,56 @@ int main(int argc, char** argv) {
   }
   // ---- 학습
   std::vector<Sample> TR = read_cache(train), VA = val.empty() ? std::vector<Sample>() : read_cache(val);
-  TR.erase(std::remove_if(TR.begin(), TR.end(), [](const Sample& s) { return s.target < 0 || s.target >= s.no; }), TR.end());
-  VA.erase(std::remove_if(VA.begin(), VA.end(), [](const Sample& s) { return s.target < 0 || s.target >= s.no; }), VA.end());
+  // 선호 쌍 (--pairs: 줄마다 "<캐시 표본 번호> <이긴 선택지> <진 선택지>") — 쌍마다 표본을 하나씩 만듦
+  const auto to_pairs = [&](std::vector<Sample>& V, const std::string& pf) {
+    if (pf.empty()) return;
+    std::vector<Sample> P;
+    std::FILE* f = std::fopen(pf.c_str(), "r");
+    if (!f) throw std::runtime_error("쌍 파일을 못 엶: " + pf);
+    int ix, w, l;
+    while (std::fscanf(f, "%d %d %d", &ix, &w, &l) == 3)
+      if (ix >= 0 && ix < (int)V.size() && w >= 0 && l >= 0 && w < V[ix].no && l < V[ix].no && w != l) { Sample s = V[ix]; s.win = w; s.lose = l; s.beta = beta; P.push_back(s); }
+    std::fclose(f);
+    V.swap(P);
+  };
+  to_pairs(TR, pairs);
+  to_pairs(VA, vpairs);
+  const auto bad = [](const Sample& s) { return s.win < 0 && (s.target < 0 || s.target >= s.no); };
+  TR.erase(std::remove_if(TR.begin(), TR.end(), bad), TR.end());
+  VA.erase(std::remove_if(VA.begin(), VA.end(), bad), VA.end());
   std::vector<int> toks;
   for (auto* V : {&TR, &VA}) for (auto& s : *V) for (int t : s.tok) if (std::find(toks.begin(), toks.end(), t) == toks.end()) toks.push_back(t);
   Model M = build(W, G, toks, r, alpha, use, batch, 1);
+  if (!init.empty()) {   // 시작 어댑터 (BC 결과) — 같은 r · 행렬이어야 함
+    std::FILE* fi = std::fopen(init.c_str(), "rb");
+    int r0; float a0;
+    if (!fi || std::fread(&r0, 4, 1, fi) != 1 || std::fread(&a0, 4, 1, fi) != 1 || r0 != r) throw std::runtime_error("--init 어댑터가 r 이 다름");
+    for (auto& L : M.N.L) for (auto& m : L.M) {
+      int on = 0;
+      if (std::fread(&on, 4, 1, fi) != 1) throw std::runtime_error("--init 짧음");
+      if (on != (m.A ? 1 : 0)) throw std::runtime_error("--init 행렬 고름이 다름");
+      if (!on) continue;
+      std::vector<float> a((size_t)r * m.in), b((size_t)m.out * r);
+      if (std::fread(a.data(), 4, a.size(), fi) != a.size() || std::fread(b.data(), 4, b.size(), fi) != b.size()) throw std::runtime_error("--init 짧음");
+      CK(cudaMemcpy(m.A, a.data(), sizeof(float) * a.size(), cudaMemcpyHostToDevice));
+      CK(cudaMemcpy(m.B, b.data(), sizeof(float) * b.size(), cudaMemcpyHostToDevice));
+    }
+    std::fclose(fi);
+  }
+  for (auto* V : {&TR, &VA}) {   // DPO 기준값: 시작 어댑터로 s_w − s_l
+    std::vector<Sample*> P;
+    for (auto& s : *V) if (s.win >= 0) P.push_back(&s);
+    for (size_t b0 = 0; b0 < P.size(); b0 += batch) {
+      std::vector<const Sample*> Q;
+      for (size_t k = b0; k < std::min(P.size(), b0 + batch); ++k) Q.push_back(P[k]);
+      std::vector<double> d(Q.size());
+      M.last_d = &d;
+      for (auto* q : Q) const_cast<Sample*>(q)->dref = 0;
+      run(M, Q, false, nullptr);
+      M.last_d = nullptr;
+      for (size_t k = 0; k < Q.size(); ++k) P[b0 + k]->dref = d[k];
+    }
+  }
   const auto eval = [&](const std::vector<Sample>& V) {
     double ls = 0; int ok = 0;
     for (size_t b0 = 0; b0 < V.size(); b0 += batch) {

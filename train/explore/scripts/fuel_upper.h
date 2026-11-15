@@ -55,8 +55,17 @@ struct Stat {
   long dec = 0, nodes = 0, kept = 0, sw = 0, fallback = 0, exact = 0;
   long slot_n = 0, slot_in = 0, slot_vp = 0;   // 후보 칸으로 나타낼 수 있나: 시뮬 후보가 있는 결정 수 · 고른 덩어리가 후보 K 개 중 하나의 덩어리 · 그 후보 칸에서 0.5 m 안이 목표 칸
   double slot_d = 0;                           // slot_in 결정에서 목표 칸과 그 후보 칸 사이 거리 합 (m)
+  // 후보 모음 셈 (전역일 때): 원래 덩어리 · 합침·나눔 뒤 · 피하는 칸 뺀 뒤 수의 합, 상한(max_nodes)에 걸린 결정 · 빠진 덩어리 수 · 그 BFS 길(m)·칸 수(m) 합·최댓값,
+  //   cand_cap 에 걸린 결정 · 빠진 후보 수 · 그 길(m)·틈(m) 합·최댓값 · 빠진 것 가운데 가장 앞(gpt 차례)
+  long g_raw = 0, g_mid = 0, g_dec = 0, cap_dec = 0, cap_drop = 0, cc_dec = 0, cc_drop = 0;
+  double cap_d = 0, cap_dmax = 0, cap_s = 0, cap_smax = 0, cc_d = 0, cc_dmax = 0, cc_s = 0, cc_smax = 0;
+  long g_rawmax = 0, g_midmax = 0;
   double ms = 0, ms_max = 0;
-  void add(const Stat& o) { slot_n += o.slot_n; slot_in += o.slot_in; slot_vp += o.slot_vp; slot_d += o.slot_d; dec += o.dec; nodes += o.nodes; kept += o.kept; sw += o.sw; fallback += o.fallback; exact += o.exact; ms += o.ms; ms_max = std::max(ms_max, o.ms_max); }
+  void add(const Stat& o) {
+    g_raw += o.g_raw; g_mid += o.g_mid; g_dec += o.g_dec; cap_dec += o.cap_dec; cap_drop += o.cap_drop; cc_dec += o.cc_dec; cc_drop += o.cc_drop;
+    cap_d += o.cap_d; cap_s += o.cap_s; cc_d += o.cc_d; cc_s += o.cc_s;
+    cap_dmax = std::max(cap_dmax, o.cap_dmax); cap_smax = std::max(cap_smax, o.cap_smax); cc_dmax = std::max(cc_dmax, o.cc_dmax); cc_smax = std::max(cc_smax, o.cc_smax);
+    g_rawmax = std::max(g_rawmax, o.g_rawmax); g_midmax = std::max(g_midmax, o.g_midmax); slot_n += o.slot_n; slot_in += o.slot_in; slot_vp += o.slot_vp; slot_d += o.slot_d; dec += o.dec; nodes += o.nodes; kept += o.kept; sw += o.sw; fallback += o.fallback; exact += o.exact; ms += o.ms; ms_max = std::max(ms_max, o.ms_max); }
 };
 
 struct Work {
@@ -283,6 +292,7 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
     std::vector<std::vector<int>> by(n_out);
     for (int q = 0; q < nr0; ++q) { const int idx = w.qa[q]; if (eligible(idx)) by[w.label[idx]].push_back(idx); }
     for (int l = 0; l < n_out; ++l) if (!by[l].empty()) { Node nd; nd.cells.swap(by[l]); nodes.push_back(std::move(nd)); }
+    st.g_raw += (long)nodes.size(); st.g_rawmax = std::max(st.g_rawmax, (long)nodes.size()); st.g_dec += 1;
   } else {
     // 시뮬 후보 K 개: 후보 칸의 덩어리(라벨) 칸들. 후보 v2 의 합친 덩어리는 칸만 첫 덩어리 것 (가운데·시점 뽑기에만 씀)
     for (int k = 0; k < mdp::hier::K; ++k) {
@@ -358,6 +368,7 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
     nodes.erase(std::remove_if(nodes.begin(), nodes.end(), [&](const Node& nd) { return in.avoided(nd.anc); }), nodes.end());
     // 차례를 정함 (결정적): 가장 가까운 칸 (거리, 칸 번호)
     std::sort(nodes.begin(), nodes.end(), [](const Node& a, const Node& b) { return a.anc_d != b.anc_d ? a.anc_d < b.anc_d : a.anc < b.anc; });
+    st.g_mid += (long)nodes.size(); st.g_midmax = std::max(st.g_midmax, (long)nodes.size());
     if ((int)nodes.size() > o.max_nodes) {   // 상한: 가까운 순 2/3 + 나머지에서 큰 순
       const int near = std::max(1, o.max_nodes * 2 / 3);
       std::stable_sort(nodes.begin() + near, nodes.end(), [](const Node& a, const Node& b) { return a.cells.size() > b.cells.size(); });
@@ -368,6 +379,11 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
           for (int idx : nodes[k].cells) { const int dx = idx % gw - ax, dy = idx / gw - ay; if (dx * dx + dy * dy <= Rm * Rm) { hit = true; break; } }
           if (hit) { std::swap(nodes[o.max_nodes - 1], nodes[k]); break; }
         }
+      }
+      st.cap_dec += 1;
+      for (size_t k = o.max_nodes; k < nodes.size(); ++k) {   // 빠지는 덩어리 (셈만)
+        const double dm = nodes[k].anc_d * (double)c.res, sm = nodes[k].cells.size() * (double)c.res;
+        st.cap_drop += 1; st.cap_d += dm; st.cap_s += sm; st.cap_dmax = std::max(st.cap_dmax, dm); st.cap_smax = std::max(st.cap_smax, sm);
       }
       nodes.resize(o.max_nodes);
     }
@@ -668,6 +684,15 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
     std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return all[a].gpt > all[b].gpt; });
     std::vector<int> keep;
     for (int k : ord) if ((int)keep.size() < in.cand_cap || all[k].cur || all[k].fuel) keep.push_back(k);
+    if (m > (int)keep.size()) {   // cand_cap 에 걸림 (셈만)
+      st.cc_dec += 1;
+      std::vector<uint8_t> kept(m, 0);
+      for (int k : keep) kept[k] = 1;
+      for (int k = 0; k < m; ++k) if (!kept[k]) {
+        st.cc_drop += 1; st.cc_d += all[k].len_m; st.cc_s += all[k].open_m;
+        st.cc_dmax = std::max(st.cc_dmax, (double)all[k].len_m); st.cc_smax = std::max(st.cc_smax, (double)all[k].open_m);
+      }
+    }
     in.cands->clear();
     for (int k : keep) {   // 떠나는 값: 이 후보로 시작하는 순회 − 가장 좋은 순회
       std::vector<int> o3;

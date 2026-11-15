@@ -7,6 +7,7 @@
 //   d1_cache -m d1-3B-Q8_0.gguf --mmproj mmproj.gguf --out cache.bin  req1.json [req2.json …]   (또는 --list 파일)
 //   --list 파일은 줄마다 "<요청 경로> [정답 선택지 번호]" (번호 없으면 −1)
 //   출력 (작은 끝, 표본마다): u32 n_opt · u32 n_tok(label 토큰 수) · i32 target · u32 group[n_opt] · i32 tok[n_tok] · f32 logit[n_tok] (llama 가 낸 값) · f32 h[5][2048]
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -85,7 +86,7 @@ int main(int argc, char** argv) {
   Cap cap;
   llama_context_params cp = llama_context_default_params();
   cp.n_ctx = nctx;
-  cp.n_batch = nctx;
+  cp.n_batch = std::min(nctx, 2048);
   cp.n_ubatch = 512;
   cp.cb_eval = cb_eval;
   cp.cb_eval_user_data = &cap;
@@ -125,16 +126,20 @@ int main(int argc, char** argv) {
       const server_tokens& toks = task.tokens;
       size_t idx = 0;
       std::vector<llama_token> run;
-      const auto flush = [&](bool last) {
+      const auto flush = [&](bool last) {   // 글 토큰을 n_batch 씩 나눠 (긴 후보 표)
         if (run.empty()) return;
-        llama_batch b = llama_batch_init((int)run.size(), 0, 1);
-        for (size_t k = 0; k < run.size(); ++k) {
-          b.token[k] = run[k]; b.pos[k] = n_past + (llama_pos)k; b.n_seq_id[k] = 1; b.seq_id[k][0] = 0; b.logits[k] = last && k + 1 == run.size();
+        if (n_past + (llama_pos)run.size() > (llama_pos)cp.n_ctx) throw std::runtime_error("프롬프트가 문맥보다 김");
+        for (size_t o = 0; o < run.size(); o += cp.n_batch) {
+          const size_t nn = std::min(run.size() - o, (size_t)cp.n_batch);
+          llama_batch b = llama_batch_init((int)nn, 0, 1);
+          for (size_t k = 0; k < nn; ++k) {
+            b.token[k] = run[o + k]; b.pos[k] = n_past + (llama_pos)k; b.n_seq_id[k] = 1; b.seq_id[k][0] = 0; b.logits[k] = last && o + k + 1 == run.size();
+          }
+          b.n_tokens = (int32_t)nn;
+          if (llama_decode(ctx, b) != 0) throw std::runtime_error("decode 실패");
+          n_past += (llama_pos)nn;
+          llama_batch_free(b);
         }
-        b.n_tokens = (int32_t)run.size();
-        if (llama_decode(ctx, b) != 0) throw std::runtime_error("decode 실패");
-        n_past += (llama_pos)run.size();
-        llama_batch_free(b);
         run.clear();
       };
       while (idx < toks.size()) {
