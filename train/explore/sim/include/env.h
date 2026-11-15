@@ -414,6 +414,8 @@ struct EnvBatch {
   float* racc;
   float* tacc;
   uint32_t* pplanes;
+  int rl_n;   // 환경마다 rlist 목록 수: kReachLists, 목적지만 학습(프론티어 요약 안 함)이면 3 (목록 2·4·6 만 — rl_at)
+  int pp_n;   // 환경마다 계획 비트 판 수: kPathPlanes, 목적지만 학습(low_auto 1 — 경로를 안 짬)이면 2 (덩어리 목표 뽑기 작업 판만, goal_reach.h)
   // 깊이 카메라 장애물 층 (cam_on 일 때만, 아니면 nullptr): 칸마다 높이 칸 비트 [env · size²] (uint8, GPU 는 4 칸 낱말로 원자 연산),
   // 마지막 깊이 장 열마다 가장 가까운 높이 띠 안 점 (지도 좌표 x, y — 앞으로 모음, 끝 x = kCamNone) [env · DEPTH_W · 2] — collision_monitor 점 출처
   uint8_t* cvox;
@@ -626,7 +628,7 @@ DEV void reset_map(const EnvBatch& b, int env, int tid) {
     for (int i = tid; i < kRbReach * nf; i += kThreads) R[i] = 0u;
     for (int i = tid; i < nf; i += kThreads) R[kRbStandC * nf + i] = 0u;
   }
-  {   // 닫힘 규칙의 지나간 길
+  if (b.trail) {   // 닫힘 규칙의 지나간 길 (목적지만 학습은 프론티어 요약을 안 해서 없음)
     const int nf = b.cfg.size * fmap_row(b.cfg);
     uint32_t* T = b.trail + (size_t)env * 2 * nf;
     for (int i = tid; i < 2 * nf; i += kThreads) T[i] = 0u;

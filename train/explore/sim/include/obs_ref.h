@@ -78,13 +78,18 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
 
 // depth = false: 깊이 칸을 안 그림 (계층형 묶음 가운데 걸음 — GPU 도 묶음 끝에만 그림, 깊이는 상태만의 함수라 끝 값이 같다)
 inline void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, const mdp::obsgen::FarDirty& fd, bool depth = true) {
-  trail_mark(b, e, env, 0, 1);   // 닫힘 규칙의 지나간 길 (GPU env_reach_kernel 처음과 같은 때)
-  reach_obs(b, e, env, sh);
-  e.map_closed = sh.reach.closed;   // 다음 걸음 finish_step 성공 판정 (GPU env_reach_kernel 과 같음)
+  // 목적지만 학습 판(goal_reach.h goal_only_train): 프론티어 요약(지나간 길 · 덩어리 · 닫힘 · 위층 관측 덩어리 칸 · 후보)을 안 한다 — GPU 도 요약 커널을 안 돌림.
+  // 그 값들은 이 판에서 아무도 안 읽는다 (판 끝 닫힘·진행 없음 규칙 꺼짐, shape_obs 는 계층형에서 아무것도 안 함, 아래층 관측은 자기 상태·라이다·직전 행동·지도·깊이만)
+  const bool rch = !goal_only_train(b.cfg);
+  if (rch) {
+    trail_mark(b, e, env, 0, 1);   // 닫힘 규칙의 지나간 길 (GPU env_reach_kernel 처음과 같은 때)
+    reach_obs(b, e, env, sh);
+    e.map_closed = sh.reach.closed;   // 다음 걸음 finish_step 성공 판정 (GPU env_reach_kernel 과 같음)
+  }
   for (int tid = 0; tid < kThreads; ++tid) mdp::obsgen::obs_cells(b, e, env, sh, tid, fd);
   if (depth)
     for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) mdp::obsgen::obs_depth(b, e, env, i);
-  mdp::obsgen::obs_finish(b, e, env, sh);
+  mdp::obsgen::obs_finish(b, e, env, sh, rch);
 }
 
 // 깊이 카메라 장애물 층 갱신 (GPU env_camlayer_kernel 과 같은 차례: 모든 픽셀 지우기 → 모든 픽셀 표시 → 몸통 밑 지우기 — 끄기·켜기라 픽셀 차례와 무관)

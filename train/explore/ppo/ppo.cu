@@ -713,7 +713,10 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
   raw_ = dmalloc<real>((long)N_ * D_, b);
   last_obs_ = dmalloc<real>((long)N_ * D_, b);
   last_val_ = dmalloc<real>(N_, b);
-  c_img_ = dmalloc<uint8_t>((long)C * IMG_, b);
+  // 미니배치 그림 모으기 버퍼: 합성곱이 모두 융합 커널이면 롤아웃 그림을 색인으로 바로 읽어 안 씀 (minibatch by_idx) — 그때는 안 잡음
+  // (아래층 1024 환경이면 chunk 6144 × 그림 52.7 KB = 324 MB)
+  if (!(ac_->enc.cnn_reads_index() && (!ac_->split || ac_->enc_c.cnn_reads_index())))
+    c_img_ = dmalloc<uint8_t>((long)C * IMG_, b);
   c_aout_ = dmalloc<real>((long)C * AO_, b);
   c_v_ = dmalloc<real>(C, b);
   c_da_ = dmalloc<real>((long)C * AO_, b);

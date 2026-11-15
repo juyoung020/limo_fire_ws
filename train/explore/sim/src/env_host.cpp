@@ -318,7 +318,9 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     b_.cand_cur = alloc<int32_t>(n_env);
     b_.racc = alloc<float>(n_env);
     b_.tacc = alloc<float>((size_t)mdp::rew::kTerms * n_env);
-    if (gpu) b_.pplanes = alloc<uint32_t>((size_t)n_env * kPathPlanes * hc.cfg.size * ((hc.cfg.size + 31) / 32));
+    // 계획 비트 판: 목적지만 학습(goal_only_train — 정책 환경은 경로를 안 짬)이면 덩어리 목표 뽑기 작업 판 2 장만 (환경당 13 → 2 장, size 512 에서 416 → 64 KB)
+    b_.pp_n = goal_only_train(hc.cfg) ? 2 : kPathPlanes;
+    if (gpu) b_.pplanes = alloc<uint32_t>((size_t)n_env * b_.pp_n * hc.cfg.size * ((hc.cfg.size + 31) / 32));
     if (hc.cfg.cam_on) {   // 깊이 카메라 장애물 층 (hier_path.h) — 리셋(reset_map)이 비움
       b_.cvox = alloc<uint8_t>(cells * n_env);
       b_.cpts = alloc<float>((size_t)mdp::obs::DEPTH_W * 2 * n_env);
@@ -365,7 +367,9 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   b_.ep = alloc<EpInfo>(n_env);
   b_.scratch = alloc<Shared>(n_env);
   // 닫힘 규칙의 지나간 길 (env.h EnvBatch::trail, trail_mark): CPU·GPU 모두
-  b_.trail = alloc<uint32_t>((size_t)n_env * 2 * hc.cfg.size * ((hc.cfg.size + 31) / 32));
+  // 목적지만 학습 판(goal_only_train)은 프론티어 요약(env_reach_kernel · CPU reach_obs)을 아예 안 해서 지나간 길·요약 버퍼를 안 잡는다
+  const bool go_train = goal_only_train(hc.cfg);
+  if (!go_train) b_.trail = alloc<uint32_t>((size_t)n_env * 2 * hc.cfg.size * ((hc.cfg.size + 31) / 32));
   if (gpu) {
     const size_t px = (size_t)mdp::obs::DEPTH_SIZE * n_env;
     b_.dep_z = alloc<float>(px);
@@ -378,10 +382,13 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     {   // 도달 가능한 프론티어 요약 (env_kernel.cu reach_block)
       const size_t nf = (size_t)hc.cfg.size * ((hc.cfg.size + 31) / 32);
       b_.rbits = alloc<uint32_t>((size_t)n_env * kReachBits * nf);
-      b_.rpre = alloc<int32_t>((size_t)n_env * nf);
-      b_.rlist = alloc<int32_t>((size_t)n_env * mdp::kReachCap * kReachLists);
-      b_.rkey = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
-      if (hier) b_.rkey2 = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
+      b_.rl_n = go_train ? 3 : kReachLists;   // 목적지만 학습: 목록 2·4·6 만 (goal_reach.h rl_at)
+      b_.rlist = alloc<int32_t>((size_t)n_env * mdp::kReachCap * b_.rl_n);
+      if (!go_train) {   // 프론티어 요약(reach_block)만 씀
+        b_.rpre = alloc<int32_t>((size_t)n_env * nf);
+        b_.rkey = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
+        if (hier) b_.rkey2 = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
+      }
     }
     const size_t nb = (size_t)kMaxBeams * n_env;
     b_.beam_t = alloc<float>(nb);

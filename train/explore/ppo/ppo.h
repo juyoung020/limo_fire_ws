@@ -264,7 +264,7 @@ class PPO {
   // 작업 공간 (chunk)
   real *raw_, *last_obs_, *last_val_;
   bool critic_only_ = false;
-  uint8_t* c_img_;
+  uint8_t* c_img_ = nullptr;   // 미니배치 그림 모으기 (합성곱이 색인으로 읽으면 안 잡음)
   real *c_aout_, *c_v_, *c_da_, *c_dv_, *c_dls_, *c_stat_, *c_red_, *c_gat_;
   real* c_x_ = nullptr;  // MLP 입력 [F | 1D] (인코더가 F 열을, 모으기·act 가 1D 열을 바로 씀)| 1D], 인코더 특징 기울기
   uint16_t* c_xh_ = nullptr;  // 그 bf16 사본 (bf16 MLP 만 — 첫 층 cuBLAS bf16 입력)

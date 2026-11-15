@@ -6,6 +6,15 @@
 #pragma once
 // (low_rl.h 머리에서 include — env.h 의 namespace sim 안)
 
+// 목적지만 학습 판(low_rl · low_auto 1 · 목적지만): 정책 환경은 경로를 안 짜므로 계획 비트 판 13 장 대신 덩어리 뽑기 작업 판 2 장만 잡는다 (env_host.cpp)
+DEV bool goal_only_train(const EnvCfg& c) { return c.low_rl && c.low_auto == 1 && c.lo_goalonly; }
+
+// rlist 목록 k (0 ~ kReachLists−1) 의 시작. 목적지만 학습 판은 목록 2·4·6 만 잡는다 (→ 0·1·2) — 시작 칸 고리(2·4)와 reach_fix 의 다시 셀 낱말(6)
+DEV int32_t* rl_at(const EnvBatch& b, int env, int k) {
+  if (b.rl_n == kReachLists) return b.rlist + ((size_t)env * kReachLists + k) * mdp::kReachCap;
+  return b.rlist + ((size_t)env * b.rl_n + k / 2 - 1) * mdp::kReachCap;
+}
+
 // 아는 칸 상자의 줄·낱말 범위 (env_plan_kernel 과 같음). kb_x1 < 0 이면 상자 없음 → false
 DEV bool goal_box(const EnvState& e, int* by0, int* by1, int* bw0, int* bw1) {
   if (e.kb_x1 < 0) return false;

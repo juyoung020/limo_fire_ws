@@ -894,6 +894,9 @@ frontier_run --scenes $T/bookstore.scene $T/small-house.scene --people 2 --episo
 덩어리 계산: GPU 는 목표를 뽑는 환경의 블록 하나가 비트 판 채우기(줄마다 낱말 안 비트 채우기·낱말 사이 올림 ↔ 낱말 열마다 위아래)를 바뀜이 없을 때까지 번갈아 (`env_kernel.cu goal_reach_gpu`),
 CPU 참조판은 큐 BFS (`env_ref.cpp goal_reach_cpu`) — 덩어리는 답이 하나라 같은 칸 집합 (env_verify --low 목적지만 GPU == CPU 비트 같음, 사람 0·2).
 시간 (환경 256, 학습과 GPU 공유, nsys 3 반복): 계획 + 목표 커널 걸음당 4.45 → 0.77 ms, 시뮬 반복당 약 310 → 215 ms.
+목적지만 학습 판(`goal_only_train` = low_rl · low_auto 1 · 목적지만, 2026-11-15)은 프론티어 요약(GPU `env_reach_kernel` — 걸음·리셋 모두, CPU `reach_obs`·지나간 길)을 아예 안 하고,
+그 버퍼(rkey·rkey2·rpre·지나간 길, rlist 목록 7 → 3)와 계획 비트 판 13 → 2 장을 안 잡는다 (환경당 약 0.7 MB). 요약 값은 이 판에서 아무도 안 읽어 학습 결과는 같다
+(위층 관측의 덩어리 칸·닫힘 값은 0 으로 남음 — GPU·CPU 같음).
 
 **목적지만 + 로봇이 아는 모양 잡기 (2026-11-15, `SIM_LOW_GO_SHAPE=1`)**: 목적지만 보상(시간 · 통과 · 닿음)에 두 항만 되살림 — 사람 마주침 `lr_ppl_k`(추적한 사람과 가장 가까워질 때까지 시간 lowrl_ppl_risk, DRL-VO·NavRL 꼴)·회전 `lr_w_k`(정책 ω 가 바퀴가 v 를 깎기 시작하는 0.55 rad/s 를 넘는 몫). 경로·지도 근접 항은 그대로 끔. 진단(검증 세트 2, low_w3 9500): 사람 충돌 87 판 중 67 % 가 회전 > 1 rad/s 중 · 75 % 가 뒤 사각(> 110°)에서 · 53 % 는 닿기 1.5 s 전부터 추적됨 · 32 % 는 5 s 안에 추적 없음; 걸음의 약 48 % 가 |ω| > 1 rad/s 이고 트인 곳에서도 평균 0.75 m/s. 같이 쓰는 값: 사람 추적 기억 6 → 20 장 (SIM_LOW_TRACK_MISS — 뒤 사각으로 빠진 사람을 2 s 들고 감). 끄면 지문 같음, GPU == CPU 비트 같음.
 

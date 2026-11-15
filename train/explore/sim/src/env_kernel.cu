@@ -120,7 +120,7 @@ __device__ void reach_fix(const EnvBatch& b, const EnvState& e, int env, const S
   uint32_t* ST = RB + kRbStand * nf;
   uint32_t* STC = RB + kRbStandC * nf;
   const mdp::Robot rbc = mdp::robot_cells(c.close_radius, c.res);   // 닫힘·후보 번지기 반경 (= 계층형 계획기 반경)
-  int32_t* QC = b.rlist + (size_t)env * mdp::kReachCap * kReachLists + 6 * mdp::kReachCap;
+  int32_t* QC = rl_at(b, env, 6);
   const mdp::Robot rb = mdp::obsgen::reach_robot(c);
   const auto fix = [&](int x, int y) {
     if (x < 0 || y < 0 || x >= m.gw || y >= m.gh) return;
@@ -1158,7 +1158,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   const int by0 = e.kb_y0, by1 = e.kb_y1, bw0 = e.kb_x0 >> 5, bw1 = e.kb_x1 >> 5;
   const auto in_box = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh && y >= by0 && y <= by1 && (x >> 5) >= bw0 && (x >> 5) <= bw1; };
   const auto bit_of = [&](const uint32_t* P, int x, int y) -> uint32_t { return in_box(x, y) ? (P[y * ws + (x >> 5)] >> (x & 31)) & 1u : 0u; };
-  uint32_t* P = b.pplanes + (size_t)env * kPathPlanes * nf;
+  uint32_t* P = b.pplanes + (size_t)env * b.pp_n * nf;   // 판 13 장 (목적지만 학습은 2 장 — 아래 replan 이 늘 거짓이라 안 씀)
   uint32_t* C3 = P + kPpC3 * nf;
   uint32_t* C45 = P + kPpC45 * nf;
   uint32_t* D0 = P + kPpD * nf;
@@ -1195,6 +1195,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
     }
     return;
   }
+  if (b.pp_n < kPathPlanes) return;   // 목적지만 학습 판: 판이 2 장뿐 — 경로를 짤 일이 없다 (정책 환경은 replan 거짓, 규칙 추종 환경 없음). 안전 장치
   if (tid == 0 && b.lowrl) lowrl_planned(b, e, env);
   if (!s_plan) {   // 빈 후보: 목표 없음. 아는 칸이 없으면 목표만 (경로 없이 섬)
     if (tid == 0 && s_target >= 0) {
@@ -1508,8 +1509,9 @@ __device__ const uint32_t* goal_reach_gpu(const EnvBatch& b, const EnvState& e, 
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   const int ws = fmap_row(c), nf = c.size * ws;
-  uint32_t* P = b.pplanes + (size_t)env * kPathPlanes * nf + (size_t)kPpLT * nf;
-  uint32_t* R = b.pplanes + (size_t)env * kPathPlanes * nf + (size_t)kPpSST * nf;
+  const bool small = b.pp_n < kPathPlanes;   // 목적지만 학습 판: 작업 판 2 장 (0 = P, 1 = R)
+  uint32_t* P = b.pplanes + (size_t)env * b.pp_n * nf + (size_t)(small ? 0 : kPpLT) * nf;
+  uint32_t* R = b.pplanes + (size_t)env * b.pp_n * nf + (size_t)(small ? 1 : kPpSST) * nf;
   const uint32_t* RB = b.rbits + (size_t)env * kReachBits * nf;
   const uint32_t* OCC = RB + kRbOcc * nf;
   const uint32_t* KN = RB + kRbKnown * nf;
@@ -1535,11 +1537,10 @@ __device__ const uint32_t* goal_reach_gpu(const EnvBatch& b, const EnvState& e, 
     if (box) {
       int rx, ry;
       if (cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry) >= 0) {
-        int32_t* LST = b.rlist + (size_t)env * mdp::kReachCap * kReachLists;
         s_start = goal_start(m.gw, m.gh, rx, ry, [&](int x, int y) -> bool {
           if (y < by0 || y > by1 || (x >> 5) < bw0 || (x >> 5) > bw1) return false;
           return (P[y * ws + (x >> 5)] >> (x & 31)) & 1u;
-        }, LST + 2 * mdp::kReachCap, LST + 4 * mdp::kReachCap, mdp::kReachCap);
+        }, rl_at(b, env, 2), rl_at(b, env, 4), mdp::kReachCap);
       }
       if (s_start >= 0) R[(s_start / m.gw) * ws + ((s_start % m.gw) >> 5)] = 1u << ((s_start % m.gw) & 31);
     }
@@ -2105,7 +2106,8 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st, bool
   }
   if (b.lowrl) {   // 아래층 RL: 한 번 = 걸음 하나 (묶음 길이 1 — 깊이도 걸음마다). 계획은 준비 단계가
     // lean (Env::set_lean_low): 단독 과제에서는 프론티어 요약을 읽는 곳이 없다 — 요약 커널 둘(걸음 · 끝난 환경)을 빼고 깊이만
-    const bool skip = lean && b.cfg.low_auto == 1 && b.cfg.low_explore == 0;
+    // 목적지만 학습 판(goal_only_train)은 늘 건너뜀 — 요약 버퍼를 안 잡음 (CPU 참조판도 요약을 안 함 — obs_ref.h write_obs)
+    const bool skip = (lean && b.cfg.low_auto == 1 && b.cfg.low_explore == 0) || goal_only_train(b.cfg);
     step_once(b, actions, st, 0, !skip);
     env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
     if (skip) depth_gpu(b, st);
@@ -2148,7 +2150,8 @@ void env_graph_gpu(const EnvBatch& b, cudaStream_t st) {
 
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st) {
   env_reset_kernel<<<b.n_env, kThreads, 0, st>>>(b);
-  reach_and_depth(b, st);
+  if (goal_only_train(b.cfg)) depth_gpu(b, st);   // 목적지만 학습 판: 프론티어 요약 없음
+  else reach_and_depth(b, st);
   if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 0);
   if (b.lowrl) {
     env_low_clear_kernel<<<(b.n_env + 255) / 256, 256, 0, st>>>(b);
