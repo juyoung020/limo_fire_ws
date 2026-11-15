@@ -389,6 +389,7 @@ static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
     }
     lowrl_goal_set(b, e, env, key);
   }
+  if (lowrl_cam_due(b, e, env) && !lowrl_due(b, e, env)) hier_camlayer_cpu(b, e, env);   // lo_cam_every: 계획 차례가 아닌 걸음에도 층만 (env_camlayer_kernel 과 같은 규칙)
   if (lowrl_due(b, e, env)) {
     hier_camlayer_cpu(b, e, env);
     if (lowrl_replan(b, e, env))   // 목적지만은 경로를 안 짬 (env_kernel.cu env_plan_kernel 과 같은 규칙)

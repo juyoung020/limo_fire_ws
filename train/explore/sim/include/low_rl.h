@@ -130,6 +130,8 @@ DEV bool lowrl_replan(const EnvBatch& b, const EnvState& e, int env) {
   if (lowrl_go_policy(b, env)) return false;
   return !b.lowrl || !b.cfg.lo_goalonly || lowrl_goal_new(b, env);   // 목적지만 (그 밖): 목표가 새로 들어올 때만
 }
+// 깊이 카메라 층을 이번에 갱신하나: lo_cam_every 면 걸음마다 (실물 카메라 주기에 가깝게), 아니면 계획 주기 (lowrl_due — 옛 동작)
+DEV bool lowrl_cam_due(const EnvBatch& b, const EnvState& e, int env) { return (b.lowrl && b.cfg.lo_cam_every) || lowrl_due(b, e, env); }
 DEV void lowrl_planned(const EnvBatch& b, const EnvState& e, int env) {
   LowRl& R = b.lowrl[env];
   R.p_step = e.step;
