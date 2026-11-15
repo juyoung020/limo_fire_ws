@@ -317,6 +317,8 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
       c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
       c.lr_ttc_k = envf("SIM_LR_TTC_K", kLrTtcK);
+      c.lr_goal_dmin = envf("SIM_LR_GOAL_DMIN", kLrGoalD2);   // 자동 목표 직선 거리 띠 (커리큘럼 — train --goal-curr 가 바꿈)
+      c.lr_goal_dmax = envf("SIM_LR_GOAL_DMAX", kLrGoalDMax);
       c.lo_wide = (int)envf("SIM_LOW_WIDE", 0.f);   // 넓은 지도 (2026-11-15 — 목적지만 정책이 ±3.2 m 창 밖 길을 못 찾아서)
       c.lo_goalonly = (int)envf("SIM_LOW_GOALONLY", 0.f);   // 목적지만 (2026-11-15 사용자 결정 실험 — 경로를 관측·보상 어디에도 안 씀)
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);

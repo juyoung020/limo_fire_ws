@@ -492,6 +492,11 @@ void Env::set_map_cdf(const std::vector<float>& cdf) {
   else std::copy(cdf.begin(), cdf.end(), cdf_buf_);
   b_.map_cdf = cdf_buf_;
 }
+void Env::set_goal_band(float dmin, float dmax) {
+  if (!(dmin >= 0.f && dmin < dmax)) throw std::runtime_error("set_goal_band: 0 ≤ dmin < dmax");
+  b_.cfg.lr_goal_dmin = dmin;   // 커널은 EnvBatch 를 값으로 받으므로 다음 발사부터
+  b_.cfg.lr_goal_dmax = dmax;
+}
 void Env::take_low_stat(std::vector<LowRlStat>& out) {
   if (!b_.lowstat) { out.clear(); return; }
   fetch(gpu_, b_.lowstat, (size_t)b_.n_env, out);

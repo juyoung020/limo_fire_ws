@@ -156,7 +156,7 @@ DEV uint64_t lowrl_goal_probe(const EnvBatch& b, const EnvState& e, int env, int
   if (reach && !((reach[(size_t)y * fmap_row(c) + (x >> 5)] >> (x & 31)) & 1u)) return ~0ull;   // 로봇과 다른 덩어리 (못 감)
   const float dx = m.ox + ((float)x + 0.5f) * c.res - (e.x + e.ex), dy = m.oy + ((float)y + 0.5f) * c.res - (e.y + e.ey);
   const float d2 = dx * dx + dy * dy;
-  if (d2 >= kLrGoalDMax * kLrGoalDMax || d2 < kLrGoalD2 * kLrGoalD2) return ~0ull;
+  if (d2 >= c.lr_goal_dmax * c.lr_goal_dmax || d2 < c.lr_goal_dmin * c.lr_goal_dmin) return ~0ull;   // 띠 (기본 kLrGoalD2 ~ kLrGoalDMax — 커리큘럼이 좁힘)
   const uint64_t grade = d2 >= kLrGoalD0 * kLrGoalD0 ? 0 : (d2 >= kLrGoalD1 * kLrGoalD1 ? 1 : 2);
   return (grade << 60) | (((h >> 36) & 0xfffffffull) << 32) | (uint64_t)(uint32_t)(y * m.gw + x);
 }

@@ -17,6 +17,8 @@
 //         [--critic-warmup N]  이번 실행의 처음 N 반복은 가치만 맞춘다 (PPO::set_critic_only — 정책·학습률 그대로). 가치 입력이 바뀐 체크포인트
 //                   (ppo/tools/ckpt_drop_priv)에서 --resume 할 때 쓴다 (ppo/README "가치 참값 입력 뺌"). 로그 train/value0 = 걸음 전 가치 손실
 //         [--people-ramp N]  (--low) 이번 실행 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → --people 로 곧게 올린다 (사람 행동 비율은 SIM_PEOPLE_P_* — env_cfg.cpp)
+//         [--goal-curr [단계]]  (--low) 목표 거리·사람 커리큘럼 (드문 보상을 처음부터 배울 때 — 보상은 그대로): 단계 0 직선 0.75~3 m · 사람 0, 1 3~6 m · 사람 4, 2 3~15 m · --people.
+//                   지난 50 반복 학습 도달률(통과 ÷ 목표 합)이 0.8 넘으면 다음 단계 (단계마다 최소 50 반복). 이어 학습이면 시작 단계를 준다 (기본 0)
 //         [--map-prio]  (--low) 맵 뽑기를 최근 닿음 비율이 높은 맵 쪽으로 (확률 ∝ 0.5 + 닿음으로 끝난 판 비율, 지수 이동 합). 충돌 시간 벌점은 SIM_LR_TTC_K (0 = 끔)
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
 //
@@ -29,6 +31,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <cmath>
 #include <cstring>
 #include <csignal>
@@ -57,6 +60,12 @@
 #include "sensor_model.h"
 
 namespace {
+// 목표 거리·사람 커리큘럼 (--goal-curr, 2026-11-15 — 처음부터 드문 보상(목적지만)일 때의 표준 보조. 보상·판정은 그대로):
+// 직선 거리 띠 [dmin, dmax) m · 판마다 사람 상한 (−1 = --people). 문턱·창은 잠정
+struct CurrStage { float dmin, dmax; int people; };
+constexpr CurrStage kCurr[] = {{0.75f, 3.f, 0}, {3.f, 6.f, 4}, {3.f, 15.f, -1}};
+constexpr int kCurrN = 3, kCurrWin = 50;
+constexpr double kCurrUp = 0.8;
 
 constexpr int kLidarN = 248;
 constexpr float kLidarFov = 220.f * (float)M_PI / 180.f, kLidarMax = 8.f;
@@ -85,6 +94,7 @@ struct Args {
   bool low = false;    // --low: 아래층 RL (단독 과제를 정책이 10 Hz 로 — run_low)
   int low_people = 2;  // --people: 아래층 RL 판마다 사람 0 ~ 이 수
   bool map_prio = false;  // --map-prio (--low): 맵 뽑기를 최근 닿음 비율이 높은 맵 쪽으로 — 확률 ∝ 0.5 + 맵의 닿음으로 끝난 판 비율 (판 수 지수 이동 합, 반감 ~14 반복)
+  int goal_curr = -1;   // --goal-curr [단계]: 목표 거리·사람 커리큘럼 시작 단계 (−1 = 끔)
   int people_ramp = 0;  // --people-ramp N: 이어 학습 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → --people 로 곧게 올림 (0 = 처음부터 --people)
   bool low_explore = false;   // --low-explore: 탐사 판 학습 (위층 규칙을 환경이 돌림)
   int low_solo = 0;           // --low-solo: 그때 단독 과제로 도는 환경 몫 (%)
@@ -506,6 +516,7 @@ int run_low(Args a) {
   const auto t_start = std::chrono::steady_clock::now();
   const int it0 = ppo.iteration();
   int k_people = a.low_people;
+  std::deque<std::pair<double, double>> curr_win;   // 커리큘럼: 반복마다 (통과, 목표)
   std::vector<double> mp_eps(worlds.size(), 0.0), mp_hit(worlds.size(), 0.0);   // --map-prio: 맵마다 판 수·닿음 판 수 (지수 이동 합)
   double mp_wmax = 1.0;
   while (!g_stop) {
@@ -525,6 +536,13 @@ int run_low(Args a) {
       }
       mp_wmax = wmax;
       env.set_map_cdf(cdf);
+    }
+    if (a.goal_curr >= 0 && it == it0) {   // 목표 거리·사람 커리큘럼 시작 단계
+      const CurrStage& g = kCurr[std::min(a.goal_curr, kCurrN - 1)];
+      env.set_goal_band(g.dmin, g.dmax);
+      k_people = g.people < 0 ? a.low_people : g.people;
+      env.set_people_max(std::vector<int>(N, k_people));
+      run.event("커리큘럼 단계 " + std::to_string(a.goal_curr) + " (반복 " + std::to_string(it) + ")");
     }
     if (a.people_ramp > 0) {   // 사람 상한 커리큘럼: 1 → --people (다음 판부터 들음 — Env::set_people_max)
       const int k = std::min(a.low_people, 1 + (int)((double)(a.low_people - 1) * (it - it0) / a.people_ramp + 0.5));
@@ -647,6 +665,24 @@ int run_low(Args a) {
     for (int k = 0; k < sim::kLrTerms; ++k) r.last(rf::reward_key(kLowTermName[k]), s.term[k] / ns);   // 걸음당 평균
     r.last("low/goals", s.goals);
     r.last("low/reach_rate", s.reach_rate());
+    if (a.goal_curr >= 0) {   // 목표 거리·사람 커리큘럼: 지난 kCurrWin 반복 도달률 ≥ kCurrUp 이면 다음 단계 (다음 목표·판부터)
+      curr_win.push_back({s.reached, s.goals});
+      if ((int)curr_win.size() > kCurrWin) curr_win.pop_front();
+      double rr = 0, gg = 0;
+      for (auto& q : curr_win) rr += q.first, gg += q.second;
+      r.last("low/curr_stage", a.goal_curr);
+      r.last("low/curr_reach", gg > 0 ? rr / gg : 0.0);
+      if (a.goal_curr < kCurrN - 1 && (int)curr_win.size() >= kCurrWin && gg > 0 && rr / gg >= kCurrUp) {
+        a.goal_curr += 1;
+        const CurrStage& g = kCurr[a.goal_curr];
+        env.set_goal_band(g.dmin, g.dmax);
+        k_people = g.people < 0 ? a.low_people : g.people;
+        env.set_people_max(std::vector<int>(N, k_people));
+        curr_win.clear();
+        run.event("커리큘럼 단계 " + std::to_string(a.goal_curr) + " (반복 " + std::to_string(it) + ", 도달률 " + std::to_string(rr / gg) + ")");
+        std::fprintf(stderr, "커리큘럼 단계 %d: 목표 %.2f~%.2f m · 사람 %d (반복 %d)\n", a.goal_curr, g.dmin, g.dmax, k_people, it);
+      }
+    }
     r.last("low/speed", s.speed(dt_act));
     r.last("low/reach_len_mean", s.reached > 0 ? s.reach_len / s.reached : 0.0);
     r.last("low/wall_per_100m", s.wall100());
@@ -742,6 +778,7 @@ int main(int argc, char** argv) {
       else if (k == "--low") a.low = true;
       else if (k == "--people") a.low_people = std::stoi(nx());
       else if (k == "--people-ramp") a.people_ramp = std::stoi(nx());
+      else if (k == "--goal-curr") a.goal_curr = (i + 1 < argc && argv[i + 1][0] != '-') ? std::stoi(nx()) : 0;
       else if (k == "--map-prio") a.map_prio = true;
       else if (k == "--low-explore") a.low_explore = true;
       else if (k == "--low-solo") a.low_solo = std::stoi(nx());

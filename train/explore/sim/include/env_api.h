@@ -119,6 +119,8 @@ class Env {
   // 맵 뽑기 우선순위 (train --map-prio): 맵마다 끝난 판 수·닿음으로 끝난 판 수를 가져가며 0 으로 · 리셋 때 맵을 뽑을 누적 분포 [n_maps] (빈 것 = 고르게)
   void take_map_stats(std::vector<int32_t>& eps, std::vector<int32_t>& hit);
   void set_map_cdf(const std::vector<float>& cdf);
+  // 자동 목표 직선 거리 띠 [dmin, dmax) m (다음 목표부터 — 학습 커리큘럼, train --goal-curr)
+  void set_goal_band(float dmin, float dmax);
   void get_terms(std::vector<float>& terms) const;
   void get_ep(std::vector<EpInfo>& ep) const;
   void get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const;
