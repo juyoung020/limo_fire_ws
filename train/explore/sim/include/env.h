@@ -92,6 +92,7 @@ struct EnvCfg {
   float lr_goal_dmin, lr_goal_dmax;   // 자동 목표 직선 거리 띠 (m — low_rl.h lowrl_goal_probe). 기본 kLrGoalD2 · kLrGoalDMax, 학습 커리큘럼이 Env::set_goal_band 로 바꿈
   int lo_cam_every;              // 깊이 카메라 장애물 층을 걸음마다 (SIM_LOW_CAM_EVERY, 기본 0 = 계획 주기 low_period 마다 — 옛 동작). 실물은 카메라 29 Hz 로 층을 갱신 (Nav2 VoxelLayer)
   int lo_wide;                   // 넓은 지도 (SIM_LOW_WIDE, 기본 0): 아래층 그림 뒤에 로봇 지도 25.6 m 창 6 × 64 × 64 (low_task.h kLowWideOff, low_rl.h lowrl_wide)
+  int lo_go_shape;               // 목적지만에서 사람 마주침·회전 항을 켬 (SIM_LOW_GO_SHAPE, 기본 0 — low_rl.h lowrl_finish)
   int lo_goalonly;               // 목적지만 (SIM_LOW_GOALONLY, 기본 0): 관측에서 경로 칸을 0 으로, 보상은 시간·통과·닿음만 (low_rl.h)
   float lr_ttc_k;                // 충돌 시간 벌점 (low_rl.h kLrTtcK, SIM_LR_TTC_K — 0 = 끔)
   float lr_mprox_k, lr_mprox_d;  // 움직임 근접 벌점: × 몸통 가장 빠른 점 속도 (m/s) × (1 − 간격 / lr_mprox_d). 0 = 끔

@@ -321,6 +321,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lr_goal_dmax = envf("SIM_LR_GOAL_DMAX", kLrGoalDMax);
       c.lo_cam_every = (int)envf("SIM_LOW_CAM_EVERY", 0.f);   // 깊이 카메라 층 걸음마다 (2026-11-15 — 시험 세트 HSSD 벽 충돌의 절반이 닿는 순간 라이다·깊이 둘 다 못 보는 곳)
       c.lo_wide = (int)envf("SIM_LOW_WIDE", 0.f);   // 넓은 지도 (2026-11-15 — 목적지만 정책이 ±3.2 m 창 밖 길을 못 찾아서)
+      c.lo_go_shape = (int)envf("SIM_LOW_GO_SHAPE", 0.f);   // 2026-11-15: 검증 세트 2 사람 충돌 67 % 가 회전 > 1 rad/s 중, 53 % 는 닿기 1.5 s 전부터 추적됨
       c.lo_goalonly = (int)envf("SIM_LOW_GOALONLY", 0.f);   // 목적지만 (2026-11-15 사용자 결정 실험 — 경로를 관측·보상 어디에도 안 씀)
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
       // 사람 충돌·속도 대책 (mdp/README "아래층 RL — 사람 충돌·속도"). 보상만 바꾼다 — 정책 행동·관측은 그대로

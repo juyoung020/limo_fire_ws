@@ -627,6 +627,11 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     if (e.last_act[0] < 0.f) r[kLrBack] = kLrBackK * -e.last_act[0];
     if (c.lo_goalonly) {   // 목적지만 (2026-11-15, SIM_LOW_GOALONLY): 보상 = 도착까지 시간 — 걸음마다 시간 · 통과 · 닿음(판 끝)만. 진행·근접·충돌 시간·매끄러움·후진 항 끔
       r[kLrProgress] = r[kLrProximity] = r[kLrSmooth] = r[kLrBack] = r[kLrTtc] = 0.f;
+      if (c.lo_go_shape) {   // (SIM_LOW_GO_SHAPE=1) 로봇이 아는 것만으로 된 두 항을 되살림 — 경로·지도 근접 항은 그대로 끔:
+        // 사람 마주침(추적한 사람과 가장 가까워질 때까지 시간, lowrl_ppl_risk — lr_ppl_k) · 회전(정책 ω 가 바퀴가 v 를 깎기 시작하는 ω 를 넘는 몫 — lr_w_k)
+        if (c.lr_ppl_k != 0.f) r[kLrProximity] = c.lr_ppl_k * lowrl_ppl_risk(b, e, env);
+        if (c.lr_w_k != 0.f) r[kLrSmooth] = c.lr_w_k * dm::maxf(0.f, dm::absf(e.last_act[2]) * c.act_w_max - c.lr_w0);
+      }
     }
     float sum = 0.f;
     for (int k = 0; k < kLrTerms; ++k) {
