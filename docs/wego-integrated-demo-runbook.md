@@ -4,7 +4,7 @@ Webots LIMO 이동, Nav2, YOLO/물체 지도, FireManager, MuJoCo 발사 시뮬�
 
 ## 1. GUI 통합 실행
 
-Wego 환경 선택 메뉴에서 Global 환경을 선택한다. 이전 domain 63 / Webots 포트 1256 실행이 있으면 먼저 종료한다. 첫 터미널에서:
+Wego Ubuntu에 접속하고 환경 선택 메뉴에서 Global 환경을 선택한다. 이전 domain 63 / Webots 포트 1256 실행이 있으면 먼저 종료한다. 첫 터미널에서 다음 준비 명령을 실행한다:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -27,11 +27,22 @@ ros2 launch limo_fire_bt limo_fire_printer_fire.launch.xml \
   rviz:=false
 ```
 
-YOLO TensorRT 엔진 경로는 검증된 실행에서 사용한 기존 공유 작업공간 파일이다. Webots와 MuJoCo GUI를 띄우는 동안 첫 터미널을 켜 둔다.
+YOLO TensorRT 엔진 경로는 검증된 실행에서 사용한 기존 공유 작업공간 파일이다. Webots와 MuJoCo GUI를 띄우는 동안 첫 터미널을 켜 둔다. `DISPLAY`, `XAUTHORITY`, `WEBOTS_HOME`은 GUI launch용이므로 첫 터미널에 설정한다.
 
 ## 2. Nav2 목표 보내기
 
-두 번째 터미널에서도 위 ROS setup, `AMENT_PREFIX_PATH`, `ROS_DOMAIN_ID=63`, `ROS_LOCALHOST_ONLY=1` 설정을 똑같이 적용한다. 액션 서버를 확인한다.
+Webots와 MuJoCo GUI가 뜨면 Wego에 두 번째 터미널로 접속한다. 별도의 셸이므로 액션 명령을 입력할 터미널에도 아래 준비 명령을 다시 실행한다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/wego/limo_fire_ws/install/setup.bash
+source /home/wego/limo_fire_ws_v5/install/setup.bash
+export AMENT_PREFIX_PATH=/home/wego/limo_fire_ws_v5/install/limo_fire_bt:/home/wego/limo_fire_ws_v5/install/limo_fire_bridge:/home/wego/limo_fire_ws_v5/install/limo_fire_msgs:$AMENT_PREFIX_PATH
+export ROS_DOMAIN_ID=63
+export ROS_LOCALHOST_ONLY=1
+```
+
+그 다음 액션 서버를 확인한다.
 
 ```bash
 ros2 action list -t | grep mission_navigate
