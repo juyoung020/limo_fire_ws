@@ -4,6 +4,7 @@
        월드  sim/webots/worlds/<world>.wbt        (정답 물체·순찰점은 같은 자리 <world>.yaml)
        지도  limo_fire_navigation/maps/sim/<world>.yaml
      주행:        ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze
+     임무 BT 까지: ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze bt:=true   (순찰·불 대응, 운용 화면 왼쪽 아래 임무 현황판)
      지도 만들기: ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze slam:=true
                   (프론티어 탐사 노드가 멈춘 채 같이 뜬다 — RViz 탐사 패널 "Auto explore" 버튼으로 켜고 끔. explore:=false 면 안 띄움)
                   → 다 돌았으면 ros2 launch limo_fire_bringup save_map.launch.xml name:=sim/limo_fire_maze
@@ -19,6 +20,7 @@
   <arg name="benchmark" default="false"
        description="인식 벤치마크: 인식을 켜고 정답(/gt/*)과 비교해 끝낼 때 docs/benchmarks/ 에 표를 쓴다. 로봇은 따로 움직인다(RViz 목표·순찰)"/>
   <arg name="report_dir" default="$(env HOME)/limo_fire_ws/docs/benchmarks"/>
+  <arg name="bt" default="false" description="임무 BT(limo_fire_bt bt.launch.xml sim:=true)를 같이 띄운다. 순찰점은 월드 데이터 파일 world_dir/world.yaml"/>
   <arg name="rviz" default="true"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
   <arg name="port" default="1234" description="Webots 포트 — 한 컴퓨터에서 시뮬을 둘 띄울 때 다르게"/>
@@ -77,6 +79,12 @@
   <group if="$(var rviz)">
     <include file="$(find-pkg-share limo_fire_description)/launch/viewer.launch.xml">
       <arg name="use_sim_time" value="true"/>
+    </include>
+  </group>
+  <group if="$(var bt)">
+    <include file="$(find-pkg-share limo_fire_bt)/launch/bt.launch.xml">
+      <arg name="sim" value="true"/>
+      <arg name="patrol_file" value="$(var world_dir)/$(var world).yaml"/>
     </include>
   </group>
 </launch>

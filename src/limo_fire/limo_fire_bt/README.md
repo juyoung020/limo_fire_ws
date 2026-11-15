@@ -7,7 +7,9 @@
 ```bash
 # 실물 (순찰점 파일은 아직 없음)
 ros2 launch limo_fire_bt bt.launch.xml patrol_file:=<순찰점 yaml>
-# Webots: sim.launch.xml perception:=true 를 먼저 띄운 뒤
+# Webots: 시뮬·Nav2·운용 화면·임무 BT 를 한 번에 (순찰점은 월드 yaml)
+ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze bt:=true
+# 또는 시뮬을 먼저 띄운 뒤 임무만
 ros2 launch limo_fire_bt bt.launch.xml sim:=true patrol_file:=$HOME/limo_fire_ws/sim/webots/worlds/limo_fire_maze.yaml
 ros2 topic echo /mission/events                      # 관리자 알림 (JSON 한 줄)
 ros2 service call /mission/request_survivor_search std_srvs/srv/SetBool "{data: true}"   # 탐사 모드 요청

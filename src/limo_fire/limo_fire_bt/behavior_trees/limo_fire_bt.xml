@@ -46,6 +46,11 @@
       <!-- 순찰점 파일은 mission 노드 설정 patrol_file (블랙보드 patrol_file) -->
       <LoadPatrolRoute file="{patrol_file}" route="{patrol_route}"/>
       <SubTree ID="CheckDepthAlignment" _autoremap="true"/>
+      <!-- 센서 주기를 잴 시간: IsTopicAlive 의 가장 긴 window_s(2 s)를 채운 뒤 첫 점검 (안 기다리면 시작마다 LIDAR_TOPIC_LOST 한 번) -->
+      <Sleep msec="3000"/>
+      <!-- Nav2(위치 추정·주행)가 다 켜진 뒤 순찰을 시작한다. 같이 띄우면 첫 순찰 목표가 거절당했다 -->
+      <WaitForLifecycleActive service="/lifecycle_manager_localization/is_active"/>
+      <WaitForLifecycleActive service="/lifecycle_manager_navigation/is_active"/>
       <Repeat num_cycles="-1">
         <!-- 한 사이클이 어떻게 끝나든 다음 순찰로 돌아간다 (트리 자체는 절대 종료되지 않음) -->
         <ForceSuccess>
@@ -574,6 +579,10 @@
     <Action ID="TrackPeopleRadar">
       <output_port name="people" type="int"/>
       <input_port name="radar_topic" type="std::string" default="/radar/people">잠정</input_port>
+    </Action>
+    <Action ID="WaitForLifecycleActive">
+      <input_port name="poll_s" type="double" default="1.000000"/>
+      <input_port name="service" type="std::string" default="/lifecycle_manager_navigation/is_active">std_srvs/Trigger</input_port>
     </Action>
   </TreeNodesModel>
 

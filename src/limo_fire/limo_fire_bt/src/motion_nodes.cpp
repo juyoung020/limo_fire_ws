@@ -9,6 +9,7 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <sensor_msgs/msg/range.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include "limo_fire_bt/nodes.hpp"
@@ -34,6 +35,51 @@ public:
 
 protected:
   std::shared_ptr<RosContext> ctx_;
+};
+
+// Nav2 lifecycle_manager 가 노드를 모두 켤 때까지 기다린다 (<관리자>/is_active, std_srvs/Trigger 를 poll_s 마다).
+// 같이 띄우면 Nav2 가 켜지기 전에 순찰 목표를 보내 거절당하므로 Boot 에서 먼저 기다린다. 끝없이 기다리며 10 s 마다 알린다
+class WaitForLifecycleActive : public RosAction
+{
+public:
+  using RosAction::RosAction;
+  static PortsList providedPorts()
+  {
+    return {InputPort<std::string>("service", "/lifecycle_manager_navigation/is_active", "std_srvs/Trigger"),
+      InputPort<double>("poll_s", 1.0, "")};
+  }
+  NodeStatus onStart() override
+  {
+    const auto name = ctx_->resolve(need<std::string>(*this, "service"));
+    if (!client_) {client_ = ctx_->node()->create_client<std_srvs::srv::Trigger>(name);}
+    start_ = ctx_->now();
+    next_ = start_;
+    active_ = std::make_shared<bool>(false);
+    return onRunning();
+  }
+  NodeStatus onRunning() override
+  {
+    if (*active_) {
+      RCLCPP_INFO(ctx_->logger(), "%s: 켜짐", client_->get_service_name());
+      return NodeStatus::SUCCESS;
+    }
+    const auto t = ctx_->now();
+    if (t >= next_ && client_->service_is_ready()) {
+      next_ = t + rclcpp::Duration::from_seconds(need<double>(*this, "poll_s"));
+      auto flag = active_;
+      client_->async_send_request(std::make_shared<std_srvs::srv::Trigger::Request>(),
+        [flag](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture f) {*flag = f.get()->success;});
+    }
+    RCLCPP_INFO_THROTTLE(ctx_->logger(), *ctx_->node()->get_clock(), 10000, "%s 기다리는 중 (%.0f s)",
+      client_->get_service_name(), (t - start_).seconds());
+    return NodeStatus::RUNNING;
+  }
+  void onHalted() override {}
+
+private:
+  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr client_;
+  std::shared_ptr<bool> active_ = std::make_shared<bool>(false);
+  rclcpp::Time start_, next_;
 };
 
 // 순찰점 파일 읽기. 형식 (sim/webots/README.md "월드 데이터 파일" 과 같음):
@@ -411,6 +457,7 @@ private:
 void register_motion_nodes(BT::BehaviorTreeFactory & f, const std::shared_ptr<RosContext> & ctx)
 {
   f.registerNodeType<LoadPatrolRoute>("LoadPatrolRoute", ctx);
+  f.registerNodeType<WaitForLifecycleActive>("WaitForLifecycleActive", ctx);
   f.registerNodeType<GetNextWaypoint>("GetNextWaypoint", ctx);
   f.registerNodeType<NavigateToWaypoint>("NavigateToWaypoint", ctx);
   f.registerNodeType<LogPatrolIssue>("LogPatrolIssue", ctx);

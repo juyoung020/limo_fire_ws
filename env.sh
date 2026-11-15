@@ -2,7 +2,14 @@
 # conda Python 이 ROS 2 Humble(rclpy, python3.10)과 충돌하므로 PATH 에서 뺀다
 conda deactivate 2>/dev/null
 export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v miniconda3 | paste -sd:)
-source /opt/ros/humble/setup.bash
+# 팀 기준은 Humble(로봇 Jetson). Humble 이 없는 Jazzy 개발 PC 는 Jazzy 로 (docs/simulation.md "ROS 2 Jazzy PC 에서 돌리기")
+if [ -f /opt/ros/humble/setup.bash ]; then
+  source /opt/ros/humble/setup.bash
+elif [ -f /opt/ros/jazzy/setup.bash ]; then
+  source /opt/ros/jazzy/setup.bash
+  # Jazzy 용 webots_ros2 를 따로 빌드해 둔 곳
+  [ -f "$HOME/webots_ros2_ws/install/setup.bash" ] && source "$HOME/webots_ros2_ws/install/setup.bash"
+fi
 # 실물 LIMO: WeGo 가 빌드한 드라이버(limo_base·orbbec_camera·ydlidar·robot_localization)를 밑에 깔고,
 # WeGo 대시보드 스크립트와 같은 DDS 설정(이 컴퓨터 안에서만)으로 맞춘다
 if [ -f "$HOME/wego_ws/install/setup.bash" ]; then
