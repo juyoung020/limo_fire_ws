@@ -18,7 +18,7 @@
 //                   (ppo/tools/ckpt_drop_priv)에서 --resume 할 때 쓴다 (ppo/README "가치 참값 입력 뺌"). 로그 train/value0 = 걸음 전 가치 손실
 //         [--people-ramp N]  (--low) 이번 실행 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → --people 로 곧게 올린다 (사람 행동 비율은 SIM_PEOPLE_P_* — env_cfg.cpp)
 //         [--goal-curr [단계]]  (--low) 목표 거리·사람 커리큘럼 (드문 보상을 처음부터 배울 때 — 보상은 그대로): 단계 0 직선 0.75~3 m · 사람 0, 1 3~6 m · 사람 4, 2 3~15 m · --people.
-//                   지난 50 반복 학습 도달률(통과 ÷ 목표 합)이 0.8 넘으면 다음 단계 (단계마다 최소 50 반복). 이어 학습이면 시작 단계를 준다 (기본 0)
+//                   지난 50 반복 학습 도달률(통과 ÷ 목표 합)이 --goal-curr-up (기본 0.8) 넘으면 다음 단계 (단계마다 최소 50 반복). 이어 학습이면 시작 단계를 준다 (기본 0)
 //         [--map-prio]  (--low) 맵 뽑기를 최근 닿음 비율이 높은 맵 쪽으로 (확률 ∝ 0.5 + 닿음으로 끝난 판 비율, 지수 이동 합). 충돌 시간 벌점은 SIM_LR_TTC_K (0 = 끔)
 //   --iters·--minutes 가 0 이면 그 한계 없음(둘 다 0 이면 Ctrl-C 까지가 아니라 --iters 1000 으로 둠).
 //
@@ -65,7 +65,6 @@ namespace {
 struct CurrStage { float dmin, dmax; int people; };
 constexpr CurrStage kCurr[] = {{0.75f, 3.f, 0}, {3.f, 6.f, 4}, {3.f, 15.f, -1}};
 constexpr int kCurrN = 3, kCurrWin = 50;
-constexpr double kCurrUp = 0.8;
 
 constexpr int kLidarN = 248;
 constexpr float kLidarFov = 220.f * (float)M_PI / 180.f, kLidarMax = 8.f;
@@ -94,6 +93,7 @@ struct Args {
   bool low = false;    // --low: 아래층 RL (단독 과제를 정책이 10 Hz 로 — run_low)
   int low_people = 2;  // --people: 아래층 RL 판마다 사람 0 ~ 이 수
   bool map_prio = false;  // --map-prio (--low): 맵 뽑기를 최근 닿음 비율이 높은 맵 쪽으로 — 확률 ∝ 0.5 + 맵의 닿음으로 끝난 판 비율 (판 수 지수 이동 합, 반감 ~14 반복)
+  double goal_curr_up = 0.8;   // --goal-curr-up R: 다음 단계로 넘어가는 지난 50 반복 학습 도달률 문턱 (잠정 — 학습 도달률은 샘플 행동이라 결정적 평가보다 낮음)
   int goal_curr = -1;   // --goal-curr [단계]: 목표 거리·사람 커리큘럼 시작 단계 (−1 = 끔)
   int people_ramp = 0;  // --people-ramp N: 이어 학습 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → --people 로 곧게 올림 (0 = 처음부터 --people)
   bool low_explore = false;   // --low-explore: 탐사 판 학습 (위층 규칙을 환경이 돌림)
@@ -672,7 +672,7 @@ int run_low(Args a) {
       for (auto& q : curr_win) rr += q.first, gg += q.second;
       r.last("low/curr_stage", a.goal_curr);
       r.last("low/curr_reach", gg > 0 ? rr / gg : 0.0);
-      if (a.goal_curr < kCurrN - 1 && (int)curr_win.size() >= kCurrWin && gg > 0 && rr / gg >= kCurrUp) {
+      if (a.goal_curr < kCurrN - 1 && (int)curr_win.size() >= kCurrWin && gg > 0 && rr / gg >= a.goal_curr_up) {
         a.goal_curr += 1;
         const CurrStage& g = kCurr[a.goal_curr];
         env.set_goal_band(g.dmin, g.dmax);
@@ -778,6 +778,7 @@ int main(int argc, char** argv) {
       else if (k == "--low") a.low = true;
       else if (k == "--people") a.low_people = std::stoi(nx());
       else if (k == "--people-ramp") a.people_ramp = std::stoi(nx());
+      else if (k == "--goal-curr-up") a.goal_curr_up = std::stod(nx());
       else if (k == "--goal-curr") a.goal_curr = (i + 1 < argc && argv[i + 1][0] != '-') ? std::stoi(nx()) : 0;
       else if (k == "--map-prio") a.map_prio = true;
       else if (k == "--low-explore") a.low_explore = true;
