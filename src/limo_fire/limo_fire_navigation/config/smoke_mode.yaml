@@ -2,8 +2,35 @@
 # navigation.launch.xml 이 저장 지도 위치 추정(localization:=true)일 때 늘 띄운다. 켜기: ros2 service call /smoke_mode/set std_srvs/srv/SetBool "{data: true}"
 smoke_mode:
   ros__parameters:
-    # 연기 속 위치: hold = 바퀴 + IMU 만(들어갈 때 위치를 붙잡음) · sonar = AMCL 에 초음파 스캔(아래 sonar_scan). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
+    # 연기 속 위치: hold = 바퀴 + IMU 만(들어갈 때 위치를 붙잡음) · sonar = AMCL 에 초음파 스캔(아래 sonar_scan)
+    #   · wall = 최근 초음파 메아리를 저장 지도의 벽에 맞춰 벽에 수직인 방향만 조금씩 고침(아래 wall). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
     smoke_localization: hold
+    # wall: 최근 window 초 메아리(각각 그 시각 odom 자세와 함께)를 지금 추정 근처에서 벽 면에 맞춘다
+    #   (include/limo_fire_navigation/sonar_wall.hpp). 값은 모두 잠정 — 시뮬 HC-SR04 모델 기준, 실물 메아리 잡음은 아직 안 쟀다
+    wall:
+      range_topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
+      window: 4.0          # s. 0.13 m/s 면 약 0.5 m — 그동안 바퀴 + IMU 가 거의 맞다고 본다
+      rate: 2.0            # Hz, 맞추기 주기
+      min_hits: 8          # 지도와 맞는 메아리가 이보다 적으면 안 고침
+      max_hits: 80         # 이보다 많으면 창 전체에서 고르게 솎음
+      blend: 1.0           # 찾은 고침의 이만큼 (불확실성으로 이미 무게를 매기므로 1)
+      echo_max_ratio: 0.95 # 이 비율 × max_range 이상은 메아리 없음 (시뮬 4.0 m, 실물 다리는 시간 초과면 max_range)
+      dist_cap: 1.0        # m, 벽 거리 지도 상한
+      rays: 7              # 원뿔(15°) 폭에 편 광선 수 — 보여야 할 거리 = 가장 가까운 광선
+      max_range: 4.0       # m, HC-SR04 최대
+      gate: 0.25           # m, |잰 − 보여야 할 거리| 가 이보다 크면 버림 (지도에 없는 물체·다른 벽)
+      sigma: 0.05          # m, 끝점 ↔ 벽 면 잡음 (지도 칸 0.05 m 몫 포함). 한 메아리를 window × rate 번 다시 쓰므로 노드가 √(그 수) 배 키워 씀
+      huber: 0.08          # m, 이보다 큰 잔차는 덜 믿음
+      min_normal: 0.5      # 거리 지도 기울기가 이보다 작으면(모서리·벽 속) 버림
+      # 추정 불확실성(칼만 꼴, 맞추기의 사전): 들어갈 때 init, 움직이면 q 만큼 커지고(분산), 맞출 때마다 줄어든다.
+      # 지도와 조금 다른 물체가 같은 쪽으로 계속 당겨도 추정이 끝없이 밀려가지 않게 한다 (warehouse 2026-11-15, 결과 7)
+      init_xy: 0.05        # m (σ)
+      init_yaw: 0.03       # rad (σ)
+      q_xy: 0.0025         # m²/m — 1 m 마다 σ 0.05 m 쯤 (거리 오차 3 % 시뮬 기준 잠정)
+      q_yaw: 0.0004        # rad²/rad — 한 바퀴(2π)에 σ 0.05 rad 쯤 (잠정)
+      max_step_xy: 0.10    # m, 한 번에 고치는 최대
+      max_step_yaw: 0.05   # rad
+      iterations: 3        # 가우스-뉴턴 횟수
     # sonar 일 때 초음파 AMCL 자세를 받는 문 (잠정): 바퀴 + IMU 추정과 0.5 m · 0.3 rad 안일 때만 30 % 씩 끌어당김,
     # 5 번 잇달아 어긋나면 AMCL 을 지금 추정 자리로 다시 놓음. 2026-11-06 엔 그대로 믿어 office·warehouse 에서 위치를 잃었다
     # 앞쪽 초음파(slow_topics) 중 하나라도 0.6 m 보다 가까우면 연기 모드 속도 한도를 0.05 m/s 로 (장애물을 늦게 봐 상자를 못 피함)

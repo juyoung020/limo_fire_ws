@@ -14,8 +14,10 @@
 // 켜고 끄기: 서비스 smoke_mode/set (std_srvs/SetBool). 상태는 smoke_mode/active (std_msgs/Bool, 마지막 값 유지).
 // 나올 때 지금 추정 자세를 쌓인 불확실성과 함께 /initialpose 로 AMCL 에 넘겨 다시 맞추게 한다.
 #include <algorithm>
-#include <vector>
+#include <chrono>
 #include <cmath>
+#include <deque>
+#include <vector>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,6 +26,7 @@
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "limo_fire_navigation/map_raycast.hpp"
+#include "limo_fire_navigation/sonar_wall.hpp"
 #include "nav2_msgs/msg/speed_limit.hpp"
 #include "nav2_msgs/srv/clear_entire_costmap.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
@@ -32,6 +35,7 @@
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/range.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/float64_multi_array.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2/LinearMath/Transform.h"
@@ -89,9 +93,40 @@ class SmokeModeNode : public rclcpp::Node {
     if (gate_xy_ <= 0.0 || gate_yaw_ <= 0.0 || blend_ <= 0.0 || blend_ > 1.0 || reseed_after_ < 1 || slow_dist_ <= 0.0 ||
         slow_speed_ <= 0.0 || slow_topics_.empty())
       throw std::invalid_argument("smoke_mode: sonar.* 파라미터 확인 (blend 는 (0, 1])");
+    // wall = 최근 window 초 초음파 메아리를 저장 지도 벽에 맞춰 map → odom 을 조금씩 고친다 (sonar_wall.hpp, AMCL 안 씀)
+    wall_topics_ = declare_parameter<std::vector<std::string>>(
+        "wall.range_topics", {"/ultrasonic/front_left", "/ultrasonic/front_right"});
+    wall_window_ = declare_parameter<double>("wall.window", 4.0);
+    wall_rate_ = declare_parameter<double>("wall.rate", 2.0);
+    wall_min_hits_ = declare_parameter<int>("wall.min_hits", 8);
+    wall_max_hits_ = declare_parameter<int>("wall.max_hits", 80);
+    wall_blend_ = declare_parameter<double>("wall.blend", 0.5);
+    wall_echo_ratio_ = declare_parameter<double>("wall.echo_max_ratio", 0.95);
+    wall_dist_cap_ = declare_parameter<double>("wall.dist_cap", 1.0);
+    wp_.rays = declare_parameter<int>("wall.rays", wp_.rays);
+    wp_.max_range = declare_parameter<double>("wall.max_range", wp_.max_range);
+    wp_.gate = declare_parameter<double>("wall.gate", wp_.gate);
+    wp_.sigma = declare_parameter<double>("wall.sigma", wp_.sigma);
+    wp_.huber = declare_parameter<double>("wall.huber", wp_.huber);
+    wp_.min_normal = declare_parameter<double>("wall.min_normal", wp_.min_normal);
+    // 추정 불확실성(칼만 꼴): 들어갈 때 init, 움직이면 q_* 만큼 커지고(분산, m²/m · rad²/rad), 맞출 때마다 줄어든다
+    wall_init_xy_ = declare_parameter<double>("wall.init_xy", 0.05);
+    wall_init_yaw_ = declare_parameter<double>("wall.init_yaw", 0.03);
+    wall_q_xy_ = declare_parameter<double>("wall.q_xy", 0.0025);
+    wall_q_yaw_ = declare_parameter<double>("wall.q_yaw", 0.0004);
+    wp_.max_step_xy = declare_parameter<double>("wall.max_step_xy", wp_.max_step_xy);
+    wp_.max_step_yaw = declare_parameter<double>("wall.max_step_yaw", wp_.max_step_yaw);
+    wp_.iterations = declare_parameter<int>("wall.iterations", wp_.iterations);
+    if (wall_topics_.empty() || wall_window_ <= 0.0 || wall_rate_ <= 0.0 || wall_min_hits_ < 1 ||
+        wall_max_hits_ < wall_min_hits_ || wall_blend_ <= 0.0 || wall_blend_ > 1.0 || wall_echo_ratio_ <= 0.0 ||
+        wall_echo_ratio_ > 1.0 || wall_dist_cap_ <= 0.0 || wp_.rays < 1 || wp_.max_range <= 0.0 || wp_.gate <= 0.0 ||
+        wp_.sigma <= 0.0 || wp_.huber <= 0.0 || wall_init_xy_ <= 0.0 || wall_init_yaw_ <= 0.0 || wall_q_xy_ < 0.0 ||
+        wall_q_yaw_ < 0.0 || wp_.max_step_xy <= 0.0 ||
+        wp_.max_step_yaw <= 0.0 || wp_.iterations < 1)
+      throw std::invalid_argument("smoke_mode: wall.* 파라미터 확인 (blend·echo_max_ratio 는 (0, 1])");
     localization_ = declare_parameter<std::string>("smoke_localization", "hold");
-    if (localization_ != "hold" && localization_ != "sonar")
-      throw std::invalid_argument("smoke_mode: smoke_localization 은 hold 또는 sonar");
+    if (!valid_localization(localization_))
+      throw std::invalid_argument("smoke_mode: smoke_localization 은 hold · sonar · wall");
     param_cb_ = add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& ps) {
       rcl_interfaces::msg::SetParametersResult r;
       r.successful = true;
@@ -99,7 +134,7 @@ class SmokeModeNode : public rclcpp::Node {
         if (p.get_name() != "smoke_localization") continue;
         const std::string v = p.get_type() == rclcpp::ParameterType::PARAMETER_STRING ? p.as_string() : "";
         if (smoke_) { r.successful = false; r.reason = "연기 모드 중에는 바꿀 수 없음"; }
-        else if (v != "hold" && v != "sonar") { r.successful = false; r.reason = "hold 또는 sonar"; }
+        else if (!valid_localization(v)) { r.successful = false; r.reason = "hold · sonar · wall"; }
         else localization_ = v;
       }
       return r;
@@ -142,6 +177,11 @@ class SmokeModeNode : public rclcpp::Node {
             }
           }));
     }
+    for (const auto& t : wall_topics_) {
+      range_subs_.push_back(create_subscription<sensor_msgs::msg::Range>(
+          t, rclcpp::SensorDataQoS(), std::bind(&SmokeModeNode::on_range, this, _1)));
+    }
+    wall_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>("smoke_mode/wall_fix", 10);
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
         "imu", rclcpp::SensorDataQoS(), std::bind(&SmokeModeNode::on_imu, this, _1));
     map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
@@ -163,6 +203,7 @@ class SmokeModeNode : public rclcpp::Node {
     tf_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / tf_rate_), [this] { on_tf_tick(); });
     scan_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / scan_rate_), [this] { on_scan_tick(); });
     speed_timer_ = create_wall_timer(std::chrono::seconds(1), [this] { publish_speed_limit(); });
+    wall_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / wall_rate_), [this] { on_wall_tick(); });
 
     publish_active();
     RCLCPP_INFO(get_logger(), "연기 모드 준비 (map → odom 발행: %s)", publish_map_odom_ ? "예" : "아니오, SLAM 이 냄");
@@ -214,11 +255,19 @@ class SmokeModeNode : public rclcpp::Node {
     last_odom_base_ = *ob;
     dist_m_ = 0.0;
     turn_rad_ = 0.0;
+    echoes_.clear();
+    wall_tried_ = wall_applied_ = 0;
+    var_xy_ = wall_init_xy_ * wall_init_xy_;
+    var_yaw_ = wall_init_yaw_ * wall_init_yaw_;
+    wall_last_ob_ = *ob;
     clear_costmaps();
     publish_active();
     publish_speed_limit();
     RCLCPP_WARN(get_logger(), "연기 모드 켬: 라이다·카메라를 쓰지 않고 %s, 속도 한도 %.2f m/s",
-                localization_ == "sonar" ? "바퀴 + IMU + 초음파(AMCL)로 위치를 잡음" : "바퀴 + IMU 로만 움직임", speed_limit_);
+                localization_ == "sonar"  ? "바퀴 + IMU + 초음파(AMCL)로 위치를 잡음"
+                : localization_ == "wall" ? "바퀴 + IMU + 초음파(벽 맞추기)로 위치를 잡음"
+                                          : "바퀴 + IMU 로만 움직임",
+                speed_limit_);
     return true;
   }
 
@@ -227,8 +276,10 @@ class SmokeModeNode : public rclcpp::Node {
     // 상태를 먼저 내린다: 이 노드도 /initialpose 를 받으므로(연기 속 사람 보정용) 자기 메시지를 사람 보정으로 받지 않게
     const auto est = estimate(now());
     smoke_ = false;
-    // sonar 면 AMCL 이 연기 속에서도 계속 위치를 고쳐 왔으므로 다시 넣지 않는다 (넣으면 입자를 흩뜨림)
-    if (est && localization_ == "hold") initialpose_pub_->publish(*est);
+    // sonar 면 AMCL 이 연기 속에서도 계속 위치를 고쳐 왔으므로 다시 넣지 않는다 (넣으면 입자를 흩뜨림). hold · wall 은 AMCL 이 멈춰 있었다
+    if (est && localization_ != "sonar") initialpose_pub_->publish(*est);
+    if (localization_ == "wall")
+      RCLCPP_INFO(get_logger(), "연기 속 초음파 벽 맞추기: %d 번 중 %d 번 고침", wall_tried_, wall_applied_);
     clear_costmaps();
     publish_active();
     publish_speed_limit();
@@ -238,8 +289,8 @@ class SmokeModeNode : public rclcpp::Node {
 
   // ---- 위치 ----------------------------------------------------------------------------------------
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
-    // hold: 연기 속에서는 스캔을 끊어 AMCL 이 새 자세를 내지 않지만, 혹시 와도 쓰지 않는다. sonar: 초음파로 고친 자세를 그대로 씀
-    if (smoke_ && localization_ == "hold") return;
+    // hold · wall: 연기 속에서는 스캔을 끊어 AMCL 이 새 자세를 내지 않지만, 혹시 와도 쓰지 않는다. sonar: 문 지킴
+    if (smoke_ && localization_ != "sonar") return;
     if (smoke_) {   // sonar: 문 지킴 (위 파라미터 주석)
       gated_update(*msg);
       return;
@@ -324,6 +375,82 @@ class SmokeModeNode : public rclcpp::Node {
     return true;
   }
 
+  // ---- 초음파 벽 맞추기 (wall) ----------------------------------------------------------------------
+  static bool valid_localization(const std::string& v) { return v == "hold" || v == "sonar" || v == "wall"; }
+
+  // 메아리 하나를 그 시각 odom 에서 본 센서 자세와 함께 모은다. 메아리 없음(최대 거리 근처)은 버린다 — 비스듬한 벽은 메아리를 잃어 정보가 아니다
+  void on_range(const sensor_msgs::msg::Range::SharedPtr m) {
+    if (!smoke_ || localization_ != "wall") return;
+    const double r = m->range;
+    if (!std::isfinite(r) || r <= m->min_range || r >= wall_echo_ratio_ * m->max_range) return;
+    const rclcpp::Time t(m->header.stamp, get_clock()->get_clock_type());
+    geometry_msgs::msg::TransformStamped ts;
+    try {
+      ts = tf_buffer_->lookupTransform(odom_frame_, m->header.frame_id, t, rclcpp::Duration::from_seconds(0.05));
+    } catch (const tf2::TransformException& e) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파: 그 시각 odom → %s TF 없음, 버림: %s",
+                           m->header.frame_id.c_str(), e.what());
+      return;
+    }
+    tf2::Transform os;
+    tf2::fromMsg(ts.transform, os);
+    echoes_.push_back({t, os, r, m->field_of_view});
+  }
+
+  void on_wall_tick() {
+    if (!smoke_ || localization_ != "wall" || !dist_ || !map_odom_) return;
+    const rclcpp::Time t = now();
+    while (!echoes_.empty() && (t - echoes_.front().stamp).seconds() > wall_window_) echoes_.pop_front();
+    if (static_cast<int>(echoes_.size()) < wall_min_hits_) return;
+    const auto ob = odom_base();
+    if (!ob) return;
+    // 메아리가 max_hits 보다 많으면 창 전체에서 고르게 솎는다 (시간은 메아리 수에 비례)
+    const size_t n = echoes_.size(), keep = std::min(n, static_cast<size_t>(wall_max_hits_));
+    std::vector<SonarHit> hits;
+    hits.reserve(keep);
+    for (size_t i = 0; i < keep; ++i) {
+      const auto& e = echoes_[i * n / keep];
+      const tf2::Transform ms = *map_odom_ * e.odom_sensor;
+      hits.push_back({ms.getOrigin().x(), ms.getOrigin().y(), tf2::getYaw(ms.getRotation()), e.r, e.fov});
+    }
+    const tf2::Transform mb = *map_odom_ * *ob;
+    const double cx = mb.getOrigin().x(), cy = mb.getOrigin().y();
+    // 지난 맞추기 뒤 움직인 만큼 불확실성을 키운다
+    const tf2::Transform step = wall_last_ob_.inverse() * *ob;
+    wall_last_ob_ = *ob;
+    var_xy_ += wall_q_xy_ * std::hypot(step.getOrigin().x(), step.getOrigin().y());
+    var_yaw_ += wall_q_yaw_ * std::fabs(tf2::getYaw(step.getRotation()));
+    WallParams p = wp_;
+    p.prior_xy = std::sqrt(var_xy_);
+    p.prior_yaw = std::sqrt(var_yaw_);
+    // 한 메아리가 창(window) 안에 있는 동안 window × rate 번 다시 쓰이므로 그만큼 덜 믿는다
+    p.sigma = wp_.sigma * std::sqrt(std::max(1.0, wall_window_ * wall_rate_));
+    const auto t0 = std::chrono::steady_clock::now();
+    const WallResult m = match_walls(*dist_, *grid_, hits, p, cx, cy);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (ms > 500.0 / wall_rate_)   // 주기의 절반을 넘으면 TF·가상 스캔이 밀린다
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000, "초음파 벽 맞추기가 느림: 메아리 %zu 개 %.0f ms", hits.size(), ms);
+    ++wall_tried_;
+    // 기록용: [쓴 메아리, 모은 메아리, 고치기 전 rms, 후 rms, dx, dy, dyaw, 고쳤나(1/0), 정보 작은 고윳값, 사전 σxy, 사전 σyaw]
+    std_msgs::msg::Float64MultiArray rec;
+    const bool apply = m.used >= wall_min_hits_ && m.rms <= m.rms0;
+    rec.data = {static_cast<double>(m.used), static_cast<double>(hits.size()), m.rms0, m.rms, m.dx, m.dy, m.dyaw,
+                apply ? 1.0 : 0.0, m.info_min, p.prior_xy, p.prior_yaw};
+    wall_pub_->publish(rec);
+    if (!apply) return;
+    var_xy_ = 0.5 * (m.var_x + m.var_y);
+    var_yaw_ = m.var_yaw;
+    const double k = wall_blend_;
+    // map 에서 (cx, cy) 둘레로 k·dyaw 돌리고 k·(dx, dy) 옮김 → map → odom 앞에 곱한다
+    tf2::Quaternion q;
+    q.setRPY(0, 0, k * m.dyaw);
+    const tf2::Transform rot(q, tf2::Vector3(0, 0, 0));
+    const tf2::Transform to_c(tf2::Quaternion::getIdentity(), tf2::Vector3(cx, cy, 0));
+    const tf2::Transform shift(tf2::Quaternion::getIdentity(), tf2::Vector3(k * m.dx, k * m.dy, 0));
+    map_odom_ = shift * to_c * rot * to_c.inverse() * *map_odom_;
+    ++wall_applied_;
+  }
+
   std::optional<tf2::Transform> odom_base() {
     try {
       const auto t = tf_buffer_->lookupTransform(odom_frame_, base_frame_, tf2::TimePointZero);
@@ -392,6 +519,7 @@ class SmokeModeNode : public rclcpp::Node {
     g.data = msg->data;
     g.occupied_threshold = occupied_threshold_;
     grid_ = std::move(g);
+    dist_ = make_dist_field(*grid_, wall_dist_cap_);
     RCLCPP_INFO(get_logger(), "저장 지도 받음 %d × %d, %.2f m/칸", grid_->width, grid_->height, grid_->resolution);
   }
 
@@ -513,7 +641,23 @@ class SmokeModeNode : public rclcpp::Node {
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr amcl_sub_, initialpose_sub_;
   rclcpp::Client<nav2_msgs::srv::ClearEntireCostmap>::SharedPtr clear_local_, clear_global_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_srv_;
-  rclcpp::TimerBase::SharedPtr tf_timer_, scan_timer_, speed_timer_;
+  rclcpp::TimerBase::SharedPtr tf_timer_, scan_timer_, speed_timer_, wall_timer_;
+  // wall
+  struct Echo {
+    rclcpp::Time stamp;
+    tf2::Transform odom_sensor;
+    double r, fov;
+  };
+  std::vector<std::string> wall_topics_;
+  double wall_window_, wall_rate_, wall_blend_, wall_echo_ratio_, wall_dist_cap_;
+  double wall_init_xy_, wall_init_yaw_, wall_q_xy_, wall_q_yaw_, var_xy_ = 0.0, var_yaw_ = 0.0;
+  tf2::Transform wall_last_ob_;
+  int wall_min_hits_, wall_max_hits_, wall_tried_ = 0, wall_applied_ = 0;
+  WallParams wp_;
+  std::optional<DistField> dist_;
+  std::deque<Echo> echoes_;
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr> range_subs_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr wall_pub_;
 };
 
 }  // namespace limo_fire_navigation

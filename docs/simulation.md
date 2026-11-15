@@ -77,8 +77,9 @@ WeGo 값으로 시작했지만 덕트호스 미로에서 막혀 바꿨다. **모
 
 | 무엇 | 까닭 | 할 일 |
 |---|---|---|
-| Webots 기본 물체 파일 | 월드가 `webots://projects/...` 를 설치본에서 읽는데 deb 설치본(R2025a)에는 `.proto` 가 없다 → 바닥·벽이 빠지고 로봇이 떨어짐(창은 회색·검은 화면) | `git clone --depth 1 --branch R2025a --filter=blob:none --sparse https://github.com/cyberbotics/webots.git` → `git sparse-checkout set projects/objects projects/appearances projects/humans projects/default` → `sudo rsync -a <clone>/projects/ /usr/local/webots/projects/` (약 640 MB) |
+| Webots 기본 물체 파일 | 월드가 `webots://projects/...` 를 설치본에서 읽는데 deb 설치본(R2025a)에는 `.proto` 가 없다 → 바닥·벽이 빠지고 로봇이 떨어짐(창은 회색·검은 화면) | `git clone --depth 1 --branch R2025a --filter=blob:none --sparse https://github.com/cyberbotics/webots.git` → `git sparse-checkout set projects/objects projects/appearances projects/humans projects/default` → `sudo rsync -a <clone>/projects/ /usr/local/webots/projects/` (약 640 MB). sudo 가 없으면 설치본을 통째로 사용자 폴더에 복사(`cp -a /usr/local/webots ~/webots_local/webots`)해 그쪽에 `projects/` 를 넣고 `WEBOTS_HOME` 을 그 폴더로 (2026-11-15 확인) |
 | `WEBOTS_HOME` | `env.sh` 는 Humble 을 불러오므로 쓰지 않는다 | `export WEBOTS_HOME=/usr/local/webots` |
+| 여러 판 동시에 | 벤치마크를 여러 판 함께 돌릴 때 | 판마다 `port:=`·`ROS_DOMAIN_ID` 를 다르게, 창은 `webots_args:=--minimize` |
 | 빌드 | 실물 드라이버·YOLO(CUDA) 는 빌드되지 않는다 | `colcon build --packages-up-to limo_fire_bringup limo_fire_bt limo_fire_sim webots_ros2_limo --packages-ignore limo_fire_perception ydlidar_ros2_driver orbbec_camera orbbec_camera_msgs orbbec_description robot_localization limo_fire_base limo_fire_esp32_bridge dl_ros2_application dl_ros2_msgs lift_ctr wego wego_2d_nav wego_msgs limo_ros2_application` |
 
 판마다 다른 설정은 파일로 나눴다 (Humble 동작은 그대로):

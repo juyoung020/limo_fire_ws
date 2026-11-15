@@ -45,6 +45,8 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_map_raycast test/test_map_raycast.cpp)
   target_include_directories(test_map_raycast PRIVATE include)
+  ament_add_gtest(test_sonar_wall test/test_sonar_wall.cpp)
+  target_include_directories(test_sonar_wall PRIVATE include)
 endif()
 
 ament_package()
