@@ -684,6 +684,19 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     R.stall = 1;
     R.stall_tgt = b.lowcmd[env].follow != 0 ? b.lowcmd[env].target : e.goal_cell;
   }
+  if (b.low_vdone) {   // 학습기 판 끝 칸 (PPO 판 끝 꼴 — train.cpp k_map_done_low 와 같은 뜻 + 목표 경계)
+    // 0 이어감 · 1 끝(부트스트랩 없음, 순환 h 초기화) · 3 끊김(부트스트랩) · 8 목표 경계 (lo_goal_term: 목표 하나를 가치의 한 판으로 —
+    // 통과 걸음에서 부트스트랩 없이 끊지만 판은 이어 가고 순환 h 도 그대로: 같은 집 기억은 남김)
+    int v = 0;
+    if (e.done) {
+      if (e.done == mdp::cur::kCollision || e.done == mdp::cur::kCollisionPerson) v = 1;
+      else if (b.cfg.lo_goal_term && b.low[env].end == kLowEndGoals) v = 1;   // 마지막 목표 통과 = 그 목표 판의 끝 (끊김 아님)
+      else v = 3;
+    } else if (b.cfg.lo_goal_term && R.pol && b.low[env].reach_step == e.step && b.low[env].reached > 0) {
+      v = 8;
+    }
+    b.low_vdone[env] = v;
+  }
   if (e.done) lowrl_clear(R);
 }
 

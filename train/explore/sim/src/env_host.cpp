@@ -355,6 +355,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.map_hit = alloc<int32_t>((size_t)b_.n_maps);
       b_.low_img = alloc<uint8_t>((size_t)(b_.cfg.lo_wide ? kLowImgWide : kLowImg) * n_env);
       b_.low_1d = alloc<float>((size_t)kLow1d * n_env);
+      b_.low_vdone = alloc<int32_t>((size_t)n_env);
       if (b_.cfg.lo_wide) b_.low_wred = alloc<uint32_t>((size_t)(b_.cfg.size / 4) * (b_.cfg.size / 4) * n_env);
     }
   }
@@ -439,7 +440,7 @@ void Env::step(const float* actions, cudaStream_t st) {
 }
 
 StepOut Env::outputs() const {
-  return StepOut{b_.obs_img, b_.obs_1d, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d};
+  return StepOut{b_.obs_img, b_.obs_1d, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d, b_.low_vdone};
 }
 
 void Env::low_prepare(const float* actions, cudaStream_t st) {

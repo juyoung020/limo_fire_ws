@@ -94,6 +94,7 @@ struct Args {
   int low_people = 2;  // --people: 아래층 RL 판마다 사람 0 ~ 이 수
   bool map_prio = false;  // --map-prio (--low): 맵 뽑기를 최근 닿음 비율이 높은 맵 쪽으로 — 확률 ∝ 0.5 + 맵의 닿음으로 끝난 판 비율 (판 수 지수 이동 합, 반감 ~14 반복)
   double goal_curr_up = 0.8;   // --goal-curr-up R: 다음 단계로 넘어가는 지난 50 반복 학습 도달률 문턱 (잠정 — 학습 도달률은 샘플 행동이라 결정적 평가보다 낮음)
+  bool entropy_skip_v = false;   // --entropy-skip-v: 엔트로피 보너스를 v 성분에 안 줌 (v 는 [0, 1] 로 잘려 σ_v 가 계속 커짐)
   int goal_curr = -1;   // --goal-curr [단계]: 목표 거리·사람 커리큘럼 시작 단계 (−1 = 끔)
   int people_ramp = 0;  // --people-ramp N: 이어 학습 처음부터 N 반복에 걸쳐 판마다 사람 상한을 1 → --people 로 곧게 올림 (0 = 처음부터 --people)
   bool low_explore = false;   // --low-explore: 탐사 판 학습 (위층 규칙을 환경이 돌림)
@@ -312,6 +313,7 @@ int run_low(Args a) {
   if (a.entropy >= 0) pc.entropy_coef = a.entropy;
   if (a.desired_kl >= 0) pc.desired_kl = a.desired_kl;
   if (a.std_min > 0) pc.std_min = a.std_min;
+  if (a.entropy_skip_v) pc.entropy_from = 1;   // 아래층: v(성분 0) 에는 엔트로피 보너스를 안 줌
   if (a.bound_coef >= 0) pc.bound_coef = a.bound_coef;
   if (a.chunk > 0) pc.chunk = a.chunk;
   if (a.steps > 0) pc.steps_per_env = a.steps;
@@ -569,7 +571,7 @@ int run_low(Args a) {
         env.sync();
         const sim::StepOut o2 = env.outputs();
         k_map_done_low<<<(N + 255) / 256, 256>>>(o2.done, N, d_done);
-        ppo.store(o2.reward, d_done);
+        ppo.store(o2.reward, c.lo_goal_term ? (const int*)o2.low_vdone : d_done);   // 목표 경계(8)까지 담은 판 끝 칸 (SIM_LOW_GOAL_TERM)
         cudaDeviceSynchronize();
         t_sim += ms_since(t0);
       }
@@ -587,7 +589,7 @@ int run_low(Args a) {
           env.step(d_act, st);
           const sim::StepOut o2 = env.outputs();
           k_map_done_low<<<(N + 255) / 256, 256, 0, st>>>(o2.done, N, d_done);
-          ppo.store(o2.reward, d_done);
+          ppo.store(o2.reward, c.lo_goal_term ? (const int*)o2.low_vdone : d_done);   // 목표 경계(8)까지 담은 판 끝 칸 (SIM_LOW_GOAL_TERM)
         }
         CKR(cudaStreamEndCapture(st, &g));
         CKR(cudaGraphInstantiate(&roll_exec, g, 0));
@@ -613,7 +615,7 @@ int run_low(Args a) {
         env.step(d_act);
         const sim::StepOut o2 = env.outputs();
         k_map_done_low<<<(N + 255) / 256, 256>>>(o2.done, N, d_done);
-        ppo.store(o2.reward, d_done);
+        ppo.store(o2.reward, c.lo_goal_term ? (const int*)o2.low_vdone : d_done);   // 목표 경계(8)까지 담은 판 끝 칸 (SIM_LOW_GOAL_TERM)
       }
       cudaEventRecord(ev_roll[2 * pc.steps_per_env], 0);
       cudaEventSynchronize(ev_roll[2 * pc.steps_per_env]);
@@ -785,6 +787,7 @@ int main(int argc, char** argv) {
       else if (k == "--people") a.low_people = std::stoi(nx());
       else if (k == "--people-ramp") a.people_ramp = std::stoi(nx());
       else if (k == "--goal-curr-up") a.goal_curr_up = std::stod(nx());
+      else if (k == "--entropy-skip-v") a.entropy_skip_v = true;
       else if (k == "--goal-curr") a.goal_curr = (i + 1 < argc && argv[i + 1][0] != '-') ? std::stoi(nx()) : 0;
       else if (k == "--map-prio") a.map_prio = true;
       else if (k == "--low-explore") a.low_explore = true;

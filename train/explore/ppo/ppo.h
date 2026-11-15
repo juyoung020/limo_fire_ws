@@ -43,6 +43,7 @@ struct PPOConfig {
   // std_max = 1: 정책 출력은 정규 단위(env.h apply_action 이 clip1 후 한도를 곱함)라 세 성분 모두 행동 한계 반폭 = 1 (= 초기 σ).
   // std_min = 0.05: 잠정 — 반폭의 5 %(ω 0.16 rad/s, v 0.05 m/s). 이보다 작으면 log π 의 1/σ 민감도가 커지고 탐사가 사라짐. 평가는 평균 행동이라 영향 없음.
   // 방식 비교·출처(rsl_rl GaussianDistribution std_range, SB3 SAC LOG_STD_MIN/MAX)는 ppo/README "σ 범위".
+  int entropy_from = 0;         // 엔트로피 보너스를 받는 첫 연속 성분 (앞 성분은 안 받음). 아래층 v 는 [0, 1] 로 잘려 σ_v 가 보너스로 계속 커져서 1 로 씀 (train --entropy-skip-v)
   float std_min = 0.05f, std_max = 1.0f;
   // 평균 행동 경계 손실 (rl_games a2c_continuous.py bound_loss, soft_bound 1.1): 환경이 [−1, 1] 로 자르므로 평균 μ 가 경계 밖으로 나가면
   // 표본이 모두 잘려 같은 행동이 되고 대리 손실 기울기가 0 이 된다 — μ 가 기울기 없이 멀리 떠내려가 그 성분을 다시 못 배운다.

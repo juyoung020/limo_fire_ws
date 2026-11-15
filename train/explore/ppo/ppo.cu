@@ -88,7 +88,7 @@ __global__ void k_h_done(const int* done, int n, int H, real* ha, real* hc, real
   long k = blockIdx.x * (long)blockDim.x + threadIdx.x;
   if (k >= (long)n * H) return;
   const int i = (int)(k / H);
-  const bool d = done[i] != 0;
+  const bool d = done[i] != 0 && done[i] != 8;   // 8 = 목표 경계 (가치만 끊고 판·순환 h 는 이어 감 — sim low_rl.h lowrl_finish)
   if (d) {
     if (ha) ha[k] = 0.f;
     if (hc) hc[k] = 0.f;
@@ -1112,7 +1112,7 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
     for (int k = 0; k < NS; ++k) stats[k] += hs[k];
   }
   if (dev_mb_) {   // 엔트로피·학습률·기울기 노름은 k_upd_ctrl 이 (log σ 기울기 상수항만 여기서 — 옛 길과 같은 차례)
-    if (backward) k_add_const<<<1, 32, 0, st>>>(ac.log_std_grad(), NC_, -cfg_.entropy_coef * ((real)n_all / mb));
+    if (backward) if (NC_ > cfg_.entropy_from) k_add_const<<<1, 32, 0, st>>>(ac.log_std_grad() + cfg_.entropy_from, NC_ - cfg_.entropy_from, -cfg_.entropy_coef * ((real)n_all / mb));
     return 0.0;
   }
   // 엔트로피(가우시안만, 상태 무관): −c·Σ(½+½ln2π+logσ) → d/dlogσ = −c
@@ -1123,7 +1123,7 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
   if (disc_) {   // 범주 판: stats[3] = 샘플 엔트로피 합 (k_loss_cat), 기울기는 로짓으로 이미 들어감
     return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * stats[3] / mb + cfg_.slot_cm_coef * stats[4] / mb;
   }
-  if (backward) k_add_const<<<1, 32, 0, st>>>(ac.log_std_grad(), NC_, -cfg_.entropy_coef * ((real)n_all / mb));
+  if (backward) if (NC_ > cfg_.entropy_from) k_add_const<<<1, 32, 0, st>>>(ac.log_std_grad() + cfg_.entropy_from, NC_ - cfg_.entropy_from, -cfg_.entropy_coef * ((real)n_all / mb));
   stats[3] = ent * n_all;  // 엔트로피 합 자리로 바꿔 쓴다 (ratio 는 안 씀)
   return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * ent * n_all / mb;
 }

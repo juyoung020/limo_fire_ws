@@ -93,6 +93,7 @@ struct EnvCfg {
   int lo_cam_every;              // 깊이 카메라 장애물 층을 걸음마다 (SIM_LOW_CAM_EVERY, 기본 0 = 계획 주기 low_period 마다 — 옛 동작). 실물은 카메라 29 Hz 로 층을 갱신 (Nav2 VoxelLayer)
   int lo_wide;                   // 넓은 지도 (SIM_LOW_WIDE, 기본 0): 아래층 그림 뒤에 로봇 지도 25.6 m 창 6 × 64 × 64 (low_task.h kLowWideOff, low_rl.h lowrl_wide)
   float lr_time_k;               // 시간 벌점 (걸음마다, low_rl.h kLrTimeK — SIM_LR_TIME_K 로 덮음)
+  int lo_goal_term;              // 목표 하나 = 가치의 한 판 (SIM_LOW_GOAL_TERM, 기본 0 — 옛 동작: 판 끝까지 이어 부트스트랩)
   int lo_go_shape;               // 목적지만에서 사람 마주침·회전 항을 켬 (SIM_LOW_GO_SHAPE, 기본 0 — low_rl.h lowrl_finish)
   int lo_goalonly;               // 목적지만 (SIM_LOW_GOALONLY, 기본 0): 관측에서 경로 칸을 0 으로, 보상은 시간·통과·닿음만 (low_rl.h)
   float lr_ttc_k;                // 충돌 시간 벌점 (low_rl.h kLrTtcK, SIM_LR_TTC_K — 0 = 끔)
@@ -443,6 +444,7 @@ struct EnvBatch {
   LowRlStat* lowstat;
   uint8_t* low_img;
   float* low_1d;
+  int32_t* low_vdone;   // 아래층 RL: 학습기 판 끝 칸 [env] (low_rl.h lowrl_finish — 0 · 1 · 3 · 8 목표 경계)
   uint32_t* low_wred;   // 넓은 지도 (lo_wide 일 때만): 로봇 지도 4 × 4 칸(0.2 m) 줄인 판 [env · (size/4)²] — low_rl.h lowrl_wred
 };
 

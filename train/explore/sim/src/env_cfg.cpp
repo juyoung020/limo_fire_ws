@@ -322,6 +322,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.lo_cam_every = (int)envf("SIM_LOW_CAM_EVERY", 0.f);   // 깊이 카메라 층 걸음마다 (2026-11-15 — 시험 세트 HSSD 벽 충돌의 절반이 닿는 순간 라이다·깊이 둘 다 못 보는 곳)
       c.lo_wide = (int)envf("SIM_LOW_WIDE", 0.f);   // 넓은 지도 (2026-11-15 — 목적지만 정책이 ±3.2 m 창 밖 길을 못 찾아서)
       c.lr_time_k = envf("SIM_LR_TIME_K", kLrTimeK);   // 2026-11-15: 검증 세트 2 사람 적은 판(p2)도 평균 속도 0.55~0.66 (기준 0.676), 트인 곳에서도 0.75 m/s
+      c.lo_goal_term = (int)envf("SIM_LOW_GOAL_TERM", 0.f);   // 2026-11-15 독립 검토: 통과가 가치 끝이 아니라 시간 벌점이 상수가 됨
       c.lo_go_shape = (int)envf("SIM_LOW_GO_SHAPE", 0.f);   // 2026-11-15: 검증 세트 2 사람 충돌 67 % 가 회전 > 1 rad/s 중, 53 % 는 닿기 1.5 s 전부터 추적됨
       c.lo_goalonly = (int)envf("SIM_LOW_GOALONLY", 0.f);   // 목적지만 (2026-11-15 사용자 결정 실험 — 경로를 관측·보상 어디에도 안 씀)
       c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
