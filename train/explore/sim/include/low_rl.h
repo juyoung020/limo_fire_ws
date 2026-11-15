@@ -814,6 +814,60 @@ DEV void lowrl_wide(const EnvBatch& b, const EnvState& e, int env, int cell, uin
   O[5 * hw + cell] = cam ? (uint8_t)255 : (uint8_t)0;
 }
 // 숫자 관측 + 걸음 사이 값 (스레드 0). 계획 뒤에 부른다 — 남은 경로 길이를 방금 짠 경로 기준으로 적어 둠 (다음 걸음 진행 항의 기준)
+// 움직이는 것 칸 (sim 과 실물이 같은 함수 — 실물 CPU 정책 network/policy_cpu.h LowPolicy 의 1D 도 이것으로): 추적한 움직이는 것 M[nm] (lowrl_trk_movers)과
+// 지도 자세 (px, py, pth) · 바퀴 앞 속도 wv · 몸통 반 길이 → mov[6] = 가장 가까운 하나 (있음 · 거리/4 m · sin · cos · 속도 앞·왼쪽/1.6 m/s, kLoMov),
+// mov4[4 × 6] (nullptr 이면 안 씀) = 2 s 앞까지 가장 가까워질 때 간격(몸통 반 길이 원 − 덩어리 반지름) 작은 차례 넷 (같으면 그때까지 시간 · 번호, kLoMov4).
+// 칸은 부르는 쪽이 0 으로 비워 둔다 (움직이는 것이 없으면 그대로 0)
+DEV void lowrl_mov_slots(const LrMover* M, int nm, float px, float py, float pth, float wv, float half_len, float* mov, float* mov4) {
+  const auto rel = [&](float x, float y, float norm, float* o) {   // (거리 / norm 자름 1, sin, cos) — 지도 자세 기준 방향 (lowrl_pack 의 rel 과 같은 식)
+    const float dx = x - px, dy = y - py, d = sqrtf(dx * dx + dy * dy);
+    float s = 0.f, co = 1.f;
+    if (d > 1e-6f) dm::sincosf_d(dm::wrap_pi(dm::atan2f_d(dy, dx) - pth), &s, &co);
+    o[0] = dm::minf(1.f, d / norm);
+    o[1] = s;
+    o[2] = co;
+  };
+  int bi = -1;
+  float bd = 3e38f;
+  for (int i = 0; i < nm; ++i) {
+    const float dx = M[i].x - px, dy = M[i].y - py, d2 = dx * dx + dy * dy;
+    if (d2 < bd) { bd = d2; bi = i; }
+  }
+  if (bi >= 0) {
+    float s, co;
+    dm::sincosf_d(pth, &s, &co);
+    mov[0] = 1.f;
+    rel(M[bi].x, M[bi].y, kLrClusRange, mov + 1);
+    mov[4] = dm::clampf((co * M[bi].vx + s * M[bi].vy) / kLrMovVNorm, -1.f, 1.f);   // 로봇 앞쪽 성분
+    mov[5] = dm::clampf((co * M[bi].vy - s * M[bi].vx) / kLrMovVNorm, -1.f, 1.f);   // 로봇 왼쪽 성분
+  }
+  if (mov4 && nm > 0) {
+    float s, co;
+    dm::sincosf_d(pth, &s, &co);
+    const float rvx = wv * co, rvy = wv * s;
+    float key[kLrMovers];
+    int ord[kLrMovers];
+    for (int i = 0; i < nm; ++i) {
+      const float qx = M[i].x - px, qy = M[i].y - py, ux = M[i].vx - rvx, uy = M[i].vy - rvy, u2 = ux * ux + uy * uy;
+      float tc = 0.f;
+      if (u2 > 1e-6f) tc = dm::clampf(-(qx * ux + qy * uy) / u2, 0.f, 2.f);
+      const float cx = qx + ux * tc, cy = qy + uy * tc;
+      key[i] = (sqrtf(cx * cx + cy * cy) - M[i].r - half_len) + 0.01f * tc;
+      ord[i] = i;
+    }
+    for (int i = 1; i < nm; ++i)   // 삽입 정렬 (같은 열쇠는 번호 차례 — 결정적)
+      for (int j = i; j > 0 && key[ord[j]] < key[ord[j - 1]]; --j) { const int t2 = ord[j]; ord[j] = ord[j - 1]; ord[j - 1] = t2; }
+    for (int k = 0; k < mdp::low::MOV_SLOTS && k < nm; ++k) {
+      const LrMover& m = M[ord[k]];
+      float* P = mov4 + mdp::low::MOV_W * k;
+      P[0] = 1.f;
+      rel(m.x, m.y, kLrClusRange, P + 1);
+      P[4] = dm::clampf((co * m.vx + s * m.vy) / kLrMovVNorm, -1.f, 1.f);
+      P[5] = dm::clampf((co * m.vy - s * m.vx) / kLrMovVNorm, -1.f, 1.f);
+    }
+  }
+}
+
 DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
   LowRl& R = b.lowrl[env];
   LowTrack t;
@@ -867,20 +921,7 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
   if (b.cfg.lo_mov) {   // 가장 가까운 "움직이는 것" (lowrl_trk — 직전 걸음 lowrl_act 가 이어 간 추적. 없으면 0)
     LrMover M[kLrMovers];
     const int nm = lowrl_trk_movers(b, env, M);
-    int bi = -1;
-    float bd = 3e38f;
-    for (int i = 0; i < nm; ++i) {
-      const float dx = M[i].x - px, dy = M[i].y - py, d2 = dx * dx + dy * dy;
-      if (d2 < bd) { bd = d2; bi = i; }
-    }
-    if (bi >= 0) {
-      float s, co;
-      dm::sincosf_d(pth, &s, &co);
-      O[kLoMov] = 1.f;
-      rel(M[bi].x, M[bi].y, kLrClusRange, O + kLoMov + 1);
-      O[kLoMov + 4] = dm::clampf((co * M[bi].vx + s * M[bi].vy) / kLrMovVNorm, -1.f, 1.f);   // 로봇 앞쪽 성분
-      O[kLoMov + 5] = dm::clampf((co * M[bi].vy - s * M[bi].vx) / kLrMovVNorm, -1.f, 1.f);   // 로봇 왼쪽 성분
-    }
+    lowrl_mov_slots(M, nm, px, py, pth, e.drive.wv, b.cfg.half_len, O + kLoMov, b.cfg.lo_mov4 ? O + kLoMov4 : nullptr);   // 칸 쓰기만 (b.low_aux 와 무관)
     if (b.low_aux) {   // 보조 예측 재료 (low_task.h kAux*): 지도 자세 · 추적 움직이는 것 · 최신 라이다 구역 최소
       float* X = b.low_aux + (size_t)env * kLowAuxSrc;
       X[kAuxPose] = px;
@@ -897,31 +938,6 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
         float m = kAuxLidRange;
         for (int k = s2 * mdp::obs::LIDAR_BINS / kAuxLidSec; k < (s2 + 1) * mdp::obs::LIDAR_BINS / kAuxLidSec; ++k) m = dm::minf(m, L[k]);
         X[kAuxLid + s2] = m / kAuxLidRange;
-      }
-    }
-    if (b.cfg.lo_mov4 && nm > 0) {   // 움직이는 것 칸 넷: 2 s 앞까지 가장 가까워질 때 간격(몸통 반 길이 원 − 덩어리 반지름) 작은 차례, 같으면 그때까지 시간 · 번호
-      float s, co;
-      dm::sincosf_d(pth, &s, &co);
-      const float rvx = e.drive.wv * co, rvy = e.drive.wv * s;
-      float key[kLrMovers];
-      int ord[kLrMovers];
-      for (int i = 0; i < nm; ++i) {
-        const float qx = M[i].x - px, qy = M[i].y - py, ux = M[i].vx - rvx, uy = M[i].vy - rvy, u2 = ux * ux + uy * uy;
-        float tc = 0.f;
-        if (u2 > 1e-6f) tc = dm::clampf(-(qx * ux + qy * uy) / u2, 0.f, 2.f);
-        const float cx = qx + ux * tc, cy = qy + uy * tc;
-        key[i] = (sqrtf(cx * cx + cy * cy) - M[i].r - b.cfg.half_len) + 0.01f * tc;
-        ord[i] = i;
-      }
-      for (int i = 1; i < nm; ++i)   // 삽입 정렬 (같은 열쇠는 번호 차례 — 결정적)
-        for (int j = i; j > 0 && key[ord[j]] < key[ord[j - 1]]; --j) { const int t2 = ord[j]; ord[j] = ord[j - 1]; ord[j - 1] = t2; }
-      for (int k = 0; k < mdp::low::MOV_SLOTS && k < nm; ++k) {
-        const LrMover& m = M[ord[k]];
-        float* P = O + kLoMov4 + mdp::low::MOV_W * k;
-        P[0] = 1.f;
-        rel(m.x, m.y, kLrClusRange, P + 1);
-        P[4] = dm::clampf((co * m.vx + s * m.vy) / kLrMovVNorm, -1.f, 1.f);
-        P[5] = dm::clampf((co * m.vy - s * m.vx) / kLrMovVNorm, -1.f, 1.f);
       }
     }
   }

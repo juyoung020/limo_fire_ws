@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
     pc.num_envs = E;
     pc.steps_per_env = 1;
     pc.minibatches = 1;
-    xppo::PPO ppo(pc, xnet::explore_spec_low(true, probe.hidden()), 1);
+    xppo::PPO ppo(pc, xnet::explore_spec_low(true, probe.hidden(), probe.n1d()), 1);
     ppo.load(ckpt);
     auto& ac = ppo.ac();
     std::vector<float> p(ac.n_params);
@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
   }
   std::vector<xnet_cpu::LowPolicy> cpu(E);
   for (auto& p : cpu) p.load(ckpt);
-  const int H = cpu[0].hidden(), IMG = mdp::low::IMG_WIDE, D = mdp::low::N1D, A = mdp::low::ACT;
+  const int H = cpu[0].hidden(), IMG = mdp::low::IMG_WIDE, D = cpu[0].n1d(), A = mdp::low::ACT;   // D: 1D 칸 수 (N1D 또는 움직이는 것 칸 넷 N1D_MOV4 — 체크포인트가 정함)
   std::printf("체크포인트 %s (반복 %d), GRU %d, 환경 %d × 걸음 %d\n", ckpt.c_str(), cpu[0].iteration(), H, E, T);
   int fail = 0;
   for (int exact = 1; exact >= 0; --exact) {
@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     pc.minibatches = 1;
     pc.cnn_bf16 = !exact;
     pc.mlp = exact ? 1 : 2;
-    xppo::PPO ppo(pc, xnet::explore_spec_low(true, H), 1);
+    xppo::PPO ppo(pc, xnet::explore_spec_low(true, H, D), 1);
     ppo.load(ckpt);
     for (auto& p : cpu) p.reset();
     ppo.inference_reset_all();

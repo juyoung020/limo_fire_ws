@@ -123,6 +123,7 @@ class Env {
   void low_prepare(const float* actions = nullptr, cudaStream_t st = 0);
   void get_low_cmd(std::vector<LowCmd>& out) const;
   void get_low_rl(std::vector<LowRl>& out) const;
+  void get_lidar_ring(std::vector<float>& out) const;   // 라이다 칸 링 [N][kLidarRing][LIDAR_BINS] (m) — 사람 추적 입력을 녹화해 실물 CPU 판과 견줄 때 (sim/tools/env_verify --mov-dump)
   void get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
   // 보조 예측 재료 [N][kLowAuxSrc] 뒤에 닿음 [N] (SIM_LOW_AUX 일 때만, 아니면 빈 것)
   void get_low_aux(std::vector<float>& out) const;

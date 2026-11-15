@@ -13,6 +13,7 @@
 
 #include "env_cfg.h"   // train/explore/sim/include
 #include "obs_ref.h"
+#include "limo_fire_rl/low_mov.h"   // 아래층 정책의 움직이는 것 칸 (시뮬과 같은 라이다 추적)
 
 namespace limo_fire_rl {
 
@@ -64,7 +65,13 @@ class RobotEnv {
   // 고른 슬롯 → 목표 칸. 같은 덩어리를 다시 고르면(cand_cur 비트, 시뮬 plan_cpu "같은 후보") 목표 그대로 = false, 새 목표면 true.
   // 슬롯이 빈 칸이면 목표 없음(goal_cell −1, 시뮬은 제자리 회전) = true
   bool choose(int slot);
-  void clear_goal() { e_.goal_cell = -1; }   // Nav2 실패 등으로 목표를 버림 (다음 결정에 새로)
+  void clear_goal() { e_.goal_cell = -1; }
+  // 아래층 정책 (SIM_LOW_OBS_MOV · SIM_LOW_MOV4 체크포인트): 라이다 덩어리 사람 추적을 걸음마다 시뮬과 같은 차례로 돌린다 (step 첫머리 —
+  // 새 장을 넣기 전, 시뮬 lowrl_act 자리). 켜면 다음 reset 부터 (판 중간에 켜면 그 걸음부터). 끄면 추적 안 함 (위층만 쓸 때 — 기본)
+  void set_mov_track(bool on) { mov_on_ = on; }
+  // 관측의 움직이는 것 칸: mov[6] = 아래층 1D kLoMov.., mov4[24] = kLoMov4.. (nullptr 이면 안 씀) — 지금(마지막 step 뒤) 지도 자세·바퀴 속도로
+  void mov_slots(float* mov, float* mov4) const { mov_.slots(b_, e_, mov, mov4); }
+  const LowMov& mov() const { return mov_; }   // Nav2 실패 등으로 목표를 버림 (다음 결정에 새로)
 
   // 읽기
   const uint8_t* obs_img() const { return b_.obs_img; }
@@ -96,6 +103,8 @@ class RobotEnv {
   sim::EnvState e_{};
   sim::Shared sh_{};
   int done_ = 0;
+  bool mov_on_ = false;
+  LowMov mov_;
   // 메모리 (EnvBatch 포인터가 가리킴)
   std::vector<uint8_t> grid_;
   std::vector<int16_t> lmap_;

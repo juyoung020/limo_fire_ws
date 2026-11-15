@@ -107,11 +107,14 @@ void RobotEnv::reset(float x0, float y0, float th0, const Proprio& p0, float fov
   for (int i = 0; i < 7; ++i) e_.imu.out[i] = p0.imu[i];
   done_ = 0;
   sh_ = sim::Shared{};
+  mov_.reset();
   obs();
 }
 
 void RobotEnv::step(const Proprio& p, const Scan& s) {
   const sim::EnvCfg& c = b_.cfg;
+  // 0. 사람 추적 (아래층 정책만, set_mov_track): 시뮬 lowrl_act 와 같은 자리 — 이번 장을 넣기 전, 링 최신 장(직전 걸음)까지
+  if (mov_on_) mov_.track(b_, e_);
   // 1. 행동 자리: 이번 걸음 명령 (시뮬 apply_action 계층형 끝)
   e_.collided = 0;
   e_.done = 0;

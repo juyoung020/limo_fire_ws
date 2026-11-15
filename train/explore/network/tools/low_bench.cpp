@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
   std::uniform_int_distribution<int> U8(0, 255);
   std::normal_distribution<float> G(0.f, 1.f);
   std::vector<uint8_t> img(mdp::low::IMG_WIDE);
-  std::vector<float> o1(mdp::low::N1D), out(mdp::low::ACT);
+  std::vector<float> o1(p.n1d()), out(mdp::low::ACT);   // 1D 칸 수는 체크포인트가 정함 (N1D 또는 N1D_MOV4)
   FILE* f = std::fopen(argv[2], "wb");
   double t = 0;
   for (int r = 0; r < n; ++r) {
@@ -34,6 +34,6 @@ int main(int argc, char** argv) {
 #else
   const char* kind = "스칼라";
 #endif
-  std::printf("%s: %d 걸음 평균 %.3f ms/act (GRU %d)\n", kind, n, t / n, p.hidden());
+  std::printf("%s: %d 걸음 평균 %.3f ms/act (GRU %d, 1D %d)\n", kind, n, t / n, p.hidden(), p.n1d());
   return 0;
 }

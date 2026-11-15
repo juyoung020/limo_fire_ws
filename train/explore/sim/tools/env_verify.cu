@@ -15,6 +15,8 @@
 //            판 시작·결정마다 GPU == CPU 인지, 정답 격자를 바꾼 묶음에서 그래프 관측이 같은지 (--negative 는 유효 이웃 번호 하나를 다른 유효 이웃으로)
 //   --low: 아래층 RL 모드(include/low_rl.h — 걸음 하나 = 행동 하나, 정책 자리에 무작위·경로 쫓기 행동). 상태·보상·관측에 더해 아래층 관측(그림·숫자)·
 //          걸음 사이 값·목표·누적이 걸음마다 GPU == CPU 인지. --low-host: 목표를 호스트가 넣는 길(Env::low_prepare — 정책·규칙 추종·예열 탐사 환경을 섞음)
+//          --mov-dump 파일: (--low, 자동 목표) 걸음마다 GPU 의 사람 추적 입력(라이다 링·자세)·추적 상태·아래층 1D 를 녹화 → sim/tools/low_mov_replay 로
+//                       실물 CPU 판(limo_fire_rl/low_mov.h)을 다시 돌려 비트 견줌 (SIM_LOW_OBS_MOV=1, SIM_LOW_MOV4=1 일 때 뜻 있음)
 //          --low-explore: 그 위에 합친 탐사(EnvCfg::low_explore — 탐사 판 끝 규칙 그대로, 정체는 막힘 신호만. scripts/combine_run.cpp 가 쓰는 길)
 //          --low-train: 탐사 판 학습(EnvCfg::low_auto 2 + low_explore — 위층 0 번 후보 규칙을 환경이 돌림, low_rl.h lowrl_goal_explore. scripts/train --low --low-explore 가 쓰는 길).
 //                       --low-solo P 를 같이 주면 환경의 P % 는 단독 과제로 (섞어 학습)
@@ -64,6 +66,7 @@ void range_1d(int i, float* lo, float* hi) {
 
 // ---- 아래층 RL (--low) ----
 static int g_low_train = 0, g_low_solo = 0;   // --low-train · --low-solo
+static FILE* g_mov_dump = nullptr;   // --mov-dump 파일: 걸음마다 GPU 의 사람 추적 입력·상태·아래층 1D 를 녹화 (sim/tools/low_mov_replay 가 실물 CPU 판으로 다시 돌려 비트 견줌)
 int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const sim::LidarModel& lidar, int n_env, int n_steps, int people, bool negative, bool host, bool explore) {
   using sim::LowRl; using sim::LowCmd; using sim::LowRlStat; using sim::LowEp;
   hc.cfg.action_mode = sim::kActPath;
@@ -174,7 +177,29 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
       }
     }
   };
+  std::vector<float> ring_g;
+  const auto mov_rec = [&]() {   // 녹화 한 줄 (걸음 뒤 GPU 값): 환경마다 EnvState · LowRl · 라이다 링 · 아래층 1D. 머리: 크기 검사 칸 · EnvCfg
+    if (!g_mov_dump) return;
+    gpu.get_state(sg);
+    gpu.get_low_rl(Rg);
+    gpu.get_lidar_ring(ring_g);
+    gpu.get_low_obs(lgi, lg1);
+    const int n1 = (int)(lg1.size() / n_env), rn = sim::kLidarRing * mdp::obs::LIDAR_BINS;
+    for (int i = 0; i < n_env; ++i) {
+      std::fwrite(&sg[i], sizeof(sim::EnvState), 1, g_mov_dump);
+      std::fwrite(&Rg[i], sizeof(LowRl), 1, g_mov_dump);
+      std::fwrite(&ring_g[(size_t)i * rn], sizeof(float), rn, g_mov_dump);
+      std::fwrite(&lg1[(size_t)i * n1], sizeof(float), n1, g_mov_dump);
+    }
+  };
+  if (g_mov_dump) {
+    const int32_t hd[8] = {0x564F4D4C, (int32_t)sizeof(sim::EnvCfg), (int32_t)sizeof(sim::EnvState), (int32_t)sizeof(LowRl),
+                           sim::kLidarRing * mdp::obs::LIDAR_BINS, c.lo_mov4 ? sim::kLow1dMov4 : sim::kLow1d, n_env, n_steps + 1};
+    std::fwrite(hd, sizeof(hd), 1, g_mov_dump);
+    std::fwrite(&c, sizeof(sim::EnvCfg), 1, g_mov_dump);
+  }
   cmp_low(-1);
+  mov_rec();
   std::vector<float> act((size_t)A * n_env);
   std::vector<int> sig_prev(n_env, 0);
   size_t n_sig = 0, n_ok = 0, n_idle = 0;   // 합친 탐사: 막힘 신호가 선 횟수 · 닫힘 성공 · 진행 없음으로 끝난 판
@@ -265,6 +290,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     for (size_t i = 0; i < og1.size(); ++i) bo += std::memcmp(&og1[i], &oc1[i], 4) != 0;
     mark(bo, bad_obs, t);
     cmp_low(t);
+    mov_rec();
     for (int i = 0; i < n_env; ++i) n_pol += Rc[i].pol != 0;
     if (explore)
       for (int i = 0; i < n_env; ++i) { n_sig += Rc[i].stall && !sig_prev[i]; sig_prev[i] = Rc[i].stall; n_ok += dc[i] == mdp::cur::kDeclareOk; n_idle += dc[i] == mdp::cur::kNoProgress; }
@@ -371,6 +397,7 @@ int main(int argc, char** argv) {
     else if (a == "--low-explore") low = low_host = low_explore = true;
     else if (a == "--low-train") { low = low_explore = true; g_low_train = 1; }
     else if (a == "--low-solo" && i + 1 < argc) g_low_solo = std::stoi(argv[++i]);
+    else if (a == "--mov-dump" && i + 1 < argc) { g_mov_dump = std::fopen(argv[++i], "wb"); if (!g_mov_dump) { std::perror(argv[i]); return 2; } }
     else if (a == "--graph") hier = graph = true;
     else if (i + 1 < argc && sim::graph_arg(gargs, a, argv[i + 1])) ++i;
     else if (a == "--graph-stand") graph_stand = std::atoi(argv[++i]);

@@ -372,7 +372,9 @@ class LowPolicy {
       blk_[nm].assign(p.begin() + off, p.begin() + off + n);
       off += n;
     }
-    if (D != mdp::low::N1D) throw std::runtime_error("정규화 차원이 아래층 1D(N1D) 와 다름 — 움직이는 것 칸 넷(N1D_MOV4) 정책은 실물 노드가 아직 관측을 안 만듦");
+    // 1D 칸 수: N1D (32) 또는 움직이는 것 칸 넷을 켠 N1D_MOV4 (56 — 관측은 sim low_rl.h lowrl_mov_slots 와 같은 함수로, 실물은 같은 라이다 추적 lowrl_trk)
+    if (D != mdp::low::N1D && D != mdp::low::N1D_MOV4) throw std::runtime_error("정규화 차원이 아래층 1D(N1D 또는 N1D_MOV4) 와 다름: " + std::to_string(D));
+    d1d_ = D;
     if (!blk_.count("actor.gru.wh") || !blk_.count("enc.cnn3.conv0.w"))
       throw std::runtime_error("넓은 지도 가지·순환 핵 아래층 체크포인트가 아님 (train --low --gru, SIM_LOW_WIDE=1): " + path);
     H_ = (int)(blk_.at("actor.gru.bh").size() / 3);
@@ -384,11 +386,11 @@ class LowPolicy {
         c = kConvCh[l];
       }
     }
-    const int nin = kFeat + mdp::low::N1D;
+    const int nin = kFeat + d1d_;
     need("actor.gru.wx", (size_t)3 * H_ * nin);
     need("actor.gru.bx", (size_t)3 * H_);
     need("actor.gru.wh", (size_t)3 * H_ * H_);
-    int in = kFeat + H_ + mdp::low::N1D;
+    int in = kFeat + H_ + d1d_;
     const int dims[4] = {kHidden[0], kHidden[1], kHidden[2], mdp::low::ACT};
     for (int l = 0; l < 4; ++l) {
       need("actor.mlp" + std::to_string(l) + ".w", (size_t)dims[l] * in);
@@ -412,7 +414,7 @@ class LowPolicy {
       }
     }
     tblk_["actor.gru.wx"] = transpose(blk_.at("actor.gru.wx"), 3 * H_, nin);
-    in = kFeat + H_ + mdp::low::N1D;
+    in = kFeat + H_ + d1d_;
     for (int l = 0; l < 4; ++l) {
       const std::string nm = "actor.mlp" + std::to_string(l) + ".w";
       tblk_[nm] = transpose(blk_.at(nm), dims[l], in);
@@ -425,19 +427,21 @@ class LowPolicy {
   int iteration() const { return iteration_; }
   void reset() { std::fill(h_.begin(), h_.end(), 0.f); }   // 판(과제)이 새로 시작 — 학습의 판 끝 h = 0 과 같음
   const std::vector<float>& h() const { return h_; }
-  // 아래층 관측: img = mdp::low::IMG_WIDE 바이트 (가까운 지도 · 라이다 그림 · 깊이 · 넓은 지도), obs1d = mdp::low::N1D (날 값).
+  int n1d() const { return d1d_; }   // 1D 칸 수 (체크포인트가 정함: N1D 또는 N1D_MOV4)
+  // 아래층 관측: img = mdp::low::IMG_WIDE 바이트 (가까운 지도 · 라이다 그림 · 깊이 · 넓은 지도), obs1d = n1d() 칸 (날 값).
   // out[ACT] = (v, ω 평균, 선언 로짓). 반환 = 선언 (로짓 > 0). h 를 한 걸음 진행
   bool act(const uint8_t* img, const float* obs1d, float* out) {
     using namespace mdp::low;
-    std::vector<float> F((size_t)kFeat), xn((size_t)N1D);
+    const int N1 = d1d_;
+    std::vector<float> F((size_t)kFeat), xn((size_t)N1);
     const int off[4] = {0, LIDAR_OFF, DEPTH_OFF, WIDE_OFF};
     const int Hs[4] = {mdp::obs::NEAR_H, LIDAR_HW, mdp::obs::DEPTH_H, WIDE_HW}, Ws[4] = {mdp::obs::NEAR_W, LIDAR_HW, mdp::obs::DEPTH_W, WIDE_HW};
     int flat = 0;
     for (int b = 0; b < 4; ++b) flat += branch(b, img + off[b], kC[b], Hs[b], Ws[b], F.data() + flat);
     if (flat != kFeat) throw std::runtime_error("아래층 인코더 특징 수 ≠ 1536");
-    for (int j = 0; j < N1D; ++j) xn[j] = (obs1d[j] - mean_[j]) / (std::sqrt(var_[j]) + kNormEps);
+    for (int j = 0; j < N1; ++j) xn[j] = (obs1d[j] - mean_[j]) / (std::sqrt(var_[j]) + kNormEps);
     // GRU: gx = bx + Wx [F | 1D] (F 열 다음 1D 열), gh = bh + Whᵀ h
-    const int H = H_, H3 = 3 * H, nin = kFeat + N1D;
+    const int H = H_, H3 = 3 * H, nin = kFeat + N1;
     std::vector<float> xin((size_t)nin), gx((size_t)H3), gh((size_t)H3);
     std::copy(F.begin(), F.end(), xin.begin());
     std::copy(xn.begin(), xn.end(), xin.begin() + kFeat);
@@ -449,7 +453,7 @@ class LowPolicy {
       h_[j] = (1.f - z) * n + z * h_[j];
     }
     // actor MLP [F | h | 1D]
-    std::vector<float> zv((size_t)kFeat + H + N1D);
+    std::vector<float> zv((size_t)kFeat + H + N1);
     std::copy(F.begin(), F.end(), zv.begin());
     std::copy(h_.begin(), h_.end(), zv.begin() + kFeat);
     std::copy(xn.begin(), xn.end(), zv.begin() + kFeat + H);
@@ -610,7 +614,7 @@ class LowPolicy {
   }
   std::map<std::string, std::vector<float>> blk_, tblk_;
   std::vector<float> mean_, var_, h_;
-  int H_ = 0, iteration_ = 0;
+  int H_ = 0, iteration_ = 0, d1d_ = mdp::low::N1D;
 };
 
 }  // namespace xnet_cpu

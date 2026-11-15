@@ -4,6 +4,8 @@
 // 지도(로그 오즈)·닫힘 길·닫힘·진행 없음 시계·판 끝 코드를 비트까지 비교한다. 깊이 바이트는 센서 입력이라 시뮬 관측 값을 그대로 넣는다(깊이 변환은 따로).
 //   rl_node_check <장면.scene> … [--decisions 120] [--seed 1] [--ckpt 정책.bin] [--pose-error] [--dump 관측.bin]
 //   --ckpt: 결정을 정책 CPU 정방향(network/policy_cpu.h)으로 (없으면 있는 후보 중 무작위). --pose-error: 지도 자세 오차를 켬(기본 끔 — 아래)
+//   --mov: 아래층 정책의 움직이는 것 칸(limo_fire_rl/low_mov.h)도 걸음마다 비교 — RobotEnv::set_mov_track 이 제 링·자세로 돌린 추적 vs
+//          시뮬 링·상태로 같은 장(직전 걸음 장 — 시뮬 lowrl_act 자리)을 돌린 추적. 칸 넷(kLoMov4)까지 견줌. --people K: 사람 상한 (움직이는 것이 잡히게)
 //   --dump: 결정마다 시뮬 관측(이미지 IMG_SIZE 바이트 + 1D hier::POLICY_1D float)을 이어 씀 → ppo/tools/policy_cpu_check 입력
 // 지도 자세 오차를 끄는 까닭: 시뮬 깊이 카메라 장애물 층은 참값 자세(e.x)로 칸을 찍고 실물은 Cartographer 자세 하나뿐이라, 오차를 켜면 그 층(→ 후보)만
 // 달라진다 — 켠 판은 그 차이를 따로 센다(관측의 나머지는 지도 자세만 써서 같아야 함).
@@ -26,6 +28,9 @@ struct Tap : sim::CpuTap {
   limo_fire_rl::Scan sc;
   bool have = false;
   int steps = 0;
+  const sim::EnvBatch* sb = nullptr;   // --mov: 시뮬 묶음 (CPU — 호스트 메모리)
+  limo_fire_rl::LowMov simmov;
+  long mov_n = 0, mov_diff = 0, mov_filled = 0;
   void scan(int, const sim::EnvState& e, const sim::Shared& sh, const std::vector<float>& r, const std::vector<float>& inten) override {
     sc.ranges = r;
     sc.intensities = inten;
@@ -51,6 +56,23 @@ struct Tap : sim::CpuTap {
     p.cmd_v = e.cmd_v;
     p.cmd_w = e.cmd_w;
     robot->step(p, sc);
+    if (sb) {   // 시뮬은 이 탭 뒤에 이번 장을 링에 넣으므로 지금 링 최신 장 = 직전 걸음 장: 실물 step 첫머리 추적과 같은 장을 추적한 뒤, 지금 자세로 칸 비교
+      float a6[6], a24[24], r6[6], r24[24];
+      simmov.track(*sb, e);
+      simmov.slots(*sb, e, a6, a24);
+      robot->mov_slots(r6, r24);
+      ++mov_n;
+      mov_diff += std::memcmp(a6, r6, sizeof(a6)) != 0 || std::memcmp(a24, r24, sizeof(a24)) != 0;
+      if (std::getenv("RL_CHECK_MOV") && (std::memcmp(a6, r6, sizeof(a6)) != 0 || std::memcmp(a24, r24, sizeof(a24)) != 0)) {
+        const sim::LowRl &A = simmov.state(), &B = robot->mov().state();
+        std::printf("  움직이는 것 다름 걸음 %d: 시뮬 %g %g %g · 실물 %g %g %g · 추적 머리 %d/%d 수 %d/%d · 링 머리 %d/%d\n", e.step, a6[0], a6[1], a6[2], r6[0], r6[1], r6[2],
+                    A.tk_head, B.tk_head, A.tk_n, B.tk_n, e.lid_head, robot->state().lid_head);
+        for (int q = 0; q < sim::kLrTrk; ++q)
+          if (A.tk_hit[q] || B.tk_hit[q])
+            std::printf("    %d: hit %d/%d mov %d/%d x %.4f/%.4f y %.4f/%.4f vx %.4f/%.4f\n", q, A.tk_hit[q], B.tk_hit[q], A.tk_mov[q], B.tk_mov[q], A.tk_x[q], B.tk_x[q], A.tk_y[q], B.tk_y[q], A.tk_vx[q], B.tk_vx[q]);
+      }
+      mov_filled += a6[0] > 0.5f;
+    }
     have = false;
     ++steps;
   }
@@ -83,7 +105,8 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", ckpt, dump;
   int decisions = 120;
   uint64_t seed = 1;
-  bool pose_err = false, nearest = false, bf16 = false, keep_delay = false;   // --keep-delay: 시뮬 관측 지연(0·1 걸음)을 그대로 (실물 노드 비교는 다를 수 있음 — 정책 성공률만 볼 때)   // --nearest: 결정 = BFS 거리 가장 짧은 있는 후보 (비교 규칙)
+  bool pose_err = false, nearest = false, bf16 = false, keep_delay = false, mov = false;
+  int people = -1;   // --keep-delay: 시뮬 관측 지연(0·1 걸음)을 그대로 (실물 노드 비교는 다를 수 있음 — 정책 성공률만 볼 때)   // --nearest: 결정 = BFS 거리 가장 짧은 있는 후보 (비교 규칙)
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--decisions" && i + 1 < argc) decisions = std::stoi(argv[++i]);
@@ -94,6 +117,8 @@ int main(int argc, char** argv) {
     else if (a == "--nearest") nearest = true;
     else if (a == "--bf16") bf16 = true;
     else if (a == "--keep-delay") keep_delay = true;
+    else if (a == "--mov") mov = true;
+    else if (a == "--people" && i + 1 < argc) people = std::stoi(argv[++i]);
     else if (a == "--env" && i + 1 < argc) env_path = argv[++i];
     else scenes.push_back(a);
   }
@@ -111,6 +136,7 @@ int main(int argc, char** argv) {
     for (const auto& p : scenes) worlds.push_back(sim::build_world(p, sim::load_scene(p), hc));
     sim::set_cpu_threads(1);
     sim::Env env(hc, worlds, lidar, 1, seed, false);
+    if (people >= 0) env.set_people_max(std::vector<int>(1, people));
     env.reset();
     std::vector<sim::EnvState> st;
     env.get_state(st);
@@ -123,6 +149,10 @@ int main(int argc, char** argv) {
     limo_fire_rl::RobotEnv robot(hc);
     Tap tap;
     tap.robot = &robot;
+    if (mov) {
+      robot.set_mov_track(true);
+      tap.sb = &env.batch();
+    }
     const sim::World& w = worlds[(size_t)st[0].map];
     {
       const sim::EnvState& e = st[0];
@@ -268,8 +298,9 @@ int main(int argc, char** argv) {
     std::printf("\n합계 결정 %ld: 2D 다른 바이트 %ld · 1D 다른 칸 %ld (최대 차 %.3g) · 후보 칸 다름 %ld · 지도 칸 다름 %ld · 닫힘 길 낱말 다름 %ld · 상태 칸 다름 %ld · "
                 "시뮬 복구로 목표 맞춤 %ld · (참고) 깊이 카메라 층 칸 다름 %ld\n",
                 n_dec, n_img_diff, n_1d_diff, max_1d, n_cand_diff, n_map_diff, n_trail_diff, n_state_diff, n_goal_sync, n_cam_diff);
+    if (mov) std::printf("움직이는 것 칸 (실물 RobotEnv 추적 vs 시뮬 링 추적): 걸음 %ld 중 다름 %ld · 하나라도 잡힌 걸음 %ld\n", tap.mov_n, tap.mov_diff, tap.mov_filled);
     if (st_n) std::printf("정책 로짓 (있는 칸): |평균| %.3f · 표준편차 %.3f · 최대 |l| %.3f (결정 %ld)\n", st_cm / st_n, st_sp / st_n, st_mx / st_n, st_n);
-    const bool ok = n_img_diff == 0 && n_1d_diff == 0 && n_cand_diff == 0 && n_map_diff == 0 && n_trail_diff == 0 && n_state_diff == 0;
+    const bool ok = tap.mov_diff == 0 && n_img_diff == 0 && n_1d_diff == 0 && n_cand_diff == 0 && n_map_diff == 0 && n_trail_diff == 0 && n_state_diff == 0;
     std::printf("%s\n", ok ? "통과: 실물 노드 관측 == 시뮬 관측 (비트)" : "다름");
     return ok ? 0 : 1;
   } catch (const std::exception& ex) {

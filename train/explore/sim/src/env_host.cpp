@@ -521,6 +521,9 @@ void Env::get_low_rl(std::vector<LowRl>& out) const {
   if (!b_.lowrl) { out.clear(); return; }
   fetch(gpu_, b_.lowrl, (size_t)b_.n_env, out);
 }
+void Env::get_lidar_ring(std::vector<float>& out) const {
+  fetch(gpu_, b_.lidar_ring, (size_t)b_.n_env * kLidarRing * mdp::obs::LIDAR_BINS, out);
+}
 void Env::get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const {
   if (!b_.lowrl) { img.clear(); o1d.clear(); return; }
   fetch(gpu_, b_.low_img, (size_t)(b_.cfg.lo_wide ? kLowImgWide : kLowImg) * b_.n_env, img);

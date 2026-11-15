@@ -135,6 +135,26 @@ ros2 run limo_fire_rl explore_rl --ros-args -p use_sim_time:=true -p dry_run:=tr
 ros2 bag play ~/limo_bags/1103_M_drive1 --clock
 ```
 
+### 아래층 움직이는 것 칸 (2026-11-16 — `SIM_LOW_OBS_MOV`·`SIM_LOW_MOV4` 체크포인트)
+
+아래층 정책 1D 의 움직이는 것 칸(kLoMov 6 칸 · 칸 넷 kLoMov4 24 칸, 1D 32 → 56)은 `include/limo_fire_rl/low_mov.h` `LowMov` 가 만든다 — 시뮬과 같은 함수
+(`low_rl.h` 라이다 덩어리 칼만 추적 `lowrl_trk_step` · `lowrl_trk_movers` · 칸 채우기 `lowrl_mov_slots`)를 RobotEnv 가 이미 들고 있는 라이다 칸 링·자세로 부른다.
+`RobotEnv::set_mov_track(true)` 면 `step` 첫머리(새 장을 넣기 전 — 시뮬 `lowrl_act` 자리)에 추적하고, 관측 때 `mov_slots(mov, mov4)`. 정책은
+`network/policy_cpu.h` `LowPolicy` 가 1D 칸 수(32·56)를 체크포인트 정규화 차원에서 읽는다. `-ffp-contract=off` 빌드(이 패키지 기본)에서 비트까지 같다:
+
+| 확인 | 결과 |
+|---|---|
+| GPU 녹화 다시 돌리기: `env_verify --low --mov-dump` (SIM_EXACT=1, 넓은 지도·목적지만·OBS_MOV·MOV4, 사람 상한 4) → `sim/tools/low_mov_replay` | 환경 16 × 600 걸음: 추적 한 걸음 9,503 번 · 칸 9,616 번 다름 0 (움직이는 것 1 개 찬 걸음 515 · 2 개 60 · 3 개 3). x86 과 **Orin(aarch64) 둘 다 비트 같음**. 칸 넷 끈 녹화(8 × 400)도 같음. 사람 상한 8, 16 × 800 걸음: 추적 12,669 번 · 칸 12,816 번 다름 0 (2 개 찬 걸음 118 · 3 개 15 — 넷 다 찬 걸음은 아직 녹화에 없음), x86·Orin 같음. 일부러 라이다 거리에 3 mm 더한 녹화는 추적 다름 38 으로 잡음 |
+| 차례: `rl_node_check --mov --people 6` (CPU 시뮬 장을 RobotEnv 에 넣고 걸음마다 RobotEnv 추적 vs 시뮬 링 추적) | bookstore·small-house 씨앗 1~5 걸음 약 1.1 만 번 다름 0, 다른 관측도 그대로 비트 같음 |
+| Orin 시간 (`~/decider_test`) | 추적 한 걸음 8~9 µs · 칸 채우기 0.1 µs. 정책 정방향 56 칸 NEON 4.8~4.9 ms (스칼라 10.2 ms, NEON 출력 == 스칼라 바이트 같음) |
+
+```bash
+SIM_EXACT=1 SIM_LOW_WIDE=1 SIM_LOW_GOALONLY=1 SIM_LOW_OBS_MOV=1 SIM_LOW_MOV4=1 build_sim/env_verify --list train/explore/scenes/train/list.tsv --low --envs 16 --steps 600 --people 4 --mov-dump rec.bin
+build_sim/low_mov_replay rec.bin   # 젯슨: g++ -O2 -std=c++17 -ffp-contract=off -I<explore>/sim/include -I<explore>/mdp -I<이 패키지>/include low_mov_replay.cpp
+```
+
+노드(`explore_rl`)는 아직 아래층 정책을 몰지 않는다 — 이 칸은 아래층 정책을 붙일 때 쓰는 부품이다. 추적은 `sense_step`(닿음 구분)에는 안 넣었다(RobotEnv 가 쓰는 닿음 값은 그대로).
+
 ### 깊이 카메라 층을 볼 것
 
 학습 정책은 깊이 카메라 장애물 층(env.yaml `camera_obstacles`)이 막은 곳을 후보·닫힘에서 뺀 채로 배웠다. 실물 깊이가 학습 모델과 다르면(정렬 꺼짐·카메라 숙임 바뀜)
