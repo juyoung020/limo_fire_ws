@@ -159,6 +159,10 @@ __global__ void k_gae(const real* rew, const real* done, const real* val, const 
   }
 }
 
+__global__ void k_ev_diff(const real* ret, const real* val, long n, real* out) {   // explained_variance: 수익 − 가치
+  const long i = (long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) out[i] = ret[i] - val[i];
+}
 __global__ void k_affine(real* x, long n, real m, real inv) {
   long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
   if (i < n) x[i] = (x[i] - m) * inv;
@@ -823,6 +827,7 @@ PPO::~PPO() {
                                               s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_, c_gred_,
                                               d_st_, d_part_, d_mbrec_, d_bc_, d_seg_, d_pack_bad_, h_a_, h_c_, s_h0a_, s_h0c_, h_tmp_, h_ia_, s_reset_, c_reset_, c_h0a_, c_h0c_})
     cudaFree(p);
+  cudaFree(d_ev_);
   for (void* p : std::initializer_list<void*>{h_mbrec_, h_bc_, h_perm_, h_pack_bad_}) cudaFreeHost(p);
   for (void* g : upd_exec_)
     if (g) cudaGraphExecDestroy((cudaGraphExec_t)g);
@@ -1334,6 +1339,20 @@ void PPO::set_critic_only(bool on) {
   // 인코더(그래프는 몸통)를 정책과 같이 쓰면 가치만 고쳐도 정책이 바뀐다
   if (on && (ac_->spec.graph ? ac_->spec.graph_share : !ac_->split)) throw std::runtime_error("set_critic_only: actor·critic 이 인코더를 같이 쓰는 구조");
   critic_only_ = on;
+}
+
+double PPO::explained_variance(double* ret_std, double* adv_mean, double* adv_std) {
+  auto st = ac_->stream;
+  if (!d_ev_) CK(cudaMalloc(&d_ev_, sizeof(real) * (size_t)S_));
+  k_ev_diff<<<nblk(S_), 256, 0, st>>>(s_ret_, s_val_, S_, d_ev_);
+  const double n = (double)S_;
+  const double sr = sum_all(s_ret_, S_, st), ssr = sumsq_all(s_ret_, S_, st);
+  const double sd = sum_all(d_ev_, S_, st), ssd = sumsq_all(d_ev_, S_, st);
+  const double vr = std::max(0.0, ssr / n - (sr / n) * (sr / n)), vd = std::max(0.0, ssd / n - (sd / n) * (sd / n));
+  if (ret_std) *ret_std = std::sqrt(vr);
+  if (adv_mean) *adv_mean = sd / n;
+  if (adv_std) *adv_std = std::sqrt(vd);
+  return vr > 0 ? 1.0 - vd / vr : 0.0;
 }
 
 UpdateStats PPO::finish_update() {

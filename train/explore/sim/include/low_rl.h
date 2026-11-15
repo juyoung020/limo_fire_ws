@@ -602,7 +602,7 @@ DEV void lowrl_finish(const EnvBatch& b, EnvState& e, int env) {
     float r[kLrTerms];
     for (int k = 0; k < kLrTerms; ++k) r[k] = 0.f;
     if (R.rem_ok && t.has_path) r[kLrProgress] = kLrProgressK * dm::clampf(R.rem_prev - t.rem, -kLrProgressClip, kLrProgressClip);
-    r[kLrTime] = kLrTimeK;
+    r[kLrTime] = c.lr_time_k;
     if (reach_new && (!xm || R.g_len >= kLrXReachLen)) r[kLrReach] = kLrReachK;   // 탐사 판 학습: 처음 계획 길이 kLrXReachLen 넘는 목표만 (위 상수)
     if (e.contact) r[kLrCollision] = (e.s_kind & kConPerson) ? c.lr_pcol_k : c.lr_coll_k;   // 닿음 (센서 — contact.h)
     {   // 근접 (2026-11-14 진행 방향): 몸통이 다가가는 쪽의 센서 간격 (contact.h s_dir — 이번 장 라이다 점 · 로봇 지도 막힘 · 깊이 층 가운데

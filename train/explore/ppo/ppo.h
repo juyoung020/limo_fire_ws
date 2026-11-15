@@ -189,6 +189,9 @@ class PPO {
 
   // 손실 하나(미니배치 하나 분량)의 기울기를 d_grads 에 쓴다 — 유한 차분 검사용. 저장된 롤아웃의 idx 앞 n 개.
   double loss_and_grad(const int* d_idx, int n, bool backward);
+  // 진단 (2026-11-15): 지난 롤아웃의 가치가 수익을 얼마나 설명하나 — 1 − Var(수익 − 가치) / Var(수익) (rollout 전체, update 뒤 다음 act 전에 부름).
+  // 수익·이점 원래 크기(정규화 전 이점의 평균·표준편차 — 수익 − 가치)도 out 에. 반복에 한 번 호스트 동기화
+  double explained_variance(double* ret_std = nullptr, double* adv_mean = nullptr, double* adv_std = nullptr);
 
  private:
   void clamp_std();  // log σ 변수를 [ln std_min, ln std_max] 로 (Adam 걸음·불러오기 뒤)
@@ -284,6 +287,7 @@ class PPO {
   real* c_xc_ = nullptr;      // 인코더 나눔: critic MLP 입력 [F_c | 1D]
   uint16_t* c_xch_ = nullptr; // 그 bf16 사본
   int* d_perm_;
+  real* d_ev_ = nullptr;   // explained_variance 작업 칸 [S]
   size_t storage_bytes_ = 0;
 };
 

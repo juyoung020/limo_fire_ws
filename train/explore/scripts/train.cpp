@@ -631,6 +631,8 @@ int run_low(Args a) {
     const sim::StepOut o = env.outputs();
     ppo.set_critic_only(it - it0 < a.critic_warmup);
     const xppo::UpdateStats us = ppo.update(o.low_img, o.low_1d);
+    double ev_rs = 0, ev_am = 0, ev_as = 0;   // 가치 진단 (2026-11-15): 설명 분산 · 수익 표준편차 · 정규화 전 이점 평균·표준편차 — 아래 기록 줄에
+    const double ev_ev = ppo.explained_variance(&ev_rs, &ev_am, &ev_as);
     const double t_upd = ms_since(tu), t_iter = ms_since(t_it);
     if (!std::isfinite(us.value) || !std::isfinite(us.surrogate) || !std::isfinite(us.kl)) {
       run.event("NaN at iteration " + std::to_string(it) + " — stop");
@@ -648,6 +650,10 @@ int run_low(Args a) {
     cudaMemGetInfo(&fr, &tot);
     const double ns = s.steps > 0 ? s.steps : 1;
     auto& r = run.row();
+    r.last("train/explained_variance", ev_ev);
+    r.last("train/return_std", ev_rs);
+    r.last("train/adv_raw_mean", ev_am);
+    r.last("train/adv_raw_std", ev_as);
     r.last(rf::key::ITER, it);
     r.last(rf::key::STEPS, total_steps);
     r.last(rf::key::FPS, iter_steps / (t_iter / 1000));
