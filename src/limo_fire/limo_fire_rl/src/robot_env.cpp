@@ -304,6 +304,7 @@ void RobotEnv::low_obs() {
     sim::lowrl_planned(b_, e_, 0);
   }
   sim::lowrl_pack(b_, e_, 0);
+  sim::lowrl_body_clear(b_, e_, 0);   // 몸 둘레 간격 8 칸 (SIM_LOW_BODY 일 때만 — 로봇 지도·깊이 카메라 층·최신 라이다 장, env_ref.cpp 와 같은 자리)
   const int n = sim::low_img_n(b_.cfg);
   for (int i = 0; i < sim::kLowImg; ++i) b_.low_img[i] = sim::lowrl_img(b_, e_, 0, i);
   if (b_.cfg.lo_wide) {

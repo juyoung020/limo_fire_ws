@@ -139,7 +139,7 @@ ros2 bag play ~/limo_bags/1103_M_drive1 --clock
 
 `RobotEnv(hc, true)` (아래층 모드)가 학습(`train --low`, 목적지만 `SIM_LOW_GOALONLY=1`)과 **같은 함수로** 아래층 관측 전부를 만든다:
 그림(가까운 지도 6 채널 — 깊이 카메라 층 채널 포함 · 라이다 4 장 그림 · 깊이 · 넓은 지도 6 채널 — 막힘·빈 칸·모름·지나간 곳·목적지 점·깊이 층)과
-1D(바퀴·자이로·헛돎·EKF · 목적지 · 직전 행동 4 걸음 · 움직이는 것 칸 · 칸 넷). 시뮬 걸음 차례(`env_ref.cpp` `step_env` + `low_prepare_env`) 그대로:
+1D(바퀴·자이로·헛돎·EKF · 목적지 · 직전 행동 4 걸음 · 움직이는 것 칸 · 칸 넷 · 몸 둘레 간격 8 칸 — `SIM_LOW_BODY`, `lowrl_pack` 뒤 `lowrl_body_clear`). 시뮬 걸음 차례(`env_ref.cpp` `step_env` + `low_prepare_env`) 그대로:
 `low_act`(정책 출력 → `lowrl_begin`·`lowrl_act`: 바퀴 한도·직전 행동·사람 추적) → `step`(라이다 장 — 지도·위층 관측, `finish_step` 안의 `low_finish`·`lowrl_finish` 포함)
 → `set_depth` → `set_goal`(위층이 새 목적지를 줄 때 — 시뮬 `lowrl_goal_set` 의 칸) → `low_obs`(깊이 카메라 층 `lowrl_cam_due` · 새 목표면 `goal_only_issue` ·
 `lowrl_pack`·`lowrl_img`·`lowrl_wred`·`lowrl_wide`). 경로 계획은 없다(학습 판 정책 환경도 안 짬). 보조 예측 재료(`SIM_LOW_AUX`)는 학습 전용이라 안 만든다.
@@ -156,6 +156,7 @@ ros2 bag play ~/limo_bags/1103_M_drive1 --clock
 | `low_node_replay` — 위 녹화를 `RobotEnv` 만으로 다시 돌림 | x86 · **Orin(aarch64, g++ 11 -O2 -ffp-contract=off) 둘 다 비트 같음** |
 | 녹화 bag(`1103_M_drive1`, 74 s)에 노드를 dry run 으로 | `~/cmd_debug` 만 나옴(노드 발행자: cmd_debug·status), 노드 녹화를 x86·Orin 에서 다시 돌려 같음 |
 | Orin 시간(한 코어, 다른 일로 부하 평균 ≈ 6) | 걸음 하나: `step` 2.4 ms · `low_obs` 2.7~3.0 ms · `low_act` 0.02 ms · 정책 NEON 5.0 ms → **합 ≈ 10.4 ms / 100 ms** (99 % 값 ≈ 15 ms) |
+| 몸 둘레 간격 8 칸 (`SIM_LOW_BODY=1`, 1D 64, 2026-11-16) | `low_node_check` CPU 4 번 · `--gpu` 2 번(사람 8, 1,500 걸음): 다름 0 — 몸 둘레 1 m 안에 막힘이 있는 관측 1,357~1,493 번. 녹화 다시 돌리기 x86 · Orin 비트 같음. Orin(부하 ≈ 0.5): `low_obs` 2.90 ms (몸 둘레 없는 녹화 2.58 ms — 다른 녹화라 차이 ≈ 0.3 ms 는 잠정) · `step` 2.78 · 정책 NEON 4.07 ms |
 
 시뮬과 다른 곳: 시뮬은 판 끝(닿음·목표 수 등 — `low_finish`)에 환경을 리셋하지만 실물은 이어 간다(같은 함수가 사람 추적·목표 상태를 비우는 것만 같음 — 로그에 알림).
 목적지가 없으면 시뮬은 규칙 추종기가 몰지만 실물 노드는 명령 0.

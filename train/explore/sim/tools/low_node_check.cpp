@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
     std::vector<float> o1d, l1, l1g;
     std::vector<sim::LowCmd> cmd;
     std::vector<sim::LowRl> R;
-    long n_obs = 0, d_img = 0, d_1d = 0, d_cmd = 0, g_img = 0, g_1d = 0, n_ep = 0, n_goal = 0, n_mov = 0, n_mov4 = 0, n_wgoal = 0;
+    long n_obs = 0, d_img = 0, d_1d = 0, d_cmd = 0, g_img = 0, g_1d = 0, n_ep = 0, n_goal = 0, n_mov = 0, n_mov4 = 0, n_wgoal = 0, n_body = 0;
     int first_bad = -1;
     double max_1d = 0;
     const auto start_episode = [&]() {   // RobotEnv 를 시뮬 판 시작 상태로 (rl_node_check 와 같음) + 시뮬이 뽑은 첫 목표
@@ -212,8 +212,14 @@ int main(int argc, char** argv) {
           if (std::memcmp(&l1[(size_t)i], &robot.low_1d()[i], 4) != 0) std::printf("  걸음 %d 1D 칸 %d 시뮬 %g 실물 %g\n", t, i, l1[(size_t)i], robot.low_1d()[i]);
       if (rec) rec->obs(exp_i, exp_1);
       n_mov += robot.low_1d()[sim::kLoMov] > 0.5f;
-      if (N1 == sim::kLow1dMov4) n_mov4 += robot.low_1d()[sim::kLoMov4 + mdp::low::MOV_W] > 0.5f;   // 둘째 칸까지 찬 걸음
+      if (hc.cfg.lo_mov4) n_mov4 += robot.low_1d()[sim::kLoMov4 + mdp::low::MOV_W] > 0.5f;   // 둘째 칸까지 찬 걸음
       if (robot.low_cmd().target >= 0) ++n_wgoal;
+      if (hc.cfg.lo_body) {   // 몸 둘레 간격: 한 구역이라도 BODY_RANGE 안에 막힘이 있는 관측
+        const float* B = robot.low_1d() + mdp::low::body_off(hc.cfg.lo_mov4 != 0);
+        bool near = false;
+        for (int k = 0; k < mdp::low::BODY_SEC; ++k) near = near || B[k] < 1.f;
+        n_body += near;
+      }
     };
     start_episode();
     sync_goal();
@@ -262,9 +268,10 @@ int main(int argc, char** argv) {
     }
     sim::set_cpu_tap(nullptr);
     if (d_act) cudaFree(d_act);
-    std::printf("설정: 그림 %d 바이트 · 1D %d 칸 (넓은 지도 %d · 움직이는 것 %d · 칸 넷 %d) · 행동 %s\n", NI, N1, hc.cfg.lo_wide, hc.cfg.lo_mov, hc.cfg.lo_mov4,
+    std::printf("설정: 그림 %d 바이트 · 1D %d 칸 (넓은 지도 %d · 움직이는 것 %d · 칸 넷 %d · 몸 둘레 %d) · 행동 %s\n", NI, N1, hc.cfg.lo_wide, hc.cfg.lo_mov, hc.cfg.lo_mov4, hc.cfg.lo_body,
                 ckpt.empty() ? "무작위" : "실물 CPU 정책");
-    std::printf("관측 %ld 번 · 판 %ld · 목표 받음 %ld · 목표 있는 관측 %ld · 움직이는 것 찬 관측 %ld (칸 넷 둘째 칸까지 %ld)\n", n_obs, n_ep, n_goal, n_wgoal, n_mov, n_mov4);
+    std::printf("관측 %ld 번 · 판 %ld · 목표 받음 %ld · 목표 있는 관측 %ld · 움직이는 것 찬 관측 %ld (칸 넷 둘째 칸까지 %ld) · 몸 둘레 1 m 안 막힘 관측 %ld\n", n_obs, n_ep, n_goal,
+                n_wgoal, n_mov, n_mov4, n_body);
     std::printf("RobotEnv vs CPU 시뮬: 그림 다른 바이트 %ld · 1D 다른 칸 %ld (최대 차 %.3g) · 명령 다름 %ld\n", d_img, d_1d, max_1d, d_cmd);
     if (gpu) std::printf("RobotEnv vs GPU 시뮬: 그림 다른 바이트 %ld · 1D 다른 칸 %ld\n", g_img, g_1d);
     const bool ok = d_img == 0 && d_1d == 0 && d_cmd == 0 && g_img == 0 && g_1d == 0;

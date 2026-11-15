@@ -79,7 +79,7 @@ class RobotEnv {
   //   low_act  = 시뮬 apply_action 의 아래층 가지: lowrl_begin · lowrl_act (바퀴 한도 · 직전 행동 · 사람 추적 lowrl_trk_step)
   //   step     = 기존 그대로 (명령·직전 행동은 low_act 가 정했으므로 /cmd_vel 값은 안 씀). finish_step 안의 low_finish · lowrl_finish 도 시뮬 그대로 돈다
   //   low_obs  = 시뮬 준비 단계(목표를 환경이 주는 학습 판, low_auto 1): 깊이 카메라 층(lowrl_cam_due) · 새 목표면 goal_only_issue · lowrl_pack · lowrl_img ·
-  //              넓은 지도(lowrl_wred · lowrl_wide). 경로 계획은 없다 (학습 판 정책 환경도 안 짬 — low_rl.h lowrl_replan)
+  //              lowrl_body_clear(몸 둘레 간격, SIM_LOW_BODY) · 넓은 지도(lowrl_wred · lowrl_wide). 경로 계획은 없다 (학습 판 정책 환경도 안 짬 — low_rl.h lowrl_replan)
   explicit RobotEnv(const sim::EnvHostCfg& hc, bool low);
   bool low() const { return low_on_; }
   // 목표 칸 (cell = cy · gw + cx, −1 = 없음) — 시뮬 lowrl_goal_set 과 같은 칸을 고침 (난수 빼고). 위층이 새 목적지를 줄 때만 부른다
