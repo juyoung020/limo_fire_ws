@@ -78,7 +78,7 @@ class SmokeModeNode : public rclcpp::Node {
     bump_accel_ = declare_parameter<double>("bump.accel", 4.0);
     bump_holdoff_ = declare_parameter<double>("bump.holdoff", 1.0);
     // 연기 속 위치: hold = 들어갈 때 map → odom 을 붙잡고 바퀴 + IMU 만 따라감 · wall = 거기에 초음파 메아리를 저장 지도 벽에 맞춰 조금씩 고침.
-    // 연기 모드가 꺼져 있을 때만 바꿀 수 있다. (초음파를 AMCL 에 넣던 sonar 는 2026-11-15 에 지움 — 비슷한 복도로 뛰어 위치를 잃었다, benchmarks 결과 5~7)
+    // 연기 모드가 꺼져 있을 때만 바꿀 수 있다.
     // 앞 초음파가 slow.distance 보다 가까우면 연기 모드 속도 한도를 slow.speed 로 (장애물을 늦게 봐 상자를 못 피함 — 2026-11-06)
     slow_topics_ = declare_parameter<std::vector<std::string>>(
         "slow.topics", {"/ultrasonic/front_left", "/ultrasonic/front_right"});

@@ -1,4 +1,4 @@
-# 주행 벤치마크 — limo_fire_maze · box_hold_sonar_3 (연기 모드: 라이다·카메라 끊음, 위치 hold)
+# 주행 벤치마크 — limo_fire_maze · box_hold_us_3 (연기 모드: 라이다·카메라 끊음, 위치 hold)
 
 - 날짜: 20261106_1711, 도구: `limo_fire_navigation nav_benchmark`, 정답: Webots supervisor (/sim/ground_truth)
 - 목표: 월드 데이터 파일 순찰점 1 개 (지도 좌표), 시간 한도 180 s (시뮬)

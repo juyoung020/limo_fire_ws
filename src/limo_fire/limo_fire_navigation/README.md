@@ -31,7 +31,7 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 | IMU | 빛을 안 써서 영향 없음 | **씀** — 방향(EKF), 부딪힘 감지 |
 | 2D 라이다 YDLIDAR T-mini Plus | 연기 입자에 반사돼 거리가 틀어짐 | 안 씀 |
 | 깊이·컬러 카메라 Orbbec Dabai DC1 | 보이는 빛·적외선 패턴이 연기에 가림 | 안 씀 |
-| 초음파 HC-SR04 × 2 (앞 범퍼 아래 좌우 ±20°) | 빛이 아니라 소리라 덜 막힐 것으로 본다(잠정 — Starr & Lattimer 2014 시험 대상에 sonar 2 종이 있으나 결과 수치는 원문 확인 필요, 열기·기류 영향도 확인 필요) | **씀** — 장애물·감속, `smoke_localization: wall` 이면 위치 보정도. 시뮬엔 있음, 실물은 장착 전([limo_fire_esp32_bridge](../limo_fire_esp32_bridge/README.md)) |
+| 초음파 HC-SR04 × 2 (앞 범퍼 아래 좌우 ±20°) | 빛이 아니라 소리라 덜 막힐 것으로 본다(잠정 — Starr & Lattimer 2014 시험 대상에 초음파 센서 2 종이 있으나 결과 수치는 원문 확인 필요, 열기·기류 영향도 확인 필요) | **씀** — 장애물·감속, `smoke_localization: wall` 이면 위치 보정도. 시뮬엔 있음, 실물은 장착 전([limo_fire_esp32_bridge](../limo_fire_esp32_bridge/README.md)) |
 | 레이더·열화상 | — | 아직 안 달아서 다루지 않음 (부품 대기, [spec.md](../../../docs/spec.md#연기-모드)) |
 
 근거: Starr & Lattimer, "Evaluation of Navigation Sensors in Fire Smoke Environments", *Fire Technology* 50, 2014
@@ -82,8 +82,8 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 - 2026-11-05 (로봇 Jetson, Humble + Webots R2025a, `nav_benchmark`): Webots 맵 4 개 순찰점 46 개를 (a) 라이다 켬 · (b) 연기 모드(바퀴 + IMU 만)
   두 조건으로 다 도착. 결과와 한계는 [docs/benchmarks "주행 벤치마크"](../../../docs/benchmarks/README.md#주행-벤치마크-연기-모드).
 - 부딪힘 감지는 미로 맵 (b) 에서 15 번 떴고 모두 오탐(실제 충돌 0) — 제자리 회전·출발 가속에 걸린다. 문턱(잠정 4 m/s²)을 다시 정해야 한다.
-- 2026-11-06 ~ 11-14: 초음파를 AMCL 에 넣는 방식(`sonar`)은 초음파 3 개·2 개, Webots·Isaac Sim 모두에서 `hold` 보다 나빴다(비슷한 복도로 뛰어 위치를 잃음) → 2026-11-15 에 지우고 `wall` 로 바꿈.
-  기록은 [benchmarks 결과 2~6](../../../docs/benchmarks/README.md). 지도에 없는 상자: 초음파 끔 3/3 닿음 → 켬(장애물 지도) 1/3(결과 3, 3 개), 2 개는 0/3 이나 간격 2 cm 안팎(결과 5). 물체가 있어도 메아리가 없는 때가 2 개 배치에서 45~50 %.
+- 2026-11-06 ~ 11-13 (로봇 Jetson, 거리 −3 % · 초음파 켬): `hold` 는 초음파 3 개·2 개 모두 네 맵 다 끝까지 갔다(추정 오차 최대 0.34 m). 지도에 없는 상자:
+  초음파 끔 3/3 닿음 → 켬(장애물 지도) 1/3(3 개), 2 개는 0/3 이나 간격 2 cm 안팎. 물체가 있어도 메아리가 없는 때가 2 개 배치에서 45~50 % → [benchmarks 결과 2·3·5](../../../docs/benchmarks/README.md).
 - 2026-11-15 (데스크톱, Jazzy + Webots R2025a, 거리 −3 %): 새 `wall` 이 네 맵 8 판 모두 끝까지 갔고 추정 오차 평균이 8 판 중 7 판에서 `hold` 보다 작았다 → [benchmarks 결과 7](../../../docs/benchmarks/README.md).
   첫 판(불확실성 없이 매번 같은 사전)은 warehouse 에서 위치를 잃어(8/13, 2.26 m) 불확실성을 넣고 다시 쟀다. 시뮬 초음파 모델이 잠정이라 실물 확인 전까지 기본은 `hold`.
 - **아직 안 함**: 실물 주행, 실물 수준 오도메트리 오차에서의 측정.

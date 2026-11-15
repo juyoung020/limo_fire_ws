@@ -4,7 +4,6 @@ smoke_mode:
   ros__parameters:
     # 연기 속 위치: hold = 바퀴 + IMU 만(들어갈 때 위치를 붙잡음)
     #   · wall = 거기에 최근 초음파 메아리를 저장 지도의 벽에 맞춰 벽에 수직인 방향만 조금씩 고침(아래 wall). 연기 모드가 꺼져 있을 때만 바꿀 수 있다
-    #   (초음파를 AMCL 에 넣던 sonar 는 2026-11-15 에 지움 — 비슷한 복도로 뛰어 위치를 잃었다, docs/benchmarks 결과 5~7)
     smoke_localization: hold
     # wall: 최근 window 초 메아리(각각 그 시각 odom 자세와 함께)를 지금 추정 근처에서 벽 면에 맞춘다
     #   (include/limo_fire_navigation/sonar_wall.hpp). 값은 모두 잠정 — 시뮬 HC-SR04 모델 기준, 실물 메아리 잡음은 아직 안 쟀다
