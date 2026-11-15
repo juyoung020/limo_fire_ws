@@ -65,13 +65,35 @@ class RobotEnv {
   // 고른 슬롯 → 목표 칸. 같은 덩어리를 다시 고르면(cand_cur 비트, 시뮬 plan_cpu "같은 후보") 목표 그대로 = false, 새 목표면 true.
   // 슬롯이 빈 칸이면 목표 없음(goal_cell −1, 시뮬은 제자리 회전) = true
   bool choose(int slot);
-  void clear_goal() { e_.goal_cell = -1; }
+  void clear_goal() { e_.goal_cell = -1; }   // Nav2 실패 등으로 목표를 버림 (다음 결정에 새로)
   // 아래층 정책 (SIM_LOW_OBS_MOV · SIM_LOW_MOV4 체크포인트): 라이다 덩어리 사람 추적을 걸음마다 시뮬과 같은 차례로 돌린다 (step 첫머리 —
   // 새 장을 넣기 전, 시뮬 lowrl_act 자리). 켜면 다음 reset 부터 (판 중간에 켜면 그 걸음부터). 끄면 추적 안 함 (위층만 쓸 때 — 기본)
   void set_mov_track(bool on) { mov_on_ = on; }
   // 관측의 움직이는 것 칸: mov[6] = 아래층 1D kLoMov.., mov4[24] = kLoMov4.. (nullptr 이면 안 씀) — 지금(마지막 step 뒤) 지도 자세·바퀴 속도로
   void mov_slots(float* mov, float* mov4) const { mov_.slots(b_, e_, mov, mov4); }
-  const LowMov& mov() const { return mov_; }   // Nav2 실패 등으로 목표를 버림 (다음 결정에 새로)
+  const LowMov& mov() const { return mov_; }
+
+  // ---- 아래층 정책 모드 (RobotEnv(hc, true)) — 학습(train --low, 목적지만 SIM_LOW_GOALONLY=1)과 같은 관측을 같은 함수로 ----
+  // 한 걸음 차례 (시뮬 env_ref.cpp step_env + low_prepare_env 와 같게):
+  //   low_act(정책 출력) → (명령을 내보냄) → step(감각, 라이다 장) → set_depth(깊이) → [set_goal(위층 목표, 바뀔 때만)] → low_obs() → 정책
+  //   low_act  = 시뮬 apply_action 의 아래층 가지: lowrl_begin · lowrl_act (바퀴 한도 · 직전 행동 · 사람 추적 lowrl_trk_step)
+  //   step     = 기존 그대로 (명령·직전 행동은 low_act 가 정했으므로 /cmd_vel 값은 안 씀). finish_step 안의 low_finish · lowrl_finish 도 시뮬 그대로 돈다
+  //   low_obs  = 시뮬 준비 단계(목표를 환경이 주는 학습 판, low_auto 1): 깊이 카메라 층(lowrl_cam_due) · 새 목표면 goal_only_issue · lowrl_pack · lowrl_img ·
+  //              넓은 지도(lowrl_wred · lowrl_wide). 경로 계획은 없다 (학습 판 정책 환경도 안 짬 — low_rl.h lowrl_replan)
+  explicit RobotEnv(const sim::EnvHostCfg& hc, bool low);
+  bool low() const { return low_on_; }
+  // 목표 칸 (cell = cy · gw + cx, −1 = 없음) — 시뮬 lowrl_goal_set 과 같은 칸을 고침 (난수 빼고). 위층이 새 목적지를 줄 때만 부른다
+  void set_goal(int cell);
+  int goal_of(float x, float y) const;   // 지도 자세 좌표 → 목표 칸 (창 밖이면 −1)
+  // 정책 출력 a[ACT] (정규 단위 v, ω, 선언 자리) → 내보낼 명령 v (m/s) · ω (rad/s). 목표가 없으면(정책 환경 아님) 0, 0
+  void low_act(const float* a, float* v, float* w);
+  void low_obs();
+  const uint8_t* low_img() const { return b_.low_img; }   // [low_img_n(cfg)] — 넓은 지도를 켜면 IMG_WIDE
+  const float* low_1d() const { return b_.low_1d; }       // [low_1d_n(cfg)] — 움직이는 것 칸 넷을 켜면 N1D_MOV4
+  int low_img_n() const { return sim::low_img_n(b_.cfg); }
+  int low_1d_n() const { return sim::low_1d_n(b_.cfg); }
+  const sim::LowRl& low_rl() const { return lowrl_[0]; }
+  const sim::LowCmd& low_cmd() const { return lowcmd_[0]; }
 
   // 읽기
   const uint8_t* obs_img() const { return b_.obs_img; }
@@ -103,7 +125,7 @@ class RobotEnv {
   sim::EnvState e_{};
   sim::Shared sh_{};
   int done_ = 0;
-  bool mov_on_ = false;
+  bool mov_on_ = false, low_on_ = false;
   LowMov mov_;
   // 메모리 (EnvBatch 포인터가 가리킴)
   std::vector<uint8_t> grid_;
@@ -113,6 +135,16 @@ class RobotEnv {
   std::vector<float> o1d_, ring_, vprev_, lint_, rew_, terms_, cpts_;
   std::vector<int32_t> done_buf_, cand_, cand_cur_;
   std::vector<sim::EpInfo> ep_;
+  // 아래층 정책 모드 (env_host.cpp 가 low_rl 일 때 잡는 칸과 같은 것)
+  std::vector<sim::LowRl> lowrl_;
+  std::vector<sim::LowCmd> lowcmd_;
+  std::vector<sim::LowEp> lowep_;
+  std::vector<sim::LowRlStat> lowstat_;
+  std::vector<uint8_t> limg_;
+  std::vector<float> l1d_;
+  std::vector<uint32_t> lwred_;
+  std::vector<int32_t> lvdone_;
+  void init(const sim::EnvHostCfg& hc, bool low);
 };
 
 }  // namespace limo_fire_rl

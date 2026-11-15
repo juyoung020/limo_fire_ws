@@ -42,6 +42,13 @@ target_link_libraries(explore_rl limo_fire_rl_core)
 target_compile_definitions(explore_rl PRIVATE LIMO_FIRE_RL_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
 ament_target_dependencies(explore_rl rclcpp rclcpp_action geometry_msgs nav_msgs nav2_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs)
 
+# 아래층 RL 노드 — 시험(dry run)만: 학습과 같은 아래층 관측(RobotEnv 아래층 모드) → 아래층 정책 → 명령을 ~/cmd_debug 에만 (/cmd_vel 발행 없음)
+add_executable(low_rl src/low_rl_node.cpp)
+target_include_directories(low_rl PRIVATE ${EXPLORE_DIR}/sim/tools)   # low_node_rec.h (녹화 꼴 — low_node_replay 와 같은 것)
+target_link_libraries(low_rl limo_fire_rl_core)
+target_compile_definitions(low_rl PRIVATE LIMO_FIRE_RL_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
+ament_target_dependencies(low_rl rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs tf2 tf2_ros)
+
 # 프론티어 탐사 노드: 탐사 기준선과 같은 찾기(mdp/frontier.h)·고르기(baselines/frontier/include/explore_lite.h), 값도 기준선 설정 그대로
 find_package(ament_index_cpp REQUIRED)
 add_executable(explore_frontier src/explore_frontier_node.cpp)
@@ -50,7 +57,7 @@ target_link_libraries(explore_frontier yaml-cpp)
 target_compile_definitions(explore_frontier PRIVATE LIMO_FIRE_FRONTIER_YAML="${EXPLORE_DIR}/baselines/frontier/config/frontier.yaml")
 ament_target_dependencies(explore_frontier rclcpp rclcpp_action nav2_msgs nav_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs ament_index_cpp)
 
-install(TARGETS explore_rl explore_frontier DESTINATION lib/${PROJECT_NAME})
+install(TARGETS explore_rl explore_frontier low_rl DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 
 ament_package()

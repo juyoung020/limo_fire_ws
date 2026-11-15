@@ -135,6 +135,30 @@ ros2 run limo_fire_rl explore_rl --ros-args -p use_sim_time:=true -p dry_run:=tr
 ros2 bag play ~/limo_bags/1103_M_drive1 --clock
 ```
 
+### 아래층 정책 관측 · `low_rl` 시험 노드 (2026-11-16 — 로봇을 몰지 않음)
+
+`RobotEnv(hc, true)` (아래층 모드)가 학습(`train --low`, 목적지만 `SIM_LOW_GOALONLY=1`)과 **같은 함수로** 아래층 관측 전부를 만든다:
+그림(가까운 지도 6 채널 — 깊이 카메라 층 채널 포함 · 라이다 4 장 그림 · 깊이 · 넓은 지도 6 채널 — 막힘·빈 칸·모름·지나간 곳·목적지 점·깊이 층)과
+1D(바퀴·자이로·헛돎·EKF · 목적지 · 직전 행동 4 걸음 · 움직이는 것 칸 · 칸 넷). 시뮬 걸음 차례(`env_ref.cpp` `step_env` + `low_prepare_env`) 그대로:
+`low_act`(정책 출력 → `lowrl_begin`·`lowrl_act`: 바퀴 한도·직전 행동·사람 추적) → `step`(라이다 장 — 지도·위층 관측, `finish_step` 안의 `low_finish`·`lowrl_finish` 포함)
+→ `set_depth` → `set_goal`(위층이 새 목적지를 줄 때 — 시뮬 `lowrl_goal_set` 의 칸) → `low_obs`(깊이 카메라 층 `lowrl_cam_due` · 새 목표면 `goal_only_issue` ·
+`lowrl_pack`·`lowrl_img`·`lowrl_wred`·`lowrl_wide`). 경로 계획은 없다(학습 판 정책 환경도 안 짬). 보조 예측 재료(`SIM_LOW_AUX`)는 학습 전용이라 안 만든다.
+
+`low_rl` 노드는 이 관측으로 아래층 정책(`LowPolicy`)을 돌려 명령을 **`~/cmd_debug`(TwistStamped)에만** 낸다 — `/cmd_vel` 발행자가 없고
+`dry_run:=false` 면 시작하지 않는다. 목적지는 `~/goal`(PoseStamped, `map` 틀, 위치 NaN = 없음). 관측 설정은 학습처럼 환경변수로 읽으므로 **학습 판과 같은 값을 export**
+(지금 low_w3: `SIM_LOW_WIDE=1 SIM_LOW_GOALONLY=1 SIM_LOW_OBS_MOV=1 SIM_LOW_MOV4=1 SIM_LOW_CAM_EVERY=1 SIM_LOW_TRACK_MISS=20`); 체크포인트 1D 칸 수가 설정과 다르면 멈춘다.
+`record:=<파일>` 이면 입력·관측·명령을 녹화한다(`low_node_replay` 로 다시 돌려 같은지·시간).
+
+| 확인 | 결과 |
+|---|---|
+| `sim/tools/low_node_check` — 학습 판 CPU 시뮬(환경 하나, 자세 오차·관측 지연 끔) 걸음마다 라이다 장·감각·깊이·시뮬이 뽑은 목적지를 `RobotEnv` 에 넣고 아래층 관측·명령 비교, `--gpu` 면 GPU 시뮬과도 직접 | 위 export 로 bookstore·small-house, 실물 CPU 정책(low_w3)이 몬 1,500 걸음 판 묶음 — CPU 비교 4 번(씨앗 1~4, 사람 8) · GPU 비교 2 번: 그림·1D·명령 **다름 0 — CPU 와 GPU 둘 다** (움직이는 것 찬 관측 85~526 번, 둘째 칸까지 찬 관측 최대 97 번). 칸 넷 끈 32 칸 정책(w1g)도 같음. 깊이 바이트 하나를 바꾸면 잡음 |
+| `low_node_replay` — 위 녹화를 `RobotEnv` 만으로 다시 돌림 | x86 · **Orin(aarch64, g++ 11 -O2 -ffp-contract=off) 둘 다 비트 같음** |
+| 녹화 bag(`1103_M_drive1`, 74 s)에 노드를 dry run 으로 | `~/cmd_debug` 만 나옴(노드 발행자: cmd_debug·status), 노드 녹화를 x86·Orin 에서 다시 돌려 같음 |
+| Orin 시간(한 코어, 다른 일로 부하 평균 ≈ 6) | 걸음 하나: `step` 2.4 ms · `low_obs` 2.7~3.0 ms · `low_act` 0.02 ms · 정책 NEON 5.0 ms → **합 ≈ 10.4 ms / 100 ms** (99 % 값 ≈ 15 ms) |
+
+시뮬과 다른 곳: 시뮬은 판 끝(닿음·목표 수 등 — `low_finish`)에 환경을 리셋하지만 실물은 이어 간다(같은 함수가 사람 추적·목표 상태를 비우는 것만 같음 — 로그에 알림).
+목적지가 없으면 시뮬은 규칙 추종기가 몰지만 실물 노드는 명령 0.
+
 ### 아래층 움직이는 것 칸 (2026-11-16 — `SIM_LOW_OBS_MOV`·`SIM_LOW_MOV4` 체크포인트)
 
 아래층 정책 1D 의 움직이는 것 칸(kLoMov 6 칸 · 칸 넷 kLoMov4 24 칸, 1D 32 → 56)은 `include/limo_fire_rl/low_mov.h` `LowMov` 가 만든다 — 시뮬과 같은 함수

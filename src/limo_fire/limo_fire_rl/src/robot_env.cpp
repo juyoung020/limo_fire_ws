@@ -7,11 +7,23 @@
 
 namespace limo_fire_rl {
 
-RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
+RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) { init(hc, false); }
+RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low) { init(hc, low); }
+
+void RobotEnv::init(const sim::EnvHostCfg& hc, bool low) {
   b_.cfg = hc.cfg;
   sim::EnvCfg& c = b_.cfg;
   c.action_mode = sim::kActPath;   // 계층형 (train --hier 와 같음)
   c.curriculum = 0;                // 단계·오차 배율 없음 (평가와 같음)
+  low_on_ = low;
+  if (low) {   // 아래층 정책: train --low 와 같은 설정 (scripts/train.cpp run_low — 목표는 위층이 주지만 관측 길은 학습 판 low_auto 1 그대로)
+    if (!c.lo_goalonly) throw std::runtime_error("RobotEnv 아래층 모드: 목적지만(SIM_LOW_GOALONLY=1) 정책만 — 경로 판은 실물 경로 계획이 없음");
+    c.low_stat = c.low_task = c.low_rl = c.low_auto = 1;
+    c.low_explore = 0;
+    c.low_solo = 0;
+    c.low_act_w = mdp::low::ACT;
+    c.lo_aux = 0;   // 보조 예측 재료는 학습 전용 (관측 아님)
+  }
   const int n = c.size * c.size;
   const int nf = c.size * sim::fmap_row(c);
   // 맵: 정답 격자 없음 (0 — 덮음·벽·바닥 칸 없음). 지도 창 = size × size 칸 전부
@@ -61,6 +73,29 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
     b_.cvox = cvox_.data();
     b_.cpts = cpts_.data();
   }
+  if (low) {   // env_host.cpp 가 low_rl 일 때 잡는 칸 (보조 예측 low_aux·low_hit 는 학습 전용이라 없음)
+    lowrl_.assign(1, sim::LowRl{});
+    sim::lowrl_clear(lowrl_[0]);
+    lowrl_[0].stall = 0;
+    lowrl_[0].stall_tgt = -1;
+    lowcmd_.assign(1, sim::LowCmd{-1, 0});
+    lowep_.assign(1, sim::LowEp{});
+    lowstat_.assign(1, sim::LowRlStat{});
+    limg_.assign((size_t)sim::low_img_n(c), 0);
+    l1d_.assign((size_t)sim::low_1d_n(c), 0.f);
+    lvdone_.assign(1, 0);
+    b_.lowrl = lowrl_.data();
+    b_.lowcmd = lowcmd_.data();
+    b_.low = lowep_.data();
+    b_.lowstat = lowstat_.data();
+    b_.low_img = limg_.data();
+    b_.low_1d = l1d_.data();
+    b_.low_vdone = lvdone_.data();
+    if (c.lo_wide) {
+      lwred_.assign((size_t)(c.size / 4) * (c.size / 4), 0u);
+      b_.low_wred = lwred_.data();
+    }
+  }
   // GPU 전용 칸은 없음 (CPU 참조판과 같음)
   b_.fmap = nullptr;
   b_.rbits = nullptr;
@@ -108,6 +143,10 @@ void RobotEnv::reset(float x0, float y0, float th0, const Proprio& p0, float fov
   done_ = 0;
   sh_ = sim::Shared{};
   mov_.reset();
+  if (low_on_) {   // 시뮬 판 시작: lowrl_clear (막힘 신호·난수는 그대로) · 목표 없음
+    sim::lowrl_clear(lowrl_[0]);
+    lowcmd_[0] = sim::LowCmd{-1, 0};
+  }
   obs();
 }
 
@@ -120,10 +159,12 @@ void RobotEnv::step(const Proprio& p, const Scan& s) {
   e_.done = 0;
   e_.people.hit_person = 0;
   e_.declared = 0;
-  e_.cmd_v = p.cmd_v;
-  e_.cmd_vy = 0.f;
-  e_.cmd_w = p.cmd_w;
-  sim::path_last_act(c, e_, p.cmd_v, p.cmd_w);
+  if (!low_on_) {   // 아래층 모드는 low_act 가 명령·직전 행동을 정했음 (시뮬 lowrl_act)
+    e_.cmd_v = p.cmd_v;
+    e_.cmd_vy = 0.f;
+    e_.cmd_w = p.cmd_w;
+    sim::path_last_act(c, e_, p.cmd_v, p.cmd_w);
+  }
   // 2. 물리 자리: 실물 감각 (시뮬 physics_step 이 쓰는 칸)
   e_.drive.wv = p.wheel_v;
   e_.drive.wvy = p.wheel_vy;
@@ -213,6 +254,63 @@ bool RobotEnv::cell_xy(int cell, float* x, float* y) const {
   *x = m_.ox + ((float)(cell % m_.gw) + 0.5f) * b_.cfg.res;
   *y = m_.oy + ((float)(cell / m_.gw) + 0.5f) * b_.cfg.res;
   return true;
+}
+
+void RobotEnv::set_goal(int cell) {
+  if (!low_on_) throw std::runtime_error("RobotEnv::set_goal: 아래층 모드가 아님");
+  // 시뮬 lowrl_goal_set (난수 빼고): 정책이 모는 환경(follow 2) · 새 목표면 다시 봄(tgt_seen −2)
+  sim::LowRl& R = lowrl_[0];
+  sim::LowCmd& cmd = lowcmd_[0];
+  cmd.follow = 2;
+  cmd.target = cell;
+  R.need_goal = cell < 0 ? 1 : 0;
+  R.tgt_seen = -2;
+  R.g_step = e_.step;
+  R.g_len = -1.f;
+  R.rem_ok = 0;
+}
+
+int RobotEnv::goal_of(float x, float y) const {
+  int cx, cy;
+  if (sim::cell_of(b_.cfg, m_, x, y, &cx, &cy) < 0) return -1;
+  return cy * m_.gw + cx;   // 목표 칸 번호는 창 너비 기준 (low_rl.h lowrl_track: tgt % gw)
+}
+
+void RobotEnv::low_act(const float* a, float* v, float* w) {
+  if (!low_on_) throw std::runtime_error("RobotEnv::low_act: 아래층 모드가 아님");
+  // 시뮬 step_env 첫머리 + apply_action 아래층 가지 (env.h): collided 0 → lowrl_begin → lowrl_act
+  e_.collided = 0;
+  sim::lowrl_begin(b_, e_, 0);
+  if (!sim::lowrl_act(b_, e_, 0, a)) {   // 정책 환경이 아님 (set_goal 전) — 시뮬은 규칙 추종기, 실물은 섬
+    e_.cmd_v = e_.cmd_vy = e_.cmd_w = 0.f;
+    sim::path_last_act(b_.cfg, e_, 0.f, 0.f);
+  }
+  *v = e_.cmd_v;
+  *w = e_.cmd_w;
+}
+
+void RobotEnv::low_obs() {
+  if (!low_on_) throw std::runtime_error("RobotEnv::low_obs: 아래층 모드가 아님");
+  // 시뮬 env_ref.cpp low_prepare_env (목표 뽑기 빼고 — 목표는 set_goal)
+  if (sim::lowrl_cam_due(b_, e_, 0) && !sim::lowrl_due(b_, e_, 0)) sim::camlayer_ref(b_, e_, 0);
+  if (sim::lowrl_due(b_, e_, 0)) {
+    sim::camlayer_ref(b_, e_, 0);
+    if (sim::lowrl_replan(b_, e_, 0)) {
+      if (lowcmd_[0].target >= 0) throw std::runtime_error("RobotEnv::low_obs: 경로 계획이 필요한 길 (목적지만 정책 환경이 아님)");
+      sim::goal_only_issue(b_, e_, 0);   // 목표 없음: 시뮬 plan_cpu 의 tgt < 0 가지와 같은 관측 (goal_cell −1 · 경로 없음)
+    } else if (sim::lowrl_go_policy(b_, 0) && sim::lowrl_goal_new(b_, 0)) {
+      sim::goal_only_issue(b_, e_, 0);
+    }
+    sim::lowrl_planned(b_, e_, 0);
+  }
+  sim::lowrl_pack(b_, e_, 0);
+  const int n = sim::low_img_n(b_.cfg);
+  for (int i = 0; i < sim::kLowImg; ++i) b_.low_img[i] = sim::lowrl_img(b_, e_, 0, i);
+  if (b_.cfg.lo_wide) {
+    for (int k = 0; k < (b_.cfg.size / 4) * (b_.cfg.size / 4); ++k) sim::lowrl_wred(b_, e_, 0, k);
+    for (int k = 0; k < sim::kLowWideHW * sim::kLowWideHW; ++k) sim::lowrl_wide(b_, e_, 0, k, b_.low_img + sim::kLowWideOff);
+  }
+  (void)n;
 }
 
 bool RobotEnv::cand_xy(int k, float* x, float* y) const { return cell_xy(b_.cand[k], x, y); }
