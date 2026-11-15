@@ -1392,8 +1392,10 @@ int main(int argc, char** argv) {
     if (a.mode == "follow" && (!a.policy.empty() || a.step)) {
       if (!a.policy.empty()) {   // 관측 설정(SIM_LOW_*)은 체크포인트 꼬리를 기본으로 — 환경변수가 명시적으로 다르면 멈춤 (sim/include/low_ckpt_cfg.h)
         std::string log;
-        ckcfg::apply(a.policy, &log);
+        const ckcfg::Kv ck = ckcfg::apply(a.policy, &log);
         std::printf("%s\n", log.c_str());
+        const std::string w = ckcfg::hash_warning(ck, "env_yaml_fnv", a.env, "설정 파일 env.yaml");
+        if (!w.empty()) std::fprintf(stderr, "\n*** %s ***\n\n", w.c_str());
       }
       return run_policy(a);
     }

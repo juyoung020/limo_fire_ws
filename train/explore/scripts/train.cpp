@@ -296,6 +296,9 @@ int run_low(Args a) {
       std::string log;
       resume_kv = ckcfg::apply(p, &log);
       std::fprintf(stderr, "이어 학습 %s\n", log.c_str());
+      for (const std::string& w : {ckcfg::hash_warning(resume_kv, "env_yaml_fnv", a.env, "설정 파일 env.yaml"),
+                                   ckcfg::hash_warning(resume_kv, "scene_list_fnv", a.list, "학습 맵 목록")})
+        if (!w.empty()) std::fprintf(stderr, "\n*** %s ***\n\n", w.c_str());
       const std::string g = ckcfg::get(resume_kv, "gru_h");
       if (!g.empty()) {
         if (a.gru >= 0 && a.gru != std::stoi(g)) throw std::runtime_error("--gru " + std::to_string(a.gru) + " 가 체크포인트 구조 gru_h=" + g + " 와 다름");
@@ -383,9 +386,13 @@ int run_low(Args a) {
       .set("ppo", rf::Json::object().set("epochs", pc.epochs).set("minibatches", pc.minibatches).set("clip", pc.clip).set("gamma", pc.gamma).set("lam", pc.lam)
                       .set("entropy_coef", pc.entropy_coef).set("lr_max", pc.lr_max).set("desired_kl", pc.desired_kl).set("std_min", pc.std_min)
                       .set("std_max", pc.std_max).set("bound_coef", pc.bound_coef));
+  // 체크포인트 꼬리·run.json obs_cfg: 관측 설정·구조 + 설정 파일(env.yaml)·학습 맵 목록 해시 (읽는 쪽은 다르면 경고만)
+  ckcfg::Kv ck_kv = sim::low_ckpt_kv(c, a.gru, spec.actor.in1d, spec.aux_out);
+  ck_kv.push_back({"env_yaml_fnv", ckcfg::file_fnv(a.env)});
+  ck_kv.push_back({"scene_list_fnv", ckcfg::file_fnv(a.list)});
   {   // 정책 입력을 바꾸는 설정·구조 (체크포인트 꼬리와 같은 것) + 시작 때 SIM_* 환경변수 전부 (보상 등 학습 설정까지 — 다시 돌리기용)
     rf::Json oc = rf::Json::object();
-    for (const auto& [k, v] : sim::low_ckpt_kv(c, a.gru, spec.actor.in1d, spec.aux_out)) oc.set(k, v);
+    for (const auto& [k, v] : ck_kv) oc.set(k, v);
     rf::Json ev = rf::Json::object();
     for (char** e = environ; e && *e; ++e) {
       const std::string kv = *e;
@@ -539,7 +546,7 @@ int run_low(Args a) {
                  a_ok > 0 ? a_t / a_ok : 0.0, ms_since(t0) / 1000);
   };
   // 체크포인트 꼬리: 이 학습의 관측 설정·구조 (평가·이어 학습·실물 노드가 읽음 — sim/include/low_ckpt_cfg.h)
-  const std::string ck_tail = ckcfg::trailer(sim::low_ckpt_kv(c, a.gru, spec.actor.in1d, spec.aux_out));
+  const std::string ck_tail = ckcfg::trailer(ck_kv);
   auto save = [&](bool numbered) {
     ppo.save(ckdir + "/model_latest.bin", ck_tail);
     if (numbered) ppo.save(ckdir + "/model_" + std::to_string(ppo.iteration()) + ".bin", ck_tail);

@@ -231,6 +231,7 @@ A/B 대신 바로 본 학습(`explore_v9`, explore_v8_cur 7400 체크포인트·
 - 형식 3 을 읽는 쪽(`PPO::load` · `network/policy_cpu.h` · 옛 바이너리)은 고정 꼬리까지만 읽어 이 꼬리를 무시한다. `ckpt_add_1d · _aux · _wide` 는 꼬리가 있으면
   바뀐 열쇠(`d1d`·`SIM_LOW_MOV4` · `aux_out`·`SIM_LOW_AUX` · `SIM_LOW_WIDE`·`gru_h`)만 고쳐 다시 붙이고, 꼬리 없는 입력은 꼬리 없이 (출력 바이트 옛 도구와 같음).
 - 보상 설정(`SIM_LR_*`)은 정책 입력이 아니라 꼬리에 없다 (`run.json sim_env` 에만).
+- 설정 파일 해시(`env_yaml_fnv` — env.yaml 바이트의 FNV-1a 64, 그 안에서 가리키는 nav2_params·sensor_model 은 안 셈)·학습 맵 목록 해시(`scene_list_fnv`)도 적는다. 읽을 때 다르면 **경고만**(멈추지 않음 — 일부러 고친 설정일 수 있음): 이어 학습은 둘 다, 평가·실물 노드는 env.yaml.
 
 ## 인코더 나눔·체크포인트 형식 3 (2026-11-08)
 

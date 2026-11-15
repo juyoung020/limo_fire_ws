@@ -89,6 +89,30 @@ inline Kv apply(const std::string& path, std::string* log = nullptr) {
 }
 
 
+// 파일 바이트 해시 (FNV-1a 64, 16 진 16 자 — 못 읽으면 빈 문자열): 설정 파일(env.yaml)·학습 맵 목록이 학습 때와 같은지 알리는 데만 (보안용 아님)
+inline std::string file_fnv(const std::string& path) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f) return "";
+  uint64_t h = 1469598103934665603ull;
+  char buf[65536];
+  while (f) {
+    f.read(buf, sizeof(buf));
+    for (std::streamsize i = 0; i < f.gcount(); ++i) h = (h ^ (uint8_t)buf[i]) * 1099511628211ull;
+  }
+  char o[17];
+  std::snprintf(o, sizeof(o), "%016llx", (unsigned long long)h);
+  return o;
+}
+// 꼬리의 파일 해시(key)가 지금 파일과 다르면 경고 문장 (같거나 꼬리에 없으면 빈 문자열) — 멈추지 않음 (설정 파일을 일부러 고쳐 쓸 때도 있음)
+inline std::string hash_warning(const Kv& kv, const std::string& key, const std::string& path, const std::string& what) {
+  const std::string want = get(kv, key);
+  if (want.empty()) return "";
+  const std::string now = file_fnv(path);
+  if (now == want) return "";
+  return "경고: " + what + " (" + path + ") 가 체크포인트 학습 때와 다름 (해시 " + want + " → " + (now.empty() ? std::string("못 읽음") : now) +
+         ") — 관측·환경이 학습과 다를 수 있음";
+}
+
 inline void set(Kv& kv, const std::string& k, const std::string& v) {
   for (auto& [a, b] : kv)
     if (a == k) { b = v; return; }

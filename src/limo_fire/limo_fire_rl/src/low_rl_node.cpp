@@ -56,8 +56,10 @@ class LowRlNode : public rclcpp::Node {
     if (ckpt_.empty()) throw std::runtime_error("checkpoint 파라미터 (아래층 체크포인트 .bin — train --low --gru, SIM_LOW_WIDE=1) 가 비었음");
     {
       std::string log;
-      ckcfg::apply(ckpt_, &log);   // load_env_cfg 앞에 — 체크포인트 관측 설정을 환경변수로 (다르게 명시한 환경변수면 멈춤)
+      const ckcfg::Kv ck = ckcfg::apply(ckpt_, &log);   // load_env_cfg 앞에 — 체크포인트 관측 설정을 환경변수로 (다르게 명시한 환경변수면 멈춤)
       RCLCPP_INFO(get_logger(), "%s", log.c_str());
+      const std::string w = ckcfg::hash_warning(ck, "env_yaml_fnv", env_yaml_, "설정 파일 env.yaml");   // 다르면 경고만 (일부러 고친 설정일 수 있음)
+      if (!w.empty()) RCLCPP_WARN(get_logger(), "*** %s ***", w.c_str());
     }
     hc_ = sim::load_env_cfg(env_yaml_);
     if (!camera_layer) hc_.cfg.cam_on = 0;
