@@ -91,8 +91,12 @@ class Reader {
     }
     if (miss < 0 || hd[2] != (int32_t)sizeof(limo_fire_rl::Proprio) || hd[3] != (int32_t)sizeof(Window))
       throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
-    ni = hd[4];
-    n1 = hd[5];
+    // 그만둔 아래층 정책 녹화(2026-11-16 앞 — 넓은 지도·움직이는 것 칸 넷·몸 둘레를 켠 것)는 관측이 뒤로 더 길다: 앞 kLowImg · kLow1d 칸만 돌려주고 나머지는 건너뜀
+    ni_file_ = hd[4];
+    n1_file_ = hd[5];
+    if (ni_file_ < sim::kLowImg || n1_file_ < sim::kLow1d) throw std::runtime_error("녹화 관측 크기가 아래층 관측보다 작음");
+    ni = sim::kLowImg;
+    n1 = sim::kLow1d;
     if (miss > 0) {
       std::vector<uint8_t> raw((size_t)hd[1]);
       r(raw.data(), raw.size());
@@ -117,7 +121,7 @@ class Reader {
   ~Reader() { if (f_) std::fclose(f_); }
   sim::EnvHostCfg hc{};
   bool old_layout = false;   // 깊이 영상 늦음 칸이 없던 옛 판 녹화 (위)
-  int ni = 0, n1 = 0;
+  int ni = 0, n1 = 0;   // 돌려주는 관측 크기 (= kLowImg · kLow1d)
   // 다음 사건 종류 (끝이면 0)
   char next() {
     char c;
@@ -154,11 +158,17 @@ class Reader {
   void depth(uint8_t* d) { r(d, (size_t)mdp::obs::DEPTH_SIZE); }
   void obs(uint8_t* img, float* o1) {
     r(img, (size_t)ni);
+    skip((size_t)(ni_file_ - ni));
     r(o1, 4 * (size_t)n1);
+    skip(4 * (size_t)(n1_file_ - n1));
   }
 
  private:
   FILE* f_;
+  int ni_file_ = 0, n1_file_ = 0;   // 녹화에 든 관측 크기
+  void skip(size_t n) {
+    if (n && std::fseek(f_, (long)n, SEEK_CUR) != 0) throw std::runtime_error("녹화가 짧음");
+  }
   void r(void* p, size_t n) {
     if (n && std::fread(p, 1, n, f_) != n) throw std::runtime_error("녹화가 짧음");
   }

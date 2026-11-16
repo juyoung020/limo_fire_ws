@@ -10,8 +10,8 @@
 //      통과 반경(low_pass_r) 안에 들면 그 결정을 거기서 끝내고(남은 걸음은 쉼 — 그래프 모드 gdec 과 같은 꼴) 다음 결정이 새 목표를 받는다.
 //      판 끝: 벽·사람 충돌(기존 규칙) · 정체(low_idle_steps 동안 low_idle_d 를 못 벗어남) · 시간(low_time_steps) · 목표 low_goals 개.
 //      탐사 판 끝 규칙(지도 닫힘 성공·지도 진행 없음)은 low_task 면 끈다 (env.h finish_step).
-//  (3) 합친 탐사 (EnvCfg::low_explore, 2026-11-13 — mdp/README "아래층 RL — 위층 규칙과 합친 탐사", 도구 scripts/combine_run.cpp): (2) 위에서
-//      위층 규칙이 고른 후보 칸을 아래층(정책·규칙 추종기)이 몰아 탐사를 끝까지 한다. 탐사 판 끝 규칙을 안 끄고, 정체·통과·경로 끝은 판을 안 끝낸다:
+//  (3) 합친 탐사 (EnvCfg::low_explore, 2026-11-13 — 도구 scripts/combine_run.cpp · 실물 노드 limo_fire_rl low_rl): (2) 위에서
+//      위층이 고른 후보 칸을 아래층 규칙 추종기가 몰아 탐사를 끝까지 한다. 탐사 판 끝 규칙을 안 끄고, 정체·통과·경로 끝은 판을 안 끝낸다:
 //      통과·경로 끝이 목표 밖은 LowEp 에 적기만(reached·off·hold), 정체는 막힘 신호(LowRl::stall)만 세우고 기준점을 새로 잡는다 (low_step.h low_finish).
 #pragma once
 
@@ -59,7 +59,7 @@ struct PathWhy {
 constexpr int32_t kLowFinish = -3;   // LowCmd::target 자리 (follow 0 일 때): 위층이 이 걸음에 판 끝을 선언 (EnvCfg::finish_declare 를 켰을 때만 봄 — low_rl.h lowrl_begin)
 struct LowCmd {
   int32_t target;    // 목표 칸 (cy · gw + cx, −1 없음) — follow 1 일 때만 봄
-  int32_t follow;    // 0 보통 계층형(예열 탐사) · 1 단독 과제 · 2 단독 과제를 정책이 몲 (아래층 RL — cfg.low_rl 일 때만)
+  int32_t follow;    // 0 보통 계층형 (target 은 안 봄 — 후보 번호 행동) · 1 목표 칸 target 을 규칙 추종기가 따라감
 };
 
 // 판 누적 (환경마다 하나)
@@ -104,76 +104,23 @@ struct LowEp {
   float ax, ay;
 };
 
-// ---------- 아래층 RL (2026-11-12, EnvCfg::low_rl — 걸음 함수·보상 상수는 low_rl.h, 설명은 mdp/README "아래층 RL") ----------
-// 단독 과제(low_task) 위에 얹는 스위치. 켜면 env.step 한 번 = 속도 행동 걸음 하나(0.1 s — 묶음 없음)이고, LowCmd::follow == 2 인 환경은
-// 규칙 추종기 대신 행동 줄의 (v, ω) 가 로봇을 몬다 (경로 계획·안전층·단독 과제 판 끝 규칙은 그대로). follow 0·1 은 규칙 추종 그대로(예열 탐사).
+// ---------- 아래층 걸음 길 (EnvCfg::low_rl — 걸음 함수는 low_rl.h) ----------
+// 단독 과제(low_task) 위에 얹는 스위치. 켜면 env.step 한 번 = 걸음 하나(0.1 s — 묶음 없음). 아래층은 규칙 추종기만 (경로 계획·단독 과제 판 끝 규칙은 그대로).
 // 끄면(EnvBatch::lowrl = nullptr) 관련 함수는 첫 줄에서 돌아가고 환경은 한 비트도 안 바뀐다.
 
-constexpr int kLrTrk = 16;   // 사람 추적(low_rl.h lowrl_trk)이 들고 가는 덩어리 수 상한 — 선 물체(의자 다리·기둥)도 한 칸씩 쓴다
-
-constexpr int kLowXBl = 8;   // 탐사 판 학습: 환경마다 피하는 칸 수 (고리 — combine_run.cpp kBl 과 같음)
 // 환경마다 걸음 사이에 들고 가는 값
 struct LowRl {
-  uint64_t rng;        // 자동 목표(low_auto) 난수 — 환경 난수(EnvState::rng)와 따로 (판 흐름을 안 바꿈)
   int32_t p_step;      // 마지막으로 계획 단계를 돈 걸음 번호 (low_period 걸음마다 · 목표가 바뀌면 바로)
   int32_t tgt_seen, fol_seen;   // 그때 본 LowCmd
-  int32_t need_goal;   // 자동 목표: 새 목표를 뽑을 차례
-  int32_t rem_ok;      // rem_prev 가 지금 경로의 값인가
-  float rem_prev;      // 지난 관측 때 남은 경로 길이 (m — 경로까지 거리 + 경로 위 남은 길이)
-  int32_t pol;         // 이번 걸음: 정책이 몰았나
-  int32_t g_step;      // 지금 목표를 받은 걸음 번호
-  float g_len;         // 지금 목표의 처음 계획 길이 (m, < 0 = 아직 계획 전)
   // 위층에 알리는 막힘 신호: 이번 결정 구간(계획 단계 ~ 다음 계획 단계)에 단독 과제의 정체 판정(low_idle_steps 동안 low_idle_d 를 못 벗어남 —
   // LowEp::end == kLowEndStall)이 났나 · 그때 가던 목적지 칸(−1 없음). 정체가 판을 끝내도 남는다 — 다음 계획 단계 뒤 첫 걸음이 지움.
-  // 위층(같은 판에서 1 Hz 로 목적지를 넣는 쪽)이 그 후보를 빼고 다시 고르는 데 쓸 자리 (호스트: Env::get_low_rl, 장치: EnvBatch::lowrl)
+  // 위층이 그 후보를 빼고 다시 고르는 데 쓴다 (호스트: Env::get_low_rl, 장치: EnvBatch::lowrl)
   int32_t stall;
   int32_t stall_tgt;
-  int32_t w_has;               // 넓은 지도 목적지 점 (lowrl_pack 이 적고 lowrl_wide 가 읽음): 있음 · 지도 좌표
-  float w_gx, w_gy;
-  // 사람 추적 (low_rl.h lowrl_trk, EnvCfg::lo_mov 일 때): 라이다 덩어리를 장마다 이어 가는 등속 칼만 필터. 지도 좌표. tk_hit == 0 이 빈 칸
-  int32_t tk_head;             //   마지막으로 본 라이다 링 칸 (−1 = 아직 없음) — 새 장이 없는 걸음은 예측만
-  int32_t tk_n;                //   진단: 지금 추적 중인 덩어리 수
-  int32_t tk_hit[kLrTrk];      //   덩어리와 이어진 장 수
-  int32_t tk_miss[kLrTrk];     //   마지막으로 이어진 뒤 못 이은 장 수
-  int32_t tk_mov[kLrTrk];      //   "걷는 사람" 판정을 이어 받은 장 수 (문턱을 넘으면 사람, 느려지면 0)
-  float tk_x[kLrTrk], tk_y[kLrTrk], tk_vx[kLrTrk], tk_vy[kLrTrk];   //   자리 (m) · 속도 (m/s)
-  float tk_pp[kLrTrk], tk_pv[kLrTrk], tk_vv[kLrTrk];                //   공분산 (두 축 같음): 자리·자리-속도·속도
-  float tk_r[kLrTrk];          //   반지름 (m)
-  float tk_x0[kLrTrk], tk_y0[kLrTrk];   //   처음 잡힌 자리 — 거기서 벗어난 거리가 사람 판정 조건
-  int32_t tk_keep[kLrTrk];     //   사람으로 확인된 뒤 남은 붙들기 장 수 (EnvCfg::tk_hold — 잠깐 서도 사람으로, lowrl_trk_movers 가 tk_fast 일 때만 씀)
-
-  // 탐사 판 학습 (EnvCfg::low_auto == 2 — low_rl.h lowrl_goal_explore): 환경 안에서 도는 위층 0 번 후보 규칙의 상태 (scripts/combine_run.cpp 호스트 규칙과 같은 값)
-  int32_t x_redo;      //   다음 준비 단계에 주기와 무관하게 다시 고름 (통과·경로 끝이 밖·경로 없음·막힘 신호)
-  int32_t x_last;      //   마지막으로 고른 걸음 번호
-  int32_t x_sig;       //   지난 걸음의 막힘 신호 (오르는 가장자리만 봄)
-  int32_t x_paid;      //   지금 목표의 통과를 이미 셈 (보상·누적은 목표마다 한 번)
-  int32_t x_n;         //   피하는 칸 고리에 넣은 수
-  int32_t x_cell[kLowXBl], x_until[kLowXBl];   //   피하는 칸 · 그 걸음 번호까지
 };
 
-// 보상 항 (차례 = LowRlStat::term 칸 번호 — 도구·학습기가 이름표를 같은 차례로 가짐)
-enum : int32_t { kLrProgress = 0, kLrTime, kLrReach, kLrCollision, kLrProximity, kLrSmooth, kLrBack, kLrTtc, kLrTerms };   // (안전층 항 safety 는 2026-11-14 에 없앰)
-
-// 환경마다 누적 (정책이 몬 걸음만). 호스트가 가져가며 0 으로 (Env::take_low_stat) — 학습기가 반복마다 한 번
-struct LowRlStat {
-  float term[kLrTerms];     // 보상 항 합
-  int32_t steps;            // 정책이 몬 걸음
-  int32_t episodes;         // 끝난 판
-  int32_t goals;            // 경로가 짜인 목표 (과제 구간 분모)
-  int32_t reached;          // 통과 반경에 든 목표
-  int32_t hit_wall, hit_person, stall, timeout;   // 판 끝 까닭 (나머지 = 목표 수를 채움). hit_* = 닿음(센서, sim contact.h)으로 끝
-  int32_t gt_wall, gt_person;   // 판 동안 시뮬 정답 충돌이 있었던 판 수 (기록 전용 — 센서 닿음과 견줌)
-  int32_t giveup;           // 경로를 못 짰거나 경로 끝이 통과 반경 밖 (새 목표를 받음)
-  int32_t back_steps;       // 후진 명령 걸음
-  int32_t reach_steps;      // 통과한 목표들의 걸린 걸음 합
-  float dist;               // 이동 거리 (m)
-  float reach_len;          // 통과한 목표들의 처음 계획 길이 합 (m) — ÷ (reach_steps × 걸음 시간) = 과제 구간 평균 속도
-  // 탐사 판 학습 (low_auto 2 의 탐사 판 환경만 — 규칙 추종 걸음에 끝난 판도 셈): 끝난 판 · 닫힘 성공 · 벽 충돌 · 사람 충돌 · 진행 없음 · 성공 판의 걸음 합
-  int32_t x_eps, x_ok, x_wall, x_person, x_idle, x_ok_steps;
-  int32_t x_rule_steps;     // 규칙 추종기가 몬 걸음 (후보 없음 — 제자리 회전)
-};
-
-// 아래층 관측 (정책 입력 — 위층과 같은 원본 버퍼(obs_img·obs_1d·지도·깊이 카메라 층·경로)에서 잘라 만든다, low_rl.h lowrl_img·lowrl_pack):
+// 아래층 관측 (위층과 같은 원본 버퍼(obs_img·obs_1d·지도·깊이 카메라 층·경로)에서 잘라 만든다, low_rl.h lowrl_img·lowrl_pack).
+// 그만둔 아래층 정책의 입력 꼴 그대로 — 실물 노드 녹화(sim/tools/low_node_rec.h)에 남고 sim == 실물 비트 비교(low_explore_check · low_explore_replay)에 쓴다:
 //  그림 u8 [kLowImg]: 가까운 지도 6 × 64 × 64 (obs_img 그대로, 예약 물체 채널 kLowCamCh 에 깊이 카메라 장애물 층) | 라이다 1 × 32 × 32 | 깊이 1 × 40 × 64 (obs_img 그대로)
 //  숫자 float [kLow1d]
 constexpr int kLowLidarHW = mdp::low::LIDAR_HW;                       // 라이다 그림 한 변: 각도 칸 248 × 프레임 4 를 Z 차례로 (픽셀 Morton 번호 4·j + f = 칸 j·프레임 f)
@@ -181,10 +128,6 @@ constexpr int kLowLidarOff = mdp::obs::NEAR_SIZE;
 constexpr int kLowDepthOff = kLowLidarOff + kLowLidarHW * kLowLidarHW;
 constexpr int kLowImg = kLowDepthOff + mdp::obs::DEPTH_SIZE;
 static_assert(kLowImg == mdp::low::IMG && kLowLidarOff == mdp::low::LIDAR_OFF && kLowDepthOff == mdp::low::DEPTH_OFF, "아래층 그림 배치 = mdp/obs_layout.h");
-// 넓은 지도 (EnvCfg::lo_wide): 그림 뒤에 6 × 64 × 64 — 환경 하나 그림 바이트 수는 low_img_n (끄면 kLowImg 그대로)
-constexpr int kLowWideOff = mdp::low::WIDE_OFF, kLowWideHW = mdp::low::WIDE_HW, kLowWideC = mdp::low::WIDE_C;
-constexpr int kLowImgWide = mdp::low::IMG_WIDE;
-constexpr float kLowWideCell = 0.4f;   // 넓은 지도 칸 (m) — 줄인 판(로봇 지도 4 × 4 칸 = 0.2 m, 최댓값·칸 수) 2 × 2 점 (low_rl.h lowrl_wred·lowrl_wide)
 constexpr int kLowCamCh = 2;                          // 가까운 지도의 예약 물체 채널 (위층 관측에서는 늘 0)
 enum : int32_t {
   kLoWheelV = 0, kLoGyro, kLoSlip, kLoEkfV, kLoEkfW,   // 자기 상태 (obs_1d 의 같은 칸 그대로)
@@ -194,15 +137,7 @@ enum : int32_t {
   kLoHasPath = 22,     // 경로 있음 0·1
   kLoRem = 23,         // 남은 경로 길이 / kLrGoalNorm
   kLoHasGoal = 24,     // 목적지 있음 0·1
-  kLoMov = 25,         // (EnvCfg::lo_mov, 기본 꺼짐 = 0) 가장 가까운 움직이는 것: 있음 0·1, 거리 / 4 m, sin, cos, 속도 앞·왼쪽 성분 / 1.6 m/s
-  kLow1d = mdp::low::N1D,         // 뒤는 예약 (0)
-  kLoMov4 = mdp::low::N1D,        // (EnvCfg::lo_mov4) 움직이는 것 칸 넷 — 칸마다 kLoMov 와 같은 6 칸, 가장 가까워질 때 간격 차례
-  kLow1dMov4 = mdp::low::N1D_MOV4
-};
-// 보조 예측 정답의 재료 (EnvCfg::lo_aux, 2026-11-16 — 학습기 ppo 보조 머리가 앞 걸음 값으로 정답을 만든다. 로봇이 아는 값만: 지도 자세 · 추적 · 라이다)
-enum : int {
-  kAuxPose = mdp::low::AUX_POSE, kAuxNMov = mdp::low::AUX_NMOV, kAuxMov = mdp::low::AUX_MOV, kAuxMovMax = mdp::low::AUX_MOV_MAX,
-  kAuxLid = mdp::low::AUX_LID, kAuxLidSec = mdp::low::AUX_LID_SEC, kLowAuxSrc = mdp::low::AUX_SRC   // 칸 뜻은 mdp/obs_layout.h AUX_*
+  kLow1d = mdp::low::N1D   // 뒤는 예약 (0 — 옛 "움직이는 것" 칸 자리)
 };
 
 }  // namespace sim

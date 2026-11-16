@@ -68,7 +68,7 @@ Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`
 
 | 차례 | 실물 노드 | 시뮬 (`train/explore/scripts/combine_run.cpp`) |
 |---|---|---|
-| 설정 | `RobotEnv` 합친 탐사 모드 — 목표는 위층, 탐사 판 끝 규칙, 막힘은 신호만 | `low_auto 0` · `low_explore 1` |
+| 설정 | `RobotEnv` 합친 탐사 모드 — 목표는 위층, 탐사 판 끝 규칙, 막힘은 신호만 | `low_rl 1` · `low_explore 1` |
 | 결정 때 | 걸음 % 10 == 0 또는 다시 결정 | 같음 |
 | `upper:=decider` (기본) | 판단 모델(d1-3B, zero-shot)이 hier 후보 8 개 중 고름 — `scripts/low_decider.h` (시뮬 `combine_run --upper decider --decider-input both` 와 같은 요청: 지도 사진 + 후보 글). `decider_period`(기본 3 s — 로봇 답 약 2.6 s + 여유)마다 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면(막힘·통과·경로 없음) 기다리지 않고 slot0 차례로 바로. `decider_timeout`(8 s) 넘은 답은 버림 | `--upper decider` |
 | `upper:=fuel` | fuel (시간 + 전역 + 시점, v 0.981 · ω 3.232 · t0 0.10, 붙들기 0.2, 시점은 로봇에서 0.75 m 밖·모름에서 0.21 m — `config/low_rl.yaml`, `scripts/README` "실물 1116"). 덩어리 없음: 피하지 않는 첫 후보(slot0). 시점 자격 되는 덩어리가 없음: 목표 없음 | `--upper fuel` |

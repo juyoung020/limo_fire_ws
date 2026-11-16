@@ -204,18 +204,15 @@ T* Env::alloc(size_t n) {
     if (cudaMalloc(&p, std::max<size_t>(1, n * sizeof(T))) != cudaSuccess) throw std::runtime_error("cudaMalloc 실패");
     cudaMemset(p, 0, n * sizeof(T));
     owned_.push_back(p);
-    zero_.push_back({p, n * sizeof(T)});
     return (T*)p;
   }
   host_.emplace_back(std::max<size_t>(1, n * sizeof(T)), 0);
-  zero_.push_back({host_.back().data(), n * sizeof(T)});
   return (T*)host_.back().data();
 }
 
 template <class T>
 T* Env::upload(const std::vector<T>& v) {
   T* p = alloc<T>(v.size());
-  zero_.pop_back();   // 올린 값 — restart 가 0 으로 만들지 않음 (정적이거나, 상태·LowRl 처럼 따로 다시 올림)
   if (gpu_) cudaMemcpy(p, v.data(), v.size() * sizeof(T), cudaMemcpyHostToDevice);
   else std::copy(v.begin(), v.end(), p);
   return p;
@@ -311,7 +308,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     e.rng = dm::splitmix64(r);
   }
   b_.st = upload(st);
-  init_st_ = st;
   const size_t cells = (size_t)hc.cfg.size * hc.cfg.size;
   b_.lmap = alloc<int16_t>(cells * n_env);
   b_.marks = alloc<uint32_t>(cells / 4 * n_env);
@@ -324,9 +320,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     b_.cand_cur = alloc<int32_t>(n_env);
     b_.racc = alloc<float>(n_env);
     b_.tacc = alloc<float>((size_t)mdp::rew::kTerms * n_env);
-    // 계획 비트 판: 목적지만 학습(goal_only_train — 정책 환경은 경로를 안 짬)이면 덩어리 목표 뽑기 작업 판 2 장만 (환경당 13 → 2 장, size 512 에서 416 → 64 KB)
-    b_.pp_n = goal_only_train(hc.cfg) ? 2 : kPathPlanes;
-    if (gpu) b_.pplanes = alloc<uint32_t>((size_t)n_env * b_.pp_n * hc.cfg.size * ((hc.cfg.size + 31) / 32));
+    if (gpu) b_.pplanes = alloc<uint32_t>((size_t)n_env * kPathPlanes * hc.cfg.size * ((hc.cfg.size + 31) / 32));
     if (hc.cfg.cam_on) {   // 깊이 카메라 장애물 층 (hier_path.h) — 리셋(reset_map)이 비움
       b_.cvox = alloc<uint8_t>(cells * n_env);
       b_.cpts = alloc<float>((size_t)mdp::obs::DEPTH_W * 2 * n_env);
@@ -345,29 +339,17 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     }
     if (hc.cfg.low_stat || hc.cfg.low_task) b_.low = alloc<LowEp>(n_env);   // 아래층 계측·단독 과제 (include/low_task.h)
     if (hc.cfg.low_task) b_.lowcmd = alloc<LowCmd>(n_env);
-    if (hc.cfg.low_rl) {   // 아래층 RL (include/low_task.h "아래층 RL")
+    if (hc.cfg.low_rl) {   // 아래층 걸음 길 (include/low_task.h · low_rl.h)
       if (!hc.cfg.low_task) throw std::runtime_error("low_rl 은 low_task 와 같이 켠다");
       std::vector<LowRl> r(n_env);
       for (int i = 0; i < n_env; ++i) {
-        uint64_t s = seed ^ (0xA24BAED4963EE407ull + (uint64_t)i * 0x9FB21C651E98DF25ull);
-        r[i].rng = dm::splitmix64(s);
         lowrl_clear(r[i]);
         r[i].stall = 0;
         r[i].stall_tgt = -1;
       }
       b_.lowrl = upload(r);
-      init_lowrl_ = r;
-      b_.lowstat = alloc<LowRlStat>(n_env);
-      b_.map_eps = alloc<int32_t>((size_t)b_.n_maps);   // 맵 뽑기 우선순위 통계 (set_map_cdf 를 안 부르면 쓰이기만 하고 뽑기는 고르게)
-      b_.map_hit = alloc<int32_t>((size_t)b_.n_maps);
-      b_.low_img = alloc<uint8_t>((size_t)(b_.cfg.lo_wide ? kLowImgWide : kLowImg) * n_env);
-      b_.low_1d = alloc<float>((size_t)mdp::low::n1d_of(b_.cfg.lo_mov4 != 0, b_.cfg.lo_body != 0) * n_env);
-      b_.low_vdone = alloc<int32_t>((size_t)n_env);
-      if (b_.cfg.lo_aux) {
-        b_.low_aux = alloc<float>((size_t)kLowAuxSrc * n_env);
-        b_.low_hit = alloc<float>((size_t)n_env);
-      }
-      if (b_.cfg.lo_wide) b_.low_wred = alloc<uint32_t>((size_t)(b_.cfg.size / 4) * (b_.cfg.size / 4) * n_env);
+      b_.low_img = alloc<uint8_t>((size_t)kLowImg * n_env);
+      b_.low_1d = alloc<float>((size_t)kLow1d * n_env);
     }
   }
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
@@ -379,9 +361,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   b_.ep = alloc<EpInfo>(n_env);
   b_.scratch = alloc<Shared>(n_env);
   // 닫힘 규칙의 지나간 길 (env.h EnvBatch::trail, trail_mark): CPU·GPU 모두
-  // 목적지만 학습 판(goal_only_train)은 프론티어 요약(env_reach_kernel · CPU reach_obs)을 아예 안 해서 지나간 길·요약 버퍼를 안 잡는다
-  const bool go_train = goal_only_train(hc.cfg);
-  if (!go_train) b_.trail = alloc<uint32_t>((size_t)n_env * 2 * hc.cfg.size * ((hc.cfg.size + 31) / 32));
+  b_.trail = alloc<uint32_t>((size_t)n_env * 2 * hc.cfg.size * ((hc.cfg.size + 31) / 32));
   if (gpu) {
     const size_t px = (size_t)mdp::obs::DEPTH_SIZE * n_env;
     b_.dep_z = alloc<float>(px);
@@ -394,13 +374,10 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     {   // 도달 가능한 프론티어 요약 (env_kernel.cu reach_block)
       const size_t nf = (size_t)hc.cfg.size * ((hc.cfg.size + 31) / 32);
       b_.rbits = alloc<uint32_t>((size_t)n_env * kReachBits * nf);
-      b_.rl_n = go_train ? 3 : kReachLists;   // 목적지만 학습: 목록 2·4·6 만 (goal_reach.h rl_at)
-      b_.rlist = alloc<int32_t>((size_t)n_env * mdp::kReachCap * b_.rl_n);
-      if (!go_train) {   // 프론티어 요약(reach_block)만 씀
-        b_.rpre = alloc<int32_t>((size_t)n_env * nf);
-        b_.rkey = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
-        if (hier) b_.rkey2 = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
-      }
+      b_.rlist = alloc<int32_t>((size_t)n_env * mdp::kReachCap * kReachLists);
+      b_.rpre = alloc<int32_t>((size_t)n_env * nf);
+      b_.rkey = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
+      if (hier) b_.rkey2 = alloc<unsigned long long>((size_t)n_env * mdp::kReachCap);
     }
     const size_t nb = (size_t)kMaxBeams * n_env;
     b_.beam_t = alloc<float>(nb);
@@ -428,12 +405,11 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
 #endif
     // 장치 사본 (OptiX raygen 이 읽음). 묶음은 여기서 다 정해지고 그 뒤 안 바뀐다
     EnvBatch* d = alloc<EnvBatch>(1);
-    zero_.pop_back();   // 장치 사본 (정적)
     b_.dev_self = d;
     cudaMemcpy(d, &b_, sizeof(EnvBatch), cudaMemcpyHostToDevice);
   }
   // 환경 하나 몫 버퍼 목록 (env_blob · set_env_blob · copy_env — 갈래 굴리기의 상태 저장·복원). 환경마다 따로인 실행 상태 전부:
-  // 상태(사람 포함) · 아래층 · 지도·지나간 길·깊이 층 · 관측 · 후보 · 계획·도달 작업 판 · 그래프 · 장 준비. 맵·장면(정적)·통계(map_eps · map_hit · counters)는 빠짐
+  // 상태(사람 포함) · 아래층 · 지도·지나간 길·깊이 층 · 관측 · 후보 · 계획·도달 작업 판 · 그래프 · 장 준비. 맵·장면(정적)·통계(counters)는 빠짐
   {
     const size_t cells = (size_t)hc.cfg.size * hc.cfg.size, nf = (size_t)hc.cfg.size * ((hc.cfg.size + 31) / 32);
     const auto reg = [&](const void* p, size_t per) { if (p && per) per_env_.push_back({(void*)p, per}); };
@@ -446,7 +422,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.cand_cur, sizeof(int32_t));
     reg(b_.racc, sizeof(float));
     reg(b_.tacc, (size_t)mdp::rew::kTerms * sizeof(float));
-    reg(b_.pplanes, (size_t)b_.pp_n * nf * sizeof(uint32_t));
+    reg(b_.pplanes, (size_t)kPathPlanes * nf * sizeof(uint32_t));
     reg(b_.cvox, cells);
     reg(b_.cpts, (size_t)mdp::obs::DEPTH_W * 2 * sizeof(float));
     reg(b_.gfeat, (size_t)mdp::graph::N * mdp::graph::FEAT);
@@ -462,13 +438,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.low, sizeof(LowEp));
     reg(b_.lowcmd, sizeof(LowCmd));
     reg(b_.lowrl, sizeof(LowRl));
-    reg(b_.lowstat, sizeof(LowRlStat));
-    reg(b_.low_img, (size_t)(b_.cfg.lo_wide ? kLowImgWide : kLowImg));
-    reg(b_.low_1d, (size_t)mdp::low::n1d_of(b_.cfg.lo_mov4 != 0, b_.cfg.lo_body != 0) * sizeof(float));
-    reg(b_.low_vdone, sizeof(int32_t));
-    reg(b_.low_aux, (size_t)kLowAuxSrc * sizeof(float));
-    reg(b_.low_hit, sizeof(float));
-    reg(b_.low_wred, (size_t)(b_.cfg.size / 4) * (b_.cfg.size / 4) * sizeof(uint32_t));
+    reg(b_.low_img, (size_t)kLowImg);
+    reg(b_.low_1d, (size_t)kLow1d * sizeof(float));
     reg(b_.lidar_ring, (size_t)kLidarRing * mdp::obs::LIDAR_BINS * sizeof(float));
     reg(b_.vec_prev, (size_t)mdp::obs::VEC * sizeof(float));
     reg(b_.lidar_int, (size_t)mdp::obs::LIDAR_BINS * sizeof(float));
@@ -485,7 +456,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.fmap, nf * sizeof(uint32_t));
     reg(b_.fchg, (size_t)kClassLog * sizeof(int32_t));
     reg(b_.rbits, (size_t)kReachBits * nf * sizeof(uint32_t));
-    reg(b_.rlist, (size_t)mdp::kReachCap * b_.rl_n * sizeof(int32_t));
+    reg(b_.rlist, (size_t)mdp::kReachCap * kReachLists * sizeof(int32_t));
     reg(b_.rpre, nf * sizeof(int32_t));
     reg(b_.rkey, (size_t)mdp::kReachCap * sizeof(unsigned long long));
     reg(b_.rkey2, (size_t)mdp::kReachCap * sizeof(unsigned long long));
@@ -542,33 +513,18 @@ Env::~Env() {
   for (void* p : owned_) cudaFree(p);
 }
 
-void Env::restart() {
-  for (const auto& [p, n] : zero_) {
-    if (gpu_) cudaMemset(p, 0, n);
-    else std::memset(p, 0, n);
-  }
-  if (gpu_) {
-    cudaMemcpy(b_.st, init_st_.data(), init_st_.size() * sizeof(EnvState), cudaMemcpyHostToDevice);
-    if (b_.lowrl) cudaMemcpy(b_.lowrl, init_lowrl_.data(), init_lowrl_.size() * sizeof(LowRl), cudaMemcpyHostToDevice);
-    if (cudaDeviceSynchronize() != cudaSuccess) throw std::runtime_error("Env::restart: CUDA 오류");
-  } else {
-    std::copy(init_st_.begin(), init_st_.end(), b_.st);
-    if (b_.lowrl) std::copy(init_lowrl_.begin(), init_lowrl_.end(), b_.lowrl);
-  }
-}
-
 void Env::reset() {
   if (gpu_) env_reset_gpu(b_);
   else env_reset_cpu(b_);
 }
 
 void Env::step(const float* actions, cudaStream_t st) {
-  if (gpu_) env_step_gpu(b_, actions, st, lean_low_);
+  if (gpu_) env_step_gpu(b_, actions, st);
   else env_step_cpu(b_, actions);
 }
 
 StepOut Env::outputs() const {
-  return StepOut{b_.obs_img, b_.obs_1d, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d, b_.low_vdone, b_.low_aux, b_.low_hit};
+  return StepOut{b_.obs_img, b_.obs_1d, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d};
 }
 
 void Env::low_prepare(const float* actions, cudaStream_t st) {
@@ -648,49 +604,10 @@ void Env::get_low_rl(std::vector<LowRl>& out) const {
   if (!b_.lowrl) { out.clear(); return; }
   fetch(gpu_, b_.lowrl, (size_t)b_.n_env, out);
 }
-void Env::get_lidar_ring(std::vector<float>& out) const {
-  fetch(gpu_, b_.lidar_ring, (size_t)b_.n_env * kLidarRing * mdp::obs::LIDAR_BINS, out);
-}
 void Env::get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const {
   if (!b_.lowrl) { img.clear(); o1d.clear(); return; }
-  fetch(gpu_, b_.low_img, (size_t)(b_.cfg.lo_wide ? kLowImgWide : kLowImg) * b_.n_env, img);
-  fetch(gpu_, b_.low_1d, (size_t)mdp::low::n1d_of(b_.cfg.lo_mov4 != 0, b_.cfg.lo_body != 0) * b_.n_env, o1d);
-}
-void Env::get_low_aux(std::vector<float>& out) const {
-  if (!b_.low_aux) { out.clear(); return; }
-  std::vector<float> h;
-  fetch(gpu_, b_.low_aux, (size_t)kLowAuxSrc * b_.n_env, out);
-  fetch(gpu_, b_.low_hit, (size_t)b_.n_env, h);
-  out.insert(out.end(), h.begin(), h.end());
-}
-void Env::take_map_stats(std::vector<int32_t>& eps, std::vector<int32_t>& hit) {
-  if (!b_.map_eps) { eps.clear(); hit.clear(); return; }
-  fetch(gpu_, b_.map_eps, (size_t)b_.n_maps, eps);
-  fetch(gpu_, b_.map_hit, (size_t)b_.n_maps, hit);
-  if (gpu_) { cudaMemset(b_.map_eps, 0, sizeof(int32_t) * b_.n_maps); cudaMemset(b_.map_hit, 0, sizeof(int32_t) * b_.n_maps); }
-  else { std::fill(b_.map_eps, b_.map_eps + b_.n_maps, 0); std::fill(b_.map_hit, b_.map_hit + b_.n_maps, 0); }
-}
-void Env::set_map_cdf(const std::vector<float>& cdf) {
-  if (cdf.empty()) { b_.map_cdf = nullptr; return; }
-  if ((int)cdf.size() != b_.n_maps) throw std::runtime_error("set_map_cdf: 맵 수와 다름");
-  if (!cdf_buf_) {
-    cdf_buf_ = alloc<float>((size_t)b_.n_maps);
-    zero_.pop_back();   // 호스트가 올리는 값 (restart 가 안 건드림)
-  }
-  if (gpu_) cudaMemcpy(cdf_buf_, cdf.data(), sizeof(float) * cdf.size(), cudaMemcpyHostToDevice);
-  else std::copy(cdf.begin(), cdf.end(), cdf_buf_);
-  b_.map_cdf = cdf_buf_;
-}
-void Env::set_goal_band(float dmin, float dmax) {
-  if (!(dmin >= 0.f && dmin < dmax)) throw std::runtime_error("set_goal_band: 0 ≤ dmin < dmax");
-  b_.cfg.lr_goal_dmin = dmin;   // 커널은 EnvBatch 를 값으로 받으므로 다음 발사부터
-  b_.cfg.lr_goal_dmax = dmax;
-}
-void Env::take_low_stat(std::vector<LowRlStat>& out) {
-  if (!b_.lowstat) { out.clear(); return; }
-  fetch(gpu_, b_.lowstat, (size_t)b_.n_env, out);
-  if (gpu_) cudaMemset(b_.lowstat, 0, sizeof(LowRlStat) * b_.n_env);
-  else std::fill(b_.lowstat, b_.lowstat + b_.n_env, LowRlStat{});
+  fetch(gpu_, b_.low_img, (size_t)kLowImg * b_.n_env, img);
+  fetch(gpu_, b_.low_1d, (size_t)kLow1d * b_.n_env, o1d);
 }
 void Env::get_map_env(int env, std::vector<int16_t>& out) const {
   const size_t cells = (size_t)b_.cfg.size * b_.cfg.size;

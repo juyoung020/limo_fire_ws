@@ -24,7 +24,7 @@ YAML::Node need(const YAML::Node& n, const char* key, const std::string& where) 
 
 EnvHostCfg load_env_cfg(const std::string& path) {
   const YAML::Node y = YAML::LoadFile(path);
-  EnvHostCfg h;
+  EnvHostCfg h{};   // 0 으로 (안 쓰는 칸 gone_rl_* 도 — 녹화 머리가 이 바이트를 담음)
   EnvCfg& c = h.cfg;
   const YAML::Node t = need(y, "time", path);
   c.dt = t["dt"].as<float>();
@@ -147,7 +147,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       const YAML::Node fo = ap["follow"];
       const auto num = [&](const char* k, float d) { return fo && fo[k] ? fo[k].as<float>() : d; };
       c.low_stat = c.low_task = 0;
-      c.low_rl = c.low_auto = c.low_period = c.low_act_w = c.low_explore = c.low_solo = 0;   // 아래층 RL (include/low_rl.h) — 도구·학습기가 켠다
+      c.low_rl = c.low_period = c.low_explore = 0;   // 아래층 걸음 길 (include/low_rl.h) — 도구가 켠다
       c.low_pass_r = num("pass_radius", 0.5f);
       c.low_idle_d = num("stall_dist", 0.3f);
       c.low_idle_steps = (int)std::lround(num("stall_time", 10.f) / pv);
@@ -322,45 +322,6 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.sweep_guard = (g && g[0] == '1') ? 1 : 0;
       c.sweep_h = 0.2f;
       c.sweep_margin = 0.02f;
-      // 아래층 RL 벽 충돌 대책 (low_rl.h, mdp/README "아래층 RL — 벽 충돌"). 정책 환경(LowCmd::follow == 2)에만 듣는다.
-      // 환경변수는 견줌 실험용 — 학습·평가·env_verify 가 같은 값을 읽는다. SIM_LOW_NOBACK=0 SIM_LR_MPROX_K=0 이 2026-11-12 동작
-      const auto envf = [](const char* k, float d) { const char* s = std::getenv(k); return s && s[0] ? (float)std::atof(s) : d; };
-      c.lg_noback = (int)envf("SIM_LOW_NOBACK", (float)kLrNoBack);
-      c.lr_mprox_k = envf("SIM_LR_MPROX_K", kLrMproxK);
-      c.lr_ttc_k = envf("SIM_LR_TTC_K", kLrTtcK);
-      c.lr_goal_dmin = envf("SIM_LR_GOAL_DMIN", kLrGoalD2);   // 자동 목표 직선 거리 띠 (커리큘럼 — train --goal-curr 가 바꿈)
-      c.lr_goal_dmax = envf("SIM_LR_GOAL_DMAX", kLrGoalDMax);
-      c.lo_cam_every = (int)envf("SIM_LOW_CAM_EVERY", 0.f);   // 깊이 카메라 층 걸음마다 (2026-11-15 — 시험 세트 HSSD 벽 충돌의 절반이 닿는 순간 라이다·깊이 둘 다 못 보는 곳)
-      c.lo_mov4 = (int)envf("SIM_LOW_MOV4", 0.f);   // 2026-11-15: 사람 충돌 대책 — 추적한 사람 넷까지 관측에
-      c.lo_aux = (int)envf("SIM_LOW_AUX", 0.f);   // 2026-11-16: 보조 예측 머리 정답 재료 (학습기 --aux)
-      c.lo_body = (int)envf("SIM_LOW_BODY", 0.f);   // 2026-11-16: 벽 옆·뒤 충돌 대책 — 몸 둘레 360° 간격
-      c.lo_wide = (int)envf("SIM_LOW_WIDE", 0.f);   // 넓은 지도 (2026-11-15 — 목적지만 정책이 ±3.2 m 창 밖 길을 못 찾아서)
-      c.lr_time_k = envf("SIM_LR_TIME_K", kLrTimeK);   // 2026-11-15: 검증 세트 2 사람 적은 판(p2)도 평균 속도 0.55~0.66 (기준 0.676), 트인 곳에서도 0.75 m/s
-      c.lo_goal_term = (int)envf("SIM_LOW_GOAL_TERM", 0.f);   // 2026-11-15 독립 검토: 통과가 가치 끝이 아니라 시간 벌점이 상수가 됨
-      c.lo_go_shape = (int)envf("SIM_LOW_GO_SHAPE", 0.f);   // 2026-11-15: 검증 세트 2 사람 충돌 67 % 가 회전 > 1 rad/s 중, 53 % 는 닿기 1.5 s 전부터 추적됨
-      c.lo_goalonly = (int)envf("SIM_LOW_GOALONLY", 0.f);   // 목적지만 (2026-11-15 사용자 결정 실험 — 경로를 관측·보상 어디에도 안 씀)
-      c.lr_mprox_d = envf("SIM_LR_MPROX_D", kLrMproxD);
-      // 사람 충돌·속도 대책 (mdp/README "아래층 RL — 사람 충돌·속도"). 보상만 바꾼다 — 정책 행동·관측은 그대로
-      c.lr_ppl_k = envf("SIM_LR_PPL_K", kLrPplK);
-      c.lr_ppl_t = envf("SIM_LR_PPL_T", kLrPplT);
-      c.lr_ppl_m = envf("SIM_LR_PPL_M", kLrPplM);
-      c.lr_coll_k = envf("SIM_LR_COLL_K", kLrCollisionK);   // 벽 닿음 (2026-11-15: 목적지만 학습에서 −20 으로 — 제자리 회전 중 모서리 긁기가 늘어서)
-      c.lr_pcol_k = envf("SIM_LR_PCOL_K", kLrPersonCollisionK);
-      c.lr_w_k = envf("SIM_LR_W_K", kLrTurnK);
-      c.tk_gate = envf("SIM_LOW_TRACK_GATE", kLrTrkGate);
-      c.tk_sz = envf("SIM_LOW_TRACK_SZ", kLrTrkSz);
-      c.tk_qa = envf("SIM_LOW_TRACK_QA", kLrTrkQa);
-      c.tk_miss = (int)envf("SIM_LOW_TRACK_MISS", (float)kLrTrkMiss);
-      c.tk_conf = (int)envf("SIM_LOW_TRACK_CONF", (float)kLrTrkConf);
-      c.tk_disp = envf("SIM_LOW_TRACK_DISP", kLrTrkDisp);
-      c.tk_fast = (int)envf("SIM_LOW_TRACK_FAST", 0.f);    // 2026-11-16 사람 충돌 (i): 끄면 옛 규칙 (지문 그대로)
-      c.tk_hold = (int)envf("SIM_LOW_TRACK_HOLD", 20.f);   //   확인된 사람을 붙드는 장 수 (2 s — 추적 기억 SIM_LOW_TRACK_MISS 와 같게, 잠정)
-      c.tk_near = envf("SIM_LOW_TRACK_NEAR", 2.0f);        //   다가오는 덩어리를 확인 전에 넣는 거리 (m, 잠정 — 0.8 m/s 로 2.5 s)
-      c.tk_appr = envf("SIM_LOW_TRACK_APPR", 0.3f);        //   그 다가오는 속도 (m/s, 잠정)
-      c.lo_mov = (int)envf("SIM_LOW_OBS_MOV", 0.f);
-      c.tk_sag = envf("SIM_LOW_TRACK_SAG", kLrClusSag);
-      c.tk_w0 = envf("SIM_LOW_TRACK_W0", kLrClusRound0);
-      c.lr_w0 = (c.wheel_max - c.act_v_fwd) / c.wheel_k;   // 이 아래 ω 는 바퀴 한도가 v 를 안 깎는다 (1.11 − 1.0) / 0.2 = 0.55 rad/s
     }
     {
       // 닿음 (2026-11-14, contact.h — 센서로 정한 부딪힘이 충돌 보상·판 끝. 시뮬 정답 충돌은 물리·기록만). 값은 low_e0 정책 자취의 정답 충돌과 견줘 골랐다

@@ -9,8 +9,6 @@
 //               [--decider-finish] [--decider-config <yaml>] [--decider-mission "<글>"] [--decider-left-hold N] [--decider-score-margin x] [--decider-score-finish x]   끝 선언 · 점수 방식 (아래)
 //               [--video <접두사>] [--video-env 0] [--end-hold 3]   환경 하나의 판을 mp4 로 (위에서 본 지도 + 걸음마다 새로 그린 카메라 그림·모델에 보낸 그림 + 판단 모델·아래층 출력 글 — decider.h Video). 판이 끝나면 리셋 없이 명령 0 으로 --end-hold 초 더 찍음 (0 = 끔)
 //   아래층은 규칙 추종기: 후보 번호를 그대로(follow 0), fuel · --rule-cell · 갈래면 목표 칸을 그대로(follow 1).
-//   --auto: 위층 규칙을 호스트 대신 환경이 돌린다 (EnvCfg::low_auto 2 — 그만둔 탐사 판 학습과 같은 길). 판 결과가 호스트 규칙과
-//           같아야 한다 (학습 때 받는 목표 = 평가 때 받는 목표). 위층 걸음 통계(결정 수 등)는 호스트 규칙 것만 셈
 //   판·씨앗·판 길이 상한은 frontier_run --modes slot0 와 같다 (장면 i 의 씨앗 seed · 1000003 + i · 7919, --eval-seed 면 seed · 7919 + 17 + i).
 //
 // 위층 규칙 (환경마다, 결정 = 10 걸음마다 · 아래 "바로 다시 고름" 때):
@@ -84,7 +82,6 @@ struct Args {
   bool eval_seed = false, avoid = true, redecide = true, stick = true;
   bool close_lidar = false;   // --close-lidar: 합친 탐사 닫힘·후보 번지기를 라이다 지도만으로 (깊이 카메라 층 뺌, EnvCfg::low_explore 2)
   double stall_s = 0.0;   // > 0 이면 정체 판정 시간(env.yaml follow.stall_time)을 이 값으로 (실험용)
-  bool autox = false;   // --auto: 위층 규칙을 환경이 돌림 (EnvCfg::low_auto 2 — 탐사 판 학습과 같은 길). 호스트 규칙과 결과가 같은지 재는 용
   std::string upper = "slot0";   // 위층 고르기: slot0 · random · decider · cand_tsp
   cr::Opt rule;                  // cand_tsp: --rule-stick · --rule-turn (scripts/cand_rules.h, frontier_run 과 같은 뜻)
   fu::Opt fuel;                  // fuel: --fuel-* (scripts/fuel_upper.h)
@@ -220,13 +217,10 @@ int run(const Args& a) {
   hc.cfg.curriculum = 0;
   hc.cfg.max_steps = (int)std::ceil(P.t_safe / (hc.cfg.substeps * hc.cfg.dt)) + 100;
   hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
-  hc.cfg.low_auto = 0;      // 목표는 호스트(위층 규칙)가 — Env::low_prepare
-  hc.cfg.low_act_w = 0;     // 행동 줄 폭 mdp::act::DIM — 규칙 추종 환경이 후보 번호를 읽음
   if (a.stall_s > 0.0) hc.cfg.low_idle_steps = std::max(1, (int)std::lround(a.stall_s / (hc.cfg.substeps * hc.cfg.dt)));
   hc.cfg.low_explore = a.close_lidar ? 2 : 1;   // 합친 탐사: 탐사 판 끝 규칙 그대로 · 정체는 막힘 신호만 (2 = 닫힘을 라이다 지도만으로 — mdp/frontier.h)
-  hc.cfg.end_hold = !a.video.empty() && !a.autox && a.end_hold > 0.0 ? 1 : 0;   // 녹화: 판이 끝나면 리셋 없이 멈춤 (env.h EnvCfg::end_hold). 녹화 안 하면 0 — 환경 동작 그대로
+  hc.cfg.end_hold = !a.video.empty() && a.end_hold > 0.0 ? 1 : 0;   // 녹화: 판이 끝나면 리셋 없이 멈춤 (env.h EnvCfg::end_hold). 녹화 안 하면 0 — 환경 동작 그대로
   hc.cfg.finish_declare = a.dec_finish ? 1 : 0;   // 판단 모델의 끝 선언 (env.h EnvCfg::finish_declare) — 끄면 환경 동작 그대로
-  if (a.autox) hc.cfg.low_auto = 2;   // 위층 규칙을 환경이 (low_rl.h lowrl_goal_explore) — 준비 단계는 step·reset 이 끝에서 부름
   const sim::LidarModel lidar = sim::load_lidar_model(a.model);
   const sim::EnvCfg& c = hc.cfg;
   const int N = a.episodes, AW = mdp::act::DIM, K = mdp::hier::K, DS = c.decide_steps;
@@ -245,12 +239,11 @@ int run(const Args& a) {
   if (a.dec_orders != 1 && (a.dec_orders != 2 || !a.dec_cand_fuel)) throw std::runtime_error("--decider-orders 는 1 · 2 (2 는 --decider-cand fuel 과 같이)");
   if (a.cand_cap < 2 || a.cand_cap > 26) throw std::runtime_error("--cand-cap 은 2 … 26");
   if ((upper == kFuel || fcand) && (!(a.fuel.v_eff > 0.f) || !(a.fuel.w_eff > 0.f) || a.fuel.max_nodes < 1)) throw std::runtime_error("--fuel-v · --fuel-w > 0, --fuel-nodes ≥ 1");
-  if (upper != kSlot0 && a.autox) throw std::runtime_error("--auto 는 slot0 규칙만");
   if (a.dec_compact < 0 || a.dec_compact > 4) throw std::runtime_error("--decider-compact 0~4");
   dec::set_compact(a.dec_compact);
   if (upper == kDecider && (a.dec_url.empty() || dec_in < 0 || a.dec_prompt < 1 || a.dec_prompt > 3)) throw std::runtime_error("decider: --decider-url · --decider-input text|image|both · --decider-prompt 1~3");
   if (upper == kDecider && (dec_mode < 0 || ((prune || score) && !all) || (all && a.dec_prompt > 2) || a.dec_ask_m < 1 || a.dec_ask_m > 8)) throw std::runtime_error("decider: --decider-mode choice|prune|score (prune · score 는 --decider-input all 만) · 입력 all 의 프롬프트는 1~2 · --decider-ask-m 1~8");
-  if (a.dec_finish && (upper != kDecider || !all || prune || a.autox)) throw std::runtime_error("--decider-finish 는 --upper decider · --decider-input all · --decider-mode choice|score 와 같이");
+  if (a.dec_finish && (upper != kDecider || !all || prune)) throw std::runtime_error("--decider-finish 는 --upper decider · --decider-input all · --decider-mode choice|score 와 같이");
   dec::ScoreCfg sc;
   if (score || a.dec_finish) {
     sc = dec::load_score_cfg(a.dec_config);
@@ -477,7 +470,6 @@ int run(const Args& a) {
     int n_dump = 0;
     std::string first_err;
     int left = N;
-    std::vector<sim::LowCmd> ecmd;
     // 녹화 (--video): 환경 ve 의 판을 걸음마다 한 장. 카메라 칸은 걸음마다 지금 자세에서 새로 그리고, 모델에 실제로 보낸 그림은 작은 그림으로 따로 둠. 결정 때 후보·모델 답을 잡아 다음 결정까지 보여 줌. 셈·고르기에는 안 씀
     const int ve = a.video_env;
     bool vrec = false, vcap = false, vok = false;
@@ -499,7 +491,7 @@ int run(const Args& a) {
     const char* const kM = "{\\c&HDC28FF&}";
     const char* const kO = "{\\c&H1E8CFF&}";
     const char* const kW = "{\\c&HFFFFFF&}";
-    if (!a.video.empty() && !a.autox) {
+    if (!a.video.empty()) {
       if (ve < 0 || ve >= N) throw std::runtime_error("--video-env 는 0 … 판 수 − 1");
       vid.reset(new dec::Video(a.video + "_" + W.name, 1.0 / dt, "Lidar map (white=free black=wall grey=unknown)  " + W.name,
                                upper == kDecider && all ? "Live camera (synthetic, not real RGB); inset = sent to model" : "Live camera (synthetic render); nothing sent to a model"));
@@ -512,11 +504,10 @@ int run(const Args& a) {
     for (long t = 0; (left > 0 && t < (long)c.max_steps + 10 * DS) || (vrec && vhold >= 0); ++t) {   // 뒤 조건: 녹화의 판 끝 뒤 멈춤 장면 (vhold 걸음 뒤 vrec 가 꺼짐)
       env.get_cand(cand);
       env.get_cand_cur(cur);
-      if (a.autox) env.get_low_cmd(ecmd);
       ask.clear();
       askg.clear();
       askq.clear();
-      for (int i = 0; i < N && !a.autox; ++i) {   // 결정할 환경과 유효 후보
+      for (int i = 0; i < N; ++i) {   // 결정할 환경과 유효 후보
         need[i] = 0;
         if (fin[i]) continue;
         const sim::EnvState& s = st[i];
@@ -544,10 +535,6 @@ int run(const Args& a) {
         for (int i = 0; i < N; ++i) any = any || need[i];
         if (any) { env.get_map(r_map); env.get_trail(r_trail); env.get_camlayer(r_cam, r_pts); }
         const size_t tws = (size_t)(c.size + 31) / 32, per_trail = 2 * c.size * tws, per_map = (size_t)c.size * c.size;
-        std::vector<std::vector<float>> ppl(N);   // 아래층 라이다 사람 추적(LowRl::tk_*)이 걷는 사람으로 본 것 — 로봇이 아는 값
-        for (int i = 0; i < N && i < (int)rl.size(); ++i)
-          for (int k = 0; k < rl[i].tk_n && k < sim::kLrTrk; ++k)
-            if (rl[i].tk_mov[k] > 0) { ppl[i].push_back(rl[i].tk_x[k]); ppl[i].push_back(rl[i].tk_y[k]); }
         std::atomic<int> nx{0};
         std::vector<std::thread> th;
         for (int t = 0; t < n_thr; ++t)
@@ -560,7 +547,6 @@ int run(const Args& a) {
               in.cands = &fc[i];
               in.cand_cap = a.cand_cap;
               in.cand_big = a.cand_big;
-              in.people = &ppl[i];
               tcell[i] = fu::decide(in, a.fuel, fmem[i], f_works[t]);   // fuel 이 고른 것 (rich · 판단 모델이 덮어씀)
               if (tcell[i] < 0) fc[i].clear();
             }
@@ -1057,7 +1043,7 @@ int run(const Args& a) {
         u_slot[pick[i]] += 1;
         u_first += rank == 0;
       }
-      for (int i = 0; i < N && !a.autox; ++i) {
+      for (int i = 0; i < N; ++i) {
         if (fin[i]) { cmd[i] = sim::LowCmd{-1, 0}; act[(size_t)AW * i] = 0.f; continue; }   // 끝난 환경: 규칙 탐사로 흘려 둠 (안 셈)
         const sim::EnvState& s = st[i];
         if (!need[i]) continue;
@@ -1111,14 +1097,10 @@ int run(const Args& a) {
           dbin[d < 1.0 ? 0 : d < 3.0 ? 1 : d < 15.0 ? 2 : 3] += 1;
         }
       }
-      if (a.autox) {
-        cmd = ecmd;   // 환경이 고른 목표 (아래 걸음 통계가 같은 값을 보게)
-      } else {
-        cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
-        env.set_low_cmd(cmd);
-        env.low_prepare(d_act);
-        env.sync();
-      }
+      cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
+      env.set_low_cmd(cmd);
+      env.low_prepare(d_act);
+      env.sync();
       env.step(d_act);
       env.sync();
       env.get_reward(rew, done);
@@ -1496,7 +1478,6 @@ int main(int argc, char** argv) {
       else if (k == "--no-redecide") a.redecide = false;
       else if (k == "--no-stick") a.stick = false;
       else if (k == "--stall-s") a.stall_s = std::stod(nx());
-      else if (k == "--auto") a.autox = true;
       else if (k == "--upper") a.upper = nx();
       else if (k == "--rule-stick") a.rule.stick = std::stof(nx());
       else if (k == "--rule-turn") a.rule.turn_m = std::stof(nx());

@@ -49,7 +49,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   EnvState e = b.st[env];
   e.collided = 0;
   if (sub == 0) gdec_begin(b, e, env);
-  apply_action(b, e, env, actions + (size_t)lowrl_act_w(b) * env);
+  apply_action(b, e, env, actions + (size_t)mdp::act::DIM * env);
   int new_wall = 0, new_floor = 0, d_known = 0, n_new = 0, n_occ = 0;
   sh.scanned = 0;
   const int tick0 = e.tick;
@@ -58,7 +58,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
     e.tick += 1;
     if ((tick0 + k + 1) % c.lidar_every != 0) continue;
     scan_begin(b, e, sh);
-    if (CpuTap* tap = g_tap) {   // 시험 탭: 이 장을 밖으로 (같은 값을 실물 노드 RobotEnv 에 넣어 비교 — tools/rl_node_check)
+    if (CpuTap* tap = g_tap) {   // 시험 탭: 이 장을 밖으로 (같은 값을 실물 노드 RobotEnv 에 넣어 비교 — tools/low_explore_check · room_run)
       std::vector<float> rr((size_t)sh.n_beams), it((size_t)sh.n_beams);
       for (int j = 0; j < sh.n_beams; ++j) scan_beam(b, e, env, sh, j, &rr[(size_t)j], &it[(size_t)j]);
       tap->scan(env, e, sh, rr, it);
@@ -125,77 +125,16 @@ void hier_plan_cpu(const EnvBatch& b, EnvState& e, int env, int slot) { plan_cpu
 void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env) { camlayer_ref(b, e, env); }
 
 static_assert(kLrNearCell == mdp::obsgen::kNearCell, "low_rl.h 가까운 지도 픽셀 크기");
-// 아래층 RL 준비 단계 (include/low_rl.h 머리말 — GPU env_low_prepare_gpu 와 같은 차례): [새 목표] → 깊이 카메라 층·경로 계획(차례일 때만) → 정책 관측
-// 목적지만 목표 뽑기의 로봇 덩어리 판 [size][fmap_row] (goal_reach.h): P = 상자(낱말 범위) 안 설 수 있음(계획 반경) & 깊이 카메라 층 아님, 시작 칸에서 4 이웃 큐 BFS
-static std::vector<uint32_t> goal_reach_cpu(const EnvBatch& b, const EnvState& e, int env, mdp::Robot rb) {
-  const EnvCfg& c = b.cfg;
-  const MapDev& m = b.maps[e.map];
-  const int ws = fmap_row(c);
-  std::vector<uint32_t> R((size_t)c.size * ws, 0u);
-  int by0, by1, bw0, bw1;
-  if (!goal_box(e, &by0, &by1, &bw0, &bw1)) return R;
-  const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
-  const auto pass = [&](int x, int y) -> bool {
-    if (x < 0 || y < 0 || x >= m.gw || y >= m.gh) return false;
-    if (y < by0 || y > by1 || (x >> 5) < bw0 || (x >> 5) > bw1) return false;
-    return mdp::standable(mv, x, y, rb) && !cam_lethal(b, env, x, y);
-  };
-  int rx, ry;
-  if (cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry) < 0) return R;
-  std::vector<int32_t> qa(mdp::kReachCap), qb(mdp::kReachCap);
-  const int s = goal_start(m.gw, m.gh, rx, ry, pass, qa.data(), qb.data(), mdp::kReachCap);
-  if (s < 0) return R;
-  std::vector<int> q{s};
-  R[(size_t)(s / m.gw) * ws + ((s % m.gw) >> 5)] |= 1u << ((s % m.gw) & 31);
-  for (size_t h = 0; h < q.size(); ++h) {
-    const int x = q[h] % m.gw, y = q[h] / m.gw;
-    for (int k = 0; k < 4; ++k) {
-      int dx, dy;
-      mdp::nb4(k, &dx, &dy);
-      const int u = x + dx, v = y + dy;
-      if (!pass(u, v)) continue;
-      uint32_t& w = R[(size_t)v * ws + (u >> 5)];
-      if ((w >> (u & 31)) & 1u) continue;
-      w |= 1u << (u & 31);
-      q.push_back(v * m.gw + u);
-    }
-  }
-  return R;
-}
-
+// 아래층 준비 단계 (include/low_rl.h 머리말 — GPU env_low_prepare_gpu 와 같은 차례): 깊이 카메라 층·경로 계획(차례일 때만) → 아래층 관측
 static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
-  const EnvCfg& c = b.cfg;
   EnvState e = b.st[env];
-  if (c.low_auto == 2 && low_xenv(b, env)) {   // 탐사 판 학습: 위층 0 번 후보 규칙
-    lowrl_goal_explore(b, e, env);
-  } else if (c.low_auto && b.lowrl[env].need_goal) {
-    const mdp::Robot rb = path_rb_plan(c, mdp::obsgen::reach_robot(c));
-    std::vector<uint32_t> reach;
-    if (c.lo_goalonly && c.low_auto == 1) reach = goal_reach_cpu(b, e, env, rb);   // 목적지만 · 학습: 로봇과 같은 덩어리 (goal_reach.h — GPU goal_reach_gpu 와 같은 칸 집합)
-    uint64_t key = ~0ull;
-    for (int j = 0; j < kLrProbes; ++j) {
-      const uint64_t k = lowrl_goal_probe(b, e, env, j, rb, reach.empty() ? nullptr : reach.data());
-      key = k < key ? k : key;
-    }
-    lowrl_goal_set(b, e, env, key);
-  }
-  if (lowrl_cam_due(b, e, env) && !lowrl_due(b, e, env)) hier_camlayer_cpu(b, e, env);   // lo_cam_every: 계획 차례가 아닌 걸음에도 층만 (env_camlayer_kernel 과 같은 규칙)
   if (lowrl_due(b, e, env)) {
     hier_camlayer_cpu(b, e, env);
-    if (lowrl_replan(b, e, env))   // 목적지만은 경로를 안 짬 (env_kernel.cu env_plan_kernel 과 같은 규칙)
-      plan_cpu(b, e, env, lowrl_policy(b, env) ? 0 : (actions && c.low_auto != 2 ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1));
-    else if (lowrl_go_policy(b, env) && lowrl_goal_new(b, env))   // 목적지만 정책 환경: 새 목표면 goal_cell 만 (goal_reach.h goal_only_issue)
-      goal_only_issue(b, e, env);
+    plan_cpu(b, e, env, actions ? slot_of(b, actions[(size_t)mdp::act::DIM * env]) : -1);
     lowrl_planned(b, e, env);
   }
   lowrl_pack(b, e, env);
-  lowrl_body_clear(b, e, env);   // 몸 둘레 간격 (켰을 때만 — GPU 는 env_low_pack_kernel 이 블록으로 나눠)
-  const int n = low_img_n(c);
-  for (int i = 0; i < kLowImg; ++i) b.low_img[(size_t)env * n + i] = lowrl_img(b, e, env, i);
-  if (c.lo_wide) {
-    for (int k = 0; k < (c.size / 4) * (c.size / 4); ++k) lowrl_wred(b, e, env, k);
-    for (int k = 0; k < kLowWideHW * kLowWideHW; ++k) lowrl_wide(b, e, env, k, b.low_img + (size_t)env * n + kLowWideOff);
-  }
+  for (int i = 0; i < kLowImg; ++i) b.low_img[(size_t)env * kLowImg + i] = lowrl_img(b, e, env, i);
   b.st[env] = e;
 }
 void env_low_prepare_cpu(const EnvBatch& b, const float* actions) {
@@ -209,7 +148,7 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
     for_envs(b.n_env, [&](int env) { step_env(b, actions, env, -1); });
     return;
   }
-  if (b.lowrl) {   // 아래층 RL: 한 번 = 걸음 하나 (계획은 준비 단계가 — 걸음 끝, 관측 앞)
+  if (b.lowrl) {   // 아래층 걸음 길: 한 번 = 걸음 하나 (계획은 준비 단계가 — 걸음 끝, 관측 앞)
     for_envs(b.n_env, [&](int env) {
       step_env(b, actions, env, 0);
       b.reward[env] = b.racc[env];
@@ -223,7 +162,6 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
         write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, true));
         b.st[env] = e;
       }
-      if (c.low_auto) low_prepare_env(b, actions, env);
     });
     return;
   }
@@ -267,10 +205,7 @@ void env_reset_cpu(const EnvBatch& b) {
     b.reward[env] = 0.f;
     b.done[env] = 0;
     for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = 0.f;
-    if (b.lowrl) {
-      lowrl_clear(b.lowrl[env]);
-      if (b.cfg.low_auto) low_prepare_env(b, nullptr, env);
-    }
+    if (b.lowrl) lowrl_clear(b.lowrl[env]);
   });
 }
 

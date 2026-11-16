@@ -133,7 +133,7 @@ __device__ void reach_fix(const EnvBatch& b, const EnvState& e, int env, const S
   uint32_t* ST = RB + kRbStand * nf;
   uint32_t* STC = RB + kRbStandC * nf;
   const mdp::Robot rbc = mdp::robot_cells(c.close_radius, c.res);   // 닫힘·후보 번지기 반경 (= 계층형 계획기 반경)
-  int32_t* QC = rl_at(b, env, 6);
+  int32_t* QC = b.rlist + ((size_t)env * kReachLists + 6) * mdp::kReachCap;
   const mdp::Robot rb = mdp::obsgen::reach_robot(c);
   const auto fix = [&](int x, int y) {
     if (x < 0 || y < 0 || x >= m.gw || y >= m.gh) return;
@@ -917,17 +917,15 @@ __global__ void __launch_bounds__(kActT) env_act_kernel(EnvBatch b, const float*
   if (tid == 0) {
     e.collided = 0;
     if (sub == 0) gdec_begin(b, e, env);
-    const float* a = actions + (size_t)lowrl_act_w(b) * env;
+    const float* a = actions + (size_t)mdp::act::DIM * env;
     if (b.lowrl) lowrl_begin(b, e, env);
     else action_begin(c, e, a);
-    if (lowrl_act(b, e, env, a)) step_begin(b.scratch[env], e);   // 아래층 RL: 정책이 모는 환경 — 추종기 없이 명령 (low_rl.h)
     pre.od_best = 1 << 30;
     pre.rot_cnt = 0;
     pre.now_hit = 0;
     pre.arr_hit = 0;
     imm = 0;
   }
-  if (lowrl_policy(b, env)) return;   // 블록 전체 같은 값 (LowCmd 는 이 커널이 안 고침)
   if (tid < 65) cnt[tid] = 0;
   __syncthreads();
   {   // 걸음 앞 상태만으로 정해지는 값 (쓰일지는 추종기가 정한다 — 안 쓰이면 버림)
@@ -1171,7 +1169,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   const int by0 = e.kb_y0, by1 = e.kb_y1, bw0 = e.kb_x0 >> 5, bw1 = e.kb_x1 >> 5;
   const auto in_box = [&](int x, int y) { return x >= 0 && y >= 0 && x < m.gw && y < m.gh && y >= by0 && y <= by1 && (x >> 5) >= bw0 && (x >> 5) <= bw1; };
   const auto bit_of = [&](const uint32_t* P, int x, int y) -> uint32_t { return in_box(x, y) ? (P[y * ws + (x >> 5)] >> (x & 31)) & 1u : 0u; };
-  uint32_t* P = b.pplanes + (size_t)env * b.pp_n * nf;   // 판 13 장 (목적지만 학습은 2 장 — 아래 replan 이 늘 거짓이라 안 씀)
+  uint32_t* P = b.pplanes + (size_t)env * kPathPlanes * nf;   // 판 13 장
   uint32_t* C3 = P + kPpC3 * nf;
   uint32_t* C45 = P + kPpC45 * nf;
   uint32_t* D0 = P + kPpD * nf;
@@ -1183,11 +1181,10 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
   uint32_t* SLO = P + kPpSLO * nf;   // 그 설 수 있음
   const bool scan = c.path_scan != 0 || b.cvox != nullptr || path_rb_plan(c, mdp::obsgen::reach_robot(c)).r2 != mdp::obsgen::reach_robot(c).r2;   // 느슨 판 LO·SLO 를 따로 만드나 (지금 스캔 · 깊이 카메라 층 · 계획 반경)
   const auto Bp = [&](int t) { return P + (size_t)(kPpB + (t & 3)) * nf; };
-  const bool due = lowrl_due(b, e, env);   // 아래층 RL: 계획 차례인 환경만 (끄면 늘 true). 고치는 것은 아래 동기화 뒤 스레드 0
-  const bool replan = lowrl_replan(b, e, env);   // 목적지만이면 목표가 새로 들어올 때만 (아니면 due 와 같음)
-  if (tid == 0 && replan) {
+  const bool due = lowrl_due(b, e, env);   // 아래층 걸음 길: 계획 차례인 환경만 (끄면 늘 true). 고치는 것은 아래 동기화 뒤 스레드 0
+  if (tid == 0 && due) {
     int force = 0;   // 복구 (hier_path.h path_recovery): 다시 계획 · 포기한 목표면 다른 후보(없으면 −1)
-    const int k_in = lowrl_policy(b, env) ? 0 : (actions && c.low_auto != 2 ? slot_of(b, actions[(size_t)lowrl_act_w(b) * env]) : -1);   // 정책 환경: 행동 줄은 속도 — 목표는 LowCmd 하나
+    const int k_in = actions ? slot_of(b, actions[(size_t)mdp::act::DIM * env]) : -1;
     const int k = path_recovery(b, e, env, k_in, &force);
     e.p_slot = k;
     const int tgt = k >= 0 ? act_cells(b, env)[k] : -1;
@@ -1201,14 +1198,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
     s_start = -1;
   }
   __syncthreads();
-  if (!replan) {   // 블록 전체 같은 값
-    if (tid == 0 && due && b.lowrl) {   // 목적지만: 경로는 안 짜고 차례 기록만 (깊이 카메라 층 주기는 그대로) — 새 목표면 goal_cell 만 (goal_reach.h)
-      if (lowrl_go_policy(b, env) && lowrl_goal_new(b, env)) goal_only_issue(b, e, env);
-      lowrl_planned(b, e, env);
-    }
-    return;
-  }
-  if (b.pp_n < kPathPlanes) return;   // 목적지만 학습 판: 판이 2 장뿐 — 경로를 짤 일이 없다 (정책 환경은 replan 거짓, 규칙 추종 환경 없음). 안전 장치
+  if (!due) return;   // 블록 전체 같은 값
   if (tid == 0 && b.lowrl) lowrl_planned(b, e, env);
   if (!s_plan) {   // 빈 후보: 목표 없음. 아는 칸이 없으면 목표만 (경로 없이 섬)
     if (tid == 0 && s_target >= 0) {
@@ -1451,7 +1441,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
 __global__ void __launch_bounds__(kRT) env_camlayer_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
   const EnvState& e = b.st[env];
-  if (!lowrl_cam_due(b, e, env)) return;   // 아래층 RL: 계획 차례인 환경만 (lo_cam_every 면 걸음마다, 끄면 늘 true)
+  if (!lowrl_due(b, e, env)) return;   // 아래층 걸음 길: 계획 차례인 환경만 (끄면 늘 true)
   uint32_t* V = reinterpret_cast<uint32_t*>(b.cvox + (size_t)env * b.cfg.size * b.cfg.size);
   for (int i = tid; i < mdp::obs::DEPTH_SIZE; i += kRT)
     cam_pixel(b, e, env, i, 0, [&](int ci, uint8_t bit) { atomicAnd(&V[ci >> 2], ~((uint32_t)bit << (8 * (ci & 3)))); });
@@ -1492,166 +1482,15 @@ __global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
   if (tid == 0) g.cam = mdp::obsgen::depth_camera(b.cfg, e);
 }
 
-// ---------- 아래층 RL (include/low_rl.h — CPU 참조판 env_ref.cpp low_prepare_env 와 같은 차례·같은 함수) ----------
-// 자동 목표: 환경 하나 = 블록 하나, 스레드마다 탐침 하나 → 가장 작은 열쇠
-// 목적지만 목표 뽑기의 로봇 덩어리 판 (goal_reach.h) — 블록 하나(스레드 nt = kLrProbes)가 환경 하나.
-// 작업 판은 경로 계획 비트 판 두 장을 빌림 (목적지만이면 경로 계획을 안 하므로 비어 있음): P = kPpLT (갈 수 있는 칸), R = kPpSST (덩어리).
-// 채우기: 시작 칸 하나에서 (가로: 줄마다 스레드 하나가 낱말 안 비트 채우기 + 낱말 사이 올림 — 왼→오·오→왼) · (세로: 낱말 열마다 스레드 하나가 위→아래·아래→위)를
-// 바뀜이 없을 때까지 번갈아 — 4 이웃 덩어리와 같은 칸 집합 (돌아가는 길이 많을수록 반복이 늘지만 반복 하나는 상자 크기의 낱말 연산 몇 번)
-__device__ __forceinline__ uint32_t fill_up(uint32_t g, uint32_t p) {   // 비트 위쪽(x 큰 쪽)으로 p 를 따라 g 를 채움 (같은 낱말 안)
-  g &= p;
-  g |= p & (g << 1); p &= p << 1;
-  g |= p & (g << 2); p &= p << 2;
-  g |= p & (g << 4); p &= p << 4;
-  g |= p & (g << 8); p &= p << 8;
-  g |= p & (g << 16);
-  return g;
-}
-__device__ __forceinline__ uint32_t fill_dn(uint32_t g, uint32_t p) {
-  g &= p;
-  g |= p & (g >> 1); p &= p >> 1;
-  g |= p & (g >> 2); p &= p >> 2;
-  g |= p & (g >> 4); p &= p >> 4;
-  g |= p & (g >> 8); p &= p >> 8;
-  g |= p & (g >> 16);
-  return g;
-}
-__device__ const uint32_t* goal_reach_gpu(const EnvBatch& b, const EnvState& e, int env, int tid, mdp::Robot rb) {
-  constexpr int nt = kLrProbes;
-  __shared__ int s_start;
-  const EnvCfg& c = b.cfg;
-  const MapDev& m = b.maps[e.map];
-  const int ws = fmap_row(c), nf = c.size * ws;
-  const bool small = b.pp_n < kPathPlanes;   // 목적지만 학습 판: 작업 판 2 장 (0 = P, 1 = R)
-  uint32_t* P = b.pplanes + (size_t)env * b.pp_n * nf + (size_t)(small ? 0 : kPpLT) * nf;
-  uint32_t* R = b.pplanes + (size_t)env * b.pp_n * nf + (size_t)(small ? 1 : kPpSST) * nf;
-  const uint32_t* RB = b.rbits + (size_t)env * kReachBits * nf;
-  const uint32_t* OCC = RB + kRbOcc * nf;
-  const uint32_t* KN = RB + kRbKnown * nf;
-  for (int i = tid; i < nf; i += nt) R[i] = 0u;   // 상자 밖은 0 (탐침이 읽음)
-  int by0, by1, bw0, bw1;
-  const bool box = goal_box(e, &by0, &by1, &bw0, &bw1);
-  const int nbw = box ? bw1 - bw0 + 1 : 0, nbox = box ? nbw * (by1 - by0 + 1) : 0;
-  for (int k = tid; k < nbox; k += nt) {   // P = 설 수 있음(계획 반경) & 깊이 카메라 층 아님
-    const int y = by0 + k / nbw, wx = bw0 + k % nbw;
-    uint32_t w = stand_word(OCC, KN, ws, m.gh, y, wx, rb);
-    if (b.cvox && w) {
-      const uint8_t* V = b.cvox + (size_t)env * c.size * c.size + (size_t)y * c.size;
-      for (int q = 0; q < 32; ++q) {
-        const int x = wx * 32 + q;
-        if (x < m.gw && V[x]) w &= ~(1u << q);
-      }
-    }
-    P[y * ws + wx] = w;
-  }
-  __syncthreads();
-  if (tid == 0) {
-    s_start = -1;
-    if (box) {
-      int rx, ry;
-      if (cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry) >= 0) {
-        s_start = goal_start(m.gw, m.gh, rx, ry, [&](int x, int y) -> bool {
-          if (y < by0 || y > by1 || (x >> 5) < bw0 || (x >> 5) > bw1) return false;
-          return (P[y * ws + (x >> 5)] >> (x & 31)) & 1u;
-        }, rl_at(b, env, 2), rl_at(b, env, 4), mdp::kReachCap);
-      }
-      if (s_start >= 0) R[(s_start / m.gw) * ws + ((s_start % m.gw) >> 5)] = 1u << ((s_start % m.gw) & 31);
-    }
-  }
-  __syncthreads();
-  if (s_start < 0) return R;   // 갈 곳 없음 — 탐침이 모두 실패 (목표 없음, 다음 걸음에 다시)
-  for (;;) {
-    int ch = 0;
-    for (int y = by0 + tid; y <= by1; y += nt) {   // 가로
-      uint32_t* Rr = R + y * ws;
-      const uint32_t* Pr = P + y * ws;
-      uint32_t carry = 0u;
-      for (int wx = bw0; wx <= bw1; ++wx) {
-        const uint32_t o = Rr[wx], g = fill_up(o | (carry & Pr[wx]), Pr[wx]);
-        Rr[wx] = g;
-        carry = g >> 31;
-        ch |= g != o;
-      }
-      carry = 0u;
-      for (int wx = bw1; wx >= bw0; --wx) {
-        const uint32_t o = Rr[wx], g = fill_dn(o | ((carry << 31) & Pr[wx]), Pr[wx]);
-        Rr[wx] = g;
-        carry = g & 1u;
-        ch |= g != o;
-      }
-    }
-    __syncthreads();
-    for (int wx = bw0 + tid; wx <= bw1; wx += nt) {   // 세로
-      for (int y = by0 + 1; y <= by1; ++y) {
-        const uint32_t o = R[y * ws + wx], g = o | (R[(y - 1) * ws + wx] & P[y * ws + wx]);
-        R[y * ws + wx] = g;
-        ch |= g != o;
-      }
-      for (int y = by1 - 1; y >= by0; --y) {
-        const uint32_t o = R[y * ws + wx], g = o | (R[(y + 1) * ws + wx] & P[y * ws + wx]);
-        R[y * ws + wx] = g;
-        ch |= g != o;
-      }
-    }
-    if (!__syncthreads_or(ch)) break;
-  }
-  return R;
-}
-
-__global__ void __launch_bounds__(kLrProbes) env_low_goal_kernel(EnvBatch b) {
-  const int env = blockIdx.x, tid = threadIdx.x;
-  if (b.cfg.low_auto == 2 && low_xenv(b, env)) {   // 탐사 판 학습: 위층 0 번 후보 규칙 (스레드 하나)
-    if (tid == 0) lowrl_goal_explore(b, b.st[env], env);
-    return;
-  }
-  if (!b.lowrl[env].need_goal) return;   // 블록 전체 같은 값 (아래 둘째 동기화 뒤 스레드 0 만 고침)
-  __shared__ unsigned long long key;
-  if (tid == 0) key = ~0ull;
-  __syncthreads();
-  const EnvState& e = b.st[env];
-  const mdp::Robot rb = path_rb_plan(b.cfg, mdp::obsgen::reach_robot(b.cfg));
-  const uint32_t* reach = nullptr;
-  if (b.cfg.lo_goalonly && b.cfg.low_auto == 1) reach = goal_reach_gpu(b, e, env, tid, rb);   // 목적지만 · 학습(환경이 뽑는 목표): 로봇과 같은 덩어리 판 (goal_reach.h) — 블록 전체가 부름
-  const unsigned long long k = lowrl_goal_probe(b, e, env, tid, rb, reach);
-  if (k != ~0ull) atomicMin(&key, k);
-  __syncthreads();
-  if (tid == 0) lowrl_goal_set(b, e, env, key);
-}
-// 정책 관측: 숫자·걸음 사이 값은 스레드 0, 그림은 스레드가 나눠
+// ---------- 아래층 걸음 길 (include/low_rl.h — CPU 참조판 env_ref.cpp low_prepare_env 와 같은 차례·같은 함수) ----------
+// 아래층 관측: 숫자는 스레드 0, 그림은 스레드가 나눠
 constexpr int kLowPackT = 256;
 __global__ void __launch_bounds__(kLowPackT) env_low_pack_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
-  EnvState& e = b.st[env];
-  if (tid == 0) lowrl_pack(b, e, env);   // p_i · 넓은 지도 목적지 점만 고침 — 그림은 자세·지도만 읽음
-  const int n = low_img_n(b.cfg);
-  uint8_t* O = b.low_img + (size_t)env * n;
-  for (int i = tid; i < kLowImg; i += kLowPackT) O[i] = lowrl_img(b, e, env, i);
-  if (b.cfg.lo_wide) {
-    const int rs = b.cfg.size / 4;
-    for (int k = tid; k < rs * rs; k += kLowPackT) lowrl_wred(b, e, env, k);
-    __syncthreads();   // 줄인 판 · 목적지 점 (스레드 0 의 lowrl_pack)
-    for (int k = tid; k < kLowWideHW * kLowWideHW; k += kLowPackT) lowrl_wide(b, e, env, k, O + kLowWideOff);
-  }
-}
-// 몸 둘레 간격 (low_rl.h lowrl_body_*, 켰을 때만): env_low_pack_kernel 뒤 따로 (lowrl_pack 이 1D 를 비운 뒤).
-// 점을 스레드가 나눠 구역 최솟값 → 공유 메모리 최솟값(양수 float 비트 = 값 차례, 차례 무관) → 스레드 0 이 씀
-constexpr int kLowBodyT = 128;
-__global__ void __launch_bounds__(kLowBodyT) env_low_body_kernel(EnvBatch b) {
-  const int env = blockIdx.x, tid = threadIdx.x;
   const EnvState& e = b.st[env];
-  __shared__ int sb[mdp::low::BODY_SEC];
-  float best[mdp::low::BODY_SEC];
-  if (tid < mdp::low::BODY_SEC) sb[tid] = __float_as_int(mdp::low::BODY_RANGE);
-  __syncthreads();
-  lowrl_body_part(b, e, env, tid, kLowBodyT, best);
-  for (int k = 0; k < mdp::low::BODY_SEC; ++k)
-    if (best[k] < mdp::low::BODY_RANGE) atomicMin(&sb[k], __float_as_int(best[k]));
-  __syncthreads();
-  if (tid == 0) {
-    float v[mdp::low::BODY_SEC];
-    for (int k = 0; k < mdp::low::BODY_SEC; ++k) v[k] = __int_as_float(sb[k]);
-    lowrl_body_write(b, env, v);
-  }
+  if (tid == 0) lowrl_pack(b, e, env);
+  uint8_t* O = b.low_img + (size_t)env * kLowImg;
+  for (int i = tid; i < kLowImg; i += kLowPackT) O[i] = lowrl_img(b, e, env, i);
 }
 __global__ void env_low_clear_kernel(EnvBatch b) {
   const int env = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2123,30 +1962,23 @@ void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub
 }
 }  // namespace
 
-// 아래층 RL 준비 단계 (low_rl.h 머리말): [새 목표] → 깊이 카메라 층·경로 계획(차례인 환경만) → 정책 관측. actions: 규칙 추종 환경(follow 0)의 후보 번호 (없으면 nullptr)
+// 아래층 준비 단계 (low_rl.h 머리말): 깊이 카메라 층·경로 계획(차례인 환경만) → 아래층 관측. actions: 규칙 추종 환경(follow 0)의 후보 번호 (없으면 nullptr)
 void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
   if (!b.lowrl) return;
-  if (b.cfg.low_auto) env_low_goal_kernel<<<b.n_env, kLrProbes, 0, st>>>(b); ksync("env_low_goal_kernel");
   if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b); ksync("env_camlayer_kernel");
   env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions); ksync("env_plan_kernel");
   env_low_pack_kernel<<<b.n_env, kLowPackT, 0, st>>>(b); ksync("env_low_pack_kernel");
-  if (b.cfg.lo_body) env_low_body_kernel<<<b.n_env, kLowBodyT, 0, st>>>(b); ksync("env_low_body_kernel");   // 몸 둘레 간격 (lowrl_pack 이 1D 를 비운 뒤)
 }
 
-void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st, bool lean) {
+void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
   if (b.cfg.action_mode != kActPath) {
     step_once(b, actions, st, -1);
     return;
   }
-  if (b.lowrl) {   // 아래층 RL: 한 번 = 걸음 하나 (묶음 길이 1 — 깊이도 걸음마다). 계획은 준비 단계가
-    // lean (Env::set_lean_low): 단독 과제에서는 프론티어 요약을 읽는 곳이 없다 — 요약 커널 둘(걸음 · 끝난 환경)을 빼고 깊이만
-    // 목적지만 학습 판(goal_only_train)은 늘 건너뜀 — 요약 버퍼를 안 잡음 (CPU 참조판도 요약을 안 함 — obs_ref.h write_obs)
-    const bool skip = (lean && b.cfg.low_auto == 1 && b.cfg.low_explore == 0) || goal_only_train(b.cfg);
-    step_once(b, actions, st, 0, !skip);
+  if (b.lowrl) {   // 아래층 걸음 길: 한 번 = 걸음 하나 (묶음 길이 1 — 깊이도 걸음마다). 계획은 준비 단계가 (Env::low_prepare)
+    step_once(b, actions, st, 0, true);
     env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b); ksync("env_bundle_end_kernel");
-    if (skip) depth_gpu(b, st);
-    else reach_and_depth(b, st, 2);
-    if (b.cfg.low_auto) env_low_prepare_gpu(b, actions, st);
+    reach_and_depth(b, st, 2);
     return;
   }
   // 계층형: 결정 하나 = 경로 계획 → 속도 행동 decide_steps 걸음 → 묶음 끝 (보상 합·끝난 판 리셋·관측)
@@ -2184,13 +2016,9 @@ void env_graph_gpu(const EnvBatch& b, cudaStream_t st) {
 
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st) {
   env_reset_kernel<<<b.n_env, kThreads, 0, st>>>(b); ksync("env_reset_kernel");
-  if (goal_only_train(b.cfg)) depth_gpu(b, st);   // 목적지만 학습 판: 프론티어 요약 없음
-  else reach_and_depth(b, st);
+  reach_and_depth(b, st);
   if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 0); ksync("env_graph_kernel");
-  if (b.lowrl) {
-    env_low_clear_kernel<<<(b.n_env + 255) / 256, 256, 0, st>>>(b); ksync("env_low_clear_kernel");
-    if (b.cfg.low_auto) env_low_prepare_gpu(b, nullptr, st);
-  }
+  if (b.lowrl) env_low_clear_kernel<<<(b.n_env + 255) / 256, 256, 0, st>>>(b); ksync("env_low_clear_kernel");
 }
 
 }  // namespace sim

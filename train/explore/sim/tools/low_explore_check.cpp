@@ -219,10 +219,7 @@ int main(int argc, char** argv) {
     hc.cfg.action_mode = sim::kActPath;
     hc.cfg.curriculum = 0;
     hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
-    hc.cfg.low_auto = 0;
-    hc.cfg.low_act_w = 0;
     hc.cfg.low_explore = close_lidar ? 2 : 1;
-    hc.cfg.lo_aux = 0;
     hc.cfg.pe_xy = hc.cfg.pe_yaw = 0.f;
     const sim::LidarModel lidar = sim::load_lidar_model(model_path);
     std::vector<sim::World> worlds;

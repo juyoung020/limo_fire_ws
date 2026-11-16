@@ -119,47 +119,17 @@ constexpr int GLOB = 16;              // 전역 벡터 칸 수 (float, 정규화
 // 이 모드의 행동: 환경마다 act::DIM 칸, a[0] = 고른 스텐실 번호 0 … NB − 1 (정수 값), 나머지 0
 }  // namespace mdp::graph
 
-// 아래층 RL (sim/include/low_rl.h — 단독 과제를 정책이 10 Hz 로 몲): 위층과 같은 관측 원본에서 잘라 만든 아래층 전용 관측.
+// 아래층 관측 (sim/include/low_rl.h · low_task.h): 위층과 같은 관측 원본에서 잘라 만든 아래층 전용 관측 — 그만둔 아래층 정책(2026-11-16, archive/rl)의 입력 꼴 그대로.
+// 실물 노드 녹화(sim/tools/low_node_rec.h)에 남고 sim == 실물 비트 비교에 쓴다.
 // 그림 u8 [IMG]: 가까운 지도 6 × 64 × 64 (예약 물체 채널에 깊이 카메라 장애물 층) | 라이다 1 × 32 × 32 (각도 칸 248 × 프레임 4, Z 차례) | 깊이 1 × 40 × 64
-// 숫자 float [N1D] (칸 뜻은 sim/include/low_task.h kLo*), 행동 = (v, ω) + 선언 자리 (환경이 안 읽음)
+// 숫자 float [N1D] (칸 뜻은 sim/include/low_task.h kLo*). ACT = 녹화의 'A' 사건 폭 (v, ω, 선언 자리)
 namespace mdp::low {
 constexpr int LIDAR_HW = 32;
 constexpr int LIDAR_OFF = mdp::obs::NEAR_SIZE;
 constexpr int DEPTH_OFF = LIDAR_OFF + LIDAR_HW * LIDAR_HW;
 constexpr int IMG = DEPTH_OFF + mdp::obs::DEPTH_SIZE;   // 28160
-// 넓은 지도 (2026-11-15, 켤 때만 — SIM_LOW_WIDE=1, sim/include/low_rl.h lowrl_wide): 로봇 지도에서 로봇 중심·로봇 방향 25.6 m 창, 칸 0.4 m, 6 × 64 × 64 (로봇 지도를 0.2 m 로 줄인 판에서 — 막힘은 최댓값이라 얇은 벽도 남음).
-// IMG 뒤에 붙는다 (끄면 그림 크기 IMG 그대로 — 옛 체크포인트·버퍼 모두 그대로). 채널: 0 막힘 확률 최댓값 · 1 아는 빈 몫 · 2 모름 몫 · 3 지나간 곳 ·
-// 4 목적지 점(창 밖이면 가장자리로 자름) · 5 깊이 카메라 장애물 층. 경로·거리장 없음 (순수 RL — 사용자 결정)
-constexpr int WIDE_C = 6, WIDE_HW = 64;
-constexpr int WIDE_OFF = IMG;
-constexpr int IMG_WIDE = WIDE_OFF + WIDE_C * WIDE_HW * WIDE_HW;   // 52736
 constexpr int N1D = 32;
-// 움직이는 것 칸 넷 (2026-11-15, 켤 때만 — SIM_LOW_MOV4=1, sim low_rl.h lowrl_pack): 1D 뒤에 칸마다 6 (있음 · 거리 · sin · cos · 속도 앞 · 왼쪽),
-// 가장 가까워질 때 간격이 작은 차례 (2 s 앞까지). 옛 칸(kLoMov, 가장 가까운 하나)은 그대로 — 끄면 1D 크기 N1D 그대로
-constexpr int MOV_SLOTS = 4, MOV_W = 6;
-constexpr int N1D_MOV4 = N1D + MOV_SLOTS * MOV_W;   // 56
-// 몸 둘레 간격 (2026-11-16, 켤 때만 — SIM_LOW_BODY=1, sim low_rl.h lowrl_body_clear): 1D 끝(움직이는 것 칸 넷 뒤)에 BODY_SEC 칸 =
-// 몸통 사각형 둘레 360° 구역마다 가장 가까운 막힘까지 거리 / BODY_RANGE (자름 1, 없으면 1). 구역 k 중심 = 로봇 앞에서 왼쪽으로 k · 45° (0 앞 · 2 왼쪽 · 4 뒤 · 6 오른쪽).
-// 막힘 = 로봇 지도(지도 자세) 막힘 칸 · 깊이 카메라 층 · 최신 라이다 점 (시뮬 정답 없음)
-constexpr int BODY_SEC = 8;
-constexpr float BODY_RANGE = 1.0f;   // m (잠정 — 0.1 s 에 0.1 m 남짓 움직이므로 1 s 거리)
-constexpr int n1d_of(bool mov4, bool body) { return N1D + (mov4 ? MOV_SLOTS * MOV_W : 0) + (body ? BODY_SEC : 0); }
-constexpr int body_off(bool mov4) { return N1D + (mov4 ? MOV_SLOTS * MOV_W : 0); }
-// 보조 예측 (2026-11-16, 켤 때만 — sim SIM_LOW_AUX=1 · train --aux, ppo/README "보조 예측 머리"): actor 순환 핵 h → 선형 머리 AUX_OUT 칸.
-// 정답은 앞 걸음의 로봇 값만으로 학습기가 만든다 (시뮬 정답 없음). 재료 한 행 AUX_SRC = [지도 자세 x, y, θ | 추적 수 | 추적 x, y × AUX_MOV_MAX | 라이다 구역 최소/AUX_RANGE × AUX_LID_SEC]
-// 머리 출력 = [(a) 1 s 안 닿음 로짓 | (b) 1 s 뒤 추적 움직이는 것 — 지금 로봇 기준 방향 구역 AUX_MOV_SEC 개마다 가까움 max(0, 1 − d/AUX_RANGE) | (c) 0.5 s 뒤 라이다 구역 최소/AUX_RANGE]
-// (c) 재료 칸 AUX_LID: 몸 둘레 간격을 켜면(SIM_LOW_BODY) 그 8 칸 (360° 몸 둘레, /BODY_RANGE), 아니면 라이다 ±110° 를 고르게 나눈 8 구역
-constexpr int AUX_POSE = 0, AUX_NMOV = 3, AUX_MOV = 4, AUX_MOV_MAX = 8, AUX_LID = AUX_MOV + 2 * AUX_MOV_MAX, AUX_LID_SEC = 8, AUX_SRC = AUX_LID + AUX_LID_SEC;
-constexpr int AUX_MOV_SEC = 8, AUX_OUT = 1 + AUX_MOV_SEC + AUX_LID_SEC;   // 17
-constexpr float AUX_RANGE = 4.0f;   // m (움직이는 것 관측 범위 kLrClusRange 와 같게 — 잠정)
-constexpr int CONT = 2;        // v, ω (옆 이동 없음)
-constexpr int ACT = CONT + 1;  // 신경망 출력 폭 (끝 칸 = 선언 로짓 자리)
-// 채널 값 꼴 (2026-11-15, 학습 롤아웃 그림을 줄여 담을 때 — ppo/README "롤아웃 그림 줄여 담기"): 0 = 아무 u8 값, 1 = 0 또는 255 만, 2 = 늘 0.
-// 학습기는 1·2 채널을 비트 판·안 담음으로 저장하고 담을 때마다 이 꼴이 맞는지 본다 (어긋나면 학습을 멈춤). 관측을 바꾸면 여기도 고칠 것
-// 가까운 지도: 0 막힘 확률 · 1 지나간 곳 · 2 깊이 카메라 층(sim low_rl.h kLowCamCh) · 3·4 물체(예약, 늘 0) · 5 프론티어
-constexpr int NEAR_KIND[6] = {0, 1, 1, 2, 2, 1};
-// 넓은 지도: 0 막힘 확률 최댓값 · 1 아는 빈 몫(65 단계) · 2 모름 몫(65 단계) · 3 지나간 곳 · 4 목적지 점 · 5 깊이 카메라 층
-constexpr int WIDE_KIND[6] = {0, 0, 0, 1, 1, 1};
+constexpr int ACT = 3;
 }  // namespace mdp::low
 
 namespace mdp::act {

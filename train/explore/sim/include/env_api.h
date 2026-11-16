@@ -1,5 +1,6 @@
-// GPU 학습 환경 호스트 쪽: 설정 읽기, 맵(장면 → 정답 격자) 만들기, 환경 묶음 메모리와 한 걸음 부르기.
-// 같은 Env 를 GPU(학습)와 CPU(참조, 비트 비교)로 돌릴 수 있다 (tools/env_verify).
+// 탐사 시뮬 호스트 쪽 (Env): 설정 읽기, 맵(장면 → 정답 격자) 만들기, 환경 묶음 메모리와 한 걸음 부르기, 상태 꺼내기·저장·복원.
+// 같은 Env 를 GPU(많은 환경 — combine_run · dec_rollout)와 CPU(참조 — low_explore_check · room_run, 비트 비교)로 돌릴 수 있다 (tools/env_verify).
+// 합친 탐사 한 걸음: set_low_cmd(위층 목표) → low_prepare(계획·아래층 관측) → step → get_state·get_low_rl(막힘 신호)·get_ep (scripts/combine_run.cpp)
 #pragma once
 #include <cuda_runtime.h>
 
@@ -35,11 +36,8 @@ struct StepOut {
   const int32_t* done;          // [N] mdp::cur::Done — 종료 여부는 mdp::cur::terminal(done), 끊김 = 3
   const EpInfo* ep;             // [N] done ≠ 0 인 환경의 끝난 판 정보 (덮음·t95·길이·충돌·단계·맵)
   int o1d;                      // 관측 1D 한 환경 칸 수
-  const uint8_t* low_img = nullptr;   // 아래층 RL 정책 관측 [N][low_img_n(cfg)] (넓은 지도 끄면 kLowImg) (cfg.low_rl 일 때만 — include/low_task.h)
-  const float* low_1d = nullptr;      // [N][kLow1d] (움직이는 것 칸 넷이면 [N][kLow1dMov4])
-  const int32_t* low_vdone = nullptr; // [N] 학습기 판 끝 칸 (PPO 꼴: 0 · 1 끝 · 3 끊김 · 8 목표 경계 — low_rl.h lowrl_finish)
-  const float* low_aux = nullptr;     // [N][kLowAuxSrc] 보조 예측 재료 (SIM_LOW_AUX — 관측과 같은 때, low_task.h kAux*)
-  const float* low_hit = nullptr;     // [N] 이 걸음에 닿음으로 끝 (SIM_LOW_AUX)
+  const uint8_t* low_img = nullptr;   // 아래층 관측 그림 [N][kLowImg] (cfg.low_rl 일 때만 — include/low_task.h)
+  const float* low_1d = nullptr;      // [N][kLow1d]
 };
 
 // 그래프 모드 관측 (cfg.graph_on — mdp/obs_layout.h mdp::graph, mdp/graph.h). StepOut 처럼 장치 포인터(CPU 판이면 호스트), 그래프 모드가 아니면 nullptr
@@ -76,11 +74,6 @@ class Env {
   GraphOut graph() const;
   void graph_refresh();   // 그래프 관측을 지금 상태에서 한 번 더 냄 (값은 그대로 — 시간 재기용, env_bench --graph)
   void sync() const;
-  // 아래층 단독 과제 학습용 (scripts/train --low): 걸음마다 env_reach_kernel(프론티어 요약 → 위층 관측 덩어리 칸·map_closed·탐사 보상 shape_obs·닫힘 trail·후보)을
-  // 건너뛴다. 이 모드에서 그 값들은 판 끝(단독 과제는 닫힘·진행 없음 규칙을 끔)·보상(shape_obs 는 kActPath 에서 아무것도 안 함)·아래층 관측(lowrl_pack·lowrl_img 는
-  // 자기 상태·라이다·직전 행동·지도·깊이만 읽음)·기록 어디에서도 안 읽힌다. 켜도 학습 결과는 비트까지 그대로 (2026-11-14 확인: --low 3 반복 체크포인트 md5 가 끈 것과 같음).
-  // 위층 관측(obs_1d 의 덩어리 칸·CLOSED)·map_closed 는 그때부터 낡은 값이 되므로 그걸 읽는 도구(env_verify 의 GPU·CPU 견줌 등)에서는 켜지 말 것. GPU 만
-  void set_lean_low(bool on) { lean_low_ = on; }
 
   // 호스트로 꺼내기 (비교·뷰어용)
   void get_state(std::vector<EnvState>& out) const;
@@ -102,32 +95,18 @@ class Env {
   void get_low(std::vector<LowEp>& out) const;
   void set_low_cmd(const std::vector<LowCmd>& cmd);
   void get_map_env(int env, std::vector<int16_t>& out) const;
-  // 아래층 RL (cfg.low_rl — include/low_task.h "아래층 RL", low_rl.h): step 한 번 = 걸음 하나(0.1 s), LowCmd::follow == 2 인 환경은 행동 줄
-  // [v, ω, …] (한 환경 cfg.low_act_w 칸)로 몬다. cfg.low_auto 면 환경이 목표·계획·관측을 알아서 하고, 아니면 호스트가 걸음마다
-  // set_low_cmd → low_prepare(다음 step 에 줄 행동 줄 — 규칙 추종 환경의 후보 번호, 없으면 nullptr) → outputs().low_img·low_1d 로 정책 → step
+  // 아래층 걸음 길 (cfg.low_rl — include/low_task.h, low_rl.h): step 한 번 = 걸음 하나(0.1 s). 호스트가 걸음마다
+  // set_low_cmd → low_prepare(다음 step 에 줄 행동 줄 — 규칙 추종 환경의 후보 번호, 없으면 nullptr) → outputs().low_img·low_1d → step
   void low_prepare(const float* actions = nullptr, cudaStream_t st = 0);
   void get_low_cmd(std::vector<LowCmd>& out) const;
   void get_low_rl(std::vector<LowRl>& out) const;
-  void get_lidar_ring(std::vector<float>& out) const;   // 라이다 칸 링 [N][kLidarRing][LIDAR_BINS] (m) — 사람 추적 입력을 녹화해 실물 CPU 판과 견줄 때 (sim/tools/env_verify --mov-dump)
   void get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
-  // 보조 예측 재료 [N][kLowAuxSrc] 뒤에 닿음 [N] (SIM_LOW_AUX 일 때만, 아니면 빈 것)
-  void get_low_aux(std::vector<float>& out) const;
-  void take_low_stat(std::vector<LowRlStat>& out);   // 누적을 가져가며 0 으로
-  // 맵 뽑기 우선순위 (train --map-prio): 맵마다 끝난 판 수·닿음으로 끝난 판 수를 가져가며 0 으로 · 리셋 때 맵을 뽑을 누적 분포 [n_maps] (빈 것 = 고르게)
-  void take_map_stats(std::vector<int32_t>& eps, std::vector<int32_t>& hit);
-  void set_map_cdf(const std::vector<float>& cdf);
-  // 자동 목표 직선 거리 띠 [dmin, dmax) m (다음 목표부터 — 학습 커리큘럼, train --goal-curr)
-  void set_goal_band(float dmin, float dmax);
   void get_terms(std::vector<float>& terms) const;
   void get_ep(std::vector<EpInfo>& ep) const;
   void get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const;
   // 움직이는 사람 (src/people_host.cpp): 환경마다 다음 판 사람 수 상한 (판 시작 인자, 0 ~ kMaxPeople) · 이 판 사람들 (뷰어 재생)
   void set_people_max(const std::vector<int>& k);
   void get_people(std::vector<People>& out) const;
-  // 처음 만든 때 상태로 되돌림 (2026-11-16): 같은 씨앗으로 새로 만든 Env 와 같은 상태 — 상태(EnvState·LowRl 난수)를 처음 값으로 다시 올리고,
-  // 할당 때 0 이던 장치 버퍼를 다시 0 으로 (정적 업로드 — 맵·장면·장치 사본 — 는 그대로, OptiX 컨텍스트·모듈도 그대로). 그 뒤 set_people_max · reset 은 부르는 쪽이.
-  // 학습 중 평가가 Env 를 매번 새로 만들고 부수던 것(OptiX 컨텍스트·모듈 파괴 포함)을 없애려고 — scripts/train.cpp evaluate
-  void restart();
   // 환경 하나의 실행 상태 저장·복원 (2026-11-17, 판단 모델 결과 라벨의 갈래 굴리기 — upper_lora/rollout): 상태(사람 포함)·지도·지나간 길·관측·후보·아래층·작업 판.
   // 같은 설정(EnvHostCfg · 장면 · n_env 무관)의 Env 끼리 주고받을 수 있음. CPU · GPU 같은 꼴 (GPU 는 장치 ↔ 호스트 복사). 맵·장면 같은 정적 업로드는 안 담음
   std::vector<uint8_t> env_blob(int env) const;
@@ -140,14 +119,9 @@ class Env {
   bool bit_exact() const { return ray_path() != kRayRtFast; }   // CPU 참조판과 비트까지 같다고 약속하는 길인가
 
  private:
-  float* cdf_buf_ = nullptr;   // set_map_cdf 의 장치(또는 호스트) 버퍼
   bool gpu_;
-  bool lean_low_ = false;
   EnvBatch b_{};
   std::vector<void*> owned_;            // 장치 메모리
-  std::vector<std::pair<void*, size_t>> zero_;   // 할당 때 0 이고 실행 중 바뀌는 버퍼 (restart 가 다시 0 으로) — upload·장치 사본은 빠짐
-  std::vector<EnvState> init_st_;       // 처음 상태 (restart)
-  std::vector<LowRl> init_lowrl_;
   std::vector<std::vector<uint8_t>> host_;   // CPU 판 메모리
   std::vector<std::pair<void*, size_t>> per_env_;   // 환경마다 따로인 버퍼 (시작 · 환경 하나 몫 바이트) — env_blob · copy_env
   void* rt_ = nullptr;                  // OptixRt (SIM_OPTIX 빌드·GPU 판, RT 코어가 있으면)
@@ -189,14 +163,12 @@ inline void to_normalized(const EnvCfg& c, float v, float vy, float w, float dec
 }
 
 // 한 걸음 (src/env_kernel.cu, src/env_ref.cpp)
-// lean: 아래층 단독 과제(low_rl · low_auto 1 · low_explore 0)에서 결과를 아무도 안 읽는 프론티어 요약(env_reach_kernel)을 건너뜀 — Env::set_lean_low.
-//   다른 모드에서는 무시. CPU 참조판(env_step_cpu)은 늘 요약을 낸다 (그래서 env_verify 처럼 둘을 견주는 도구는 lean 을 켜지 않는다)
-void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0, bool lean = false);   // actions: [N][mdp::act::DIM]
+void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);   // actions: [N][mdp::act::DIM]
 void env_step_cpu(const EnvBatch& b, const float* actions);
-// 아래층 RL 준비 단계 (include/low_rl.h 머리말 — low_auto 가 아니면 호스트가 LowCmd 를 넣은 뒤 부른다. Env::low_prepare)
+// 아래층 준비 단계 (include/low_rl.h 머리말 — 호스트가 LowCmd 를 넣은 뒤 부른다. Env::low_prepare)
 void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);
 void env_low_prepare_cpu(const EnvBatch& b, const float* actions);
-// 시험용 (tools/rl_node_check): CPU 참조판 걸음 안의 라이다 장(지도 쪽 준비 뒤 빔마다 거리·세기)과 걸음 끝 상태(판 끝 판정 뒤, 링·관측 전)를
+// 시험용 (tools/low_explore_check · room_run): CPU 참조판 걸음 안의 라이다 장(지도 쪽 준비 뒤 빔마다 거리·세기)과 걸음 끝 상태(판 끝 판정 뒤, 링·관측 전)를
 // 밖으로 넘긴다 — 실물 노드(limo_fire_rl RobotEnv)에 같은 센서 값을 넣어 관측이 같은지 본다. 탭은 스레드 1 개(set_cpu_threads(1))일 때만 쓴다
 struct CpuTap {
   virtual ~CpuTap() = default;

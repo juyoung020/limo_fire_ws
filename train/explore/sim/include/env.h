@@ -1,6 +1,8 @@
-// GPU 학습 환경: 첫 지도 만들기(탐사) 한 판의 물리·센서·지도·보상 전부. 환경 하나 = 스레드 블록 하나(kThreads),
+// 탐사 시뮬 환경: 첫 지도 만들기(탐사) 한 판의 물리·센서·지도·판 끝 전부. 환경 하나 = 스레드 블록 하나(kThreads),
 // 커널 한 번 = 행동 하나(substeps × dt, 속도 행동 0.1 s · 목표점 행동 0.5 s). GPU 커널(src/env_kernel.cu)과 CPU 참조판(src/env_ref.cpp)이 이 단계 함수들을 같이 불러
-// 비트까지 같은 값을 낸다(tools/env_verify). 블록 안 합치기는 정수만(순서와 무관) — 결정적.
+// 비트까지 같은 값을 낸다(tools/env_verify). 블록 안 합치기는 정수만(순서와 무관) — 결정적. 실물 노드(limo_fire_rl RobotEnv)도 센서 몫만 실물 값으로 바꿔 같은 함수를 부른다.
+// 지금 탐사 구성이 쓰는 길: 계층형(kActPath) + 아래층 걸음 길(EnvCfg::low_rl — 걸음 하나 0.1 s, 목표는 호스트 위층이 LowCmd 로, low_rl.h) + 합친 탐사(low_explore).
+// 보상(mdp/rewards.h)·커리큘럼(mdp/curriculums.h)은 그만둔 강화학습 때 것인데 판 끝 코드·관측과 한 몸이라 그대로 계산한다 (지금 도구는 보상을 안 읽고 커리큘럼은 끔 — curriculum 0).
 //
 // 한 행동 (env_step):
 //   0. 끝난 판이면 리셋: 맵·시작 칸·방향·라이다 오차 무작위화·지도 비움
@@ -87,32 +89,9 @@ struct EnvCfg {
   int finish_declare;
   int sweep_guard;          // 규칙 추종기 몸통 쓸림 정지 (실험, 기본 끔 — path_step_c sweep_scale): 로봇 지도 막힘 칸을 다음 sweep_h 초 몸통이 쓸면 추종기 명령을 줄임
   float sweep_h, sweep_margin;   // 내다보는 시간 (s), 몸통 둘레 여유 (m)
-  // 아래층 RL (low_rl.h · mdp/README "아래층 RL"). 기본값은 low_rl.h 상수, env_cfg.cpp 가 환경변수로 덮는다
-  int lg_noback;                 // 1: 정책 후진 명령을 0 으로 (뒤 140° 는 라이다가 못 봄)
-  float lr_goal_dmin, lr_goal_dmax;   // 자동 목표 직선 거리 띠 (m — low_rl.h lowrl_goal_probe). 기본 kLrGoalD2 · kLrGoalDMax, 학습 커리큘럼이 Env::set_goal_band 로 바꿈
-  int lo_cam_every;              // 깊이 카메라 장애물 층을 걸음마다 (SIM_LOW_CAM_EVERY, 기본 0 = 계획 주기 low_period 마다 — 옛 동작). 실물은 카메라 29 Hz 로 층을 갱신 (Nav2 VoxelLayer)
-  int lo_aux;                    // 보조 예측 재료를 내보냄 (SIM_LOW_AUX, 기본 0 — 관측·보상·끝 판정 그대로). low_aux · low_hit
-  int lo_body;                   // 몸 둘레 간격 8 칸 (SIM_LOW_BODY, 기본 0 — 1D 끝에 붙음, low_rl.h lowrl_body_clear)
-  int lo_mov4;                   // 움직이는 것 칸 넷 (SIM_LOW_MOV4, 기본 0 — 1D 크기 kLow1d 그대로). 켜면 kLow1dMov4
-  int lo_wide;                   // 넓은 지도 (SIM_LOW_WIDE, 기본 0): 아래층 그림 뒤에 로봇 지도 25.6 m 창 6 × 64 × 64 (low_task.h kLowWideOff, low_rl.h lowrl_wide)
-  float lr_time_k;               // 시간 벌점 (걸음마다, low_rl.h kLrTimeK — SIM_LR_TIME_K 로 덮음)
-  int lo_goal_term;              // 목표 하나 = 가치의 한 판 (SIM_LOW_GOAL_TERM, 기본 0 — 옛 동작: 판 끝까지 이어 부트스트랩)
-  int lo_go_shape;               // 목적지만에서 사람 마주침·회전 항을 켬 (SIM_LOW_GO_SHAPE, 기본 0 — low_rl.h lowrl_finish)
-  int lo_goalonly;               // 목적지만 (SIM_LOW_GOALONLY, 기본 0): 관측에서 경로 칸을 0 으로, 보상은 시간·통과·닿음만 (low_rl.h)
-  float lr_ttc_k;                // 충돌 시간 벌점 (low_rl.h kLrTtcK, SIM_LR_TTC_K — 0 = 끔)
-  float lr_mprox_k, lr_mprox_d;  // 움직임 근접 벌점: × 몸통 가장 빠른 점 속도 (m/s) × (1 − 간격 / lr_mprox_d). 0 = 끔
-  float lr_ppl_k, lr_ppl_t, lr_ppl_m;   // 사람 마주침 벌점 (low_rl.h lowrl_ppl_risk): × (1 − 가장 가까워질 때까지 시간 / lr_ppl_t), 그때 간격 < lr_ppl_m 인 사람. 0 = 끔
-  // 사람 추적 (low_rl.h lowrl_trk — 라이다 덩어리 칼만 필터, lo_mov 일 때 걸음마다. 인지만 — 명령은 안 고침)
-  float tk_gate, tk_sz, tk_qa;   //   추적: 연결 문 (m) · 덩어리 자리 잡음 σ (m) · 가속 잡음 σ (m/s²)
-  int tk_miss, tk_conf;          //   추적: 못 이어도 들고 가는 장 수 · 사람 판정까지 이어 받을 장 수
-  float tk_disp;                 //   추적: 처음 자리에서 이만큼 벗어나야 사람 (m)
-  // 빠른 움직이는 것 (2026-11-16, SIM_LOW_TRACK_FAST — 사람 충돌 진단 (i): 확인 전·잠깐 섬으로 칸에 못 든 사람): 1 이면 lowrl_trk_movers 가
-  //   (a) 한 번 사람으로 확인된 덩어리는 tk_hold 장 동안 멈춰도 사람으로 두고 (b) 로봇에서 tk_near m 안·tk_appr m/s 넘게 다가오는 덩어리(이은 장 ≥ 2)는 확인 전에도 넣음
-  int tk_fast, tk_hold;
-  float tk_near, tk_appr;
-  int lo_mov;                    //   아래층 숫자 관측의 예약 칸(kLoMov)에 추적 결과를 넣음 (0 = 0 으로 둠 — 기존 체크포인트 그대로)
-  float tk_sag;                  //   추적: 둥근 덩어리만 — 활꼴 높이 / 현 길이 하한 (0 이면 모양을 안 봄)
-  float tk_w0;                   //   추적: 둥근 덩어리의 현 길이 하한 (m)
+  // 그만둔 아래층 RL 칸 자리 (2026-11-16 — 보상 계수·실험 스위치·사람 추적). 실물 녹화 머리(sim/tools/low_node_rec.h)가 EnvHostCfg 를 바이트 그대로
+  // 담으므로 옛 녹화를 읽으려고 크기·자리만 남긴다. 아무도 안 읽는다 (아래 gone_rl_* 모두)
+  int32_t gone_rl_a[31];
 
   // 닿음 (2026-11-14, contact.h — 센서로 정한 부딪힘이 충돌 보상·판 끝. 시뮬 정답 충돌은 물리·기록만). 값의 근거는 env_cfg.cpp
   float con_lid, con_cam, con_map;   //   라이다 점 · 깊이 층 칸 · 지도 막힘 칸이 몸통에서 이 간격 (m) 안이면 닿음
@@ -128,9 +107,7 @@ struct EnvCfg {
   int con_yaw_k;                     //   이 걸음 이어지면 (kConYaw)
   float con_acc;                     //   닿음 신호: IMU 수평 가속 크기 > con_acc (m/s², kConAcc)
   int con_end;                       //   1: 닿음이 판을 끝냄 (기본). 0: 진단 전용 — 끝내지 않고 정답 충돌·센서 값을 기록만 (일치도 재기)
-  float lr_coll_k;               // 벽 닿음 보상 (판 끝 — low_rl.h kLrCollisionK, SIM_LR_COLL_K)
-  float lr_pcol_k;               // 사람 충돌 보상 (벽 충돌은 kLrCollisionK 그대로)
-  float lr_w_k, lr_w0;           // 회전 벌점: × max(0, |정책 ω| − lr_w0) (rad/s). 0 = 끔
+  int32_t gone_rl_b[4];   // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
   int curriculum;           // 1: 환경마다 단계(맵 묶음·오차 배율), 0: 모든 맵 고르게·오차 배율 1 (기준선·도구)
   int cur_top_random;       // 1: 맨 위 단계에서 또 올림 조건이면 무작위 단계로 (curriculums.h on_episode_end — 기본 켬, SIM_CUR_TOPRAND=0 이면 끔)
   // 오르내림 규칙 (env.yaml curriculum, curriculums.h): 최근 cur_window 판 성공 비율 ≥ cur_up 올림 · < cur_down 내림 (미끄러지는 창).
@@ -202,15 +179,13 @@ struct EnvCfg {
   int low_stat, low_task;          // 1 = 걸음 분류 누적(EnvBatch::low) · 1 = 호스트가 목표 칸을 넣는 단독 과제(EnvBatch::lowcmd, low_stat 도 켜짐)
   int low_goals, low_idle_steps, low_time_steps;   // 판 끝: 목표 수 · 정체 걸음 수 · 과제 시간 걸음 수
   float low_pass_r, low_idle_d, low_front;         // 통과 반경 (m) · 정체 거리 (m) · 사람 충돌 방위의 앞 반각 (rad)
-  // 아래층 RL (include/low_task.h "아래층 RL" · low_rl.h — 스위치는 도구·학습기가 켠다, 기본 0. low_task 도 켜야 함)
-  int low_rl;                      // 1 = env.step 한 번이 걸음 하나, follow 2 인 환경은 행동 줄 (v, ω) 로 (EnvBatch::lowrl)
-  int low_auto;                    // 1 = 환경이 목표를 스스로 뽑고 모든 환경이 follow 2 (학습) · 0 = 호스트가 LowCmd 를 넣고 Env::low_prepare (평가·두 층 같이)
-                                   // 2 = 탐사 판 학습 (low_explore 와 같이 — low_rl.h lowrl_goal_explore): 위층 0 번 후보 규칙을 환경이 걸음마다 돌려 LowCmd 를 넣는다
-  int low_solo;                    // low_auto 2 일 때 단독 과제(자동 목표 · 단독 과제 판 끝 규칙)로 도는 환경의 몫 (%, 환경 번호 해시 — low_step.h low_xenv). 나머지가 탐사 판
+  // 아래층 걸음 길 (include/low_task.h · low_rl.h — 도구가 켠다, 기본 0. low_task 도 켜야 함)
+  int low_rl;                      // 1 = env.step 한 번이 걸음 하나 (0.1 s), 목표는 호스트가 LowCmd 로 넣고 Env::low_prepare (EnvBatch::lowrl)
+  int32_t gone_rl_c[2];            // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
   int low_period;                  // 경로를 다시 살피는 주기 (걸음 — 목표가 바뀌면 바로). 0 이면 decide_steps
   int low_explore;                 // 2 = 1 + 닫힘·후보 번지기를 라이다 지도만으로 (깊이 카메라 층 뺌 — mdp/frontier.h "합친 탐사의 닫힘", 켜야 씀). 1 = 두 층을 합친 탐사 (low_rl 위 스위치 — low_task.h "합친 탐사"): 탐사 판 끝 규칙(닫힘 성공·진행 없음)을 그대로 두고,
                                    //     단독 과제의 정체·시간·목표 수는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
-  int low_act_w;                   // 행동 줄 한 환경 칸 수 (정책 환경은 a[0] = v, a[1] = ω 만 읽음). 0 이면 mdp::act::DIM
+  int32_t gone_rl_d;               // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -235,7 +210,7 @@ constexpr int kProgRing = 20;                             // 탐사 진행 속�
 constexpr int kBinNone = 1 << 30;                         // 라이다 칸에 점 없음
 constexpr int kCamHist = 8;   // 깊이 카메라 늦음용 몸통 자세 기록 (물리 걸음 0.02 s × 8 = 0.16 s, sensor_model.yaml depth.latency 상한)
 // 로봇이 재는 간격·닿음 (contact.h): 닿은 센서 비트, 지도·깊이 층 간격을 보는 몸통 둘레 거리 (m — 근접 항 띠 0.2 m 보다 조금 넓게, 밖은 이 값), 라이다 점이 없을 때 간격
-enum : int32_t { kConLidar = 1, kConCam = 2, kConStall = 4, kConMap = 8, kConPerson = 16, kConYaw = 32, kConAcc = 64 };   // kConPerson: 닿음 때 추적 사람이 곁 (닿음 센서 아님) · kConYaw · kConAcc: 바퀴·자이로 어긋남 · IMU 수평 가속 튐 (2026-11-16)
+enum : int32_t { kConLidar = 1, kConCam = 2, kConStall = 4, kConMap = 8, kConYaw = 32, kConAcc = 64 };   // (16 은 옛 사람 닿음 비트 — 비워 둠) kConYaw · kConAcc: 바퀴·자이로 어긋남 · IMU 수평 가속 튐 (2026-11-16)
 constexpr float kSenseWin = 0.6f;   // 2026-11-14 low_s4: 0.25 → 0.6 (충돌 시간 항이 1 m/s 에서 0.6 m 앞까지 보게)
 constexpr float kSenseFar = 9.f;
 constexpr int kClassLog = 16384;                          // 한 장에 칸 종류가 바뀐 칸 낱말 목록 길이 (넘으면 장 범위 전체를 다시 셈 — env_kernel.cu)
@@ -290,8 +265,8 @@ struct EnvState {
   float cam_hx[kCamHist], cam_hy[kCamHist], cam_hth[kCamHist];   // 참값 몸통 자세 기록: [k] = k + 1 물리 걸음 전
   People people;              // 이 판 움직이는 사람 (people.h)
   // 로봇이 재는 간격·닿음 (contact.h sense_step, 걸음마다): 라이다 점 · 지도 막힘 칸 · 깊이 층 칸 → 몸통 간격 (m), 그 최솟값(근접 항),
-  // 라이다 추적 사람까지 간격(없으면 kSenseFar), 멈춤 시계(걸음), 닿은 센서 비트 (kCon*), 닿음 (con_mask). gt_touch: 판 동안 정답 충돌 (비트 1 벽 · 2 사람) — 기록 전용, 학습에 안 씀
-  float s_lid, s_map, s_cam, s_clear, s_pgap;
+  // 멈춤 시계(걸음), 닿은 센서 비트 (kCon*), 닿음 (con_mask). gt_touch: 판 동안 정답 충돌 (비트 1 벽 · 2 사람) — 기록 전용, 학습에 안 씀
+  float s_lid, s_map, s_cam, s_clear;
   float s_close;               // s_dir 점에 다가가는 속도 (m/s, 몸통 둘레 점 속도의 그 점 쪽 성분 — 충돌 시간 항)
   float s_dir;                 // 진행 방향 간격: 위 셋 가운데 몸통이 다가가는 점·칸만 (contact.h rect_toward, 몸통 속도 = 오도메트리·자이로) — 근접 항
   int32_t s_stall, s_kind, contact, gt_touch;
@@ -393,11 +368,6 @@ struct EnvBatch {
   int stage_off[mdp::cur::kNumStages + 1];
   int max_stage;
   int n_env;
-  // 맵 뽑기 우선순위 (2026-11-14 low_s4, train --map-prio — 우선 재생 꼴): 맵마다 끝난 판 수·닿음으로 끝난 판 수 (판 끝에 더함, 정수라 차례 무관),
-  // 호스트가 고친 누적 분포 map_cdf [n_maps] (nullptr 이면 고르게 — 옛 동작과 비트 같음)
-  int32_t* map_eps;
-  int32_t* map_hit;
-  const float* map_cdf;
   Shared* scratch;             // [env] GPU 판: 커널 사이에 넘기는 장 준비·한 행동 합 (CPU 판은 안 씀)
   // GPU 판 깊이 광선 (env_kernel.cu·optix_rays.cu): 픽셀마다 가운데 광선 거리·삼각형, 옆 광선 큐(소프트웨어: 픽셀 · 2 + 왼0/오른1, RT 코어: 픽셀)·그 거리(소프트웨어), 원자 셈 칸
   float* dep_z;                // [env · DEPTH_SIZE]
@@ -435,8 +405,6 @@ struct EnvBatch {
   float* racc;
   float* tacc;
   uint32_t* pplanes;
-  int rl_n;   // 환경마다 rlist 목록 수: kReachLists, 목적지만 학습(프론티어 요약 안 함)이면 3 (목록 2·4·6 만 — rl_at)
-  int pp_n;   // 환경마다 계획 비트 판 수: kPathPlanes, 목적지만 학습(low_auto 1 — 경로를 안 짬)이면 2 (덩어리 목표 뽑기 작업 판만, goal_reach.h)
   // 깊이 카메라 장애물 층 (cam_on 일 때만, 아니면 nullptr): 칸마다 높이 칸 비트 [env · size²] (uint8, GPU 는 4 칸 낱말로 원자 연산),
   // 마지막 깊이 장 열마다 가장 가까운 높이 띠 안 점 (지도 좌표 x, y — 앞으로 모음, 끝 x = kCamNone) [env · DEPTH_W · 2] — collision_monitor 점 출처
   uint8_t* cvox;
@@ -458,15 +426,10 @@ struct EnvBatch {
   // 아래층 계측·단독 과제 (low_stat·low_task 일 때만, 아니면 nullptr — include/low_task.h): 판 누적 [env] · 호스트가 넣는 목표 [env]
   LowEp* low;
   LowCmd* lowcmd;
-  // 아래층 RL (low_rl 일 때만, 아니면 nullptr — include/low_task.h): 걸음 사이 값 [env] · 누적 [env] · 정책 관측 그림 [env · kLowImg] · 숫자 [env · kLow1d]
+  // 아래층 걸음 길 (low_rl 일 때만, 아니면 nullptr — include/low_task.h): 걸음 사이 값 [env] · 아래층 관측 그림 [env · kLowImg] · 숫자 [env · kLow1d]
   LowRl* lowrl;
-  LowRlStat* lowstat;
   uint8_t* low_img;
   float* low_1d;
-  float* low_aux;       // 아래층 RL · lo_aux: 보조 예측 재료 [env][kLowAuxSrc] (관측과 같은 때 — lowrl_pack)
-  float* low_hit;       // 아래층 RL · lo_aux: 이 걸음에 닿음(센서)으로 끝 [env] (lowrl_finish)
-  int32_t* low_vdone;   // 아래층 RL: 학습기 판 끝 칸 [env] (low_rl.h lowrl_finish — 0 · 1 · 3 · 8 목표 경계)
-  uint32_t* low_wred;   // 넓은 지도 (lo_wide 일 때만): 로봇 지도 4 × 4 칸(0.2 m) 줄인 판 [env · (size/4)²] — low_rl.h lowrl_wred
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)
@@ -568,14 +531,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
     e.map = b.stage_maps[b.stage_off[s] + (int)(dm::splitmix64(e.rng) % (uint64_t)n)];
     e.err_scale = mdp::cur::err_scale_of(s);
   } else {
-    if (b.map_cdf) {   // 우선순위 뽑기 (누적 분포에서 이분 탐색)
-      const float u = (float)(dm::splitmix64(e.rng) >> 40) * (1.f / 16777216.f) * b.map_cdf[b.n_maps - 1];
-      int lo = 0, hi = b.n_maps - 1;
-      while (lo < hi) { const int mid = (lo + hi) / 2; if (b.map_cdf[mid] > u) hi = mid; else lo = mid + 1; }
-      e.map = lo;
-    } else {
-      e.map = (int)(dm::splitmix64(e.rng) % (uint64_t)b.n_maps);
-    }
+    e.map = (int)(dm::splitmix64(e.rng) % (uint64_t)b.n_maps);
     e.err_scale = 1.f;
   }
   const MapDev& m = b.maps[e.map];
@@ -619,7 +575,6 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.declared = 0;
   e.s_lid = kSenseFar;
   e.s_map = e.s_cam = e.s_clear = kSenseWin;   // 아직 안 잼 — 첫 걸음 끝에 잼
-  e.s_pgap = kSenseFar;
   e.s_dir = kSenseFar;
   e.s_close = 0.f;
   e.s_stall = e.s_kind = e.contact = e.gt_touch = 0;
@@ -770,8 +725,8 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
 #include "hier_path.h"   // 계층형 경로 추종 (apply_action 이 부름)
 #include "graph_env.h"   // 그래프 모드 풀 (hier_path.h 뒤)
 #include "low_step.h"    // 아래층 계측·단독 과제 걸음 함수
-#include "low_rl.h"      // 아래층 RL 걸음 함수 (low_step.h 뒤)
-#include "contact.h"     // 로봇이 재는 간격·닿음 (low_rl.h 뒤 — 사람 추적을 씀)
+#include "low_rl.h"      // 아래층 걸음 길 함수 (low_step.h 뒤)
+#include "contact.h"     // 로봇이 재는 간격·닿음
 
 // 계층형 관측 "직전 행동": 이번 걸음 명령 (v, ω) — 추종기·smoother·앞 범퍼 정지 뒤 /cmd_vel — 을 정규 단위로 밀어 넣음 (vy·선언 0).
 // 실물 노드(limo_fire_rl)는 Nav2 가 낸 /cmd_vel 로 같은 함수를 부른다
@@ -866,7 +821,7 @@ DEV void action_begin(const EnvCfg& c, EnvState& e, const float* a) {
 }
 DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
   const EnvCfg& c = b.cfg;
-  if (b.lowrl) lowrl_begin(b, e, env);   // 아래층 RL: 행동 줄이 좁을 수 있어(low_act_w) 선언 칸을 안 읽음
+  if (b.lowrl) lowrl_begin(b, e, env);   // 아래층 걸음 길: 끝 선언은 행동 줄이 아니라 LowCmd 로
   else action_begin(c, e, a);
   if (c.action_mode == kActVelocity) {
     float v, vy, w;
@@ -907,7 +862,6 @@ DEV void apply_action(const EnvBatch& b, EnvState& e, int env, const float* a) {
   } else if (c.action_mode == kActPath) {
     // 계층형: 경로(결정 때 plan 단계가 짬)를 추종기가 따라감 → velocity_smoother(행동 주기) → 앞 범퍼 정지. 고른 후보 번호는 결정 때 p_slot 에.
     // 세 토막(path_step_a·b·c) 사이에 무거운 검사 둘(RPP 충돌 검사 · collision_monitor)이 낀다 — GPU env_act_kernel 은 그 둘을 블록 스레드로 나눠 본다
-    if (lowrl_act(b, e, env, a)) return;   // 아래층 RL: 정책이 모는 환경 (low_rl.h — 아니면 false)
     PathStep s;
     path_step_a(b, e, env, nullptr, s);
     const bool imm = s.want_imm && path_imminent(b, e, env, s.vc, s.wc, s.cd);
@@ -1448,15 +1402,6 @@ DEV void episode_end(const EnvBatch& b, EnvState& e, int env, float cov, float d
   I.coll_kind = !e.contact ? 0
                 : (e.cmd_v > 0.01f ? 1 : (e.cmd_v < -0.01f ? 3 : (dm::absf(e.cmd_w) > 0.01f ? 2 : 4)));
   I.gt_touch = e.gt_touch;
-  if (b.map_eps) {   // 맵 뽑기 우선순위 통계 (정수 더하기 — GPU 원자 연산이어도 결과는 차례와 무관)
-#ifdef __CUDA_ARCH__
-    atomicAdd(&b.map_eps[e.map], 1);
-    if (e.done == mdp::cur::kCollision || e.done == mdp::cur::kCollisionPerson) atomicAdd(&b.map_hit[e.map], 1);
-#else
-    b.map_eps[e.map] += 1;
-    if (e.done == mdp::cur::kCollision || e.done == mdp::cur::kCollisionPerson) b.map_hit[e.map] += 1;
-#endif
-  }
   if (c.curriculum) {
     // 맨 위 단계 무작위 (실험, 켤 때만 난수를 뽑아 끈 쪽은 난수 흐름이 그대로)
     const uint32_t rnd = c.cur_top_random ? (uint32_t)(dm::splitmix64(e.rng) >> 32) : 0u;
@@ -1476,11 +1421,10 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   mdp::rew::StepIn in;
   in.dt = dt_act;
   in.t = (float)(e.step + 1) * dt_act;   // 이번 걸음 끝 시각 (s) — 성공 빠르기 보너스 (rewards.h kFast)
-  // 닿음·사람 (contact.h — 센서로 정함, sense_step 이 이 함수 앞에서 잼). 사람인지는 라이다 덩어리 추적(아래층 RL 만 — 없으면 벽으로 셈)
-  const bool hit_p = (e.s_kind & kConPerson) != 0;
-  in.collided_wall = e.contact && !hit_p;
-  in.collided_person = hit_p;
-  in.near_person = e.s_pgap < mdp::rew::kNearDist ? dm::absf(e.drive.wv) * dt_act : 0.f;   // 바퀴 오도메트리 속도로 (잠정)
+  // 닿음 (contact.h — 센서로 정함, sense_step 이 이 함수 앞에서 잼). 로봇은 닿은 것이 사람인지 모르므로 늘 벽으로 셈
+  in.collided_wall = e.contact != 0;
+  in.collided_person = false;
+  in.near_person = 0.f;
   // 닫힘 성공 (2026-11-08): 지도 진행 없음 시계 ≥ close_idle_s 이고 close_every 걸음마다 굵은 격자 닫힘 — 이번 걸음 지도(갱신 뒤)·지도 자세로.
   // 시계 조건을 먼저 보므로 탐사 중(시계가 자주 0 으로 돌아감)에는 격자를 만들지 않는다
   // 닫힘 값(map_closed)은 지난 관측의 프론티어 요약(GPU env_reach_kernel · CPU env_ref.cpp write_obs)이 이번 걸음 앞 지도로 낸 것 — 관측 CLOSED 와 같음
@@ -1551,14 +1495,14 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   // 판 끝: 닿음 > 닫힘(성공) > 선언(finish_declare — 로봇 지도 닫힘이면 성공) > 진행 없음 > 끊김. 닿음은 센서(contact.h).
   // con_end = 0 (진단)이면 닿아도 안 끝냄 — 정답 충돌은 물리가 몸통을 멈출 뿐
   if (e.halt) e.done = 0;   // 판 끝 뒤 멈춤 (end_hold): 더 판정 안 함
-  else if (e.contact && c.con_end) e.done = hit_p ? mdp::cur::kCollisionPerson : mdp::cur::kCollision;
+  else if (e.contact && c.con_end) e.done = mdp::cur::kCollision;   // 닿음 (센서) — 사람인지는 모름
   else if (in.closed) e.done = mdp::cur::kDeclareOk;   // 성공 코드 1 = 지도 닫힘 (닫힘 성공 규칙 · 닫힌 지도에서 선언)
   else if (decl) e.done = e.map_closed ? mdp::cur::kDeclareOk : mdp::cur::kDeclareShort;   // 선언 (닫힘 규칙을 끈 모드에서도 지도 닫힘이면 성공)
   else if (in.idle) e.done = mdp::cur::kNoProgress;
   else if (e.step >= c.max_steps) e.done = mdp::cur::kTruncated;
   else if (low_end) e.done = mdp::cur::kTruncated;   // 단독 과제 끝 (까닭은 LowEp::end)
   if (e.done) episode_end(b, e, env, cov, dt_act);
-  lowrl_finish(b, e, env);   // 아래층 RL: 보상·누적 (끄면 아무것도 안 함)
+  lowrl_finish(b, e, env);   // 아래층 걸음 길: 막힘 신호 (끄면 아무것도 안 함)
 }
 
 // 스레드 0, 관측의 프론티어 요약이 나온 바로 뒤 (GPU env_reach_kernel · CPU env_ref.cpp — write_obs 다음): approach·front_cells 항 (rewards.h).

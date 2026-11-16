@@ -119,10 +119,7 @@ int main(int argc, char** argv) {
     hc.cfg.action_mode = sim::kActPath;
     hc.cfg.curriculum = 0;
     hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
-    hc.cfg.low_auto = 0;
-    hc.cfg.low_act_w = 0;
     hc.cfg.low_explore = 1;
-    hc.cfg.lo_aux = 0;
     if (exact) hc.cfg.pe_xy = hc.cfg.pe_yaw = 0.f;
     if (model_set) {   // --model: 깊이·IMU 도 그 파일로 (env.yaml 의 sensor_model 대신 — 방마다 다른 바닥 구멍 같은 값을 갈아 끼워 볼 때)
       hc.cfg.depth = sim::load_depth_model(model_path);

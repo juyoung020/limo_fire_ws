@@ -1,10 +1,8 @@
 // 아래층 계측·단독 과제의 걸음 함수 (기록 꼴·설명은 low_task.h). env.h 가운데서 include (hier_path.h·graph_env.h 뒤). 모두 스레드 0. env.h 가 namespace sim 안에서 포함한다.
 #pragma once
 
-// 이 환경이 합친 탐사 판인가 (EnvCfg::low_explore). 탐사 판 학습(low_auto 2)은 환경의 low_solo % 를 단독 과제로 돌린다 — 환경 번호 해시로 가름
-// (맵 배정이 환경 번호 차례라 번호 그대로 나누면 맵과 얽힘). 그 밖의 모드는 설정값 그대로
-DEV bool low_solo_env(const EnvCfg& c, int env) { return c.low_auto == 2 && (int)((((uint32_t)env * 2654435761u) >> 8) % 100u) < c.low_solo; }
-DEV bool low_xenv(const EnvBatch& b, int env) { return b.cfg.low_explore != 0 && !low_solo_env(b.cfg, env); }
+// 이 환경이 합친 탐사 판인가 (EnvCfg::low_explore)
+DEV bool low_xenv(const EnvBatch& b, int) { return b.cfg.low_explore != 0; }
 
 DEV int low_ang_bin(float err) {
   const float d = dm::absf(err) * 57.29578f;
@@ -113,21 +111,8 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
     L.dist_all += d;
     L.seg_dist += d;
   }
-  if (e.contact && c.con_end) {   // 닿음 (센서 — contact.h). 사람인지는 라이다 추적 (kConPerson)
-    L.end = (e.s_kind & kConPerson) ? kLowEndPerson : kLowEndWall;
-    if (L.end == kLowEndPerson) {   // 기록 전용(정답 사람 자리): 가장 깊이 겹친 사람의 방위 (로봇 기준) — 앞 ±low_front 안인가
-      float s, co;
-      dm::sincosf_d(e.th, &s, &co);
-      float g = 1e9f, bear = 0.f;
-      for (int i = 0; i < e.people.n; ++i) {
-        const float gi = body_cyl_gap(c, e.people.cyl[i], e.x, e.y, s, co);
-        if (gi < g) {
-          g = gi;
-          bear = dm::wrap_pi(dm::atan2f_d(e.people.cyl[i].y - e.y, e.people.cyl[i].x - e.x) - e.th);
-        }
-      }
-      L.hit_dir = dm::absf(bear) <= c.low_front ? 1 : 2;
-    }
+  if (e.contact && c.con_end) {   // 닿음 (센서 — contact.h). 로봇은 닿은 것이 사람인지 모름 — 늘 벽
+    L.end = kLowEndWall;
     return false;
   }
   if (low_xenv(b, env)) {   // 합친 탐사 (low_task.h): 판은 탐사 규칙이 끝낸다. 통과·경로 끝은 표시만(위층이 바로 다시 고름), 정체는 신호만 올리고 닻을 새로
@@ -160,17 +145,7 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
   if (!L.following || !b.lowcmd) return false;
   const int tgt = b.lowcmd[env].target;
   const float px = e.x + e.ex, py = e.y + e.ey;   // 지도 자세 (로봇이 아는 자기 자리)
-  // 목적지만 (SIM_LOW_GOALONLY — low_rl.h lowrl_replan): 경로는 목표를 받을 때만 짜므로 통과는 목표 칸과 지도 자세 거리만으로, 경로 끝(off)·그 대기(hold)는 안 씀
-  const bool go = b.lowrl && c.lo_goalonly;
-  if (go && tgt >= 0) {
-    const float tx = m.ox + ((float)(tgt % m.gw) + 0.5f) * c.res - px, ty = m.oy + ((float)(tgt / m.gw) + 0.5f) * c.res - py;
-    if (tx * tx + ty * ty <= c.low_pass_r * c.low_pass_r) {
-      L.reached += 1;
-      L.reach_step = e.step;
-      L.hold = e.step - L.d_step;
-      if (L.reached >= c.low_goals) { L.end = kLowEndGoals; return true; }
-    }
-  } else if (tgt >= 0 && e.goal_cell == tgt) {
+  if (tgt >= 0 && e.goal_cell == tgt) {
     const float tx = m.ox + ((float)(tgt % m.gw) + 0.5f) * c.res - px, ty = m.oy + ((float)(tgt / m.gw) + 0.5f) * c.res - py;
     if (tx * tx + ty * ty <= c.low_pass_r * c.low_pass_r) {
       L.reached += 1;

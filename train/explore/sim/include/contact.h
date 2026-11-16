@@ -92,25 +92,7 @@ DEV void sense_map_gaps(const EnvBatch& b, const EnvState& e, int env, float vb,
   *g_close = gcl;
 }
 
-// 사람 (라이다 덩어리 칼만 추적 — 아래층 RL 의 lowrl_trk, 센서만): 지도 자세 몸통 ~ 추적한 움직이는 덩어리(원) 간격 최솟값 (m). 추적이 없으면 kSenseFar.
-// 닿음 때 이 간격 < kConPersonGap 이면 사람 닿음으로 셈 (몸통 쪽 덩어리 가장자리가 원 반지름만큼 흔들리므로 여유)
-constexpr float kConPersonGap = 0.15f;   // 잠정 — 추적 덩어리 자리 σ 0.05 m(low_rl.h kLrTrkSz)의 3 배
-DEV float tracked_person_gap(const EnvBatch& b, const EnvState& e, int env) {
-  if (!b.lowrl || !b.cfg.lo_mov) return kSenseFar;   // 추적은 lo_mov 일 때만 돈다
-  LrMover M[kLrMovers + 1];
-  const int n = lowrl_trk_movers(b, e, env, M);
-  const float px = e.x + e.ex, py = e.y + e.ey;
-  float s, co;
-  dm::sincosf_d(e.th + e.eth, &s, &co);
-  float g = kSenseFar;
-  for (int i = 0; i < n; ++i) {
-    const float dx = M[i].x - px, dy = M[i].y - py;
-    g = dm::minf(g, rect_gap(b.cfg, co * dx + s * dy, co * dy - s * dx) - M[i].r);
-  }
-  return g;
-}
-
-// 걸음 끝 (finish_step 바로 앞, 물리·지도 갱신 뒤): 간격 넷·멈춤 시계·닿음·추적 사람 간격. sh = 이번 행동의 라이다 장 칸
+// 걸음 끝 (finish_step 바로 앞, 물리·지도 갱신 뒤): 간격 넷·멈춤 시계·닿음. sh = 이번 행동의 라이다 장 칸
 DEV void sense_step(const EnvBatch& b, EnvState& e, int env, const Shared& sh) {
   const EnvCfg& c = b.cfg;
   if (e.collided) e.gt_touch |= e.people.hit_person ? 2 : 1;   // 정답 충돌 (기록 전용 — 학습에 안 씀)
@@ -135,7 +117,5 @@ DEV void sense_step(const EnvBatch& b, EnvState& e, int env, const Shared& sh) {
   if (e.s_yaw >= c.con_yaw_k) k |= kConYaw;
   if (e.a_h > c.con_acc) k |= kConAcc;
   e.contact = (k & c.con_mask) != 0 ? 1 : 0;
-  e.s_pgap = tracked_person_gap(b, e, env);
-  if (e.contact && e.s_pgap < kConPersonGap) k |= kConPerson;   // 닿음 때 추적 사람이 몸통 곁 → 사람 닿음 (판 끝 코드·보상 항)
   e.s_kind = k;
 }

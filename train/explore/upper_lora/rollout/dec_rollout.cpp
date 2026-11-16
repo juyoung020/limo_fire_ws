@@ -511,10 +511,7 @@ int main(int argc, char** argv) {
     c.action_mode = sim::kActPath;
     c.curriculum = 0;
     c.low_stat = c.low_task = c.low_rl = 1;
-    c.low_auto = 0;
-    c.low_act_w = 0;
     c.low_explore = 1;
-    c.lo_aux = 0;
     C.lidar = sim::load_lidar_model(model_path);
     C.worlds.push_back(sim::build_world(scene, sim::load_scene(scene), C.hc));
     sim::set_cpu_threads(1);

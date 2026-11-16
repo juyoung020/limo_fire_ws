@@ -99,9 +99,9 @@ int main(int argc, char** argv) {
     // --floor: 걸음마다 IMU roll·pitch 와 바닥 같은 깊이 점(센서 수평 0.5~1.5 m, |높이| < 0.10 m)의 높이 = a + b·거리 (바닥 기울어 보임 ↔ 몸 기울기) 와 띠 안 바닥 점 수
     FILE* ff = floor_csv.empty() ? nullptr : std::fopen(floor_csv.c_str(), "w");
     if (ff) std::fprintf(ff, "k,roll,pitch,ax,wv,gyro,n,a,b,n_band\n");
-    // 아래층 관측 분포 (--obs): 1D 칸마다 평균·제곱 평균·0 아닌 몫, 그림 구역(가까운 지도 채널 · 라이다 그림 · 깊이 · 넓은 지도 채널) 평균
+    // 아래층 관측 분포 (--obs): 1D 칸마다 평균·제곱 평균·0 아닌 몫, 그림 구역(가까운 지도 채널 · 라이다 그림 · 깊이) 평균
     std::vector<double> o_s((size_t)rd.n1, 0.0), o_q((size_t)rd.n1, 0.0), o_nz((size_t)rd.n1, 0.0);
-    const int n_sec = mdp::obs::NEAR_C + 2 + mdp::low::WIDE_C;
+    const int n_sec = mdp::obs::NEAR_C + 2;
     std::vector<double> g_s((size_t)n_sec, 0.0), g_nz((size_t)n_sec, 0.0), g_n((size_t)n_sec, 0.0);
     double zh[4][30] = {};   // 거리 0.5 m 구간 넷(0.5~2.5)마다 높이 1 cm 칸(−10~+20 cm) 개수 — 최빈값 = 바닥 높이
     int first_bad = -1, ep_i = -1;
@@ -365,13 +365,11 @@ int main(int argc, char** argv) {
         }
         {
           const uint8_t* im = robot.low_img();
-          const int ns = mdp::obs::NEAR_H * mdp::obs::NEAR_W, ws = mdp::low::WIDE_HW * mdp::low::WIDE_HW;
+          const int ns = mdp::obs::NEAR_H * mdp::obs::NEAR_W;
           const auto sec = [&](int k, int off, int n) { for (int i = 0; i < n; ++i) { const int v = im[off + i]; g_s[(size_t)k] += v; g_nz[(size_t)k] += v != 0; } g_n[(size_t)k] += n; };
           for (int ch = 0; ch < mdp::obs::NEAR_C; ++ch) sec(ch, ch * ns, ns);
           sec(mdp::obs::NEAR_C, mdp::low::LIDAR_OFF, mdp::low::LIDAR_HW * mdp::low::LIDAR_HW);
           sec(mdp::obs::NEAR_C + 1, mdp::low::DEPTH_OFF, mdp::obs::DEPTH_SIZE);
-          if (rd.ni >= mdp::low::IMG_WIDE)
-            for (int ch = 0; ch < mdp::low::WIDE_C; ++ch) sec(mdp::obs::NEAR_C + 2 + ch, mdp::low::WIDE_OFF + ch * ws, ws);
         }
         if ((di || d1) && first_bad < 0) first_bad = (int)n_obs;
         ++n_obs;
