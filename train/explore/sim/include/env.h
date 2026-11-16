@@ -157,6 +157,8 @@ struct EnvCfg {
   int low_period;                  // 경로를 다시 살피는 주기 (걸음 — 목표가 바뀌면 바로). 0 이면 decide_steps
   int low_explore;                 // 2 = 1 + 닫힘·후보 번지기를 라이다 지도만으로 (깊이 카메라 층 뺌 — mdp/frontier.h "합친 탐사의 닫힘", 켜야 씀). 1 = 두 층을 합친 탐사 (low_rl 위 스위치 — low_task.h "합친 탐사"): 탐사 판 끝 규칙(닫힘 성공·진행 없음)을 그대로 두고,
                                    //     정체·통과는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
+  int32_t cam_every;               // 1 = 깊이 카메라 장애물 층을 걸음(0.1 s)마다 갱신 (env.yaml camera_obstacles.update_every_step — 실물 Nav2 층은 센서 장마다), 0 = 경로 계획 차례만(옛 동작).
+                                   //     녹화 판 2 이전 머리에는 없음 — 읽을 때 0 (sim/tools/low_node_rec.h)
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)

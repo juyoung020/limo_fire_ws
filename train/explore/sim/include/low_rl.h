@@ -35,6 +35,8 @@ DEV bool lowrl_due(const EnvBatch& b, const EnvState& e, int env) {
   const LowRl& R = b.lowrl[env];
   return R.tgt_seen == -2 || e.step - R.p_step >= lowrl_period(b.cfg) || b.lowcmd[env].target != R.tgt_seen || b.lowcmd[env].follow != R.fol_seen;
 }
+// 깊이 카메라 층을 이번 걸음에 갱신하나: cam_every 면 걸음마다, 아니면 계획 차례만 (lowrl_due)
+DEV bool lowrl_cam_due(const EnvBatch& b, const EnvState& e, int env) { return (b.lowrl && b.cfg.cam_every) || lowrl_due(b, e, env); }
 DEV void lowrl_planned(const EnvBatch& b, const EnvState& e, int env) {
   LowRl& R = b.lowrl[env];
   R.p_step = e.step;

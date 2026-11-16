@@ -111,6 +111,7 @@ void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env) { camlayer
 // 아래층 준비 단계 (include/low_rl.h 머리말 — GPU env_low_prepare_gpu 와 같은 차례): 깊이 카메라 층·경로 계획(차례일 때만)
 static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
   EnvState e = b.st[env];
+  if (lowrl_cam_due(b, e, env) && !lowrl_due(b, e, env)) hier_camlayer_cpu(b, e, env);   // cam_every: 계획 차례가 아닌 걸음에도 층만 (env_camlayer_kernel 과 같은 규칙)
   if (lowrl_due(b, e, env)) {
     hier_camlayer_cpu(b, e, env);
     plan_cpu(b, e, env, actions ? slot_of(b, actions[(size_t)mdp::act::DIM * env]) : -1);

@@ -1395,7 +1395,7 @@ __global__ void __launch_bounds__(kRT) env_plan_kernel(EnvBatch b, const float* 
 __global__ void __launch_bounds__(kRT) env_camlayer_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
   const EnvState& e = b.st[env];
-  if (!lowrl_due(b, e, env)) return;   // 아래층 걸음 길: 계획 차례인 환경만 (끄면 늘 true)
+  if (!lowrl_cam_due(b, e, env)) return;   // 아래층 걸음 길: 계획 차례인 환경만 (cam_every 면 걸음마다, 끄면 늘 true)
   uint32_t* V = reinterpret_cast<uint32_t*>(b.cvox + (size_t)env * b.cfg.size * b.cfg.size);
   for (int i = tid; i < mdp::obs::DEPTH_SIZE; i += kRT)
     cam_pixel(b, e, env, i, 0, [&](int ci, uint8_t bit) { atomicAnd(&V[ci >> 2], ~((uint32_t)bit << (8 * (ci & 3)))); });

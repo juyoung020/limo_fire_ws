@@ -142,9 +142,11 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     if (const char* g = std::getenv("SIM_HIER_AVOID"); g && g[0] == '0') c.path_scan = c.mon_on = 0;
     // 깊이 카메라 장애물 층 (hier_path.h "깊이 카메라 장애물 층"): 절이 없으면 끔 (옛 설정 그대로). SIM_CAM_OBSTACLES=0/1 이면 그 값 (앞뒤 비교)
     c.cam_on = c.cam_nz = 0;
+    c.cam_every = 0;
     c.cam_min_h = c.cam_max_h = c.cam_obs_range = c.cam_ray_range = 0.f;
     if (const YAML::Node co = ap["camera_obstacles"]) {
       c.cam_on = co["enabled"].as<bool>() ? 1 : 0;
+      c.cam_every = co["update_every_step"] && co["update_every_step"].as<bool>() ? 1 : 0;
       c.cam_min_h = co["min_obstacle_height"].as<float>();
       c.cam_max_h = co["max_obstacle_height"].as<float>();
       c.cam_nz = co["z_voxels"].as<int>();
