@@ -8,5 +8,4 @@
 - `explore_net_v2/`: 탐사 RL 신경망 구조 버전 2 의 Netron 그림(`explore_net_v2.png`)과 모양만 담은 ONNX(원래 `docs/images`·`docs/models`, 2026-11-04). 지금 신경망과 많이 달라 옮겼다. 마지막 구조로는 `rl/train/explore/network/tools/onnx_export` (b48688a 판에서 빌드)로 다시 만든다.
 - `explore_roadmap_1104/`: 탐사 RL 첫 학습 계획(원래 `train/explore/ROADMAP.md`, 2026-11-04)과 학습 시뮬레이터 계획(원래 `docs/rl_explore_plan.md`, 일정·신경망 구조 버전 2 기준). 정책 하나가 속도를 바로 내는 구조의 단계·통과 조건·학습 속도 기록. 두 층 구조로 바꾸면서(2026-11-12) 옮겼다. 코드 주석의 "ROADMAP S2·S4·S5" 는 이 문서를 가리킨다.
 - `rl/`: 탐사 강화학습 전부(2026-11-16 그만둠 — 실물에서 시뮬과의 격차가 컸고 A* 아래층이 훨씬 빠르고 잘 됨). PPO 학습기·신경망·학습 러너·RL 실물 노드 `explore_rl`·두 층 계획·조준 RL 계획을 원래 경로 그대로 옮겼다. 마지막 결과·되살리기(옮기기 앞 커밋 `b48688a`)는 [rl/README.md](rl/README.md).
-- `docs/midterm_ros.md`: 중간고사(2026-11-04) 대비 ROS 2 구조 정리(원래 `docs/midterm_ros.md`, 2026-11-16 옮김). 시험이 끝났고 어느 문서도 가리키지 않으며, 탐사를 강화학습으로 하던 때 기준이다.
 - `refs/papers/header_fare_diff.md`: HEADER·FARE 논문과 우리 탐사 RL(직접 제어 v10)의 차이(원래 `refs/papers/`, 2026-11-16 옮김). 견줄 대상인 탐사 RL 을 그만둬서 옮겼다. 논문 받는 법과 판단 모델 쪽 선행연구는 `refs/` 에 그대로 있다.
