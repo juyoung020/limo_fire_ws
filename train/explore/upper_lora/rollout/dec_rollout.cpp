@@ -7,9 +7,11 @@
 //   <앞머리>.jsonl  요청 r 마다 한 줄: 장면 · 씨앗 · 요청 번호 · 걸음 · 자세 · 후보(글자 차례: 슬롯 · 칸 · 특징 F[FEAT]) · 기준 판 결과 · 갈래 결과 [글자][반복] = {끝 코드, 끝 시각 s, 아는 칸 수}
 //   <앞머리>_r<번호>.req.json  그 요청 본문 (지금 꼴 — decider_input both: 지도 사진 + 후보 글)
 //   <앞머리>_r<번호>.map.bin   원시 지도 (아는 칸 범위만: i32 x0 y0 w h · i16 [h][w]) — 후보 꼴이 바뀌면 이것과 jsonl 로 요청을 다시 그림
-//   dec_rollout <장면.scene> --seed 1 --out p [--people 0] [--period 3.0] [--latency 2.6] [--every 3] [--reps 4] [--horizon 600] [--max-req 0] [--base slot0]
+//   dec_rollout <장면.scene> --seed 1 --out p [--people 0] [--period 3.0] [--latency 2.6] [--every 3] [--reps 4] [--horizon 600] [--max-req 0] [--base slot0] [--mode event|periodic] [--threads 8]
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <thread>
 #include <deque>
 #include <chrono>
 #include <cmath>
@@ -85,6 +87,7 @@ struct Cfg {
   sim::LidarModel lidar;
   uint64_t seed = 1;
   int people = 0;
+  int threads = 8;   // --threads: 갈래 칸 위층을 나눌 스레드 수
   lxc::Params lp;
   lxd::Params dp;
   int lat = 26;
@@ -399,8 +402,6 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
     std::vector<sim::LowEp> L;
     std::vector<sim::EpInfo> ep;
     std::vector<int16_t> lm;
-    std::vector<uint32_t> trs;
-    std::vector<uint8_t> vx;
     GpuAct da(n);
     covm::Coverage cov;
     cov.init(C.worlds[0]);
@@ -408,32 +409,53 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
     g.set_low_cmd(cmd);
     int live = n;
     bool first = true;
+    std::vector<uint8_t> need((size_t)n, 0), upd((size_t)n, 0);
+    std::vector<std::vector<int16_t>> lmb((size_t)n);
+    std::vector<std::vector<uint32_t>> trb((size_t)n);
+    std::vector<std::vector<uint8_t>> vxb((size_t)n);
+    const int nthr = C.threads;
     while (live > 0) {
       g.get_state(st); g.get_cand(cand); g.get_cand_cur(ccur);
       cudaMemcpy(o1d.data(), g.batch().obs_1d, sizeof(float) * o1d.size(), cudaMemcpyDeviceToHost);
-      bool chg = false;
+      // 1) 차례대로: 이 걸음에 후보를 만들 칸(위층 결정 차례 · 답이 옴 · 보낼 때)만 지도 · 지나간 길 · 깊이 층을 칸별 버퍼로 꺼냄 (cand::build 가 읽음)
+      // 2) 스레드로 나눠: 칸마다 위층 (Ctl · Upper · 기준 응답기는 칸마다 따로 — 공유 상태 없음, 결과는 한 스레드와 바이트 같음)
+      const size_t cells = (size_t)C.hc.cfg.size * C.hc.cfg.size, nf = (size_t)C.hc.cfg.size * ((C.hc.cfg.size + 31) / 32);
       for (int i = 0; i < n; ++i) {
         Sl& x = sl[(size_t)i];
-        if (!x.live) continue;
-        if (first) continue;   // 첫 걸음: 저장한 때 위층은 이미 돌았음 (준비·걸음부터)
+        need[(size_t)i] = 0;
+        if (!x.live || first) continue;
         x.bm.now = x.t;
-        // 후보를 만들 걸음(위층 결정 차례 · 답이 옴 · 보낼 때)에만 이 칸의 지도 · 지나간 길 · 깊이 층을 꺼냄 (cand::build 가 읽음)
         const bool ans = !x.bm.q.empty() && x.bm.q.front().ready <= x.t;
-        const bool snd = !x.us.waiting() && (x.us.last_send() < 0 || st[(size_t)i].step - x.us.last_send() >= C.dp.period_steps);
-        const bool need = x.cs.due(st[(size_t)i]) || ans || snd;
-        if (need) {
-          const sim::EnvBatch& B = g.batch();
-          const size_t cells = (size_t)C.hc.cfg.size * C.hc.cfg.size, nf = (size_t)C.hc.cfg.size * ((C.hc.cfg.size + 31) / 32);
-          lm.resize(cells); trs.resize(2 * nf); vx.resize(cells);
-          cudaMemcpy(lm.data(), B.lmap + (size_t)i * cells, cells * 2, cudaMemcpyDeviceToHost);
-          cudaMemcpy(trs.data(), B.trail + (size_t)i * 2 * nf, 2 * nf * 4, cudaMemcpyDeviceToHost);
-          if (B.cvox) cudaMemcpy(vx.data(), B.cvox + (size_t)i * cells, cells, cudaMemcpyDeviceToHost);
-        }
-        const lxc::View v{&C.hc.cfg, &w, need ? lm.data() : nullptr, need ? trs.data() : nullptr, need && g.batch().cvox ? vx.data() : nullptr, &st[(size_t)i],
-                          &cand[(size_t)i * K], (uint32_t)ccur[(size_t)i]};
-        sim::LowCmd c1;
-        if (x.us.step(v, o1d.data() + (size_t)i * mdp::hier::POLICY_1D + mdp::obs::POLICY_1D, x.cs, x.bm, &c1)) { cmd[(size_t)i] = c1; chg = true; }
+        const bool snd = C.dp.mode == 0 && !x.us.waiting() && (x.us.last_send() < 0 || st[(size_t)i].step - x.us.last_send() >= C.dp.period_steps);
+        if (!(x.cs.due(st[(size_t)i]) || ans || snd)) continue;
+        need[(size_t)i] = 1;
+        const sim::EnvBatch& B = g.batch();
+        lmb[(size_t)i].resize(cells); trb[(size_t)i].resize(2 * nf); vxb[(size_t)i].resize(cells);
+        cudaMemcpy(lmb[(size_t)i].data(), B.lmap + (size_t)i * cells, cells * 2, cudaMemcpyDeviceToHost);
+        cudaMemcpy(trb[(size_t)i].data(), B.trail + (size_t)i * 2 * nf, 2 * nf * 4, cudaMemcpyDeviceToHost);
+        if (B.cvox) cudaMemcpy(vxb[(size_t)i].data(), B.cvox + (size_t)i * cells, cells, cudaMemcpyDeviceToHost);
       }
+      std::fill(upd.begin(), upd.end(), 0);
+      if (!first) {
+        std::atomic<int> next{0};
+        const auto work = [&]() {
+          for (int i; (i = next.fetch_add(1)) < n;) {
+            Sl& x = sl[(size_t)i];
+            if (!x.live) continue;
+            const bool nd = need[(size_t)i] != 0;
+            const lxc::View v{&C.hc.cfg, &w, nd ? lmb[(size_t)i].data() : nullptr, nd ? trb[(size_t)i].data() : nullptr, nd && g.batch().cvox ? vxb[(size_t)i].data() : nullptr,
+                              &st[(size_t)i], &cand[(size_t)i * K], (uint32_t)ccur[(size_t)i]};
+            sim::LowCmd c1;
+            if (x.us.step(v, o1d.data() + (size_t)i * mdp::hier::POLICY_1D + mdp::obs::POLICY_1D, x.cs, x.bm, &c1)) { cmd[(size_t)i] = c1; upd[(size_t)i] = 1; }
+          }
+        };
+        std::vector<std::thread> th;
+        for (int k = 1; k < nthr; ++k) th.emplace_back(work);
+        work();
+        for (auto& t : th) t.join();
+      }
+      bool chg = false;
+      for (int i = 0; i < n; ++i) chg = chg || upd[(size_t)i];
       first = false;
       if (chg) g.set_low_cmd(cmd);
       for (int i = 0; i < n; ++i) act[(size_t)i * AW] = (float)sl[(size_t)i].cs.slot();
@@ -482,6 +504,7 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml";
   Cfg C;
   double period = 3.0, latency = 2.6, horizon = 600.0;
+  int mode = 1;   // 위층 요청 차례 — 실물 노드 decider_mode 기본(event)과 같게
   int every = 3, reps = 4, max_req = 0, snap_a = -1, gpu_n = 0;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -496,13 +519,15 @@ int main(int argc, char** argv) {
     else if (a == "--horizon") horizon = std::stod(nx());
     else if (a == "--max-req") max_req = std::stoi(nx());
     else if (a == "--base") base = nx();
+    else if (a == "--threads") C.threads = std::max(1, std::stoi(nx()));
+    else if (a == "--mode") { const std::string m = nx(); mode = m == "event" ? 1 : 0; }
     else if (a == "--env") env_path = nx();
     else if (a == "--snap-test") snap_a = std::stoi(nx());
     else if (a == "--gpu") gpu_n = std::stoi(nx());
     else scene = a;
   }
   if (scene.empty() || out.empty() || base != "slot0") {
-    std::fprintf(stderr, "dec_rollout <장면.scene> --seed 1 --out p [--people 0] [--period 3.0] [--latency 2.6] [--every 3] [--reps 4] [--horizon 600] [--max-req 0] [--base slot0]\n");
+    std::fprintf(stderr, "dec_rollout <장면.scene> --seed 1 --out p [--people 0] [--period 3.0] [--latency 2.6] [--every 3] [--reps 4] [--horizon 600] [--max-req 0] [--base slot0] [--mode event|periodic] [--threads 8]\n");
     return 2;
   }
   try {
@@ -519,6 +544,7 @@ int main(int argc, char** argv) {
     C.lp.use_fuel = false;
     C.lp.use_cand = true;   // 후보 = scripts/cand_view.h (실물 노드 upper:=decider decider_cand true 와 같음)
     C.dp.cand = true;
+    C.dp.mode = mode;
     const double dt = (double)c.substeps * c.dt;
     C.dp.period_steps = std::max(1, (int)std::lround(period / dt));
     C.lat = std::max(0, (int)std::lround(latency / dt));
@@ -581,8 +607,8 @@ int main(int argc, char** argv) {
         std::fclose(g);
       }
       std::fprintf(f, "{\"scene\":\"%s\",\"seed\":%llu,\"people\":%d,\"req\":%ld,\"step\":%d,\"x\":%.4f,\"y\":%.4f,\"th\":%.5f,\"res\":%.4f,\"ox\":%.4f,\"oy\":%.4f,\"gw\":%d,"
-                      "\"cand_ver\":\"cand-v1-b8d942b\",\"period_steps\":%d,\"lat_steps\":%d,\"horizon_s\":%.1f,\"base\":{\"done\":%d,\"t\":%.2f},\"mem\":{\"trail\":[",
-                   jesc(scene).c_str(), (unsigned long long)C.seed, C.people, s.id, s.step, s.x, s.y, s.th, c.res, C.worlds[0].ox, C.worlds[0].oy, C.worlds[0].gw, C.dp.period_steps, C.lat,
+                      "\"cand_ver\":\"cand-v2-f5334cd\",\"mode\":\"%s\",\"period_steps\":%d,\"lat_steps\":%d,\"horizon_s\":%.1f,\"base\":{\"done\":%d,\"t\":%.2f},\"mem\":{\"trail\":[",
+                   jesc(scene).c_str(), (unsigned long long)C.seed, C.people, s.id, s.step, s.x, s.y, s.th, c.res, C.worlds[0].ox, C.worlds[0].oy, C.worlds[0].gw, C.dp.mode ? "event" : "periodic", C.dp.period_steps, C.lat,
                    horizon, b.done, b.t);
       for (size_t q = 0; q < s.mem.trail.size(); ++q) { const auto& t = s.mem.trail[q]; std::fprintf(f, "%s[%.3f,%.3f,%.4f,%d]", q ? "," : "", t.x, t.y, t.th, t.step); }
       std::fprintf(f, "],\"goals\":[");

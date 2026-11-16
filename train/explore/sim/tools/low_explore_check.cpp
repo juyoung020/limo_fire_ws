@@ -345,6 +345,22 @@ int main(int argc, char** argv) {
           if (c1.target != prev_tgt) { ++n_sw; prev_tgt = c1.target; }
         }
         n_ans += us.n_ans() - a0;
+        if (const char* tp = std::getenv("DEC_TRACE")) {   // 진단: 1 s 마다 자세·목표·진행 없음 시계, 결정·요청마다 한 줄/파일
+          static FILE* tf = std::fopen((std::string(tp) + ".tsv").c_str(), "w");
+          static size_t n_req = 0, n_d = 0;
+          const auto wx = [&](int cell) { return w.ox + (cell % w.gw + 0.5) * hc.cfg.res; };
+          const auto wy = [&](int cell) { return w.oy + (cell / w.gw + 0.5) * hc.cfg.res; };
+          while (n_req < ms.sent.size()) { char nm[64]; std::snprintf(nm, sizeof nm, "_req%03zu_t%d.json", n_req, t); write_text(std::string(tp) + nm, ms.sent[n_req]); ++n_req; }
+          while (n_d < us.decisions().size()) {
+            const auto& d = us.decisions()[n_d++];
+            std::fprintf(tf, "D\t%d\t%d\t%.2f\t%.2f\t%d\t%d\t%s\n", d.step, d.id, d.x, d.y, d.kept, d.src, us.last_trigger().c_str());
+          }
+          if (t % 10 == 0) {
+            const int tg = cs.cmd().target;
+            std::fprintf(tf, "P\t%d\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%d\t%d\t%d\n", t, st[0].x, st[0].y, st[0].th, tg >= 0 ? wx(tg) : -99.0, tg >= 0 ? wy(tg) : -99.0, cs.cmd().follow, st[0].since_occ, st[0].collided);
+          }
+          std::fflush(tf);
+        }
         const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
         sim::LowCmd c2;
         if (ur.step(vr, robot.obs_1d() + mdp::obs::POLICY_1D, cr, mr, &c2)) robot.set_cmd(c2);
