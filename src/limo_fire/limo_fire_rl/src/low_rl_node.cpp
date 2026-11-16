@@ -105,7 +105,8 @@ class LowRlNode : public rclcpp::Node {
     dp.hint = declare_parameter<bool>("decider_hint", true);          // 글의 "Rules of thumb"
     dp.mem_image = declare_parameter<bool>("decider_mem_image", true);   // 지도 사진에 지나온 길 · 지난 목표
     dp.image = declare_parameter<std::string>("decider_image", "A") == "B" ? 1 : 0;
-    dp.cam = (int)declare_parameter<int>("decider_cam", 4);   // 둘째 사진: 앞 n 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 (0 = 끔)
+    dp.cam = (int)declare_parameter<int>("decider_cam", 4);
+    dp.log_k = (int)declare_parameter<int>("decider_log_k", 8);   // 결정 기록 최근 K 개 (글 + 지도 번호), 0 = 끔   // 둘째 사진: 앞 n 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 (0 = 끔)
     cam_base_h_ = declare_parameter<double>("cam_base_h", 0.147);   // base_link 의 바닥 위 높이 (m) — 카메라 높이 = 이것 + tf base_link→camera_link z   // A = 지금 지도 한 장 · B = 2 × 2 (지금 · 5 · 15 · 30 s 전)
     if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "decider" && upper_ != "cand") throw std::runtime_error("upper 는 fuel · slot0 · decider · cand");
     if (upper_ == "decider" && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("decider_input 은 text · image · both (all 은 시뮬 장면 그림이라 실물에 없음)");

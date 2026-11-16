@@ -197,6 +197,25 @@ std::vector<uint8_t> render_png(const int16_t* lmap, int size, int gw, int gh, i
   return render_png_mem(lmap, size, gw, gh, unknown_l, occ_l, kb, rob_cx, rob_cy, rob_th, cand, cells, px, MapMem());
 }
 
+namespace {
+// 3 × 5 작은 글꼴 (꼴 B 칸 이름: 숫자 · '-' · 's' · N O W) — 줄마다 위에서부터 3 비트
+const char* kSmallCh = "0123456789-sNOW ";
+constexpr uint8_t kSmall[16][5] = {{7, 5, 5, 5, 7}, {2, 6, 2, 2, 7}, {7, 1, 7, 4, 7}, {7, 1, 7, 1, 7}, {5, 5, 7, 1, 1}, {7, 4, 7, 1, 7}, {7, 4, 7, 5, 7}, {7, 1, 1, 1, 1},
+                                   {7, 5, 7, 5, 7}, {7, 5, 7, 1, 7}, {0, 0, 7, 0, 0}, {0, 3, 6, 3, 6}, {5, 7, 7, 7, 5}, {7, 5, 5, 5, 7}, {5, 5, 7, 7, 5}, {0, 0, 0, 0, 0}};
+void draw_small(Img& im, int x, int y, const std::string& t, int sc) {
+  for (size_t i = 0; i < t.size(); ++i) {
+    const char* q = std::strchr(kSmallCh, t[i]);
+    const int g = q ? (int)(q - kSmallCh) : 15;
+    for (int yy = -1; yy <= 5 * sc; ++yy)   // 바탕 흰 상자 (읽기 쉽게)
+      for (int xx = -1; xx <= 4 * sc; ++xx) im.set(x + (int)i * 4 * sc + xx, y + yy, 255, 255, 255);
+    for (int r = 0; r < 5; ++r)
+      for (int c = 0; c < 3; ++c)
+        if ((kSmall[g][r] >> (2 - c)) & 1)
+          for (int a = 0; a < sc; ++a) for (int b = 0; b < sc; ++b) im.set(x + (int)i * 4 * sc + c * sc + a, y + r * sc + b, 0, 0, 0);
+  }
+}
+}  // namespace
+
 static Img render_img(const int16_t* lmap, int size, int gw, int gh, int16_t unknown_l, int16_t occ_l, int kb[4], float rob_cx, float rob_cy, float rob_th,
                       std::vector<Cand>& cand, const std::vector<int>& cells, int px, const MapMem& mem, int* crop, bool fixed) {
   int x0 = (int)rob_cx, x1 = (int)rob_cx, y0 = (int)rob_cy, y1 = (int)rob_cy;
@@ -270,6 +289,15 @@ static Img render_img(const int16_t* lmap, int size, int gw, int gh, int16_t unk
     dots[2 * k + 1] = cand[k].py = std::clamp((int)std::lround(fv), kDotR + 1, px - kDotR - 2);
   }
   place_tags(im, cand, dots, (int)std::lround(ru), (int)std::lround(rv));
+  {   // 결정 기록 번호: 흰 상자 검은 숫자 (꼬리표 위에 — 큰 번호부터 그려 1 이 맨 위)
+    std::vector<MapMem::N> ns = mem.nums;
+    std::sort(ns.begin(), ns.end(), [](const MapMem::N& a, const MapMem::N& b) { return a.num > b.num; });
+    for (const auto& q : ns) {
+      float fu, fv;
+      to_px(q.cx, q.cy, &fu, &fv);
+      draw_small(im, (int)std::lround(fu) + 5, (int)std::lround(fv) - 12, std::to_string(q.num), 2);
+    }
+  }
   {   // 로봇: 머리 방향 세모
     float fu, fv;
     to_px(rob_cx, rob_cy, &fu, &fv);
@@ -291,24 +319,6 @@ std::vector<uint8_t> render_png_mem(const int16_t* lmap, int size, int gw, int g
   return png_of(render_img(lmap, size, gw, gh, unknown_l, occ_l, kb, rob_cx, rob_cy, rob_th, cand, cells, px, mem, crop, false));
 }
 
-namespace {
-// 3 × 5 작은 글꼴 (꼴 B 칸 이름: 숫자 · '-' · 's' · N O W) — 줄마다 위에서부터 3 비트
-const char* kSmallCh = "0123456789-sNOW ";
-constexpr uint8_t kSmall[16][5] = {{7, 5, 5, 5, 7}, {2, 6, 2, 2, 7}, {7, 1, 7, 4, 7}, {7, 1, 7, 1, 7}, {5, 5, 7, 1, 1}, {7, 4, 7, 1, 7}, {7, 4, 7, 5, 7}, {7, 1, 1, 1, 1},
-                                   {7, 5, 7, 5, 7}, {7, 5, 7, 1, 7}, {0, 0, 7, 0, 0}, {0, 3, 6, 3, 6}, {5, 7, 7, 7, 5}, {7, 5, 5, 5, 7}, {5, 5, 7, 7, 5}, {0, 0, 0, 0, 0}};
-void draw_small(Img& im, int x, int y, const std::string& t, int sc) {
-  for (size_t i = 0; i < t.size(); ++i) {
-    const char* q = std::strchr(kSmallCh, t[i]);
-    const int g = q ? (int)(q - kSmallCh) : 15;
-    for (int yy = -1; yy <= 5 * sc; ++yy)   // 바탕 흰 상자 (읽기 쉽게)
-      for (int xx = -1; xx <= 4 * sc; ++xx) im.set(x + (int)i * 4 * sc + xx, y + yy, 255, 255, 255);
-    for (int r = 0; r < 5; ++r)
-      for (int c = 0; c < 3; ++c)
-        if ((kSmall[g][r] >> (2 - c)) & 1)
-          for (int a = 0; a < sc; ++a) for (int b = 0; b < sc; ++b) im.set(x + (int)i * 4 * sc + c * sc + a, y + r * sc + b, 0, 0, 0);
-  }
-}
-}  // namespace
 
 std::vector<uint8_t> render_png_tiles(const int16_t* lmap, const std::vector<const int16_t*>& past, const std::vector<float>& past_age_s, const std::vector<float>& past_pose,
                                       int size, int gw, int gh, int16_t unknown_l, int16_t occ_l, int kb[4], float rob_cx, float rob_cy, float rob_th, std::vector<Cand>& cand,

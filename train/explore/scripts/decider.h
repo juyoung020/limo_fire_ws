@@ -60,6 +60,8 @@ struct MapMem {
   struct G { float cx, cy; int outcome; };   // 0 지금 목표 · 1 닿음 · 2 실패 · 3 바꿈 (다른 목표로)
   std::vector<P> trail;
   std::vector<G> goals;
+  struct N { float cx, cy; int num; };   // 결정 기록 번호 (1 = 가장 최근 결정의 목표)
+  std::vector<N> nums;
   float trail_s = 60.f;   // 길 색의 시간 폭 (s)
   bool clear_tags = false;   // 꼬리표를 글자마다 다른 색 · 또렷한 글꼴로 (후보 모드)
 };

@@ -17,6 +17,7 @@ low_rl:
     decider_mem_image: true   # 지도 사진에 지나온 길(60 s, 보라 — 옅을수록 오래됨) · 지난 목표(✓ 닿음 · × 실패 · 회색 고리 바꿈 · 파란 고리 지금)
     decider_image: A          # A = 지금 지도 한 장 · B = 한 사진을 2 × 2 칸으로 (지금 · 5 · 15 · 30 s 전, 같은 범위 · 토큰 수 같음)
     decider_cam: 4            # 둘째 사진: 앞 4 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 2 × 2 (실물 컬러 · 정렬 깊이로 가려짐 검사, scripts/cam_memory.h) — 0 = 끔
+    decider_log_k: 8          # 결정 기록: 최근 K 결정(언제 · 고른 후보의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 최근)로 — 0 = 끔
     color_topic: /camera/color/image_raw
     color_info_topic: /camera/color/camera_info
     cam_base_h: 0.147         # base_link 의 바닥 위 높이 (m) — 카메라 높이 = 이것 + tf base_link→camera_link z

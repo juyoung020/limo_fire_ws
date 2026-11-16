@@ -74,7 +74,8 @@ struct Snap {   // 요청을 보낸 때의 원시 상태 (후보 꼴이 바뀌�
   std::vector<int16_t> map;        // 지금 지도 (아는 칸 범위)
   std::vector<int> past_age;       // 지난 지도의 걸음 차 (같은 범위로 자름 — 그림 꼴 B)
   std::vector<std::vector<int16_t>> past;
-  std::vector<std::array<float, 4>> kf;   // 판 시작부터 10 걸음마다 (걸음 · 지도 x · y · th) — 시뮬은 장면으로 그때 카메라를 다시 그림 (후보별 지난 장면)
+  std::vector<std::array<float, 4>> kf;
+  std::vector<lxd::Dec> decs;   // 판 동안 위층 결정 전부 (렌더 때 결정 기록 K 를 바꿀 수 있게)   // 판 시작부터 10 걸음마다 (걸음 · 지도 x · y · th) — 시뮬은 장면으로 그때 카메라를 다시 그림 (후보별 지난 장면)
 };
 struct Cfg {
   sim::EnvHostCfg hc;
@@ -93,9 +94,10 @@ void hist_push(Hist& h, int step, const std::vector<int16_t>& lm) {
   if (h.size() > 31) h.pop_front();
 }
 Snap make_snap(const Cfg& C, const sim::World& w, const sim::EnvState& e, const std::vector<int16_t>& lm, const lxc::Ctl& cs, const lxd::Req& r, const Hist& hist,
-               const std::vector<std::array<float, 4>>& kf) {
+               const std::vector<std::array<float, 4>>& kf, const lxd::Upper& us) {
   Snap s;
   s.kf = kf;
+  s.decs = us.decisions();
   s.id = r.id; s.step = e.step; s.x = e.x + e.ex; s.y = e.y + e.ey; s.th = e.th + e.eth;
   s.body = r.body;
   s.cands = cs.cands().c;
@@ -171,7 +173,7 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
     if (us.step(v, o1d.data() + mdp::obs::POLICY_1D, cs, bm, &c1)) cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
     if (bm.sent.size() > ns) {   // 이 걸음에 요청을 보냄
       const lxd::Req& r = bm.sent.back();
-      if (snaps) snaps->push_back(make_snap(C, w, st[0], lm, cs, r, hist, kfp));
+      if (snaps) snaps->push_back(make_snap(C, w, st[0], lm, cs, r, hist, kfp, us));
       if (r.id == forced) {
         branch_step = t;
         if (reseed > 0) {   // 그 뒤 우연만 다르게 (combine_run --branch-reseed 와 같은 섞기)
@@ -335,7 +337,7 @@ Out base_gpu(const Cfg& C, int every, std::vector<Snap>* snaps, std::vector<Cap>
     if (bm.sent.size() > ns) {
       const lxd::Req& r = bm.sent.back();
       if (nreq++ % every == 0 && r.cells.size() >= 2) {
-        snaps->push_back(make_snap(C, w, st[0], lm, cs, r, hist, kfp));
+        snaps->push_back(make_snap(C, w, st[0], lm, cs, r, hist, kfp, us));
         caps->push_back(Cap{r.id, t, g.env_blob(0), cs, us, bm, snaps->size() - 1});
       }
     }
@@ -582,6 +584,8 @@ int main(int argc, char** argv) {
       for (size_t q = 0; q < s.mem.fails.size(); ++q) { const auto& t = s.mem.fails[q]; std::fprintf(f, "%s[%.3f,%.3f,%d,%d]", q ? "," : "", t.x, t.y, t.why, t.step); }
       std::fprintf(f, "]},\"kf\":[");
       for (size_t q = 0; q < s.kf.size(); ++q) std::fprintf(f, "%s[%d,%.3f,%.3f,%.4f]", q ? "," : "", (int)s.kf[q][0], s.kf[q][1], s.kf[q][2], s.kf[q][3]);
+      std::fprintf(f, "],\"decisions\":[");
+      for (size_t q = 0; q < s.decs.size(); ++q) { const auto& d = s.decs[q]; std::fprintf(f, "%s[%d,%d,%.3f,%.3f,%d,%d]", q ? "," : "", d.step, d.id, d.x, d.y, d.kept, d.src); }
       std::fprintf(f, "],\"cand\":[");
       for (size_t L = 0; L < s.cands.size(); ++L) {
         const cand::Cand& q = s.cands[L];

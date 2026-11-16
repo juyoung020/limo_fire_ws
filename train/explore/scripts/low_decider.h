@@ -37,6 +37,7 @@ struct Params {
   bool hint = true;         // 후보 모드 글의 "Rules of thumb" (가까운 쪽으로 쏠리게 함 — 평가에서 빼고도 잼)
   bool mem_image = true;    // 후보 모드 지도 사진에 지나온 길 · 지난 목표 표시 (꼴 A)
   int cam = 0;              // 후보 모드 둘째 사진: 0 = 없음 · n = 앞 n 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 (cam_memory.h — 2 × 2 격자, 512 × 384)
+  int log_k = 8;            // 후보 모드 결정 기록: 최근 K 개 결정(언제 · 고른 번호의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 가장 최근)로 — 0 = 끔
   int image = 0;            // 후보 모드 사진 꼴: 0 = A (지금 지도 한 장) · 1 = B (2 × 2 칸: 지금 · 5 · 15 · 30 s 전, 같은 범위 — 토큰 수 같음, 칸마다 해상도 반)
   float match_r = 1.5f;     // 답의 후보 칸 → 지금 후보 (m). hier 후보 칸은 덩어리에서 로봇에 가장 가까운 칸이라 답을 기다리는 동안 옮겨감 — 0.5 m 면 답의 40 ~ 55 % 를 버림 (low_explore_check, 지연 2.6 s)
 };
@@ -48,6 +49,14 @@ struct Req {
   std::string body;
   std::vector<int> cells;   // 글자 차례의 후보 칸 (후보 모드: 서는 자리 vp)
   std::vector<int> ids;     // 후보 모드: 글자 차례의 안정 번호
+};
+// 위층 결정 하나 (후보 모드 — 판단 모델 답을 따른 것 · 규칙으로 대신 고른 것 모두)
+struct Dec {
+  int step;
+  int id;          // 고른 후보 안정 번호 (−1 = 목표 없음)
+  float x, y;      // 그 서는 자리 (지도 m)
+  int kept;        // 1 = 지금 목표를 이어 감 · 0 = 바꿈
+  int src;         // 0 = 판단 모델 답 · 1 = 규칙 (목표가 죽어 대신)
 };
 struct Answer {
   long id = 0;
@@ -105,7 +114,7 @@ class Upper {
         int idx = ctl.cand_index(req_.ids[(size_t)k]);
         if (idx < 0) idx = match_cand(v, ctl, req_.cells[(size_t)k]);
         if (idx < 0) { ++n_nomatch_; continue; }
-        *cmd = ctl.go_cand(v, idx, why);
+        { const int prev = ctl.cur_id(); *cmd = ctl.go_cand(v, idx, why); note_dec(v, ctl, prev, 0); }
         changed = true;
         continue;
       }
@@ -117,7 +126,7 @@ class Upper {
     if (wait_ && s.step - req_.step > p_.timeout_steps) { wait_ = false; ++n_timeout_; }
     bool urgent = false;
     if (!changed && ctl.due(s) && (ctl.redo_pending() || !ctl.live(s))) {   // 기다리지 않고 slot0 차례로 (combine_run 의 slot0 위층과 같은 고름)
-      if (p_.cand) { ctl.build_cands(v); *cmd = ctl.go_cand(v, -1, why); }   // 후보 모드 규칙(cand_pick)
+      if (p_.cand) { ctl.build_cands(v); const int prev = ctl.cur_id(); *cmd = ctl.go_cand(v, -1, why); note_dec(v, ctl, prev, 1); }   // 후보 모드 규칙(cand_pick)
       else *cmd = ctl.decide_slot(v, -1, why);
       changed = true;
       urgent = true;
@@ -230,6 +239,20 @@ class Upper {
     // 최근 목표 (cand::Mem::goals, 새것부터 5 개)
     const cand::Mem& M = ctl.cand_mem();
     oj gl = oj::array();
+    // 결정 기록 (새것부터 log_k 개): "12s ago: chose C (switched) - reached" 꼴 한 줄 — 고른 번호가 지금 목록에 없으면 gone. 결과는 그 결정 뒤 그 번호 목표 기록에서
+    oj dl = oj::array();
+    for (int i = (int)decs_.size() - 1, n = 0; i >= 0 && n < p_.log_k; --i, ++n) {
+      const Dec& d = decs_[(size_t)i];
+      std::string let = "none";
+      if (d.id >= 0) { const int ci = ctl.cand_index(d.id); let = ci >= 0 && ci < 26 ? std::string(1, (char)('A' + ci)) : "gone"; }
+      std::string out = "";
+      for (const auto& g : ctl.cand_mem().goals)
+        if (g.id == d.id && g.start <= d.step + 1 && (g.end < 0 || g.end >= d.step)) out = g.end < 0 ? "still going" : why_txt[std::clamp(g.why, 0, 8)];
+      if (out.empty()) out = d.id < 0 ? "no goal" : "replaced";
+      char b[160];
+      std::snprintf(b, sizeof b, "#%d %.0fs ago: %s %s%s - %s", n + 1, (s.step - d.step) * dt, d.kept ? "kept" : "chose", let.c_str(), d.src ? " (fallback rule)" : "", out.c_str());
+      dl.push_back(std::string(b));
+    }
     dec::MapMem mm;
     mm.clear_tags = true;
     const auto cxy = [&](float x, float y, float* cx, float* cy) { *cx = (x - v.W->ox) / c.res; *cy = (y - v.W->oy) / c.res; };
@@ -257,6 +280,13 @@ class Upper {
         cxy(g.x, g.y, &gg.cx, &gg.cy);
         gg.outcome = g.end < 0 ? 0 : g.why == cand::kReached ? 1 : g.why == cand::kSwitched ? 3 : 2;
         mm.goals.push_back(gg);
+      }
+      for (int i = (int)decs_.size() - 1, n = 0; i >= 0 && n < p_.log_k; --i, ++n) {   // 결정 기록 번호 (1 = 가장 최근)
+        if (decs_[(size_t)i].id < 0) continue;
+        dec::MapMem::N nn;
+        cxy(decs_[(size_t)i].x, decs_[(size_t)i].y, &nn.cx, &nn.cy);
+        nn.num = n + 1;
+        mm.nums.push_back(nn);
       }
     }
     oj st;
@@ -296,6 +326,7 @@ class Upper {
                                     "joined to that dot by a line of the same color (each letter has its own color).") +
                         (p_.mem_image ? " Purple dots are where the robot drove in the last 60 seconds: dark purple = recent, faint purple = older. Past goals are marked: "
                                         "green check = reached, red X = failed (the robot got stuck or had no path), gray ring = left for another goal, blue ring = current goal."
+                                        " Small black numbers in white boxes mark the targets of the last decisions (1 = most recent), matching decision_log_newest_first."
                                       : "") +
                         (p_.image == 1 ? " The image is split into four panels showing the same map area at the same scale, so positions line up: top-left = now (with the "
                                          "candidates, the path and the goals), top-right, bottom-left and bottom-right = the map a few seconds ago (the time is written in each "
@@ -310,6 +341,7 @@ class Upper {
                                "inside_avoid_zone = near a spot the robot is currently avoiding after a failure; robot_was_here_before = the robot already stood near it.";
       st["candidates"] = cl;
       st["recent_goals_newest_first"] = gl;
+      if (p_.log_k > 0) st["decision_log_newest_first"] = dl;
     }
     if (p_.hint)
       st["hint"] = "Rules of thumb: prefer a spot that is close and roughly ahead; finish nearby small frontiers before leaving an area because coming back later is "
@@ -385,7 +417,17 @@ class Upper {
   const std::string& last_err() const { return last_err_; }
   const Params& params() const { return p_; }
   void set_input(int input) { p_.input = input; }
-  void set_cam(const camm::Memory* m) { cam_ = m; }   // 카메라 키프레임 기억 (부르는 쪽이 걸음마다 채움 — 실물 노드)   // 요청 꼴만 바꿈 (갈래 굴리기: 기준 응답기는 그림을 안 봄 — 지도 없이 글만)
+  void set_cam(const camm::Memory* m) { cam_ = m; }
+  const std::vector<Dec>& decisions() const { return decs_; }   // 판 동안 모든 결정 (갈래 원시 상태 — 렌더 때 K 를 바꿀 수 있게)
+  void note_dec(const lxc::View& v, const lxc::Ctl& ctl, int prev_id, int src) {
+    Dec d{v.s->step, ctl.cur_id(), 0.f, 0.f, 0, src};
+    if (ctl.cmd().follow != 0 && ctl.cmd().target >= 0) {
+      d.x = v.W->ox + (ctl.cmd().target % v.W->gw + 0.5f) * v.c->res;
+      d.y = v.W->oy + (ctl.cmd().target / v.W->gw + 0.5f) * v.c->res;
+    } else d.id = -1;
+    d.kept = d.id >= 0 && d.id == prev_id;
+    decs_.push_back(d);
+  }   // 카메라 키프레임 기억 (부르는 쪽이 걸음마다 채움 — 실물 노드)   // 요청 꼴만 바꿈 (갈래 굴리기: 기준 응답기는 그림을 안 봄 — 지도 없이 글만)
 
  private:
   Params p_;
@@ -393,6 +435,7 @@ class Upper {
   bool wait_ = false;
   int last_send_ = -1;
   const camm::Memory* cam_ = nullptr;
+  std::vector<Dec> decs_;
   std::deque<std::pair<int, std::vector<int16_t>>> hist_;   // 꼴 B 지난 지도 (걸음, 지도)
   long next_id_ = 0, n_sent_ = 0, n_ans_ = 0, n_timeout_ = 0, n_fail_ = 0, n_nomatch_ = 0, n_fallback_ = 0, n_late_ = 0;
   double last_ms_ = 0;
