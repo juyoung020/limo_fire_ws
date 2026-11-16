@@ -2,15 +2,14 @@
 
 | 파일 | 내용 |
 |---|---|
-| `frontier_run.cpp` | 프론티어 탐사 기준선을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) · `--modes slot0`(·`slot0_nosafe`) 는 계층형 규칙 정책(늘 0 번 후보)을 같은 판으로 |
-| `oracle_run.cpp` | **측정 도구 — 정답을 씀.** 학습 맵 단계마다 정답 격자 경로·참 자세·정답 사람 위치로 모는 oracle(`--policy oracle`, 목표는 로봇 지도 굵은 프론티어, 성공 정의 그대로)과 slot0 규칙 정책을 같은 판으로 돌려 성공 상한을 잰다(`--stage 0..3 --people on\|off --out 판.tsv`). 시뮬은 env_api 로만 몰고 정답은 러너 안에서만 — 학습 환경·관측과 무관. 빌드는 baselines/frontier, 결과는 [mdp/README](../mdp/README.md) "커리큘럼" |
+| `frontier_run.cpp` | 프론티어 탐사 기준선(nav2 · fast)을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) |
 | `combine_run.cpp` | 두 층을 한 판에서 합쳐 탐사를 끝까지: 위층(slot0 · fuel · 판단 모델 · cand_tsp · random) + 아래층 규칙 추종기(A* + 경로 추종 — 실물 노드 `low_rl` 과 같은 길). 막힘 신호(`LowRl::stall`)를 받아 그 칸을 한동안 피하고 다시 고른다. 빌드는 이 폴더 `CMakeLists.txt` |
 | `fuel_upper.h` · `low_explore_ctl.h` · `low_decider.h` · `cand_rules.h` | 위층 규칙(fuel · slot0 · 판단 모델 · 후보 규칙)과 목표 넘기기 — 시뮬 도구와 실물 노드가 같이 씀 |
 | `decider.h` · `decider.cpp` | 판단 모델 서버(llama.cpp `/v1/systemone`)에 묻는 쪽: 요청 글·사진 만들기, 여러 요청 한꺼번에 보내기, 점유 격자만으로 남은 프론티어 세기(`grid_open_frontier`). 설정 글은 `config/decider.yaml` |
 
 탐사 강화학습 실행기(학습기 `train.cpp` · 아래층 정책 측정 `low_policy_run`/`low_run.cpp` · `hybrid_eval.cpp` · 판정 `tools/judge_low.py`)는 2026-11-16 에 그만두고
 [archive/rl](../../../archive/rl/README.md) 로 옮겼다. 그때의 이 README(학습기 옵션·아래층 판정 포함)는 `archive/rl/train/explore/scripts/README.md`.
-아래 결과 표에 나오는 "아래층 low_w3 36000"·"아래층 RL" 은 그때 기록이다.
+아래 결과 표에 나오는 "아래층 low_w3 36000"·"아래층 RL" 은 그때 기록이다(위층 고르기 비교의 근거라 남김). 위층 RL 견줌·정답 상한(`oracle_run`)·그래프 모드 기록은 archive 쪽 README.
 
 ## combine_run — 위층 fuel (`--upper fuel`, `fuel_upper.h`, 2026-11-15)
 
@@ -67,8 +66,6 @@
   0.5 m 안인 것은 26~38 % (평균 0.85 m 떨어짐). 슬롯 고르기는 후보 칸으로만 가므로 fuel 을 그대로 따라 해도 "덩어리 고르기" 만 얻고, 그것만으로는 slot0 보다 +2.4 % (위 사다리) —
   이득은 서는 자리에서 나왔다. 그래서 BC → RL 미세조정은 돌리지 않았다(행동이 시점까지 담아야 의미가 있음).
 - 결정당 시간, 로봇 CPU (Jetson Orin Nano 8GB, 한 스레드, 저장한 결정 상태 32 개): 평균 27.8 ms · 최대 64 ms (x86 11.2 · 27.7 ms), 결정 결과는 x86 과 같음. 대부분 frontier_search 와 시점마다 다익스트라.
-- 위층 RL 견줌 (규칙 추종기 hier 환경, 같은 시작 칸 `--eval-seed`): explore_h5 반복 3350(후보 v1 · 사람 0~3 커리큘럼 · 학습 맵에 HSSD 포함 · 가치망 정답 입력은 `ckpt_drop_priv` 로 뺌)
-  157.4 s · 성공 0.740 · 충돌 판 3, 같은 환경 slot0 150.2 s · 0.771 · 5.
 
 ### 실물 1116 진단과 고침 (2026-11-16 — 붙들기 · 시점 자격 · 라이다 닫힘 옵션)
 
@@ -166,7 +163,7 @@
 
 ## combine_run — 위층을 판단 모델에 맡기기 (`--upper decider`, 실험 중)
 
-두 층 탐사(위층 1 Hz 후보 고르기 + 아래층 RL 10 Hz)에서 위층의 "어느 후보로 갈까"를 바깥 판단 모델 서버에 묻는다(`decider.h` · `decider.cpp`).
+두 층 탐사(위층 1 Hz 후보 고르기 + 아래층 규칙 추종기 10 Hz)에서 위층의 "어느 후보로 갈까"를 바깥 판단 모델 서버에 묻는다(`decider.h` · `decider.cpp`).
 모델은 글을 만들지 않고 선택지·예/아니오·점수 단계의 확률만 낸다. 미세조정 없이(제로샷) 붙인 것이고, **지금까지 규칙(늘 가장 가까운 후보)보다 나아진 것은 없다** — 아래 "결과".
 
 ### 준비: 모델과 서버 (저장소에 없음)
