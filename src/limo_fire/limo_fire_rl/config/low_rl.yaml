@@ -36,7 +36,7 @@ low_rl:
     rc_timeout: 0.5           # s, /rc_state 가 이만큼 안 오면 오토 아님으로 (멈추고 꺼짐)
     require_rc: true          # false 는 시뮬·녹화에 /rc_state 가 없을 때만
     input_timeout: 0.3        # s, 라이다·TF·오도메트리 가 이만큼 없으면 명령 0 (돌아오면 이어 감)
-    tf_timeout: 0.2           # s, 장 시각의 map → base_link 기다림 — 잠정
+    tf_timeout: 0.2           # s, 장 시각의 map → base_link 기다림 (막지 않음 — 장을 줄에 두고 5 ms 마다 다시 봄) — 잠정
     depth_timeout: 0.5        # s, 이보다 오래된 깊이 영상은 안 씀 (구멍 0) — 잠정
     camera_layer: true        # 깊이 카메라 장애물 층 (학습과 같음)
     contact_resume_s: 0.0     # > 0 이면 닿음으로 멈춘 뒤 이 시간 뒤 저절로 다시 켬 (0 = ~/enable true 를 따로)

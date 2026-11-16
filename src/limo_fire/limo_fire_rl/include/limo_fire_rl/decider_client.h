@@ -1,23 +1,25 @@
-// 위층 판단 모델 요청을 로봇 안의 llama-server 로 보내는 일꾼 (low_rl upper:=decider — scripts/low_decider.h 의 Transport).
-// 라이다 콜백은 막지 않는다: send 는 줄에 넣고 돌아오고, 일꾼 스레드가 HTTP/1.1 POST (소켓, 연결마다 닫음)로 보내 답을 받아 줄에 넣고, poll 이 꺼내 간다.
+// 위층 판단 모델 요청을 로봇 안의 llama-server 로 보내는 것 (low_rl upper:=decider — scripts/low_decider.h 의 Transport).
+// 스레드 없음: send 는 줄에 넣고 비차단 연결만 시작하고, poll (노드가 걸음마다 부름)이 비차단 소켓을 한 단계씩 진행한다
+// (연결 → HTTP/1.1 POST 보내기 → 답 받기 → 해석, 연결마다 닫음). 라이다 콜백은 막지 않고, 노드는 한 스레드로 돈다.
 // 로봇에는 libcurl 개발 헤더가 없어서 POSIX 소켓으로 직접 쓴다 (localhost · 평문 HTTP 만 — url 은 http://호스트:포트).
 #pragma once
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <atomic>
+#include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <chrono>
-#include <condition_variable>
 #include <cstring>
 #include <deque>
-#include <mutex>
 #include <stdexcept>
 #include <string>
-#include <thread>
+#include <vector>
 
 #include "low_decider.h"
 
@@ -35,25 +37,26 @@ class DeciderClient : public lxd::Transport {
     const size_t co = hp.rfind(':');
     host_ = co == std::string::npos ? hp : hp.substr(0, co);
     port_ = co == std::string::npos ? "80" : hp.substr(co + 1);
-    th_ = std::thread([this] { run(); });
-  }
-  ~DeciderClient() override {
-    {
-      std::lock_guard<std::mutex> l(mu_);
-      stop_ = true;
+    addrinfo hints{}, *res = nullptr;   // 주소는 한 번만 풂 (요청마다 막히지 않게)
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host_.c_str(), port_.c_str(), &hints, &res) == 0 && res) {
+      for (addrinfo* p = res; p; p = p->ai_next) {
+        Addr a;
+        a.family = p->ai_family; a.socktype = p->ai_socktype; a.proto = p->ai_protocol; a.len = p->ai_addrlen;
+        std::memcpy(&a.sa, p->ai_addr, p->ai_addrlen);
+        addrs_.push_back(a);
+      }
+      freeaddrinfo(res);
     }
-    cv_.notify_all();
-    if (th_.joinable()) th_.join();
   }
+  ~DeciderClient() override { if (fd_ >= 0) close(fd_); }
   void send(const lxd::Req& r) override {
-    {
-      std::lock_guard<std::mutex> l(mu_);
-      todo_.push_back({r.id, r.body});
-    }
-    cv_.notify_all();
+    todo_.push_back({r.id, r.body});
+    step();
   }
   bool poll(lxd::Answer* a) override {
-    std::lock_guard<std::mutex> l(mu_);
+    step();
     if (done_.empty()) return false;
     *a = done_.front();
     done_.pop_front();
@@ -65,65 +68,105 @@ class DeciderClient : public lxd::Transport {
     long id;
     std::string body;
   };
-  void run() {
+  struct Addr {
+    int family, socktype, proto;
+    socklen_t len;
+    sockaddr_storage sa;
+  };
+  enum State { kIdle, kConnect, kSend, kRecv };
+  using Clock = std::chrono::steady_clock;
+
+  bool late() const { return Clock::now() >= t_end_; }
+  // 다음 주소로 비차단 연결 시작 (없으면 거짓)
+  bool open_next() {
+    for (; ai_ < addrs_.size(); ++ai_) {
+      const Addr& a = addrs_[ai_];
+      fd_ = socket(a.family, a.socktype | SOCK_NONBLOCK | SOCK_CLOEXEC, a.proto);
+      if (fd_ < 0) continue;
+      if (connect(fd_, (const sockaddr*)&a.sa, a.len) == 0 || errno == EINPROGRESS) { st_ = kConnect; return true; }
+      close(fd_);
+      fd_ = -1;
+    }
+    return false;
+  }
+  void finish(lxd::Answer a) {
+    if (fd_ >= 0) { close(fd_); fd_ = -1; }
+    a.ms = std::chrono::duration<double, std::milli>(Clock::now() - t0_).count();
+    done_.push_back(std::move(a));
+    st_ = kIdle;
+  }
+  void fail(const std::string& err) {
+    lxd::Answer a;
+    a.id = cur_.id;
+    a.err = err;
+    finish(std::move(a));
+  }
+  // 막지 않고 할 수 있는 만큼 진행 (send · poll 이 부름)
+  void step() {
     for (;;) {
-      Job j;
-      {
-        std::unique_lock<std::mutex> l(mu_);
-        cv_.wait(l, [this] { return stop_ || !todo_.empty(); });
-        if (stop_) return;
-        j = std::move(todo_.front());
+      if (st_ == kIdle) {
+        if (todo_.empty()) return;
+        cur_ = std::move(todo_.front());
         todo_.pop_front();
+        t0_ = Clock::now();
+        t_end_ = t0_ + std::chrono::milliseconds(timeout_ms_);
+        ai_ = 0;
+        if (addrs_.empty()) { fail("주소를 못 찾음 " + host_); continue; }
+        if (!open_next()) { fail("연결 안 됨 " + host_ + ":" + port_ + " (llama-server 가 떠 있나)"); continue; }
       }
-      const auto t0 = std::chrono::steady_clock::now();
-      std::string raw, err;
-      lxd::Answer a;
-      if (post(j.body, &raw, &err)) a = lxd::parse_answer(j.id, raw);
-      else { a.id = j.id; a.err = err; }
-      a.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-      std::lock_guard<std::mutex> l(mu_);
-      done_.push_back(a);
+      if (st_ == kConnect) {
+        pollfd pf{fd_, POLLOUT, 0};
+        const int pr = ::poll(&pf, 1, 0);
+        if (pr == 0) { if (late()) fail("시간 끝 (보내기)"); return; }
+        int e = 0;
+        socklen_t el = sizeof e;
+        if (pr < 0 || getsockopt(fd_, SOL_SOCKET, SO_ERROR, &e, &el) != 0 || e != 0) {   // 이 주소는 안 됨 → 다음 주소
+          close(fd_);
+          fd_ = -1;
+          ++ai_;
+          if (!open_next()) fail("연결 안 됨 " + host_ + ":" + port_ + " (llama-server 가 떠 있나)");
+          continue;
+        }
+        req_ = "POST /v1/systemone HTTP/1.1\r\nHost: " + host_ + ":" + port_ + "\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(cur_.body.size()) +
+               "\r\nConnection: close\r\n\r\n";
+        req_ += cur_.body;
+        off_ = 0;
+        st_ = kSend;
+      }
+      if (st_ == kSend) {
+        while (off_ < req_.size()) {
+          const ssize_t n = ::send(fd_, req_.data() + off_, req_.size() - off_, MSG_NOSIGNAL | MSG_DONTWAIT);
+          if (n > 0) { off_ += (size_t)n; continue; }
+          if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) { if (late()) fail("시간 끝 (보내기)"); return; }
+          fail("보내기 실패");
+          break;
+        }
+        if (st_ != kSend) continue;
+        resp_.clear();
+        st_ = kRecv;
+      }
+      if (st_ == kRecv) {
+        char buf[16384];
+        for (;;) {
+          const ssize_t n = ::recv(fd_, buf, sizeof buf, MSG_DONTWAIT);
+          if (n > 0) { resp_.append(buf, (size_t)n); continue; }
+          if (n == 0) {   // 서버가 닫음 = 답 끝
+            std::string raw, err;
+            lxd::Answer a;
+            if (parse_http(resp_, &raw, &err)) a = lxd::parse_answer(cur_.id, raw);
+            else { a.id = cur_.id; a.err = err; }
+            finish(std::move(a));
+            break;
+          }
+          if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) { if (late()) fail("시간 끝 (답)"); return; }
+          fail("받기 실패");
+          break;
+        }
+      }
     }
   }
-  // POST /v1/systemone — 성공(HTTP 200)이면 본문을 *out
-  bool post(const std::string& body, std::string* out, std::string* err) const {
-    const auto t_end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms_);
-    const auto left_ms = [&]() { return (int)std::max<long>(0, std::chrono::duration_cast<std::chrono::milliseconds>(t_end - std::chrono::steady_clock::now()).count()); };
-    addrinfo hints{}, *res = nullptr;
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host_.c_str(), port_.c_str(), &hints, &res) != 0 || !res) { *err = "주소를 못 찾음 " + host_; return false; }
-    int fd = -1;
-    for (addrinfo* p = res; p && fd < 0; p = p->ai_next) {
-      fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-      if (fd < 0) continue;
-      if (connect(fd, p->ai_addr, p->ai_addrlen) != 0) { close(fd); fd = -1; }
-    }
-    freeaddrinfo(res);
-    if (fd < 0) { *err = "연결 안 됨 " + host_ + ":" + port_ + " (llama-server 가 떠 있나)"; return false; }
-    std::string req = "POST /v1/systemone HTTP/1.1\r\nHost: " + host_ + ":" + port_ + "\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) +
-                      "\r\nConnection: close\r\n\r\n";
-    req += body;
-    size_t off = 0;
-    while (off < req.size()) {
-      pollfd pf{fd, POLLOUT, 0};
-      if (::poll(&pf, 1, left_ms()) <= 0) { close(fd); *err = "시간 끝 (보내기)"; return false; }
-      const ssize_t n = ::send(fd, req.data() + off, req.size() - off, MSG_NOSIGNAL);
-      if (n <= 0) { close(fd); *err = "보내기 실패"; return false; }
-      off += (size_t)n;
-    }
-    std::string resp;
-    char buf[16384];
-    for (;;) {
-      pollfd pf{fd, POLLIN, 0};
-      const int pr = ::poll(&pf, 1, left_ms());
-      if (pr <= 0) { close(fd); *err = "시간 끝 (답)"; return false; }
-      const ssize_t n = ::recv(fd, buf, sizeof buf, 0);
-      if (n < 0) { close(fd); *err = "받기 실패"; return false; }
-      if (n == 0) break;
-      resp.append(buf, (size_t)n);
-    }
-    close(fd);
+  // HTTP 답 → 본문 (HTTP 200 일 때만 *out)
+  static bool parse_http(const std::string& resp, std::string* out, std::string* err) {
     const size_t he = resp.find("\r\n\r\n");
     if (he == std::string::npos || resp.compare(0, 5, "HTTP/") != 0) { *err = "HTTP 꼴 아님"; return false; }
     const size_t sp = resp.find(' ');
@@ -150,12 +193,16 @@ class DeciderClient : public lxd::Transport {
 
   std::string host_, port_;
   int timeout_ms_;
-  std::mutex mu_;
-  std::condition_variable cv_;
+  std::vector<Addr> addrs_;
+  size_t ai_ = 0;
   std::deque<Job> todo_;
   std::deque<lxd::Answer> done_;
-  bool stop_ = false;
-  std::thread th_;
+  State st_ = kIdle;
+  Job cur_{};
+  int fd_ = -1;
+  std::string req_, resp_;
+  size_t off_ = 0;
+  Clock::time_point t0_, t_end_;
 };
 
 }  // namespace limo_fire_rl

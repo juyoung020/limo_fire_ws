@@ -13,6 +13,7 @@
 // upper:=cand: 위층 후보 scripts/cand_view.h 의 0 번 (low_explore_ctl.h Ctl 후보 모드). ~/candidates 에 후보 그림 (cand · decider 모드 — 결정마다).
 // upper:=decider: 위층을 로봇 안 llama-server 판단 모델에 (scripts/low_decider.h — decider_period 마다 비동기 요청, 기다리는 동안 지금 목표로 몰고, 답이 오면 바꿈).
 #include <chrono>
+#include <deque>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -151,7 +152,7 @@ class LowRlNode : public rclcpp::Node {
     if (!record_.empty()) rec_ = std::make_unique<lowrec::Writer>(record_, hc_);
 
     tf_buf_ = std::make_shared<tf2_ros::Buffer>(get_clock());
-    tf_lis_ = std::make_shared<tf2_ros::TransformListener>(*tf_buf_);
+    tf_lis_ = std::make_shared<tf2_ros::TransformListener>(*tf_buf_, this, false);   // 스레드 없이 이 노드의 실행기에서 받음 (노드 = 한 스레드)
     const auto sensor = rclcpp::SensorDataQoS();
     sub_scan_ = create_subscription<sensor_msgs::msg::LaserScan>(scan_topic, sensor, [this](sensor_msgs::msg::LaserScan::ConstSharedPtr m) { on_scan(m); });
     sub_odom_ = create_subscription<nav_msgs::msg::Odometry>(odom_topic, 20, [this](nav_msgs::msg::Odometry::ConstSharedPtr m) {
@@ -178,6 +179,7 @@ class LowRlNode : public rclcpp::Node {
     srv_enable_ = create_service<std_srvs::srv::SetBool>("~/enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
     watchdog_ = create_wall_timer(std::chrono::milliseconds(50), [this] { check_inputs(); });
+    tf_retry_ = create_wall_timer(std::chrono::milliseconds(5), [this] { try_scans(); });   // 장 시각 TF 를 기다리는 장 (막지 않고 5 ms 마다)
     if (enabled_ && require_rc_) {   // 켠 채로 띄워도 리모컨 오토를 한 번 본 뒤에만
       enabled_ = false;
       RCLCPP_WARN(get_logger(), "enabled:=true 지만 리모컨 오토를 아직 못 봄 — ~/enable true 로 켤 것");
@@ -297,6 +299,8 @@ class LowRlNode : public rclcpp::Node {
     return std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
   }
 
+  // 장 도착: 장 시각의 map → base_link 가 오면 처리 (try_scans). 노드는 한 스레드라 TF 를 막고 기다리지 않고, 장과 그때의 감각 값(오도메트리·IMU·
+  // 깊이·컬러 — 옛 막는 기다림 동안 바뀌지 않던 것)을 줄에 두고 tf_timeout 안에 TF 가 오면 차례대로 처리, 넘으면 그 장을 건너뜀
   void on_scan(const sensor_msgs::msg::LaserScan::ConstSharedPtr& m) {
     last_scan_t_ = now();
     if (finished_) return;
@@ -304,13 +308,42 @@ class LowRlNode : public rclcpp::Node {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "오도메트리·IMU 기다림");
       return;
     }
-    geometry_msgs::msg::TransformStamped T;
-    try {
-      T = tf_buf_->lookupTransform(map_frame_, base_frame_, m->header.stamp, rclcpp::Duration::from_seconds(tf_timeout_));
-    } catch (const std::exception& ex) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "TF %s → %s (장 시각) 없음: %s — 이 장 건너뜀", map_frame_.c_str(), base_frame_.c_str(), ex.what());
-      return;
+    if (scans_.empty()) head_t_ = std::chrono::steady_clock::now();
+    scans_.push_back(Pend{m, odom_, imu_, depth_, info_, color_, cinfo_});
+    try_scans();
+  }
+  void try_scans() {
+    while (!scans_.empty()) {
+      Pend& e = scans_.front();
+      std::string err;
+      geometry_msgs::msg::TransformStamped T;
+      bool ok = false;
+      const tf2::TimePoint ts = tf2_ros::fromMsg(e.scan->header.stamp);   // 기다리지 않는 BufferCore 판 (기다림 판은 TF 스레드가 있어야 함)
+      if (tf_buf_->canTransform(map_frame_, base_frame_, ts, &err)) {
+        try {
+          T = tf_buf_->lookupTransform(map_frame_, base_frame_, ts);
+          ok = true;
+        } catch (const std::exception& ex) {
+          err = ex.what();
+        }
+      }
+      if (!ok && std::chrono::duration<double>(std::chrono::steady_clock::now() - head_t_).count() < tf_timeout_) return;   // 아직 기다림
+      const Pend p = std::move(e);
+      scans_.pop_front();
+      head_t_ = std::chrono::steady_clock::now();
+      if (!ok) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "TF %s → %s (장 시각) 없음: %s — 이 장 건너뜀", map_frame_.c_str(), base_frame_.c_str(), err.c_str());
+        continue;
+      }
+      // 장이 왔을 때의 감각 값으로 처리 (그 사이 온 값은 다음 장에)
+      auto o = odom_; auto i = imu_; auto d = depth_; auto f = info_; auto c = color_; auto ci = cinfo_;
+      odom_ = p.odom; imu_ = p.imu; depth_ = p.depth; info_ = p.info; color_ = p.color; cinfo_ = p.cinfo;
+      on_scan_tf(p.scan, T);
+      odom_ = o; imu_ = i; depth_ = d; info_ = f; color_ = c; cinfo_ = ci;
     }
+  }
+  void on_scan_tf(const sensor_msgs::msg::LaserScan::ConstSharedPtr& m, const geometry_msgs::msg::TransformStamped& T) {
+    if (finished_) return;
     last_tf_t_ = now();
     // 꺼짐·멈춤 동안은 판을 세움: 판 시계(진척 없음·시간·닫힘)는 켠 동안만 감. 판은 처음 켤 때 시작
     if (!running()) return;
@@ -711,7 +744,18 @@ class LowRlNode : public rclcpp::Node {
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_goal_, pub_cand_;
   rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr pub_cand_txt_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr srv_enable_;
-  rclcpp::TimerBase::SharedPtr watchdog_;
+  rclcpp::TimerBase::SharedPtr watchdog_, tf_retry_;
+  struct Pend {   // TF 를 기다리는 장과 그때의 감각 값
+    sensor_msgs::msg::LaserScan::ConstSharedPtr scan;
+    nav_msgs::msg::Odometry::ConstSharedPtr odom;
+    sensor_msgs::msg::Imu::ConstSharedPtr imu;
+    sensor_msgs::msg::Image::ConstSharedPtr depth;
+    sensor_msgs::msg::CameraInfo::ConstSharedPtr info;
+    sensor_msgs::msg::Image::ConstSharedPtr color;
+    sensor_msgs::msg::CameraInfo::ConstSharedPtr cinfo;
+  };
+  std::deque<Pend> scans_;
+  std::chrono::steady_clock::time_point head_t_;
 };
 
 }  // namespace limo_fire_rl
