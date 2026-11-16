@@ -355,6 +355,8 @@ int run_low(Args a) {
   std::vector<sim::World> tests;
   for (auto& t : a.test) tests.push_back(sim::build_world(stem(t), sim::load_scene(t), hc));
   xnet::ACSpec spec = xnet::explore_spec_low(c.lo_wide != 0, a.gru, mdp::low::n1d_of(c.lo_mov4 != 0, c.lo_body != 0));   // --gru H: actor·critic 순환 핵 (은닉 H, 0 = 끔)
+  // σ 상한(--std-max)이 처음 σ(1)보다 작으면 처음 log σ 를 범위 안으로 (새 학습만 뜻이 있음 — 이어 학습은 체크포인트 값을 읽은 뒤 Adam 걸음마다 범위로 투영)
+  spec.init_log_std = std::min(std::max(spec.init_log_std, (float)std::log(pc.std_min)), (float)std::log(pc.std_max));
   if (a.aux > 0) {   // 보조 예측 머리: 재료는 시뮬이 관측과 같이 내보냄 (SIM_LOW_AUX), 추적 움직이는 것은 관측 칸(SIM_LOW_OBS_MOV)이 켜야 만들어짐
     if (a.gru <= 0 || !c.lo_aux || !c.lo_mov) throw std::runtime_error("--aux: --gru 와 SIM_LOW_AUX=1 · SIM_LOW_OBS_MOV=1 이 필요");
     spec.aux_out = mdp::low::AUX_OUT;
