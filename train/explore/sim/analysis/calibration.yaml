@@ -30,6 +30,13 @@ recordings:
     floor: office
     skip: [[42, 43.5], [55, 57.5], [59, 61]]   # 부딪힌 순간 (수평 가속 7 · 92 · 26 m/s²)
 
+# 달리며 돌 때 ω 몫 (env.yaml drive.turn_gain) — motion_check (오토 모드 구간만, MOTION_CHECK_DUMP 로 같은 명령의 시뮬 바퀴 ω 를 실물과 나란히). CSV 는 bag 의
+# /cmd_vel · /odom · /imu · /limo_status 로 motion_export 와 같은 앞 11 열 (real_limo.md "명령 → 섀시 실행")
+turn_gain:
+  - {bag: 1116_decider_rule_2, role: fit}      # A* 아래층, 9.0~9.4 V
+  - {bag: 1116_fuel_rl_1, role: validate}      # 10.4~10.7 V
+  - {bag: 1116_slot0_1, role: validate}
+
 # 몸 참값 — motion_check --set analysis/calibration.yaml fit|validate --body [--fit] [--table]. CSV 는 motion_export (라이다 스캔 맞추기 몸 자세 lo_* 열).
 # 명령 → 몸 움직임(라이다 몸 vx · 자이로 ω · 정지→정지 이동)과 멈춤 응답. 옆(vy) 명령 구간은 도구가 스스로 뺀다 (시뮬은 정상 메카넘 가정, real_limo.md 구동 절).
 # 맞춤은 앞뒤 단독 ±0.3·±0.6·±1.0 m/s 와 제자리 ±1·±2·±3 rad/s 가 다 든 mecanum (넓은 범위), 확인은 v·ω 조합만 든 mix

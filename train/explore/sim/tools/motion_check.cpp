@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -131,6 +132,13 @@ Sum replay(const Rec& rec, const sim::DriveModel& m, const sim::Floor& fl) {
   Sum s;
   sim::DriveState st;
   sim::drive_reset(st);
+  // MOTION_CHECK_DUMP=<접두사>: 녹화마다 <접두사><번호>.csv 로 줄마다 명령·시뮬 바퀴·몸통·실물 값 (같은 명령에 시뮬 응답을 실물과 나란히 볼 때)
+  static int n_dump = 0;
+  FILE* dump = nullptr;
+  if (const char* dp = std::getenv("MOTION_CHECK_DUMP")) {
+    dump = std::fopen((std::string(dp) + std::to_string(n_dump++) + ".csv").c_str(), "w");
+    if (dump) std::fprintf(dump, "t,skip,cmd_v,cmd_w,sim_wv,sim_ww,sim_bw,odom_v,odom_w,gyro\n");
+  }
   for (size_t i = 0; i < rec.rows.size(); ++i) {
     const Row& r = rec.rows[i];
     const float dt = i ? (float)(r.t - rec.rows[i - 1].t) : 0.02f;
@@ -139,6 +147,7 @@ Sum replay(const Rec& rec, const sim::DriveModel& m, const sim::Floor& fl) {
     float bv, bw;
     const float prev_bv = st.bv;
     sim::drive_step(m, st, cv, cw, dt, fl, &bv, &bw);
+    if (dump) std::fprintf(dump, "%.4f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", r.t, (int)r.skip, cv, cw, st.wv, st.ww, bw, r.odom_v, r.odom_w, r.gyro);
     if (r.skip) continue;
     if (!std::isnan(r.acc)) {
       const float a = (bv - prev_bv) / dt;
@@ -158,6 +167,7 @@ Sum replay(const Rec& rec, const sim::DriveModel& m, const sim::Floor& fl) {
     s.mg += r.gyro;
     ++s.n;
   }
+  if (dump) std::fclose(dump);
   return s;
 }
 
@@ -307,6 +317,12 @@ sim::DriveModel load_model(const YAML::Node& top, bool rc) {
       m.rc_v[i] = d["rc_v"][i].as<float>();
       m.rc_w[i] = d["rc_w"][i].as<float>();
     }
+  m.n_tg = 0;   // 달리며 돌 때 ω 몫 (env_cfg.cpp 와 같은 뜻 — 리모컨 경로 drive.rc 에는 없음)
+  if (d["turn_gain"]) {
+    m.n_tg = (int32_t)d["turn_gain"]["v"].size();
+    if (m.n_tg < 2 || m.n_tg > sim::kTurnGainPts || d["turn_gain"]["gain"].size() != (size_t)m.n_tg) throw std::runtime_error("drive.turn_gain");
+    for (int i = 0; i < m.n_tg; ++i) { m.tg_v[i] = d["turn_gain"]["v"][i].as<float>(); m.tg_g[i] = d["turn_gain"]["gain"][i].as<float>(); }
+  }
   return m;
 }
 

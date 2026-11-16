@@ -5,6 +5,8 @@
 //   · 책상 상판·의자 좌판·등받이 — 몸통 띠 위: 안 부딪히고 깊이 영상에만 보임 (로봇이 책상 밑으로 지나갈 수 있음)
 //   · 의자 사이·책상 무리 사이 좁은 틈 (몸통 폭 0.22 m 보다 조금 넓은 것부터)
 //   scene_office --in a.scene (--out b.scene | --overlay b_ov.scene) [--seed 1] [--clusters 6] [--fill 0.25] [--env env.yaml] [--ppm 그림.ppm]
+//   scene_office --in a.scene --boxes 잰상자.tsv (--out | --overlay) — 무작위 무리 대신 잰 상자 (줄마다 x y yaw(도) 길이 폭 z0 z1 이름, # 주석). 같은 이름 = 물체 하나.
+//     실물 방 장면에 라이다가 못 보는 가구를 깊이 점으로 찾아 넣을 때 (train/explore/sim/analysis/real_limo.md "실물 방 장면 lab_1116b")
 // 값 (근거 · 잠정):
 //   책상 1.2~1.6 × 0.6~0.8 m, 상판 0.72~0.76 m 높이·3 cm 두께 (EN 527-1 고정 높이 책상 74~76 cm 를 파는 쪽이 적은 값 — 표준 원문 표는 못 봄, 잠정) · 다리 4 cm 각
 //   의자 받침 지름 0.60~0.70 m (교체 부품 판매 목록 635 · 650 · 700 · 710 mm), 갈래 5 개 폭 5 cm · 높이 0.04~0.09 m, 바퀴 5 cm 상자 0~0.06 m (잠정),
@@ -152,7 +154,7 @@ int floor_cells(const sim::World& w) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string env_path = SIM_CONFIG_DIR "/env.yaml", in, out, overlay, ppm;
+  std::string env_path = SIM_CONFIG_DIR "/env.yaml", in, out, overlay, ppm, boxes_path;
   unsigned seed = 1;
   int max_clusters = 6;
   float fill = 0.25f;   // 무리 틀 넓이 합 / 갈 수 있는 바닥 상한 — 잠정 (1116 강의실: 무리 6 개가 바닥 약 140 m² 의 0.3 쯤)
@@ -165,6 +167,7 @@ int main(int argc, char** argv) {
       else if (a == "--overlay") overlay = nx();
       else if (a == "--seed") seed = (unsigned)std::stoul(nx());
       else if (a == "--clusters") max_clusters = std::stoi(nx());
+      else if (a == "--boxes") boxes_path = nx();
       else if (a == "--fill") fill = std::stof(nx());
       else if (a == "--env") env_path = nx();
       else if (a == "--ppm") ppm = nx();
@@ -202,6 +205,50 @@ int main(int argc, char** argv) {
         }
         clr[(size_t)k] = std::sqrt((float)b2) * res;
       }
+    }
+    if (!boxes_path.empty()) {   // 잰 상자 그대로
+      FILE* fb = std::fopen(boxes_path.c_str(), "r");
+      if (!fb) throw std::runtime_error("못 읽음: " + boxes_path);
+      std::vector<std::string> names;
+      std::vector<std::vector<Box>> groups;
+      char line[512];
+      while (std::fgets(line, sizeof line, fb)) {
+        if (line[0] == '#') continue;
+        Box b{};
+        float deg;
+        char nm[128] = "meas";
+        if (std::sscanf(line, "%f %f %f %f %f %f %f %127s", &b.x, &b.y, &deg, &b.len, &b.wid, &b.z0, &b.z1, nm) < 7) continue;
+        b.yaw = deg * 0.017453292f;
+        if (!(b.z1 > b.z0) || !(b.len > 0.f) || !(b.wid > 0.f)) throw std::runtime_error(std::string("상자 크기: ") + line);
+        size_t g = 0;
+        while (g < names.size() && names[g] != nm) ++g;
+        if (g == names.size()) { names.push_back(nm); groups.emplace_back(); }
+        groups[g].push_back(b);
+      }
+      std::fclose(fb);
+      if (groups.empty()) throw std::runtime_error("상자가 없음: " + boxes_path);
+      sim::Scene t = base, ov;
+      size_t nb = 0;
+      for (size_t g = 0; g < groups.size(); ++g) {
+        add_boxes(t, groups[g], "furniture_" + std::to_string(t.obj_names.size()) + "_" + names[g]);
+        add_boxes(ov, groups[g], "furniture_" + std::to_string(base.obj_names.size() + g) + "_" + names[g]);
+        nb += groups[g].size();
+      }
+      sim::build_bvh(t);
+      sim::compute_obj_size(t);
+      const sim::World w1 = sim::build_world("measured", t, hc);
+      std::printf("scene_office %s --boxes %s: 상자 %zu 개 · 물체 %zu 개 · 갈 수 있는 바닥 %.1f → %.1f m²\n", in.c_str(), boxes_path.c_str(), nb, groups.size(), f0 * res * res,
+                  floor_cells(w1) * res * res);
+      if (!out.empty()) { sim::save_scene(t, out); std::printf("씀: %s\n", out.c_str()); }
+      if (!overlay.empty()) {
+        sim::build_bvh(ov);
+        sim::compute_obj_size(ov);
+        ov.start[0] = base.start[0];
+        ov.start[1] = base.start[1];
+        sim::save_scene(ov, overlay);
+        std::printf("덧 장면 씀: %s (삼각형 %zu)\n", overlay.c_str(), ov.tris.size());
+      }
+      return 0;
     }
     std::mt19937 rng(seed);
     std::uniform_real_distribution<float> u(0.f, 1.f);

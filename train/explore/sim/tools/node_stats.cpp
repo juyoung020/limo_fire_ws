@@ -22,6 +22,7 @@ struct Row {
   float x, y, th, wv, ww, gyro, cmd_v, cmd_w;
   int goal, follow, dec, why;
   float gdist, gx, gy;
+  float rgx = NAN, rgy = NAN;   // 녹화 관측(아래층 1D 목적지 칸)에서 되살린 노드의 목적지 (세계) — 판단 모델 위층처럼 다시 못 내는 위층의 목표
   int known, freec, occ, front, front_near, cand_n, ep;
   int scan_n, scan_ok, ok_front, n_front, ok_side, n_side;
   float rmin;
@@ -35,7 +36,8 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "node_stats <녹화.bin> [--upper fuel|slot0] [--csv 걸음.csv] [--label 이름] [--map 지도.ppm 초]\n");
     return 2;
   }
-  std::string csv, label = argv[1], upper = "fuel", map_out, obs_csv, floor_csv;
+  std::string csv, label = argv[1], upper = "fuel", map_out, obs_csv, floor_csv, vox_path;
+  float vox_tau = 0.075f;
   float map_at = -1.f;
   for (int i = 2; i < argc; ++i) {
     const std::string a = argv[i];
@@ -44,6 +46,8 @@ int main(int argc, char** argv) {
     else if (a == "--upper" && i + 1 < argc) upper = argv[++i];
     else if (a == "--obs" && i + 1 < argc) obs_csv = argv[++i];
     else if (a == "--floor" && i + 1 < argc) floor_csv = argv[++i];
+    else if (a == "--vox" && i + 1 < argc) vox_path = argv[++i];
+    else if (a == "--vox-tau" && i + 1 < argc) vox_tau = std::stof(argv[++i]);
     else if (a == "--map" && i + 2 < argc) { map_out = argv[++i]; map_at = std::stof(argv[++i]); }
     else { std::fprintf(stderr, "모르는 인자 %s\n", a.c_str()); return 2; }
   }
@@ -83,6 +87,12 @@ int main(int argc, char** argv) {
     // 바닥 구멍 (sensor_model.yaml depth.holes.floor_cos 구간): 픽셀 광선이 바닥 면(z = 0)에 닿을 깊이 z_f 가 [min_z, obs_max) 이고 값이 구멍이거나 z_f 근처(바닥이 보임)인 픽셀만.
     // 구멍 / (구멍 + 바닥 보임). 앞에 물체가 보인 픽셀(z < z_f − 여유)은 뺌 — 실물·시뮬 같은 셈
     double fh_hole[8] = {}, fh_tot[8] = {};
+    // --vox: 깊이 점을 지도 칸 · 높이 띠별로 셈 (몸통 띠 아래·라이다 평면 아래 · 몸통 띠 위쪽 · 좌판 · 상판). 자세는 τ(--vox-tau, 기본 0.075 s — 깊이 영상 늦음 맞춤값)만큼
+    // 자이로로 되돌림. 칸마다 그 칸을 시야에 둔 걸음 수(see — 띠 점이 없었던 걸음 포함)도 셈 → 점 수 / see = 늘 보이는 물체인가. 실물 방 장면에 라이다가 못 보는 가구를 넣는 근거
+    constexpr int kVoxB = 5;
+    const float vb[kVoxB + 1] = {0.03f, 0.10f, 0.25f, 0.40f, 0.60f, 0.85f};   // [0.03,0.10) 라이다 평면(0.111) 아래 · [0.10,0.25) · [0.25,0.40) · [0.40,0.60) 좌판 · [0.60,0.85) 상판
+    std::vector<uint32_t> vox, vsee;
+    if (!vox_path.empty()) { vox.assign((size_t)c.size * c.size * kVoxB, 0u); vsee.assign((size_t)c.size * c.size, 0u); }
     // 깊이 시각 어긋남: 빨리 돌 때(|자이로| > 1.5 rad/s) 띠 안 깊이 점을 τ 만큼 앞 자세(θ − ω·τ)로 놓았을 때 로봇 지도 막힘 칸(한 칸 둘레)에 드는 몫 — 가장 큰 τ = 깊이가 자세보다 늦은 시간
     constexpr int kTau = 16;   // τ = 0, 0.025, …, 0.375 s
     double lat_hit[kTau] = {}, lat_n = 0;
@@ -239,6 +249,33 @@ int main(int argc, char** argv) {
           { const int hb = (int)std::floor((bz + 0.10f) / 0.01f); if (hb >= 0 && hb < 30) zh[std::min(3, (int)((lh - 0.5f) / 0.5f))][hb] += 1; }
           if (std::fabs(bz) < 0.15f) { fs[0] += 1; fs[1] += lh; fs[2] += lh * lh; fs[3] += bz; fs[4] += lh * bz; }
         }
+        if (!vox.empty()) {
+          const float th = cur.th - p.gyro_z * vox_tau, cs = std::cos(th), sn = std::sin(th);
+          std::vector<uint8_t> seen_now((size_t)c.size * c.size, 0);
+          for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) {
+            const uint8_t q = dep[(size_t)i];
+            if (q == 0) continue;
+            float bx, by, bz;
+            if (q == 255) {   // 3 m 넘음: 그 광선이 지나는 칸 표시용으로 3 m 점
+              if (!sim::cam_point_base(c, 254, i, &bx, &by, &bz)) continue;
+            } else if (!sim::cam_point_base(c, q, i, &bx, &by, &bz)) continue;
+            const float lh = std::hypot(bx - c.cam_x, by - c.cam_y);
+            // 광선이 지난 칸 = 본 칸 (0.5 칸 간격)
+            const int n = (int)std::ceil(lh / (0.5f * c.res));
+            for (int k = 1; k <= n; ++k) {
+              const float t = (float)k / (float)n, hx = c.cam_x + t * (bx - c.cam_x), hy = c.cam_y + t * (by - c.cam_y);
+              const int x = (int)std::floor((cur.x + cs * hx - sn * hy - w.ox) / c.res), y = (int)std::floor((cur.y + sn * hx + cs * hy - w.oy) / c.res);
+              if (x >= 0 && y >= 0 && x < w.gw && y < w.gh) seen_now[(size_t)y * c.size + x] = 1;
+            }
+            if (q == 255 || lh > 2.5f) continue;   // 층과 같은 표시 거리 (obstacle_max_range 2.5 m)
+            int b = -1;
+            for (int k = 0; k < kVoxB; ++k) if (bz >= vb[k] && bz < vb[k + 1]) b = k;
+            if (b < 0) continue;
+            const int x = (int)std::floor((cur.x + cs * bx - sn * by - w.ox) / c.res), y = (int)std::floor((cur.y + sn * bx + cs * by - w.oy) / c.res);
+            if (x >= 0 && y >= 0 && x < w.gw && y < w.gh) vox[((size_t)y * c.size + x) * kVoxB + b] += 1;
+          }
+          for (size_t k = 0; k < seen_now.size(); ++k) vsee[k] += seen_now[k];
+        }
         if (ff) {
           double S0 = 0, S1 = 0, S2 = 0, Sz = 0, Sdz = 0;
           int nb = 0;
@@ -309,6 +346,13 @@ int main(int argc, char** argv) {
         }
       } else if (ch == 'O') {
         rd.obs(ei.data(), e1.data());
+        if (rd.n1 > sim::kLoHasGoal && e1[(size_t)sim::kLoHasGoal] > 0.5f) {   // low_rl.h rel(): 거리 / kLrGoalNorm · 지도 자세 기준 sin · cos
+          const float d = e1[(size_t)sim::kLoGoal] * sim::kLrGoalNorm, a = std::atan2(e1[(size_t)sim::kLoGoal + 1], e1[(size_t)sim::kLoGoal + 2]);
+          cur.rgx = cur.x + d * std::cos(cur.th + a);
+          cur.rgy = cur.y + d * std::sin(cur.th + a);
+        } else {
+          cur.rgx = cur.rgy = NAN;
+        }
         robot.set_slot(ctl.slot());   // 규칙 추종기: 경로 계획 후보 (노드와 같은 차례)
         robot.low_obs();
         long di = 0, d1 = 0;
@@ -360,11 +404,11 @@ int main(int argc, char** argv) {
     if (!csv.empty()) {
       FILE* f = std::fopen(csv.c_str(), "w");
       if (!f) throw std::runtime_error("csv 를 못 엶: " + csv);
-      std::fprintf(f, "ep,k,t,x,y,th,wv,ww,gyro,cmd_v,cmd_w,goal,gx,gy,follow,gdist,dec,why,known_m2,free_m2,occ_m2,front,front_near,cand_n,scan_n,scan_ok,ok_front,n_front,ok_side,n_side,rmin,done\n");
+      std::fprintf(f, "ep,k,t,x,y,th,wv,ww,gyro,cmd_v,cmd_w,goal,gx,gy,rgx,rgy,follow,gdist,dec,why,known_m2,free_m2,occ_m2,front,front_near,cand_n,scan_n,scan_ok,ok_front,n_front,ok_side,n_side,rmin,done\n");
       const float a2 = c.res * c.res;
       for (const Row& r : rows)
-        std::fprintf(f, "%d,%d,%.1f,%.3f,%.3f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%.2f,%.2f,%d,%.3f,%d,%d,%.3f,%.3f,%.3f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.3f,%d\n", r.ep, r.k, r.k * dt, r.x, r.y, r.th, r.wv,
-                     r.ww, r.gyro, r.cmd_v, r.cmd_w, r.goal, r.gx, r.gy, r.follow, r.gdist, r.dec, r.why, r.known * a2, r.freec * a2, r.occ * a2, r.front, r.front_near, r.cand_n, r.scan_n,
+        std::fprintf(f, "%d,%d,%.1f,%.3f,%.3f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%.2f,%.2f,%.3f,%.3f,%d,%.3f,%d,%d,%.3f,%.3f,%.3f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.3f,%d\n", r.ep, r.k, r.k * dt, r.x, r.y, r.th, r.wv,
+                     r.ww, r.gyro, r.cmd_v, r.cmd_w, r.goal, r.gx, r.gy, r.rgx, r.rgy, r.follow, r.gdist, r.dec, r.why, r.known * a2, r.freec * a2, r.occ * a2, r.front, r.front_near, r.cand_n, r.scan_n,
                      r.scan_ok, r.ok_front, r.n_front, r.ok_side, r.n_side, r.rmin, r.done);
       std::fclose(f);
     }
@@ -477,6 +521,24 @@ int main(int argc, char** argv) {
         }
     }
     if (ff) std::fclose(ff);
+    if (!vox.empty()) {   // 칸 가운데 세계 좌표 · 본 걸음 · 띠별 점 수 · 라이다 막힘(로봇 지도 끝)
+      FILE* fv = std::fopen(vox_path.c_str(), "w");
+      if (!fv) throw std::runtime_error("vox 를 못 엶: " + vox_path);
+      std::fprintf(fv, "x\ty\tsee\tz03_10\tz10_25\tz25_40\tz40_60\tz60_85\tlidar_occ\n");
+      const mdp::MapView mv{robot.lmap(), c.size, w.gw, w.gh};
+      for (int y = 0; y < w.gh; ++y)
+        for (int x = 0; x < w.gw; ++x) {
+          const size_t k = (size_t)y * c.size + x;
+          uint32_t tot = 0;
+          for (int b = 0; b < kVoxB; ++b) tot += vox[k * kVoxB + b];
+          const int occ = mdp::cls_at(mv, x, y) == mdp::kOcc;
+          if (!tot && !occ) continue;
+          std::fprintf(fv, "%.3f\t%.3f\t%u", w.ox + (x + 0.5f) * c.res, w.oy + (y + 0.5f) * c.res, vsee[k]);
+          for (int b = 0; b < kVoxB; ++b) std::fprintf(fv, "\t%u", vox[k * kVoxB + b]);
+          std::fprintf(fv, "\t%d\n", occ);
+        }
+      std::fclose(fv);
+    }
     if (lat_n > 0) {
       int kb = 0;
       for (int k = 1; k < kTau; ++k) if (lat_hit[k] > lat_hit[kb]) kb = k;

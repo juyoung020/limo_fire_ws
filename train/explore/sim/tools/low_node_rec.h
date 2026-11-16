@@ -4,7 +4,10 @@
 //   'S' 걸음 (Proprio · 빔 수 · 거리 · 세기 수 · 세기 · angle_min angle_increment time_increment x y th w n_rev scan_time)
 //   'D' 깊이 바이트 (DEPTH_SIZE)   'O' 기대 아래층 관측 (그림 · 1D) — 읽는 쪽은 여기서 low_obs 를 부르고 견줌
 #pragma once
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -76,14 +79,44 @@ class Reader {
     int32_t hd[6];
     r(hd, sizeof(hd));
     if (hd[0] != kMagic) throw std::runtime_error("녹화 머리가 아님");
-    if (hd[1] != (int32_t)sizeof(sim::EnvHostCfg) || hd[2] != (int32_t)sizeof(limo_fire_rl::Proprio) || hd[3] != (int32_t)sizeof(Window))
+    // 옛 판도 받는다: EnvHostCfg 에 칸이 더해진 차례대로 (새 구조체 안 자리, 바이트). 녹화 크기가 "지금 − 뒤에서 j 개 합" 이면 그 j 개 자리에 0 을 끼움 (0 = 그 기능 끔 = 그때 동작)
+    //   1) 2a17a5a 깊이 영상 늦음 범위 DepthModel::lat_lo·lat_hi (8) — 1116 실물 녹화들   2) 구동 달리며 돌 때 ω 몫 DriveModel::n_tg·tg_v·tg_g
+    const size_t ins_off[2] = {offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, depth) + offsetof(sim::DepthModel, lat_lo),
+                               offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, drive) + offsetof(sim::DriveModel, n_tg)};
+    const size_t ins_len[2] = {8, sizeof(int32_t) + 2 * sizeof(float) * sim::kTurnGainPts};
+    int miss = -1;   // 빠진 뒤쪽 칸 수
+    for (int j = 0, sum = 0; j <= 2; ++j) {
+      if (hd[1] + sum == (int32_t)sizeof(sim::EnvHostCfg)) { miss = j; break; }
+      if (j < 2) sum += (int)ins_len[1 - j];
+    }
+    if (miss < 0 || hd[2] != (int32_t)sizeof(limo_fire_rl::Proprio) || hd[3] != (int32_t)sizeof(Window))
       throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
     ni = hd[4];
     n1 = hd[5];
-    r(&hc, sizeof(hc));
+    if (miss > 0) {
+      std::vector<uint8_t> raw((size_t)hd[1]);
+      r(raw.data(), raw.size());
+      // 새 구조체를 앞에서부터 채우며, 빠진 칸(뒤쪽 miss 개 — 자리 순서로)이 오면 0
+      std::vector<std::pair<size_t, size_t>> gaps;
+      for (int j = 2 - miss; j < 2; ++j) gaps.emplace_back(ins_off[j], ins_len[j]);
+      std::sort(gaps.begin(), gaps.end());
+      uint8_t* dst = reinterpret_cast<uint8_t*>(&hc);
+      size_t src = 0, at = 0;
+      for (const auto& g : gaps) {
+        std::memcpy(dst + at, raw.data() + src, g.first - at);
+        src += g.first - at;
+        std::memset(dst + g.first, 0, g.second);
+        at = g.first + g.second;
+      }
+      std::memcpy(dst + at, raw.data() + src, sizeof(hc) - at);
+      old_layout = true;
+    } else {
+      r(&hc, sizeof(hc));
+    }
   }
   ~Reader() { if (f_) std::fclose(f_); }
   sim::EnvHostCfg hc{};
+  bool old_layout = false;   // 깊이 영상 늦음 칸이 없던 옛 판 녹화 (위)
   int ni = 0, n1 = 0;
   // 다음 사건 종류 (끝이면 0)
   char next() {

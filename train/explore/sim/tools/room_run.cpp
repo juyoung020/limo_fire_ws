@@ -1,5 +1,8 @@
 // 실물 방 재현: 실물 합친 탐사 노드(limo_fire_rl low_rl — 위층 fuel/slot0 + 아래층 규칙 추종기)를 시뮬(CPU 참조판, 환경 하나) 안에서 노드와 같은 차례로 돌리고
 // 노드와 같은 꼴(lowrec — low_rl record:=)로 녹화한다. 실물 녹화와 같은 도구(node_stats)로 견주려고.
+//   --follow 걸음.csv th tx ty [--follow-ahead 3]: 위층 대신 실물 궤적을 따라감 — node_stats --csv 의 (t, x, y)를 장면 좌표로 (회전 th · 이동 tx ty) 옮겨
+//     결정마다 실물이 ahead 초 뒤 있던 자리를 목표로 (규칙 추종기 · 목표 칸 그대로, fuel 과 같은 길). 판단 모델처럼 다시 못 내는 위층의 실물 주행과 아래층·센서·지도를 견줄 때.
+//     실물 시작 자세도 그 표 첫 줄에서 (--start 가 없으면)
 //   room_run <장면.scene> [--start x y θ (없으면 장면 출발점·방향 0)] [--upper fuel|slot0] [--seed 1] [--max-s 300] [--rec 녹화.bin] [--exact] [--env env.yaml] [--model sensor_model.yaml]
 // 장면 좌표 = 실물 지도 좌표 (map2scene 로 만든 장면이면 --start 는 그 실물 지도에서 로봇이 판을 시작한 자세 — node_stats 의 R 사건 / 노드 로그 "시작 자세").
 // 시뮬 쪽: 센서(라이다 장·바퀴·IMU·깊이)를 RobotEnv 에 넣는 탭은 low_explore_check 와 같다. 위층 결정·판 끝은 RobotEnv(노드 몫)만 — 시뮬 환경은 같은 목표·행동 칸을
@@ -58,7 +61,9 @@ int main(int argc, char** argv) {
   std::string scene, env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", rec_path;
   float start[3] = {0.f, 0.f, 0.f};
   bool have_start = false, exact = false, model_set = false;
-  double max_s = 300.0;
+  double max_s = 300.0, follow_ahead = 3.0;
+  std::string follow_path;
+  float ftf[3] = {0.f, 0.f, 0.f};
   int depth_lag = 0;
   uint64_t seed = 1;
   bool use_fuel = true;
@@ -67,6 +72,9 @@ int main(int argc, char** argv) {
   fo.v_eff = 0.981f;
   fo.w_eff = 3.232f;
   fo.t0 = 0.10f;
+  fo.hyst = 0.2f;      // 실물 노드 기본 (limo_fire_rl config/low_rl.yaml fuel_hyst · fuel_vp_min · fuel_vp_clear — low_explore_replay 기본과 같게)
+  fo.vp_min = 0.75f;
+  fo.vp_clear = 0.21f;
   try {
     for (int i = 1; i < argc; ++i) {
       const std::string a = argv[i];
@@ -77,6 +85,8 @@ int main(int argc, char** argv) {
       else if (a == "--max-s") max_s = std::stod(nx());
       else if (a == "--rec") rec_path = nx();
       else if (a == "--exact") exact = true;
+      else if (a == "--follow") { follow_path = nx(); for (int k = 0; k < 3; ++k) ftf[k] = std::stof(nx()); }
+      else if (a == "--follow-ahead") follow_ahead = std::stod(nx());
       else if (a == "--depth-lag") depth_lag = std::stoi(nx());
       else if (a == "--env") env_path = nx();
       else if (a == "--model") { model_path = nx(); model_set = true; }
@@ -85,6 +95,25 @@ int main(int argc, char** argv) {
     }
     if (scene.empty())
       throw std::runtime_error("room_run <장면.scene> [--start x y θ] [--upper fuel|slot0] [--seed 1] [--max-s 300] [--rec 녹화.bin] [--exact]");
+    struct FP { double t; float x, y, th; };
+    std::vector<FP> fol;   // 실물 궤적 (장면 좌표)
+    if (!follow_path.empty()) {
+      FILE* f = std::fopen(follow_path.c_str(), "r");
+      if (!f) throw std::runtime_error("못 읽음: " + follow_path);
+      char line[1024];
+      if (!std::fgets(line, sizeof line, f)) throw std::runtime_error("빈 표: " + follow_path);   // 머리 (ep,k,t,x,y,th,…)
+      const float c = std::cos(ftf[0]), sn = std::sin(ftf[0]);
+      while (std::fgets(line, sizeof line, f)) {
+        int ep, k;
+        double t;
+        float x, y, th;
+        if (std::sscanf(line, "%d,%d,%lf,%f,%f,%f", &ep, &k, &t, &x, &y, &th) != 6 || ep != 0) continue;
+        fol.push_back(FP{t, c * x - sn * y + ftf[1], sn * x + c * y + ftf[2], th + ftf[0]});
+      }
+      std::fclose(f);
+      if (fol.empty()) throw std::runtime_error("궤적이 없음: " + follow_path);
+      if (!have_start) { start[0] = fol[0].x; start[1] = fol[0].y; start[2] = fol[0].th; have_start = true; }
+    }
     sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
     // combine_run.cpp 합친 탐사 설정 (low_explore_check 와 같음)
     hc.cfg.action_mode = sim::kActPath;
@@ -166,7 +195,15 @@ int main(int argc, char** argv) {
       // 노드 차례: (앞 걸음 step 은 탭에서) → 위층 → 깊이 → set_slot · low_obs → low_act
       if (ctl.due(robot.state())) {
         const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
-        const sim::LowCmd c = ctl.decide(vr, work);
+        sim::LowCmd c = ctl.decide(vr, work);   // 위층 기록(결정 수 등)은 그대로 — --follow 면 목표만 실물 궤적으로 바꿈
+        if (!fol.empty()) {
+          const double tt = t * dt + follow_ahead;
+          size_t k = 0;
+          while (k + 1 < fol.size() && fol[k + 1].t <= tt) ++k;
+          const int gx = (int)std::floor((fol[k].x - rw.ox) / hc.cfg.res), gy = (int)std::floor((fol[k].y - rw.oy) / hc.cfg.res);
+          c = (gx >= 0 && gy >= 0 && gx < rw.gw && gy < rw.gh) ? sim::LowCmd{gy * rw.gw + gx, 1} : sim::LowCmd{-1, 0};
+          ctl.force_cmd(c);
+        }
         robot.set_cmd(c);
         cpu.set_low_cmd(std::vector<sim::LowCmd>{c});   // 시뮬 환경도 같은 목표
       }

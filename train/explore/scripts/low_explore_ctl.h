@@ -186,6 +186,8 @@ class Ctl {
     }
   }
   // 판을 새로 (실물: 노드를 다시 켤 때) — 피하는 칸·기억·명령을 비움
+  // 위층 밖에서 정한 목표 칸을 그대로 (시험 도구 room_run --follow — 실물 궤적 따라가기). LowCmd{칸, 1} 이면 규칙 추종기 목표 칸 길(fuel 과 같음), 아니면 목표 없음
+  void force_cmd(const sim::LowCmd& c) { cmd_ = c; slot_ = c.target >= 0 ? 0 : -1; }
   void restart() { fu::Diag* d = diag_; *this = Ctl(p_); diag_ = d; }
   void force_redo() { redo_ = true; }   // 실물: 다시 켤 때 바로 결정 (시뮬에는 없음 — 판 중간에 멈추지 않으므로)
   const sim::LowCmd& cmd() const { return cmd_; }

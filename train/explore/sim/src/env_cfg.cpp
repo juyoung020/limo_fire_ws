@@ -235,6 +235,17 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   drv.tau_slow_down_w = dr["tau_slow_down"][1].as<float>();
   drv.v_max = dr["max"][0].as<float>();
   drv.w_max = dr["max"][1].as<float>();
+  drv.n_tg = 0;
+  if (dr["turn_gain"]) {   // 없으면 끔 (옛 동작)
+    const YAML::Node tv = dr["turn_gain"]["v"], tg = dr["turn_gain"]["gain"];
+    if (!tv || !tg || tv.size() != tg.size() || tv.size() < 2 || tv.size() > (size_t)kTurnGainPts) throw std::runtime_error(path + ": drive.turn_gain 은 v · gain 같은 수 2~8 개");
+    drv.n_tg = (int32_t)tv.size();
+    for (int i = 0; i < drv.n_tg; ++i) {
+      drv.tg_v[i] = tv[i].as<float>();
+      drv.tg_g[i] = tg[i].as<float>();
+      if (i && !(drv.tg_v[i] > drv.tg_v[i - 1])) throw std::runtime_error(path + ": drive.turn_gain.v 는 커지는 차례");
+    }
+  }
   // rc_v·rc_w 는 리모컨 녹화를 다시 돌릴 때만(motion_check, drive.rc) — 학습 환경은 /cmd_vel 경로
   // 물리 단위 행동(act_raw) 한도 = 섀시 최고 속도. 정규 단위 행동 한도는 mdp/obs_layout.h mdp::act
   c.act_v_max = drv.v_max;

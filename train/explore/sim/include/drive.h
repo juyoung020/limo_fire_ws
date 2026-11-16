@@ -14,6 +14,7 @@ namespace sim {
 constexpr int kDelayMax = 16;   // 지연 최대 (dt 걸음)
 constexpr int kRcPoints = 6;    // 스틱 |값| 0, 0.2, …, 1.0
 
+constexpr int kTurnGainPts = 8;
 struct DriveModel {
   int delay_v, delay_w;        // dt 걸음
   float tau_v, tau_w;          // 빠른 갈래 1 차 시간상수 (s), 0 이면 가속 한도만
@@ -23,6 +24,9 @@ struct DriveModel {
   float acc_v, acc_w;          // 가속 한도 (m/s², rad/s²)
   float v_max, w_max;          // 바퀴 최고 속도
   float rc_v[kRcPoints], rc_w[kRcPoints];   // 리모컨 스틱 |값| → 목표 속도 (부호는 스틱을 따름)
+  // 달리며 돌 때 섀시가 내는 ω 몫 (config/env.yaml drive.turn_gain): 지금 바퀴 |v| 마디 tg_v 에서 몫 tg_g (사이 선형, 끝 밖은 끝 값). n_tg 0 이면 끔(늘 1)
+  int32_t n_tg;
+  float tg_v[kTurnGainPts], tg_g[kTurnGainPts];
 };
 
 // 바닥 재질 (config/env.yaml floors): 일정할 때 바퀴 / 몸통 비, 몸통이 낼 수 있는 가속 (마찰)
@@ -85,6 +89,14 @@ DEV float drive_lat(const DriveModel& m, DriveState& s, float cmd_vy, float dt, 
   return s.bvy;
 }
 
+DEV float turn_gain(const DriveModel& m, float wv) {
+  if (m.n_tg <= 0) return 1.f;
+  const float a = dm::absf(wv);
+  if (a <= m.tg_v[0]) return m.tg_g[0];
+  for (int i = 1; i < m.n_tg; ++i)
+    if (a <= m.tg_v[i]) return m.tg_g[i - 1] + (a - m.tg_v[i - 1]) / (m.tg_v[i] - m.tg_v[i - 1]) * (m.tg_g[i] - m.tg_g[i - 1]);
+  return m.tg_g[m.n_tg - 1];
+}
 DEV void drive_step(const DriveModel& m, DriveState& s, float cmd_v, float cmd_w, float dt, const Floor& f, float* body_v,
                     float* body_w) {
   s.buf_v[s.head] = dm::maxf(-m.v_max, dm::minf(m.v_max, cmd_v));
@@ -92,9 +104,10 @@ DEV void drive_step(const DriveModel& m, DriveState& s, float cmd_v, float cmd_w
   const int kv = (s.head - m.delay_v + kDelayMax) % kDelayMax, kw = (s.head - m.delay_w + kDelayMax) % kDelayMax;
   s.head = (s.head + 1) % kDelayMax;
   s.fv = follow(s.fv, s.buf_v[kv], m.tau_v, m.acc_v, dt);
-  s.fw = follow(s.fw, s.buf_w[kw], m.tau_w, m.acc_w, dt);
+  const float tw = s.buf_w[kw] * turn_gain(m, s.wv);   // 달리며 돌면 섀시가 ω 를 덜 냄 (바퀴 오도메트리 ω 도 같이 작음 — 실물 1116 A* 녹화)
+  s.fw = follow(s.fw, tw, m.tau_w, m.acc_w, dt);
   s.sv = follow(s.sv, s.buf_v[kv], slow_tau(s.sv, s.buf_v[kv], m.tau_slow_v, m.tau_slow_down_v), m.acc_v, dt);
-  s.sw = follow(s.sw, s.buf_w[kw], slow_tau(s.sw, s.buf_w[kw], m.tau_slow_w, m.tau_slow_down_w), m.acc_w, dt);
+  s.sw = follow(s.sw, tw, slow_tau(s.sw, tw, m.tau_slow_w, m.tau_slow_down_w), m.acc_w, dt);
   s.wv = (1.f - m.slow_v) * s.fv + m.slow_v * s.sv;
   s.ww = (1.f - m.slow_w) * s.fw + m.slow_w * s.sw;
   s.bv = follow(s.bv, s.wv / f.slip_v, f.tau_v, f.trac_v, dt);
