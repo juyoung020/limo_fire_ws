@@ -22,7 +22,9 @@ inline ckcfg::Kv low_obs_cfg_kv(const EnvCfg& c) {
           {"SIM_LOW_MOV4", i(c.lo_mov4)},          {"SIM_LOW_CAM_EVERY", i(c.lo_cam_every)}, {"SIM_LOW_NOBACK", i(c.lg_noback)},
           {"SIM_LOW_AUX", i(c.lo_aux)},            {"SIM_LOW_BODY", i(c.lo_body)},            {"SIM_LOW_TRACK_GATE", f(c.tk_gate)},   {"SIM_LOW_TRACK_SZ", f(c.tk_sz)},
           {"SIM_LOW_TRACK_QA", f(c.tk_qa)},        {"SIM_LOW_TRACK_MISS", i(c.tk_miss)},   {"SIM_LOW_TRACK_CONF", i(c.tk_conf)},
-          {"SIM_LOW_TRACK_DISP", f(c.tk_disp)},    {"SIM_LOW_TRACK_SAG", f(c.tk_sag)},     {"SIM_LOW_TRACK_W0", f(c.tk_w0)}};
+          {"SIM_LOW_TRACK_DISP", f(c.tk_disp)},    {"SIM_LOW_TRACK_SAG", f(c.tk_sag)},     {"SIM_LOW_TRACK_W0", f(c.tk_w0)},
+          {"SIM_LOW_TRACK_FAST", i(c.tk_fast)},    {"SIM_LOW_TRACK_HOLD", i(c.tk_hold)},   {"SIM_LOW_TRACK_NEAR", f(c.tk_near)},
+          {"SIM_LOW_TRACK_APPR", f(c.tk_appr)}};
 }
 
 // 학습기가 체크포인트에 붙이는 꼬리: 관측 설정 + 구조

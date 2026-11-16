@@ -30,7 +30,7 @@ class LowMov {
     sim::EnvBatch t = b;
     t.lowrl = const_cast<sim::LowRl*>(&R_);   // lowrl_trk_movers 는 읽기만
     sim::LrMover M[sim::kLrMovers];
-    const int nm = sim::lowrl_trk_movers(t, 0, M);
+    const int nm = sim::lowrl_trk_movers(t, e, 0, M);
     sim::lowrl_mov_slots(M, nm, e.x + e.ex, e.y + e.ey, e.th + e.eth, e.drive.wv, b.cfg.half_len, mov, mov4);
   }
   const sim::LowRl& state() const { return R_; }

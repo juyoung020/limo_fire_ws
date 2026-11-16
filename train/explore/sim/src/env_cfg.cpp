@@ -342,6 +342,10 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.tk_miss = (int)envf("SIM_LOW_TRACK_MISS", (float)kLrTrkMiss);
       c.tk_conf = (int)envf("SIM_LOW_TRACK_CONF", (float)kLrTrkConf);
       c.tk_disp = envf("SIM_LOW_TRACK_DISP", kLrTrkDisp);
+      c.tk_fast = (int)envf("SIM_LOW_TRACK_FAST", 0.f);    // 2026-11-16 사람 충돌 (i): 끄면 옛 규칙 (지문 그대로)
+      c.tk_hold = (int)envf("SIM_LOW_TRACK_HOLD", 20.f);   //   확인된 사람을 붙드는 장 수 (2 s — 추적 기억 SIM_LOW_TRACK_MISS 와 같게, 잠정)
+      c.tk_near = envf("SIM_LOW_TRACK_NEAR", 2.0f);        //   다가오는 덩어리를 확인 전에 넣는 거리 (m, 잠정 — 0.8 m/s 로 2.5 s)
+      c.tk_appr = envf("SIM_LOW_TRACK_APPR", 0.3f);        //   그 다가오는 속도 (m/s, 잠정)
       c.lo_mov = (int)envf("SIM_LOW_OBS_MOV", 0.f);
       c.tk_sag = envf("SIM_LOW_TRACK_SAG", kLrClusSag);
       c.tk_w0 = envf("SIM_LOW_TRACK_W0", kLrClusRound0);

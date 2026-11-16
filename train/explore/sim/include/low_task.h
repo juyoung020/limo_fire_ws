@@ -140,6 +140,7 @@ struct LowRl {
   float tk_pp[kLrTrk], tk_pv[kLrTrk], tk_vv[kLrTrk];                //   공분산 (두 축 같음): 자리·자리-속도·속도
   float tk_r[kLrTrk];          //   반지름 (m)
   float tk_x0[kLrTrk], tk_y0[kLrTrk];   //   처음 잡힌 자리 — 거기서 벗어난 거리가 사람 판정 조건
+  int32_t tk_keep[kLrTrk];     //   사람으로 확인된 뒤 남은 붙들기 장 수 (EnvCfg::tk_hold — 잠깐 서도 사람으로, lowrl_trk_movers 가 tk_fast 일 때만 씀)
 
   // 탐사 판 학습 (EnvCfg::low_auto == 2 — low_rl.h lowrl_goal_explore): 환경 안에서 도는 위층 0 번 후보 규칙의 상태 (scripts/combine_run.cpp 호스트 규칙과 같은 값)
   int32_t x_redo;      //   다음 준비 단계에 주기와 무관하게 다시 고름 (통과·경로 끝이 밖·경로 없음·막힘 신호)

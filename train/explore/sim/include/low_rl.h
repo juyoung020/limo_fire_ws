@@ -96,7 +96,7 @@ DEV void lowrl_clear(LowRl& R) {
   R.tk_head = -1;
   R.tk_n = 0;
   for (int i = 0; i < kLrTrk; ++i) {
-    R.tk_hit[i] = R.tk_miss[i] = R.tk_mov[i] = 0;
+    R.tk_hit[i] = R.tk_miss[i] = R.tk_mov[i] = R.tk_keep[i] = 0;
     R.tk_x[i] = R.tk_y[i] = R.tk_vx[i] = R.tk_vy[i] = R.tk_pp[i] = R.tk_pv[i] = R.tk_vv[i] = R.tk_r[i] = R.tk_x0[i] = R.tk_y0[i] = 0.f;
   }
   R.x_redo = 1;
@@ -464,12 +464,18 @@ DEV void lowrl_trk_step(const EnvBatch& b, const EnvState& e, int env) {
       R.tk_x0[bi] = R.tk_x[bi];
       R.tk_y0[bi] = R.tk_y[bi];
     }
+    {   // 사람으로 확인됐으면 붙들기를 채우고, 아니면 한 장 줄임 (lowrl_trk_movers 가 tk_fast 일 때 씀 — 상태만, 끄면 관측과 무관)
+      const float ddx = R.tk_x[bi] - R.tk_x0[bi], ddy = R.tk_y[bi] - R.tk_y0[bi];
+      if (R.tk_mov[bi] >= c.tk_conf && ddx * ddx + ddy * ddy >= c.tk_disp * c.tk_disp) R.tk_keep[bi] = c.tk_hold;
+      else if (R.tk_keep[bi] > 0) R.tk_keep[bi] -= 1;
+    }
   }
   int n = 0;
   for (int i = 0; i < kLrTrk; ++i) {
     if (R.tk_hit[i] <= 0) continue;
     if (!done[i]) {
       R.tk_miss[i] += 1;
+      if (R.tk_keep[i] > 0) R.tk_keep[i] -= 1;
       if (R.tk_miss[i] > c.tk_miss || (R.tk_hit[i] < 3 && R.tk_miss[i] > 1)) { R.tk_hit[i] = 0; continue; }
     }
     ++n;
@@ -483,6 +489,7 @@ DEV void lowrl_trk_step(const EnvBatch& b, const EnvState& e, int env) {
     R.tk_hit[slot] = 1;
     R.tk_miss[slot] = 0;
     R.tk_mov[slot] = 0;
+    R.tk_keep[slot] = 0;
     R.tk_x[slot] = R.tk_x0[slot] = cx[j];
     R.tk_y[slot] = R.tk_y0[slot] = cy[j];
     R.tk_vx[slot] = R.tk_vy[slot] = 0.f;
@@ -494,14 +501,28 @@ DEV void lowrl_trk_step(const EnvBatch& b, const EnvState& e, int env) {
   }
   R.tk_n = n;
 }
-DEV int lowrl_trk_movers(const EnvBatch& b, int env, LrMover* M) {
+// fast: −1 = EnvCfg::tk_fast 를 따름, 0 · 1 = 그 규칙으로 (진단 — 평가 자취가 새 규칙을 옆에서 잼). e: 로봇 지도 자세 (다가오는 덩어리 규칙)
+DEV bool lowrl_trk_is_mover(const EnvCfg& c, const LowRl& R, int i, float px, float py, int fast) {
+  if (R.tk_hit[i] <= 0) return false;
+  const float dx = R.tk_x[i] - R.tk_x0[i], dy = R.tk_y[i] - R.tk_y0[i];
+  if (R.tk_mov[i] >= c.tk_conf && dx * dx + dy * dy >= c.tk_disp * c.tk_disp) return true;   // 옛 규칙: 걷는 사람 확인
+  if (!fast) return false;
+  if (R.tk_keep[i] > 0) return true;   // (a) 확인된 사람이 잠깐 섬
+  if (R.tk_hit[i] < 2) return false;   // (b) 가까이 다가오는 덩어리 (속도가 생긴 뒤 — 이은 장 ≥ 2)
+  const float rx = px - R.tk_x[i], ry = py - R.tk_y[i], d = sqrtf(rx * rx + ry * ry);
+  if (d >= c.tk_near || d < 1e-3f) return false;
+  const float sp2 = R.tk_vx[i] * R.tk_vx[i] + R.tk_vy[i] * R.tk_vy[i];
+  if (sp2 > kLrMoveV1 * kLrMoveV1) return false;   // 너무 빠름 = 가려졌다 드러나는 가장자리
+  return (R.tk_vx[i] * rx + R.tk_vy[i] * ry) / d > c.tk_appr;
+}
+DEV int lowrl_trk_movers(const EnvBatch& b, const EnvState& e, int env, LrMover* M, int fast = -1) {
   const EnvCfg& c = b.cfg;
   const LowRl& R = b.lowrl[env];
+  const int fa = fast < 0 ? c.tk_fast : fast;
+  const float px = e.x + e.ex, py = e.y + e.ey;
   int n = 0;
   for (int i = 0; i < kLrTrk && n < kLrMovers; ++i) {
-    if (R.tk_hit[i] <= 0 || R.tk_mov[i] < c.tk_conf) continue;
-    const float dx = R.tk_x[i] - R.tk_x0[i], dy = R.tk_y[i] - R.tk_y0[i];
-    if (dx * dx + dy * dy < c.tk_disp * c.tk_disp) continue;
+    if (!lowrl_trk_is_mover(c, R, i, px, py, fa)) continue;
     LrMover& m = M[n++];
     m.x = R.tk_x[i];
     m.y = R.tk_y[i];
@@ -562,7 +583,7 @@ DEV float lowrl_ppl_risk(const EnvBatch& b, const EnvState& e, int env) {
   const EnvCfg& c = b.cfg;
   if (!c.lo_mov) return 0.f;   // 추적은 lo_mov 일 때만 돈다
   LrMover M[kLrMovers + 1];
-  const int n = lowrl_trk_movers(b, env, M);
+  const int n = lowrl_trk_movers(b, e, env, M);
   float s, co;
   dm::sincosf_d(e.th + e.eth, &s, &co);
   const float rvx = e.drive.wv * co, rvy = e.drive.wv * s, rx = e.x + e.ex, ry = e.y + e.ey;
@@ -1005,7 +1026,7 @@ DEV void lowrl_pack(const EnvBatch& b, EnvState& e, int env) {
   O[kLoHasGoal] = (float)t.has_goal;
   if (b.cfg.lo_mov) {   // 가장 가까운 "움직이는 것" (lowrl_trk — 직전 걸음 lowrl_act 가 이어 간 추적. 없으면 0)
     LrMover M[kLrMovers];
-    const int nm = lowrl_trk_movers(b, env, M);
+    const int nm = lowrl_trk_movers(b, e, env, M);
     lowrl_mov_slots(M, nm, px, py, pth, e.drive.wv, b.cfg.half_len, O + kLoMov, b.cfg.lo_mov4 ? O + kLoMov4 : nullptr);   // 칸 쓰기만 (b.low_aux 와 무관)
     if (b.low_aux) {   // 보조 예측 재료 (low_task.h kAux*): 지도 자세 · 추적 움직이는 것 · 최신 라이다 구역 최소
       float* X = b.low_aux + (size_t)env * kLowAuxSrc;

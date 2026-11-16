@@ -98,7 +98,7 @@ constexpr float kConPersonGap = 0.15f;   // 잠정 — 추적 덩어리 자리 �
 DEV float tracked_person_gap(const EnvBatch& b, const EnvState& e, int env) {
   if (!b.lowrl || !b.cfg.lo_mov) return kSenseFar;   // 추적은 lo_mov 일 때만 돈다
   LrMover M[kLrMovers + 1];
-  const int n = lowrl_trk_movers(b, env, M);
+  const int n = lowrl_trk_movers(b, e, env, M);
   const float px = e.x + e.ex, py = e.y + e.ey;
   float s, co;
   dm::sincosf_d(e.th + e.eth, &s, &co);

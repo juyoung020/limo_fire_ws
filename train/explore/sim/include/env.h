@@ -106,6 +106,10 @@ struct EnvCfg {
   float tk_gate, tk_sz, tk_qa;   //   추적: 연결 문 (m) · 덩어리 자리 잡음 σ (m) · 가속 잡음 σ (m/s²)
   int tk_miss, tk_conf;          //   추적: 못 이어도 들고 가는 장 수 · 사람 판정까지 이어 받을 장 수
   float tk_disp;                 //   추적: 처음 자리에서 이만큼 벗어나야 사람 (m)
+  // 빠른 움직이는 것 (2026-11-16, SIM_LOW_TRACK_FAST — 사람 충돌 진단 (i): 확인 전·잠깐 섬으로 칸에 못 든 사람): 1 이면 lowrl_trk_movers 가
+  //   (a) 한 번 사람으로 확인된 덩어리는 tk_hold 장 동안 멈춰도 사람으로 두고 (b) 로봇에서 tk_near m 안·tk_appr m/s 넘게 다가오는 덩어리(이은 장 ≥ 2)는 확인 전에도 넣음
+  int tk_fast, tk_hold;
+  float tk_near, tk_appr;
   int lo_mov;                    //   아래층 숫자 관측의 예약 칸(kLoMov)에 추적 결과를 넣음 (0 = 0 으로 둠 — 기존 체크포인트 그대로)
   float tk_sag;                  //   추적: 둥근 덩어리만 — 활꼴 높이 / 현 길이 하한 (0 이면 모양을 안 봄)
   float tk_w0;                   //   추적: 둥근 덩어리의 현 길이 하한 (m)
