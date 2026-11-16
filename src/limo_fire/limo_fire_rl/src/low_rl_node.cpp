@@ -70,6 +70,8 @@ class LowRlNode : public rclcpp::Node {
     const std::string imu_topic = declare_parameter<std::string>("imu_topic", "/imu");
     const std::string depth_topic = declare_parameter<std::string>("depth_topic", "/camera/depth/image_raw");
     const std::string info_topic = declare_parameter<std::string>("depth_info_topic", "/camera/depth/camera_info");
+    const std::string color_topic = declare_parameter<std::string>("color_topic", "/camera/color/image_raw");
+    const std::string color_info_topic = declare_parameter<std::string>("color_info_topic", "/camera/color/camera_info");
     const std::string cmd_topic = declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel");
     const std::string rc_topic = declare_parameter<std::string>("rc_topic", "/rc_state");
     // 닿음 정의 (학습 run.json con_cfg 와 같게 — 시뮬 env_cfg.cpp SIM_CON_* 기본값 위에 덮음. 음수 = env.yaml·환경변수 그대로)
@@ -99,6 +101,12 @@ class LowRlNode : public rclcpp::Node {
     dp.prompt = (int)declare_parameter<int>("decider_prompt", 1);
     dp.input = dec::input_of(dec_input);
     dp.match_r = (float)declare_parameter<double>("decider_match_r", 1.5);
+    dp.cand = declare_parameter<bool>("decider_cand", true);          // 후보 = cand_view.h (기억 필드 · 안정 번호). false 면 예전 hier 8 칸
+    dp.hint = declare_parameter<bool>("decider_hint", true);          // 글의 "Rules of thumb"
+    dp.mem_image = declare_parameter<bool>("decider_mem_image", true);   // 지도 사진에 지나온 길 · 지난 목표
+    dp.image = declare_parameter<std::string>("decider_image", "A") == "B" ? 1 : 0;
+    dp.cam = (int)declare_parameter<int>("decider_cam", 4);   // 둘째 사진: 앞 n 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 (0 = 끔)
+    cam_base_h_ = declare_parameter<double>("cam_base_h", 0.147);   // base_link 의 바닥 위 높이 (m) — 카메라 높이 = 이것 + tf base_link→camera_link z   // A = 지금 지도 한 장 · B = 2 × 2 (지금 · 5 · 15 · 30 s 전)
     if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "decider" && upper_ != "cand") throw std::runtime_error("upper 는 fuel · slot0 · decider · cand");
     if (upper_ == "decider" && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("decider_input 은 text · image · both (all 은 시뮬 장면 그림이라 실물에 없음)");
     hc_ = sim::load_env_cfg(env_yaml_);
@@ -116,7 +124,7 @@ class LowRlNode : public rclcpp::Node {
     if (!(max_speed_ > 0.0)) max_speed_ = c.act_v_fwd;   // 기본 = 시뮬 한도 (자르지 않음)
     lp_ = lxc::Params::from_cfg(c);
     lp_.fuel = fo;
-    lp_.use_cand = upper_ == "cand";   // 위층 후보 scripts/cand_view.h 의 0 번(지금 목표 번호가 있으면 붙듦) — low_explore_check --upper cand
+    lp_.use_cand = upper_ == "cand" || (upper_ == "decider" && dp.cand);   // 위층 후보 scripts/cand_view.h 의 0 번(지금 목표 번호가 있으면 붙듦) — low_explore_check --upper cand
     lp_.use_fuel = upper_ == "fuel" || (upper_ == "slot0" && slot_vp);   // slot0: 피하지 않는 첫 후보 · stick (slot_vp 면 그 덩어리의 시점 — fu::slot_view)
     if (upper_ == "slot0" && slot_vp) lp_.fuel = fu::slot_view(fo);
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
@@ -124,6 +132,8 @@ class LowRlNode : public rclcpp::Node {
       dp.period_steps = std::max(1, (int)std::lround(dec_period / dt()));
       dp.timeout_steps = std::max(1, (int)std::lround(dec_timeout / dt()));
       dec_up_ = std::make_unique<lxd::Upper>(dp);
+      dp_cand_ = dp.cand;
+      dp_cam_ = dp.cam;
       dec_cli_ = std::make_unique<DeciderClient>(dec_url, (int)std::lround(dec_timeout * 1000.0));
       RCLCPP_INFO(get_logger(), "위층 판단 모델 %s · 입력 %s · 프롬프트 %d · 주기 %.1f s (%d 걸음) · 한도 %.1f s — 기다리는 동안 지금 목표로, 목표가 죽으면 slot0 차례로 바로",
                   dec_url.c_str(), dec_input.c_str(), dp.prompt, dp.period_steps * dt(), dp.period_steps, dp.timeout_steps * dt());
@@ -147,6 +157,11 @@ class LowRlNode : public rclcpp::Node {
     sub_imu_ = create_subscription<sensor_msgs::msg::Imu>(imu_topic, 50, [this](sensor_msgs::msg::Imu::ConstSharedPtr m) { imu_ = m; });
     sub_depth_ = create_subscription<sensor_msgs::msg::Image>(depth_topic, sensor, [this](sensor_msgs::msg::Image::ConstSharedPtr m) { depth_ = m; });
     sub_info_ = create_subscription<sensor_msgs::msg::CameraInfo>(info_topic, sensor, [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr m) { info_ = m; });
+    if (dec_up_ && dp_cam_ > 0) {   // 판단 모델 둘째 사진용 컬러 (키프레임 기억 — scripts/cam_memory.h)
+      sub_color_ = create_subscription<sensor_msgs::msg::Image>(color_topic, sensor, [this](sensor_msgs::msg::Image::ConstSharedPtr m) { color_ = m; });
+      sub_cinfo_ = create_subscription<sensor_msgs::msg::CameraInfo>(color_info_topic, sensor, [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr m) { cinfo_ = m; });
+      dec_up_->set_cam(&cam_);
+    }
     sub_rc_ = create_subscription<sensor_msgs::msg::Joy>(rc_topic, 20, [this](sensor_msgs::msg::Joy::ConstSharedPtr m) { on_rc(m); });
     if (!dry_run_) pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>(cmd_topic, 10);   // dry run 이면 발행자를 아예 안 만듦
     pub_cmd_ = create_publisher<geometry_msgs::msg::TwistStamped>("~/cmd_debug", 10);
@@ -313,6 +328,7 @@ class LowRlNode : public rclcpp::Node {
       world_.gw = md.gw; world_.gh = md.gh; world_.ox = md.ox; world_.oy = md.oy;
       ctl_->restart();   // 새 판: 위층 피하는 칸·목표도 처음부터
       if (dec_up_) dec_up_->restart();
+      cam_.clear();
       ctl_->set_geom(md.gw, env_->cfg().res);
       if (rec_) rec_->reset(s.x, s.y, s.th, p, -2.f * s.angle_min, RobotEnv::Window{md.ox, md.oy, md.gw, md.gh});
       started_ = true;
@@ -374,14 +390,15 @@ class LowRlNode : public rclcpp::Node {
         const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur()};
         sim::LowCmd cmd;
         int why = 0;
+        if (dp_cam_ > 0 && cam_.due(env_->state().step)) push_keyframe();
         if (dec_up_->step(v, env_->obs_1d() + mdp::obs::POLICY_1D, *ctl_, *dec_cli_, &cmd, &why)) {
           env_->set_cmd(cmd);
           why_dec_ = why;
           publish_goal(cmd.target);
         }
         dec_ms = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
-        if (env_->state().step % lp_.decide_steps == 0) {   // 그림만: 새 후보(cand_view.h)를 만들어 ~/candidates 로 (판단 모델 결정에는 안 씀 — 판단 모델 쪽이 아직 hier 후보)
-          ctl_->build_cands(v);
+        if (env_->state().step % lp_.decide_steps == 0) {   // ~/candidates: 후보 모드면 판단 모델이 마지막으로 만든 목록 그대로 (따로 안 만듦), hier 모드면 그림용으로 만듦
+          if (!dp_cand_) ctl_->build_cands(v);
           publish_cands();
         }
       } else if (env_->low_cmd().follow != 0) {
@@ -535,6 +552,53 @@ class LowRlNode : public rclcpp::Node {
     pub_cand_->publish(ma);
   }
 
+  // 키프레임 하나 (컬러 256 × 192 · 깊이 128 × 96 — 정렬된 깊이라 같은 시야, 지도 자세). 카메라 달린 자리는 처음 한 번 tf 로
+  void push_keyframe() {
+    if (!color_ || !cinfo_) return;
+    if ((now() - rclcpp::Time(color_->header.stamp)).seconds() > 0.5) return;
+    if (!cam_mount_ok_) {
+      try {
+        const auto T = tf_buf_->lookupTransform(base_frame_, "camera_link", tf2::TimePointZero);
+        tf2::Quaternion q(T.transform.rotation.x, T.transform.rotation.y, T.transform.rotation.z, T.transform.rotation.w);
+        double r, pi, yw;
+        tf2::Matrix3x3(q).getRPY(r, pi, yw);
+        cam_.mt.mx = (float)T.transform.translation.x;
+        cam_.mt.my = (float)T.transform.translation.y;
+        cam_.mt.h = (float)(cam_base_h_ + T.transform.translation.z);
+        cam_.mt.pitch = (float)pi;
+        cam_mount_ok_ = true;
+        RCLCPP_INFO(get_logger(), "카메라 달린 자리 (tf %s→camera_link): x %.3f y %.3f 높이 %.3f m 숙임 %.1f°", base_frame_.c_str(), cam_.mt.mx, cam_.mt.my, cam_.mt.h, pi * 57.2958);
+      } catch (const std::exception&) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "tf %s→camera_link 없음 — 기본 달린 자리 (1116 녹화 값)", base_frame_.c_str());
+      }
+    }
+    const int W = (int)color_->width, H = (int)color_->height;
+    const bool bgr = color_->encoding == "bgr8", rgb = color_->encoding == "rgb8";
+    if (!bgr && !rgb) { RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "컬러 꼴 %s — rgb8 · bgr8 만", color_->encoding.c_str()); return; }
+    camm::Frame fr;
+    const sim::EnvState& e = env_->state();
+    fr.step = e.step; fr.x = e.x + e.ex; fr.y = e.y + e.ey; fr.th = e.th + e.eth;
+    const int w = 256, h = 192;
+    fr.rgb.resize((size_t)w * h * 3);
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x) {
+        const uint8_t* p = &color_->data[(size_t)(y * H / h) * color_->step + (size_t)(x * W / w) * 3];
+        uint8_t* q = &fr.rgb[((size_t)y * w + x) * 3];
+        q[0] = bgr ? p[2] : p[0]; q[1] = p[1]; q[2] = bgr ? p[0] : p[2];
+      }
+    if (depth_ && depth_->encoding == "16UC1" && (now() - rclcpp::Time(depth_->header.stamp)).seconds() < 0.5) {
+      const int DW = (int)depth_->width, DH = (int)depth_->height;
+      fr.dw = 128; fr.dh = 96;
+      fr.depth.resize((size_t)fr.dw * fr.dh);
+      for (int y = 0; y < fr.dh; ++y)
+        for (int x = 0; x < fr.dw; ++x)
+          fr.depth[(size_t)y * fr.dw + x] = *reinterpret_cast<const uint16_t*>(&depth_->data[(size_t)(y * DH / fr.dh) * depth_->step + (size_t)(x * DW / fr.dw) * 2]);
+    }
+    const double sx = (double)w / W, sy = (double)h / H;
+    cam_.in = camm::Intr{(float)(cinfo_->k[0] * sx), (float)(cinfo_->k[4] * sy), (float)((cinfo_->k[2] + 0.5) * sx - 0.5), (float)((cinfo_->k[5] + 0.5) * sy - 0.5), w, h};
+    cam_.push(std::move(fr));
+  }
+
   void publish_goal(int cell) {
     visualization_msgs::msg::MarkerArray ma;
     visualization_msgs::msg::Marker mk;
@@ -572,6 +636,7 @@ class LowRlNode : public rclcpp::Node {
   lxc::Params lp_;
   std::unique_ptr<lxc::Ctl> ctl_;
   std::unique_ptr<lxd::Upper> dec_up_;
+  bool dp_cand_ = false;
   std::unique_ptr<DeciderClient> dec_cli_;
   fu::Work work_;
   std::unique_ptr<lowrec::Writer> rec_;
@@ -581,6 +646,14 @@ class LowRlNode : public rclcpp::Node {
   nav_msgs::msg::Odometry::ConstSharedPtr odom_;
   sensor_msgs::msg::Image::ConstSharedPtr depth_;
   sensor_msgs::msg::CameraInfo::ConstSharedPtr info_;
+  sensor_msgs::msg::Image::ConstSharedPtr color_;
+  sensor_msgs::msg::CameraInfo::ConstSharedPtr cinfo_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_color_;
+  rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr sub_cinfo_;
+  camm::Memory cam_;
+  bool cam_mount_ok_ = false;
+  double cam_base_h_ = 0.147;
+  int dp_cam_ = 0;
   sensor_msgs::msg::Joy::ConstSharedPtr rc_;
   rclcpp::Time last_scan_t_{0, 0, RCL_ROS_TIME}, last_tf_t_{0, 0, RCL_ROS_TIME}, odom_t_{0, 0, RCL_ROS_TIME}, rc_t_{0, 0, RCL_ROS_TIME};
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_scan_;

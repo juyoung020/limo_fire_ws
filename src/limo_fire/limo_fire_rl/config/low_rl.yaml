@@ -12,6 +12,14 @@ low_rl:
     decider_px: 384
     decider_prompt: 1
     decider_match_r: 1.5      # m, 답의 후보 칸 → 지금 후보 (기다리는 동안 후보 칸이 옮겨감 — 0.5 면 답의 절반쯤 버림)
+    decider_cand: true        # 판단 모델 후보 = scripts/cand_view.h (기억 필드 · 안정 번호로 답 맞춤). false = 예전 hier 8 칸
+    decider_hint: true        # 글의 "Rules of thumb" (가까운 쪽으로 쏠리게 함 — 평가에서 빼고도 잼)
+    decider_mem_image: true   # 지도 사진에 지나온 길(60 s, 보라 — 옅을수록 오래됨) · 지난 목표(✓ 닿음 · × 실패 · 회색 고리 바꿈 · 파란 고리 지금)
+    decider_image: A          # A = 지금 지도 한 장 · B = 한 사진을 2 × 2 칸으로 (지금 · 5 · 15 · 30 s 전, 같은 범위 · 토큰 수 같음)
+    decider_cam: 4            # 둘째 사진: 앞 4 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 2 × 2 (실물 컬러 · 정렬 깊이로 가려짐 검사, scripts/cam_memory.h) — 0 = 끔
+    color_topic: /camera/color/image_raw
+    color_info_topic: /camera/color/camera_info
+    cam_base_h: 0.147         # base_link 의 바닥 위 높이 (m) — 카메라 높이 = 이것 + tf base_link→camera_link z
     map_frame: map
     base_frame: base_link
     scan_topic: /scan

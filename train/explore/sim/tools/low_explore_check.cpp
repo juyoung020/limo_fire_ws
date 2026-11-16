@@ -6,7 +6,7 @@
 //   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 실물 노드 upper:=slot0)
 //   fuel 기본 = 실물 노드 config/low_rl.yaml (시간 + 전역 + 시점, 붙들기 0.2, 시점 자격 0.75 m · 0.21 m). --fuel-hyst · --fuel-vp-min · --fuel-vp-clear · --fuel-first 로 바꿈
 //   --log 파일: 시뮬 쪽 결정마다 한 줄 (판·시각·목표·바뀜·뜀·목표 없음 까닭·닫힘) — 실물 녹화 low_explore_replay --log 와 같은 꼴로 견줌
-//   --upper decider [--dec-period 3.0] [--dec-latency 2.6] [--dec-input both]: 실물 노드 upper:=decider (scripts/low_decider.h) — 판단 모델 대신 정해진 가짜 응답기
+//   --upper decider [--dec-period 3.0] [--dec-latency 2.6] [--dec-input both] [--dec-cand 1] [--dec-hint 1] [--dec-mem-image 1] [--dec-image A|B]: 실물 노드 upper:=decider (scripts/low_decider.h) — 판단 모델 대신 정해진 가짜 응답기
 //     (요청 본문의 FNV 해시로 글자를 고르고 --dec-latency 초 뒤 걸음에 답을 냄). 두 쪽 요청 본문도 비트 비교. 시뮬이 판단 모델 답을 몇 걸음 뒤에 받는 것과 같은 길
 //     --dec-url http://127.0.0.1:8171: 가짜 대신 진짜 llama-server (실물 노드와 같은 소켓 일꾼 limo_fire_rl/decider_client.h). 시뮬 시계는 답을 기다리는 동안 멈추고,
 //     답은 --dec-latency 초 뒤 걸음에 줌 (실물 답 시간을 시뮬 걸음으로). 실물 쪽은 같은 답을 같은 차례로 받음 — 판단 모델 위층을 시뮬에서 실물과 같은 코드로 평가
@@ -113,7 +113,8 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml";
   int steps = 1500, people = 0;
   uint64_t seed = 1;
-  bool use_fuel = true, use_dec = false, use_cand = false;
+  bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true;
+  int dec_img = 0;
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
   std::string dec_input = "both", dec_url;
   std::string ep_log;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
@@ -150,6 +151,10 @@ int main(int argc, char** argv) {
     else if (a == "--cand-vp-min") co.vp_min = std::stof(nx());
     else if (a == "--cand-unk-clear") co.unk_clear = std::stof(nx());   // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
+    else if (a == "--dec-cand") dec_cand = std::stoi(nx()) != 0;   // 판단 모델 후보: 1 = cand_view.h (기본) · 0 = hier 8 칸
+    else if (a == "--dec-hint") dec_hint = std::stoi(nx()) != 0;
+    else if (a == "--dec-mem-image") dec_mimg = std::stoi(nx()) != 0;
+    else if (a == "--dec-image") dec_img = nx() == "B" ? 1 : 0;
     else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0" && u != "decider" && u != "cand") throw std::runtime_error("--upper 는 fuel · slot0 · decider · cand"); use_fuel = u == "fuel"; use_dec = u == "decider"; use_cand = u == "cand"; }
     else if (a == "--dec-period") dec_period = std::stod(nx());
     else if (a == "--dec-latency") dec_lat = std::stod(nx());
@@ -200,7 +205,7 @@ int main(int argc, char** argv) {
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
-    lp.use_cand = use_cand;
+    lp.use_cand = use_cand || (use_dec && dec_cand);
     lp.cand = co;
     lxc::Ctl cs(lp), cr(lp);
     const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
@@ -208,6 +213,7 @@ int main(int argc, char** argv) {
     dp.period_steps = std::max(1, (int)std::lround(dec_period / dt));
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
+    dp.cand = dec_cand; dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img;
     if (use_dec && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("--dec-input text · image · both");
     lxd::Upper us(dp), ur(dp);
     FakeModel ms, mr;
@@ -295,6 +301,8 @@ int main(int argc, char** argv) {
         const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
         sim::LowCmd c2;
         if (ur.step(vr, robot.obs_1d() + mdp::obs::POLICY_1D, cr, mr, &c2)) robot.set_cmd(c2);
+        if (std::getenv("DEC_SAVE") && ms.sent.size() == (size_t)std::atoi(std::getenv("DEC_SAVE_N") ? std::getenv("DEC_SAVE_N") : "10") && !ms.sent.empty())
+          write_text(std::getenv("DEC_SAVE"), ms.sent.back());   // 요청 하나를 파일로 (눈으로 보기)
         if (ms.sent.size() != mr.sent.size()) { ++d_body; if (first_bad < 0) first_bad = t; }
         else if (!ms.sent.empty() && ms.sent.back() != mr.sent.back()) {
           if (d_body == 0 && std::getenv("DEC_DUMP")) {

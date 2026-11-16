@@ -114,6 +114,8 @@ class Ctl {
   // 결정 때 후보를 만듦 (판단 모델은 이 목록을 보고 go_cand 로 고름). 기억(cand_mem)은 판 동안 이어짐
   const cand::Out& build_cands(const View& v) {
     const sim::EnvState& s = *v.s;
+    if (cand_step_ == s.step) return cout_;   // 같은 걸음에 다시 부르면 그대로 (번호 나이 age 가 부른 수로 늘지 않게 · 시간 아낌)
+    cand_step_ = s.step;
     const cand::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, [this, &s](int cell) { return avoided(cell, s.step); }, cmd_.follow != 0 ? cmd_.target : -1};
     cout_ = cand::build(in, p_.cand, cmem_, cwork_);
     return cout_;
@@ -222,6 +224,7 @@ class Ctl {
   cand::Work cwork_;
   cand::Out cout_;
   int cur_id_ = -1;
+  int cand_step_ = -1;   // build_cands 를 마지막으로 부른 걸음
   void avoid_add(int cell, int step) {
     if (!p_.avoid || cell < 0) return;
     av_cell_[av_n_ % kBl] = cell;

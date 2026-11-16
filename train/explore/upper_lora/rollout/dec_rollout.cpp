@@ -10,6 +10,7 @@
 //   dec_rollout <장면.scene> --seed 1 --out p [--people 0] [--period 3.0] [--latency 2.6] [--every 3] [--reps 4] [--horizon 600] [--max-req 0] [--base slot0]
 #include <algorithm>
 #include <array>
+#include <deque>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -61,15 +62,19 @@ struct Out {
   double t = 0;
   long known = 0;
 };
-struct Snap {   // 요청을 보낸 때의 원시 상태
+struct Snap {   // 요청을 보낸 때의 원시 상태 (후보 꼴이 바뀌면 이것으로 요청을 다시 그림)
   long id;
   int step;
   float x, y, th;
-  std::vector<int> slot, cell;
-  std::vector<float> feat;   // [글자][FEAT]
-  std::string body;
+  std::vector<cand::Cand> cands;   // 글자 차례 (Ctl::cands — 기억 필드 포함)
+  std::vector<int> cell;           // 글자 차례 서는 자리 (vp)
+  cand::Mem mem;                   // 판 기억 (지나온 길 trail · 목표 goals · 실패 자리 fails)
+  std::string body;                // 지금 꼴 요청 (decider_input both)
   int x0, y0, w, h;
-  std::vector<int16_t> map;
+  std::vector<int16_t> map;        // 지금 지도 (아는 칸 범위)
+  std::vector<int> past_age;       // 지난 지도의 걸음 차 (같은 범위로 자름 — 그림 꼴 B)
+  std::vector<std::vector<int16_t>> past;
+  std::vector<std::array<float, 4>> kf;   // 판 시작부터 10 걸음마다 (걸음 · 지도 x · y · th) — 시뮬은 장면으로 그때 카메라를 다시 그림 (후보별 지난 장면)
 };
 struct Cfg {
   sim::EnvHostCfg hc;
@@ -81,6 +86,46 @@ struct Cfg {
   lxd::Params dp;
   int lat = 26;
 };
+using Hist = std::deque<std::pair<int, std::vector<int16_t>>>;   // (걸음, 지도) — 10 걸음마다, 최근 31 개 (30 s)
+void hist_push(Hist& h, int step, const std::vector<int16_t>& lm) {
+  if (step % 10 != 0) return;
+  h.emplace_back(step, lm);
+  if (h.size() > 31) h.pop_front();
+}
+Snap make_snap(const Cfg& C, const sim::World& w, const sim::EnvState& e, const std::vector<int16_t>& lm, const lxc::Ctl& cs, const lxd::Req& r, const Hist& hist,
+               const std::vector<std::array<float, 4>>& kf) {
+  Snap s;
+  s.kf = kf;
+  s.id = r.id; s.step = e.step; s.x = e.x + e.ex; s.y = e.y + e.ey; s.th = e.th + e.eth;
+  s.body = r.body;
+  s.cands = cs.cands().c;
+  s.cell = r.cells;
+  s.mem = cs.cand_mem();
+  const int S = C.hc.cfg.size;
+  int x0 = 1 << 30, y0 = 1 << 30, x1 = -1, y1 = -1;
+  for (int y = 0; y < w.gh; ++y)
+    for (int x = 0; x < w.gw; ++x)
+      if (lm[(size_t)y * S + x] != sim::kUnknown) { x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
+  if (x1 < 0) { x0 = y0 = 0; x1 = y1 = -1; }
+  s.x0 = x0; s.y0 = y0; s.w = x1 - x0 + 1; s.h = y1 - y0 + 1;
+  const auto crop = [&](const std::vector<int16_t>& m) {
+    std::vector<int16_t> o;
+    o.reserve((size_t)s.w * s.h);
+    for (int y = y0; y <= y1; ++y)
+      for (int x = x0; x <= x1; ++x) o.push_back(m[(size_t)y * S + x]);
+    return o;
+  };
+  s.map = crop(lm);
+  for (int ago : {50, 150, 300}) {   // −5 · −15 · −30 s 쯤 (10 걸음 칸에서 가장 가까운 것)
+    const std::pair<int, std::vector<int16_t>>* best = nullptr;
+    for (const auto& q : hist) if (q.first <= e.step - ago && (!best || q.first > best->first)) best = &q;
+    if (!best && !hist.empty()) best = &hist.front();
+    if (!best) continue;
+    s.past_age.push_back(e.step - best->first);
+    s.past.push_back(crop(best->second));
+  }
+  return s;
+}
 long count_known(const std::vector<int16_t>& lm) {
   long n = 0;
   for (int16_t v : lm) n += v != sim::kUnknown;
@@ -110,12 +155,15 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
   std::vector<float> act((size_t)mdp::act::DIM, 0.f);
   const double dt = (double)C.hc.cfg.substeps * C.hc.cfg.dt;
   int branch_step = -1;
+  Hist hist;
+  std::vector<std::array<float, 4>> kfp;
   Out o;
   for (int t = 0;; ++t) {
     auto tp = clk::now();
     cpu.get_state(st);
     bm.now = t;
     cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur); cpu.get_obs(img, o1d);
+    if (snaps) { hist_push(hist, st[0].step, lm); if (st[0].step % 10 == 0) kfp.push_back({(float)st[0].step, st[0].x + st[0].ex, st[0].y + st[0].ey, st[0].th + st[0].eth}); }
     const lxc::View v{&C.hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
     g_tm[0] += since(tp);
     const size_t ns = bm.sent.size();
@@ -123,27 +171,7 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
     if (us.step(v, o1d.data() + mdp::obs::POLICY_1D, cs, bm, &c1)) cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
     if (bm.sent.size() > ns) {   // 이 걸음에 요청을 보냄
       const lxd::Req& r = bm.sent.back();
-      if (snaps) {
-        Snap s;
-        s.id = r.id; s.step = st[0].step; s.x = st[0].x + st[0].ex; s.y = st[0].y + st[0].ey; s.th = st[0].th + st[0].eth;
-        s.body = r.body;
-        const float* F = o1d.data() + mdp::obs::POLICY_1D;
-        for (int j = 0; j < mdp::hier::K; ++j) {   // low_decider.h build 와 같은 차례 (유효 후보 = 빈 칸 아님 · 피하지 않음)
-          const int cell = cand[(size_t)j];
-          if (cell < 0 || cs.avoided(cell, st[0].step)) continue;
-          s.slot.push_back(j); s.cell.push_back(cell);
-          for (int f = 0; f < mdp::hier::FEAT; ++f) s.feat.push_back(F[j * mdp::hier::FEAT + f]);
-        }
-        int x0 = 1 << 30, y0 = 1 << 30, x1 = -1, y1 = -1;
-        for (int y = 0; y < w.gh; ++y)
-          for (int x = 0; x < w.gw; ++x)
-            if (lm[(size_t)y * C.hc.cfg.size + x] != sim::kUnknown) { x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
-        if (x1 < 0) { x0 = y0 = 0; x1 = y1 = -1; }
-        s.x0 = x0; s.y0 = y0; s.w = x1 - x0 + 1; s.h = y1 - y0 + 1;
-        for (int y = y0; y <= y1; ++y)
-          for (int x = x0; x <= x1; ++x) s.map.push_back(lm[(size_t)y * C.hc.cfg.size + x]);
-        snaps->push_back(std::move(s));
-      }
+      if (snaps) snaps->push_back(make_snap(C, w, st[0], lm, cs, r, hist, kfp));
       if (r.id == forced) {
         branch_step = t;
         if (reseed > 0) {   // 그 뒤 우연만 다르게 (combine_run --branch-reseed 와 같은 섞기)
@@ -292,10 +320,14 @@ Out base_gpu(const Cfg& C, int every, std::vector<Snap>* snaps, std::vector<Cap>
   GpuAct da(1);
   Out o;
   long nreq = 0;
+  Hist hist;
+  std::vector<std::array<float, 4>> kfp;
   for (int t = 0;; ++t) {
     g.get_state(st);
     bm.now = t;
     g.get_map(lm); g.get_trail(tr); g.get_camlayer(vox, pts); g.get_cand(cand); g.get_cand_cur(ccur); g.get_obs(img, o1d);
+    hist_push(hist, st[0].step, lm);
+    if (st[0].step % 10 == 0) kfp.push_back({(float)st[0].step, st[0].x + st[0].ex, st[0].y + st[0].ey, st[0].th + st[0].eth});
     const lxc::View v{&C.hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
     const size_t ns = bm.sent.size();
     sim::LowCmd c1;
@@ -303,25 +335,7 @@ Out base_gpu(const Cfg& C, int every, std::vector<Snap>* snaps, std::vector<Cap>
     if (bm.sent.size() > ns) {
       const lxd::Req& r = bm.sent.back();
       if (nreq++ % every == 0 && r.cells.size() >= 2) {
-        Snap s;
-        s.id = r.id; s.step = st[0].step; s.x = st[0].x + st[0].ex; s.y = st[0].y + st[0].ey; s.th = st[0].th + st[0].eth;
-        s.body = r.body;
-        const float* F = o1d.data() + mdp::obs::POLICY_1D;
-        for (int j = 0; j < mdp::hier::K; ++j) {
-          const int cell = cand[(size_t)j];
-          if (cell < 0 || cs.avoided(cell, st[0].step)) continue;
-          s.slot.push_back(j); s.cell.push_back(cell);
-          for (int f = 0; f < mdp::hier::FEAT; ++f) s.feat.push_back(F[j * mdp::hier::FEAT + f]);
-        }
-        int x0 = 1 << 30, y0 = 1 << 30, x1 = -1, y1 = -1;
-        for (int y = 0; y < w.gh; ++y)
-          for (int x = 0; x < w.gw; ++x)
-            if (lm[(size_t)y * C.hc.cfg.size + x] != sim::kUnknown) { x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
-        if (x1 < 0) { x0 = y0 = 0; x1 = y1 = -1; }
-        s.x0 = x0; s.y0 = y0; s.w = x1 - x0 + 1; s.h = y1 - y0 + 1;
-        for (int y = y0; y <= y1; ++y)
-          for (int x = x0; x <= x1; ++x) s.map.push_back(lm[(size_t)y * C.hc.cfg.size + x]);
-        snaps->push_back(std::move(s));
+        snaps->push_back(make_snap(C, w, st[0], lm, cs, r, hist, kfp));
         caps->push_back(Cap{r.id, t, g.env_blob(0), cs, us, bm, snaps->size() - 1});
       }
     }
@@ -381,6 +395,8 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
     std::vector<sim::LowEp> L;
     std::vector<sim::EpInfo> ep;
     std::vector<int16_t> lm;
+    std::vector<uint32_t> trs;
+    std::vector<uint8_t> vx;
     GpuAct da(n);
     for (int i = 0; i < n; ++i) cmd[(size_t)i] = sl[(size_t)i].cs.cmd();
     g.set_low_cmd(cmd);
@@ -395,7 +411,20 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
         if (!x.live) continue;
         if (first) continue;   // 첫 걸음: 저장한 때 위층은 이미 돌았음 (준비·걸음부터)
         x.bm.now = x.t;
-        const lxc::View v{&C.hc.cfg, &w, nullptr, nullptr, nullptr, &st[(size_t)i], &cand[(size_t)i * K], (uint32_t)ccur[(size_t)i]};
+        // 후보를 만들 걸음(위층 결정 차례 · 답이 옴 · 보낼 때)에만 이 칸의 지도 · 지나간 길 · 깊이 층을 꺼냄 (cand::build 가 읽음)
+        const bool ans = !x.bm.q.empty() && x.bm.q.front().ready <= x.t;
+        const bool snd = !x.us.waiting() && (x.us.last_send() < 0 || st[(size_t)i].step - x.us.last_send() >= C.dp.period_steps);
+        const bool need = x.cs.due(st[(size_t)i]) || ans || snd;
+        if (need) {
+          const sim::EnvBatch& B = g.batch();
+          const size_t cells = (size_t)C.hc.cfg.size * C.hc.cfg.size, nf = (size_t)C.hc.cfg.size * ((C.hc.cfg.size + 31) / 32);
+          lm.resize(cells); trs.resize(2 * nf); vx.resize(cells);
+          cudaMemcpy(lm.data(), B.lmap + (size_t)i * cells, cells * 2, cudaMemcpyDeviceToHost);
+          cudaMemcpy(trs.data(), B.trail + (size_t)i * 2 * nf, 2 * nf * 4, cudaMemcpyDeviceToHost);
+          if (B.cvox) cudaMemcpy(vx.data(), B.cvox + (size_t)i * cells, cells, cudaMemcpyDeviceToHost);
+        }
+        const lxc::View v{&C.hc.cfg, &w, need ? lm.data() : nullptr, need ? trs.data() : nullptr, need && g.batch().cvox ? vx.data() : nullptr, &st[(size_t)i],
+                          &cand[(size_t)i * K], (uint32_t)ccur[(size_t)i]};
         sim::LowCmd c1;
         if (x.us.step(v, o1d.data() + (size_t)i * mdp::hier::POLICY_1D + mdp::obs::POLICY_1D, x.cs, x.bm, &c1)) { cmd[(size_t)i] = c1; chg = true; }
       }
@@ -479,6 +508,8 @@ int main(int argc, char** argv) {
     sim::set_cpu_threads(1);
     C.lp = lxc::Params::from_cfg(c);
     C.lp.use_fuel = false;
+    C.lp.use_cand = true;   // 후보 = scripts/cand_view.h (실물 노드 upper:=decider decider_cand true 와 같음)
+    C.dp.cand = true;
     const double dt = (double)c.substeps * c.dt;
     C.dp.period_steps = std::max(1, (int)std::lround(period / dt));
     C.lat = std::max(0, (int)std::lround(latency / dt));
@@ -532,22 +563,35 @@ int main(int argc, char** argv) {
       std::snprintf(p, sizeof p, "%s_r%ld.req.json", stem, s.id);
       if (std::FILE* g = std::fopen(p, "w")) { std::fwrite(s.body.data(), 1, s.body.size(), g); std::fclose(g); }
       std::snprintf(p, sizeof p, "%s_r%ld.map.bin", stem, s.id);
-      if (std::FILE* g = std::fopen(p, "wb")) {
-        const int32_t hd[4] = {s.x0, s.y0, s.w, s.h};
-        std::fwrite(hd, 4, 4, g);
+      if (std::FILE* g = std::fopen(p, "wb")) {   // i32 x0 y0 w h n_past · i32 past_age[n_past] · i16 지금 [h][w] · i16 지난 [n_past][h][w]
+        const int32_t hd[5] = {s.x0, s.y0, s.w, s.h, (int32_t)s.past.size()};
+        std::fwrite(hd, 4, 5, g);
+        for (int a : s.past_age) { const int32_t v = a; std::fwrite(&v, 4, 1, g); }
         std::fwrite(s.map.data(), 2, s.map.size(), g);
+        for (const auto& m : s.past) std::fwrite(m.data(), 2, m.size(), g);
         std::fclose(g);
       }
       std::fprintf(f, "{\"scene\":\"%s\",\"seed\":%llu,\"people\":%d,\"req\":%ld,\"step\":%d,\"x\":%.4f,\"y\":%.4f,\"th\":%.5f,\"res\":%.4f,\"ox\":%.4f,\"oy\":%.4f,\"gw\":%d,"
-                      "\"cand_ver\":\"hier8-v0\",\"period_steps\":%d,\"lat_steps\":%d,\"horizon_s\":%.1f,\"base\":{\"done\":%d,\"t\":%.2f},\"cand\":[",
+                      "\"cand_ver\":\"cand-v1-b8d942b\",\"period_steps\":%d,\"lat_steps\":%d,\"horizon_s\":%.1f,\"base\":{\"done\":%d,\"t\":%.2f},\"mem\":{\"trail\":[",
                    jesc(scene).c_str(), (unsigned long long)C.seed, C.people, s.id, s.step, s.x, s.y, s.th, c.res, C.worlds[0].ox, C.worlds[0].oy, C.worlds[0].gw, C.dp.period_steps, C.lat,
                    horizon, b.done, b.t);
-      const int FE = mdp::hier::FEAT;
-      for (size_t L = 0; L < s.cell.size(); ++L) {
-        std::fprintf(f, "%s{\"slot\":%d,\"cell\":%d,\"feat\":[", L ? "," : "", s.slot[L], s.cell[L]);
-        for (int q = 0; q < FE; ++q) std::fprintf(f, "%s%.6g", q ? "," : "", s.feat[L * FE + q]);
-        std::fprintf(f, "],\"out\":[");
-        for (int rp = 0; rp < reps; ++rp) std::fprintf(f, "%s[%d,%.2f,%ld]", rp ? "," : "", br[k][L][(size_t)rp].done, br[k][L][(size_t)rp].t, br[k][L][(size_t)rp].known);
+      for (size_t q = 0; q < s.mem.trail.size(); ++q) { const auto& t = s.mem.trail[q]; std::fprintf(f, "%s[%.3f,%.3f,%.4f,%d]", q ? "," : "", t.x, t.y, t.th, t.step); }
+      std::fprintf(f, "],\"goals\":[");
+      for (size_t q = 0; q < s.mem.goals.size(); ++q) { const auto& t = s.mem.goals[q]; std::fprintf(f, "%s[%d,%.3f,%.3f,%d,%d,%d]", q ? "," : "", t.id, t.x, t.y, t.start, t.end, t.why); }
+      std::fprintf(f, "],\"fails\":[");
+      for (size_t q = 0; q < s.mem.fails.size(); ++q) { const auto& t = s.mem.fails[q]; std::fprintf(f, "%s[%.3f,%.3f,%d,%d]", q ? "," : "", t.x, t.y, t.why, t.step); }
+      std::fprintf(f, "]},\"kf\":[");
+      for (size_t q = 0; q < s.kf.size(); ++q) std::fprintf(f, "%s[%d,%.3f,%.3f,%.4f]", q ? "," : "", (int)s.kf[q][0], s.kf[q][1], s.kf[q][2], s.kf[q][3]);
+      std::fprintf(f, "],\"cand\":[");
+      for (size_t L = 0; L < s.cands.size(); ++L) {
+        const cand::Cand& q = s.cands[L];
+        std::fprintf(f, "%s{\"id\":%d,\"age\":%d,\"vp\":%d,\"anc\":%d,\"len_m\":%.3f,\"turn_rad\":%.4f,\"t_s\":%.3f,\"bearing\":%.4f,\"gain_m2\":%.3f,\"marg_m2\":%.3f,\"score\":%.5f,"
+                        "\"open_m\":%.3f,\"clear_m\":%.3f,\"path_clear_m\":%.3f,\"same_room\":%d,\"room_left\":%d,\"cur\":%d,\"kept\":%d,\"chosen\":%d,\"aborts\":%d,\"last_fail\":%d,"
+                        "\"since_fail_s\":%.2f,\"fail_near\":%d,\"in_avoid\":%d,\"visited\":%d,\"out\":[",
+                     L ? "," : "", q.id, q.age, q.vp, q.anc, q.len_m, q.turn_rad, q.t_s, q.bearing, q.gain_m2, q.marg_m2, q.score, q.open_m, q.clear_m, q.path_clear_m, q.same_room,
+                     q.room_left, q.cur, q.kept, q.chosen, q.aborts, q.last_fail, q.since_fail_s, q.fail_near, q.in_avoid, q.visited);
+        for (int rp = 0; rp < reps; ++rp)
+          if (L < br[k].size()) std::fprintf(f, "%s[%d,%.2f,%ld]", rp ? "," : "", br[k][L][(size_t)rp].done, br[k][L][(size_t)rp].t, br[k][L][(size_t)rp].known);
         std::fprintf(f, "]}");
       }
       std::fprintf(f, "]}\n");
