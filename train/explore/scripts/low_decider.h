@@ -43,7 +43,11 @@ struct Params {
   float approach_m = 1.0f;
   float switch_ratio = 1.5f;
   int max_steps = 100;      // event 모드 최대 간격 (걸음 — 10 s)
-  int log_k = 8;            // 후보 모드 결정 기록: 최근 K 개 결정(언제 · 고른 번호의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 가장 최근)로 — 0 = 끔
+  int log_k = 8;
+  bool compact = false;     // 후보 모드 글: 짧은 키 10 개 (t · len · bear · new · w · room · cur · fail · fail_s · seen) — 미세조정용 대조
+  bool mem_fields = true;   // 후보 모드 글: 기억 필드(고른·실패 수 · 까닭 · 실패 뒤 초 · 실패 자리 · 피하는 곳 · 가 본 곳)
+  int max_cands = 0;        // 후보 모드: 요청에 넣는 후보 수 상한 (0 = 다)
+  int order = 0;            // 후보 모드 글자 차례: 0 = 후보 점수 순 (cand::build) · 1 = 길 거리 순            // 후보 모드 결정 기록: 최근 K 개 결정(언제 · 고른 번호의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 가장 최근)로 — 0 = 끔
   int image = 0;            // 후보 모드 사진 꼴: 0 = A (지금 지도 한 장) · 1 = B (2 × 2 칸: 지금 · 5 · 15 · 30 s 전, 같은 범위 — 토큰 수 같음, 칸마다 해상도 반)
   float match_r = 1.5f;     // 답의 후보 칸 → 지금 후보 (m). hier 후보 칸은 덩어리에서 로봇에 가장 가까운 칸이라 답을 기다리는 동안 옮겨감 — 0.5 m 면 답의 40 ~ 55 % 를 버림 (low_explore_check, 지연 2.6 s)
 };
@@ -124,6 +128,7 @@ class Upper {
         int idx = ctl.cand_index(req_.ids[(size_t)k]);
         if (idx < 0) idx = match_cand(v, ctl, req_.cells[(size_t)k]);
         if (idx < 0) { ++n_nomatch_; continue; }
+        { const cand::Cand& q = ctl.cands().c[(size_t)idx]; n_pick_failed_ += q.aborts > 0 || q.in_avoid; n_pick_top_ += idx == 0; }   // 평가 셈: 실패 기록 후보 · 규칙 1 순위
         { const int prev = ctl.cur_id(); *cmd = ctl.go_cand(v, idx, why); note_dec(v, ctl, prev, 0); }
         changed = true;
         continue;
@@ -191,6 +196,8 @@ class Upper {
     return "";
   }
   const std::string& last_trigger() const { return last_trig_; }
+  long n_pick_failed() const { return n_pick_failed_; }   // 답이 고른 후보가 실패 기록(aborts > 0 · 피하는 곳)이 있던 수
+  long n_pick_top() const { return n_pick_top_; }         // 답이 후보 점수 1 순위(규칙과 같은 고름)였던 수
   const std::map<std::string, long>& trigger_counts() const { return n_trig_; }
   // 요청 본문 (combine_run.cpp 판단 모델 가지 — 후보 특징 → dec::Cand, render_png, build_body)
   bool build(const lxc::View& v, const float* F, const lxc::Ctl& ctl, Req* r) const {
@@ -250,8 +257,15 @@ class Upper {
     std::vector<dec::Cand> dc;
     std::vector<int> cells;
     oj cl = oj::array();
-    for (size_t i = 0; i < co.c.size() && i < 26; ++i) {
-      const cand::Cand& q = co.c[i];
+    std::vector<size_t> ord;   // 글자 차례 → co.c 번호
+    for (size_t i = 0; i < co.c.size() && i < 26; ++i) ord.push_back(i);
+    if (p_.order == 1) std::stable_sort(ord.begin(), ord.end(), [&](size_t a, size_t b) { return co.c[a].len_m < co.c[b].len_m; });
+    if (p_.max_cands > 0 && (int)ord.size() > p_.max_cands) ord.resize((size_t)p_.max_cands);   // 점수 순 · 거리 순 어느 쪽이든 앞에서
+    if (ord.size() < 2) return false;
+    std::map<int, char> id_let;
+    for (size_t i = 0; i < ord.size(); ++i) id_let[co.c[ord[i]].id] = (char)('A' + (int)i);
+    for (size_t i = 0; i < ord.size(); ++i) {
+      const cand::Cand& q = co.c[ord[i]];
       dec::Cand d;
       d.key = (char)('A' + (int)i);
       d.slot = (int)i;
@@ -262,6 +276,13 @@ class Upper {
       r->ids.push_back(q.id);
       oj o;
       o["id"] = std::string(1, d.key);
+      if (p_.compact) {   // 짧은 키 (candidate_fields 에 뜻)
+        o["t"] = rnd(q.t_s, 0.1); o["len"] = rnd(q.len_m, 0.1); o["bear"] = (int)std::lround(q.bearing * 57.29578f); o["new"] = rnd(q.gain_m2, 1.0);
+        o["w"] = rnd(q.open_m, 0.1); o["room"] = q.same_room != 0; o["cur"] = q.cur != 0;
+        if (p_.mem_fields) { o["fail"] = q.aborts; o["fail_s"] = q.since_fail_s < 0 ? oj(nullptr) : oj(rnd(q.since_fail_s, 1.0)); o["seen"] = q.visited != 0; }
+        cl.push_back(o);
+        continue;
+      }
       o["travel_time_s"] = rnd(q.t_s, 0.1);
       o["path_length_m"] = rnd(q.len_m, 0.1);
       o["bearing_deg_left_positive"] = (int)std::lround(q.bearing * 57.29578f);
@@ -273,13 +294,15 @@ class Upper {
       o["same_room_as_robot"] = q.same_room != 0;
       o["other_frontiers_in_its_room"] = q.room_left;
       o["is_current_target"] = q.cur != 0;
-      o["times_chosen"] = q.chosen;
-      o["times_failed"] = q.aborts;
-      o["last_failure"] = why_txt[std::clamp(q.last_fail, 0, 8)];
-      o["seconds_since_failure"] = q.since_fail_s < 0 ? oj(nullptr) : oj(rnd(q.since_fail_s, 1.0));
-      o["failed_spots_nearby"] = q.fail_near;
-      o["inside_avoid_zone"] = q.in_avoid != 0;
-      o["robot_was_here_before"] = q.visited != 0;
+      if (p_.mem_fields) {
+        o["times_chosen"] = q.chosen;
+        o["times_failed"] = q.aborts;
+        o["last_failure"] = why_txt[std::clamp(q.last_fail, 0, 8)];
+        o["seconds_since_failure"] = q.since_fail_s < 0 ? oj(nullptr) : oj(rnd(q.since_fail_s, 1.0));
+        o["failed_spots_nearby"] = q.fail_near;
+        o["inside_avoid_zone"] = q.in_avoid != 0;
+        o["robot_was_here_before"] = q.visited != 0;
+      }
       cl.push_back(o);
     }
     // 최근 목표 (cand::Mem::goals, 새것부터 5 개)
@@ -290,7 +313,7 @@ class Upper {
     for (int i = (int)decs_.size() - 1, n = 0; i >= 0 && n < p_.log_k; --i, ++n) {
       const Dec& d = decs_[(size_t)i];
       std::string let = "none";
-      if (d.id >= 0) { const int ci = ctl.cand_index(d.id); let = ci >= 0 && ci < 26 ? std::string(1, (char)('A' + ci)) : "gone"; }
+      if (d.id >= 0) { const auto it = id_let.find(d.id); let = it != id_let.end() ? std::string(1, it->second) : "gone"; }
       std::string out = "";
       for (const auto& g : ctl.cand_mem().goals)
         if (g.id == d.id && g.start <= d.step + 1 && (g.end < 0 || g.end >= d.step)) out = g.end < 0 ? "still going" : why_txt[std::clamp(g.why, 0, 8)];
@@ -380,7 +403,11 @@ class Upper {
                                        : "");
     }
     if (p_.input != dec::kImage) {
-      st["candidate_fields"] = "travel_time_s = estimated driving time including turning; new_area_m2 = unmapped area visible from the spot; "
+      if (p_.compact)
+        st["candidate_fields"] = std::string("t = driving time s incl. turning; len = path m; bear = bearing deg (left +); new = unmapped area visible from the spot m2; ") +
+                                 "w = frontier opening width m; room = in the robot's room; cur = current target" +
+                                 (p_.mem_fields ? "; fail = times the robot failed to reach it; fail_s = seconds since that failure; seen = the robot already stood near it." : ".");
+      else st["candidate_fields"] = "travel_time_s = estimated driving time including turning; new_area_m2 = unmapped area visible from the spot; "
                                "new_area_not_seen_from_other_candidates_m2 = part of it that no better-ranked candidate also sees; frontier_width_m = width of the opening; "
                                "free_space_around_spot_m = distance from the spot to the nearest obstacle; narrowest_gap_on_way_m = tightest squeeze on the way; "
                                "times_failed / last_failure / seconds_since_failure = what happened when the robot tried this spot before; failed_spots_nearby = failed goals within 1 m; "
@@ -395,9 +422,9 @@ class Upper {
     std::vector<uint8_t> cpng;
     if (p_.cam > 0 && cam_ && p_.input != dec::kText) {   // 둘째 사진: 후보별 지난 장면 (기하 검색)
       std::vector<dec::CamTile> tiles;
-      const int n = std::min<int>(p_.cam, (int)co.c.size());
+      const int n = std::min<int>(p_.cam, (int)ord.size());
       for (int i = 0; i < n; ++i) {
-        const cand::Cand& q = co.c[(size_t)i];
+        const cand::Cand& q = co.c[ord[(size_t)i]];
         const float wx = v.W->ox + (q.vp % v.W->gw + 0.5f) * c.res, wy = v.W->oy + (q.vp / v.W->gw + 0.5f) * c.res;
         dec::CamTile t;
         t.key = (char)('A' + i);
@@ -484,6 +511,7 @@ class Upper {
   bool wait_ = false;
   int last_send_ = -1;
   int approach_goal_ = -1, gone_id_ = -1, better_id_ = -1;
+  long n_pick_failed_ = 0, n_pick_top_ = 0;
   std::string last_trig_;
   std::map<std::string, long> n_trig_;
   const camm::Memory* cam_ = nullptr;

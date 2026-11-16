@@ -117,9 +117,10 @@ int main(int argc, char** argv) {
   bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true;
   int dec_img = 0, dec_logk = 8;
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
-  int dec_mode = 0;
+  int dec_mode = 0, dec_max = 0, dec_order = 0;
+  bool dec_compact = false, dec_memf = true;
   std::string dec_input = "both", dec_url;
-  std::string ep_log, lat_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 아는 넓이 m² 30/60/90/120/180 s)
+  std::string ep_log, lat_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 아는 넓이 m² 30/60/90/120/180 s)
   bool dec_fake_a = false;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
   int max_ep = 0;
   bool close_lidar = false;
@@ -165,6 +166,10 @@ int main(int argc, char** argv) {
     else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0" && u != "decider" && u != "cand") throw std::runtime_error("--upper 는 fuel · slot0 · decider · cand"); use_fuel = u == "fuel"; use_dec = u == "decider"; use_cand = u == "cand"; }
     else if (a == "--dec-period") dec_period = std::stod(nx());
     else if (a == "--dec-mode") dec_mode = nx() == "event" ? 1 : 0;
+    else if (a == "--dec-compact") dec_compact = std::stoi(nx()) != 0;
+    else if (a == "--dec-memf") dec_memf = std::stoi(nx()) != 0;
+    else if (a == "--dec-max") dec_max = std::stoi(nx());
+    else if (a == "--dec-order") dec_order = nx() == "dist" ? 1 : 0;
     else if (a == "--dec-latency") dec_lat = std::stod(nx());
     else if (a == "--dec-input") dec_input = nx();
     else if (a == "--dec-match") dec_match = std::stod(nx());
@@ -222,6 +227,7 @@ int main(int argc, char** argv) {
     lxd::Params dp;
     dp.period_steps = std::max(1, (int)std::lround(dec_period / dt));
     dp.mode = dec_mode;
+    dp.compact = dec_compact; dp.mem_fields = dec_memf; dp.max_cands = dec_max; dp.order = dec_order;
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
     dp.cand = dec_cand; dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img; dp.log_k = dec_logk;
@@ -230,7 +236,7 @@ int main(int argc, char** argv) {
     FakeModel ms, mr;
     ms.lat = mr.lat = std::max(0, (int)std::lround(dec_lat / dt));
     ms.first = mr.first = dec_fake_a;
-    long l_fb0 = 0, l_rw = 0;
+    long l_fb0 = 0, l_rw = 0, l_sent0 = 0, l_pf0 = 0, l_pt0 = 0, l_ans0 = 0;
     double l_area[5] = {-1, -1, -1, -1, -1};
     const double l_mark[5] = {30, 60, 90, 120, 180};
     std::unique_ptr<limo_fire_rl::DeciderClient> real;
@@ -445,7 +451,9 @@ int main(int argc, char** argv) {
         if (!lat_log.empty()) {
           if (FILE* lf2 = std::fopen(lat_log.c_str(), "a")) {
             const long fb = (n_fb_all + us.n_fallback()) - l_fb0;
-            std::fprintf(lf2, "%ld\t%d\t%.1f\t%ld\t%ld", n_ep, dn[0], robot.state().step * dt, fb, l_rw);
+            const long sent = (n_sent_all + us.n_sent()) - l_sent0;
+            std::fprintf(lf2, "%ld\t%d\t%.1f\t%ld\t%ld\t%ld\t%ld\t%ld\t%ld", n_ep, dn[0], robot.state().step * dt, fb, l_rw, sent, n_ans - l_ans0, us.n_pick_failed() - l_pf0,
+                         us.n_pick_top() - l_pt0);
             for (int q = 0; q < 5; ++q) std::fprintf(lf2, "\t%.1f", l_area[q]);
             std::fprintf(lf2, "\n");
             std::fclose(lf2);
@@ -453,6 +461,7 @@ int main(int argc, char** argv) {
           for (double& x : l_area) x = -1;
           l_rw = 0;
           l_fb0 = n_fb_all + us.n_fallback();
+          l_sent0 = n_sent_all + us.n_sent(); l_ans0 = n_ans; l_pf0 = 0; l_pt0 = 0;   // us 는 판마다 새로 (restart) — 고름 셈도 0 부터
         }
         if (!ep_log.empty()) {
           if (FILE* ef = std::fopen(ep_log.c_str(), "a")) {
@@ -485,11 +494,12 @@ int main(int argc, char** argv) {
       }
       cpu.get_low_rl(R); cpu.get_low(L);
       cs.after_step(st[0], R[0], L[0]);
-      if (!lat_log.empty() && use_dec) {
-        if (L[0].reach_step == st[0].step && L[0].reached > 0 && us.waiting()) ++l_rw;
+      if (!lat_log.empty()) {
+        if (use_dec && L[0].reach_step == st[0].step && L[0].reached > 0 && us.waiting()) ++l_rw;
         const double ts = st[0].step * dt;
         for (int q = 0; q < 5; ++q)
           if (l_area[q] < 0 && ts >= l_mark[q]) {
+            if (!use_dec) cpu.get_map(lm);   // 판단 모델이 아니면 지도를 이때만 꺼냄
             long kn = 0;
             for (int16_t v_ : lm) kn += v_ != sim::kUnknown;
             l_area[q] = kn * hc.cfg.res * hc.cfg.res;
