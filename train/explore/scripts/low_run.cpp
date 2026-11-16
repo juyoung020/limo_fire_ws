@@ -835,9 +835,9 @@ const char* kPplHead = "id\tscene\tpeople\tenv\thit_dir\tgoal_age\tback\tx\ty\tt
 
 // 걸음 자취 (--trace): 정책이 몬 걸음마다 한 줄 — 닿음 센서 값(contact.h)과 시뮬 정답(충돌·간격)을 나란히. 정답 칸은 기록 전용
 const char* kTraceHead = "scene\tpeople\tenv\tep\tt\tend\tx\ty\tth\tv\tw\ta_v\ta_w\tcmd_v\tcmd_w\tsafe\twv\tgyro\t"
-                         "s_lid\ts_map\ts_cam\ts_pgap\ts_stall\ts_kind\tcontact\tgt_touch\tgt_person\tgt_gap\tgt_u\tgt_v\tgt_pgap\tgoal_d\tgt_pmode\tgt_pbear\ts_dir\ts_close\tp_mode\tp_n\tpath_lat\tpath_clr_here\tpath_clr_min\tsub_blk\tww\ta_h\ts_yaw\n";
+                         "s_lid\ts_map\ts_cam\ts_pgap\ts_stall\ts_kind\tcontact\tgt_touch\tgt_person\tgt_gap\tgt_u\tgt_v\tgt_pgap\tgoal_d\tgt_pmode\tgt_pbear\ts_dir\ts_close\tp_mode\tp_n\tpath_lat\tpath_clr_here\tpath_clr_min\tsub_blk\tww\ta_h\ts_yaw\ttrk_n\ttrk_d\n";
 void trace_row(std::FILE* f, const sim::EnvCfg& c, const sim::World& W, const char* scene, int people, int i, int ep, int t, int end, const sim::EnvState& e,
-               float a0, float a1, int safe, float goal_d) {
+               float a0, float a1, int safe, float goal_d, const sim::LowRl* R = nullptr) {
   float hu = 0.f, hv = 0.f, hd = 9.f;
   diag_nearest(c, W, e, &hu, &hv, &hd);
   // 계획 경로 진단 (정답 격자 — 기록 전용): 지도 자세에서 경로(웨이포인트 꺾은선)까지 옆 거리, 가장 가까운 경로 점의 정답 간격(막힌 칸까지 — W.clear),
@@ -890,18 +890,31 @@ void trace_row(std::FILE* f, const sim::EnvCfg& c, const sim::World& W, const ch
   }
   // 가장 가까운 사람 (정답 — 기록 전용): 행동 비트(people.h kPerson*), 로봇 기준 방위 (rad)
   int pm = -1;
-  float pb = 0.f;
+  float pb = 0.f, px_ = 0.f, py_ = 0.f;
   {
     const float s0 = std::sin(e.th), c0 = std::cos(e.th);
     float g = 1e9f;
     for (int k = 0; k < e.people.n; ++k) {
       const float gk = sim::body_cyl_gap(c, e.people.cyl[k], e.x, e.y, s0, c0);
-      if (gk < g) { g = gk; pm = e.people.mode[k]; pb = std::remainder(std::atan2(e.people.cyl[k].y - e.y, e.people.cyl[k].x - e.x) - e.th, 6.2831853f); }
+      if (gk < g) { g = gk; pm = e.people.mode[k]; pb = std::remainder(std::atan2(e.people.cyl[k].y - e.y, e.people.cyl[k].x - e.x) - e.th, 6.2831853f); px_ = e.people.cyl[k].x; py_ = e.people.cyl[k].y; }
     }
   }
-  std::fprintf(f, "%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.3f\t%.3f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\t%d\t%d\t%.3f\t%.3f\t%.3f\t%d\t%.4f\t%.3f\t%d\n",
+  // 추적 (기록 전용, 2026-11-16 사람 충돌 분해): 움직이는 것 수(lowrl_trk_movers 와 같은 조건 — MOV4 칸은 이 중 넷) · 가장 가까운 정답 사람에서 가장 가까운 추적까지 (m)
+  int trk_n = 0;
+  float trk_d = 99.f;
+  if (R && pm >= 0) {
+    for (int k = 0; k < sim::kLrTrk; ++k) {
+      if (R->tk_hit[k] <= 0 || R->tk_mov[k] < c.tk_conf) continue;
+      const float dx0 = R->tk_x[k] - R->tk_x0[k], dy0 = R->tk_y[k] - R->tk_y0[k];
+      if (dx0 * dx0 + dy0 * dy0 < c.tk_disp * c.tk_disp) continue;
+      if (trk_n >= sim::kLrMovers) break;
+      ++trk_n;
+      trk_d = std::min(trk_d, std::hypot(R->tk_x[k] - px_, R->tk_y[k] - py_));
+    }
+  }
+  std::fprintf(f, "%s\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%.3f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%d\t%d\t%d\t%d\t%d\t%.4f\t%.3f\t%.3f\t%.4f\t%.3f\t%d\t%.3f\t%.4f\t%.3f\t%d\t%d\t%.3f\t%.3f\t%.3f\t%d\t%.4f\t%.3f\t%d\t%d\t%.3f\n",
                scene, people, i, ep, t, end, e.x, e.y, e.th, e.v, e.w, a0, a1, e.cmd_v, e.cmd_w, safe, e.drive.wv, e.gyro, e.s_lid, e.s_map, e.s_cam,
-               e.s_pgap, e.s_stall, e.s_kind, e.contact, e.collided, e.people.hit_person, hd, hu, hv, e.people.near_d, goal_d, pm, pb, e.s_dir, e.s_close, e.p_mode, e.p_n, p_lat, p_here, p_min, sub_blk, e.drive.ww, e.a_h, e.s_yaw);   // 뒤 셋 (2026-11-16): 바퀴 오도메트리 ω · IMU 수평 가속 · 바퀴·자이로 어긋남 걸음
+               e.s_pgap, e.s_stall, e.s_kind, e.contact, e.collided, e.people.hit_person, hd, hu, hv, e.people.near_d, goal_d, pm, pb, e.s_dir, e.s_close, e.p_mode, e.p_n, p_lat, p_here, p_min, sub_blk, e.drive.ww, e.a_h, e.s_yaw, trk_n, trk_d);   // 뒤 셋 (2026-11-16): 바퀴 오도메트리 ω · IMU 수평 가속 · 바퀴·자이로 어긋남 걸음
 }
 
 // 도착 효율 (2026-11-15, 평가 전용 — 학습에 안 씀): 정답 격자에서 몸통 외접 반경으로 설 수 있는 칸 위 목표까지 최단 길이(8 이웃 Dijkstra, 목표에서 퍼짐)와
@@ -1058,6 +1071,7 @@ int run_policy(const Args& a) {
     for (int i = 0; i < N; ++i) warm[i] = warm_draw();
     std::vector<sim::EnvState> st;
     std::vector<sim::EpInfo> epi;   // 자취 끝 줄 정답 충돌 비트 (--trace)
+    std::vector<sim::LowRl> trl;    // 자취 추적 칸 (--trace)
     std::vector<float> rew;
     std::vector<int32_t> done;
     std::vector<LowEp> low;
@@ -1136,7 +1150,7 @@ int run_policy(const Args& a) {
       env.get_state(st);
       env.get_low(low);
       if (dg.f) env.get_low_rl(dg.rl_post);
-      if (tr) env.get_ep(epi);   // 자취 끝 줄: 판 동안 정답 충돌 비트 (끝 걸음 포함 — 상태는 이미 새 판)
+      if (tr) { env.get_ep(epi); env.get_low_rl(trl); }   // 자취 끝 줄: 판 동안 정답 충돌 비트 (끝 걸음 포함 — 상태는 이미 새 판)
       for (int i = 0; i < N; ++i) {
         if (phase[i] == 2) continue;
         const LowEp& L = low[i];
@@ -1171,7 +1185,7 @@ int run_policy(const Args& a) {
           // 정답 충돌을 판정(lpr_setv2.py)이 못 셌다 (벽·사람 /100 m 이 센서가 놓친 충돌만 셈 — 측정 오류)
           if (done[i]) std::fprintf(tr, "%s\t%d\t%d\t%d\t%d\t%d\t%d\n", W.name.c_str(), people, i, eps[i], st[i].step, L.end == sim::kLowEndNone ? sim::kLowEndTime : L.end,
                                     (int)epi[i].gt_touch);
-          else trace_row(tr, c, W, W.name.c_str(), people, i, eps[i], st[i].step - step0[i], 0, st[i], a0, a1, L.kind == sim::kLowSafety, gd);
+          else trace_row(tr, c, W, W.name.c_str(), people, i, eps[i], st[i].step - step0[i], 0, st[i], a0, a1, L.kind == sim::kLowSafety, gd, trl.empty() ? nullptr : &trl[i]);
         }
         if (dg.f && phase[i] == 1 && cmd[i].follow == 2) {   // 진단: 정책이 몬 걸음
           const int safe_now = L.kind == sim::kLowSafety;   // 규칙 추종기의 앞 범퍼 정지 (정책 걸음엔 늘 0)

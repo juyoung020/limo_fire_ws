@@ -9,11 +9,12 @@ import argparse, subprocess, sys, os, re, time, math
 ap=argparse.ArgumentParser()
 ap.add_argument('tag'); ap.add_argument('ckpt')
 ap.add_argument('--bin',required=True); ap.add_argument('--scenes',required=True); ap.add_argument('--tsv',required=True); ap.add_argument('--out',required=True)
-ap.add_argument('--seed',default='1'); ap.add_argument('--envs',default='32'); ap.add_argument('--env',default='')
+ap.add_argument('--slip',type=int,default=0,help='1 = 실물처럼 닿은 뒤 바퀴 헛돎·IMU 충격 (SIM_CON_SLIP=1, 고르기 확인·시험 세트는 이것) — 태그 끝 s, 표 safety 칸 slip1');ap.add_argument('--seed',default='1'); ap.add_argument('--envs',default='32'); ap.add_argument('--env',default='')
 ap.add_argument('--cwd',default=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))   # train/explore
 A=ap.parse_args()
 it=A.tag; ck=A.ckpt; seed=A.seed; nenv=A.envs
-tag=it if seed=='1' and nenv=='32' else it+'c'
+tag=(it if seed=='1' and nenv=='32' else it+'c')+('s' if A.slip else '')
+PHYS='slip1' if A.slip else 'off'
 E=A.cwd; TS=A.scenes; T=A.tsv; OUT=A.out
 JUDGE=[f'{TS}/{n}.scene' for n in ['procthor_val2_00002_f','procthor_val2_00042_f','procthor_val2_00009_f','procthor_val2_00032_f','hssd_106366386_174226770_l0','hssd_107734176_176000019_l0','hssd_104348028_171512877_l0','hssd_104348361_171513414_l0','procthor_val2_00002_f-lowobs','hssd_106366386_174226770_l0-lowobs']]
 HSSD=[]
@@ -22,6 +23,7 @@ COND={'p2':('2',{}),'p8':('8',dict(SIM_PEOPLE_P_STAND='0',SIM_PEOPLE_P_IGNORE='1
 rows=[]
 for cn,(pk,extra) in COND.items():
     env=dict(os.environ); env.update(SIM_LOW_OBS_MOV='1',SIM_LOW_GOALONLY='1',SIM_LOW_WIDE='1',SIM_LOW_CAM_EVERY='1',SIM_LOW_TRACK_MISS='20',SIM_LOW_MOV4='1',SIM_LOW_BODY='1'); env.update(extra)
+    if A.slip: env['SIM_CON_SLIP']='1'
     for kv in [x for x in A.env.split(',') if x]:   # 체크포인트마다 관측 설정 (K=V, 값 '-' 이면 뺌)
         k,v=kv.split('=',1)
         if v=='-': env.pop(k,None)
@@ -66,9 +68,9 @@ for cn,(pk,extra) in COND.items():
 ts=time.strftime('%Y-%m-%d %H:%M:%S')
 out=[]
 def effs_(e): return ['%.3f'%e[2],'%.3f'%e[3],'%.2f'%e[4],'%.3f'%e[5],'%.3f'%e[6]] if e else ['','','','','']
-def line(set_,sc,cn,w,p,fr,rx,sp,g,n,ps,ef=None): out.append('\t'.join([ts,tag,'off',set_,sc,cn,'%.3f'%w,'%.3f'%p,fr,'%.3f'%rx,'%.3f'%sp,str(g),str(n),ps]+effs_(ef)))
+def line(set_,sc,cn,w,p,fr,rx,sp,g,n,ps,ef=None): out.append('\t'.join([ts,tag,PHYS,set_,sc,cn,'%.3f'%w,'%.3f'%p,fr,'%.3f'%rx,'%.3f'%sp,str(g),str(n),ps]+effs_(ef)))
 for r in rows:
-    if r.get('err'): out.append('\t'.join([ts,tag,'off','?',r['sc'],r['cn'],'','','','','','','','parse-fail'])); continue
+    if r.get('err'): out.append('\t'.join([ts,tag,PHYS,'?',r['sc'],r['cn'],'','','','','','','','parse-fail'])); continue
     w=100*r['w']/r['d'] if r['d'] else 0; p=100*r['p']/r['d'] if r['d'] else 0
     line(r['set'],r['sc'],r['cn'],w,p,'%.2f'%r['front'] if r['front']==r['front'] else '',r['reachx'],r['speed'],r['goals'],r['n'],'',r.get('eff'))
 J=[r for r in rows if r.get('set')=='val2']
