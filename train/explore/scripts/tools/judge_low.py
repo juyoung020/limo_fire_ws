@@ -23,7 +23,7 @@ COND={'p2':('2',{}),'p8':('8',dict(SIM_PEOPLE_P_STAND='0',SIM_PEOPLE_P_IGNORE='1
 rows=[]
 for cn,(pk,extra) in COND.items():
     env=dict(os.environ); env.update(SIM_LOW_OBS_MOV='1',SIM_LOW_GOALONLY='1',SIM_LOW_WIDE='1',SIM_LOW_CAM_EVERY='1',SIM_LOW_TRACK_MISS='20',SIM_LOW_MOV4='1',SIM_LOW_BODY='1'); env.update(extra)
-    if A.slip: env['SIM_CON_SLIP']='1'
+    if A.slip: env.update(SIM_CON_SLIP='1',SIM_CON_MASK='71',SIM_CON_ACC='15')   # 실물형: 닿음도 학습과 같게 (라이다·깊이·멈춤 2·IMU 가속 > 15)
     for kv in [x for x in A.env.split(',') if x]:   # 체크포인트마다 관측 설정 (K=V, 값 '-' 이면 뺌)
         k,v=kv.split('=',1)
         if v=='-': env.pop(k,None)
@@ -47,17 +47,21 @@ for cn,(pk,extra) in COND.items():
         if p[0]=='scene': continue
         if len(p)==7:   # 판 끝 줄 (2026-11-16 계측 수정): 그 판의 정답 충돌 비트 (끝 걸음 포함) — 아직 안 센 충돌이면 셈 (센서 닿음으로 끝난 걸음 포함)
             k=(p[0],p[2],p[3]); e=eps.get(k)
-            if e is None or e['done']: continue
+            if e is None or e['done'] or e['carry']: continue   # 앞 구간에서 이어진 닿음만 있던 구간은 끝 비트도 그 닿음 — 새로 안 셈
             bits=int(p[6]); endc=int(p[5])
             if bits:
                 e['done']=True; e['hit']=1; e['hp']=1 if (bits==2 or (bits==3 and endc==5)) else 0   # 정답 비트로 (둘 다면 끝 코드로 가름)
             continue
         if len(p)<30: continue
         k=(p[0],p[2],p[3]); x,y=float(p[6]),float(p[7])
-        e=eps.setdefault(k,dict(px=x,py=y,d=0.0,hit=0,hp=0,done=False))
+        new=k not in eps
+        e=eps.setdefault(k,dict(px=x,py=y,d=0.0,hit=0,hp=0,done=False,carry=False,prev=0))
         if e['done']: continue
         e['d']+=math.hypot(x-e['px'],y-e['py']); e['px'],e['py']=x,y
-        if p[25]=='1': e['done']=True; e['hit']=1; e['hp']=int(p[26]=='1')
+        g=p[25]=='1'
+        if new and g: e['carry']=True   # 구간 첫 걸음에 이미 닿음 = 앞 구간에서 이어진 같은 닿음 (2026-11-16 이중 셈 고침 — 새 닿음 아님)
+        if g and not e['prev'] and not new: e['done']=True; e['hit']=1; e['hp']=int(p[26]=='1')   # 정답 닿음 시작(앞 걸음 0 → 1)만 셈
+        e['prev']=1 if g else 0
     agg={}
     for (sc,_,_),e in eps.items():
         a=agg.setdefault(sc,[0.0,0,0,0]); a[0]+=e['d']; a[1]+=e['hit']-e['hp']; a[2]+=e['hp']; a[3]+=1
