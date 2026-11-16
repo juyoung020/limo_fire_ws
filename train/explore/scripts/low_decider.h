@@ -12,6 +12,7 @@
 //   4. 기다리는 요청이 없고 마지막으로 보낸 지 period_steps 지났으면(또는 3 에서 급하면) 새 요청 (유효 후보 2 개 이상일 때만)
 // 보내기·받기는 Transport 가 맡는다: 실물 = 소켓 HTTP 일꾼 스레드 (limo_fire_rl/decider_client.h), 시뮬 = 정해진 걸음 뒤에 답을 내놓는 줄 (combine_run).
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -30,7 +31,7 @@ struct Params {
   int px = 384;             // 지도 사진 한 변 (combine_run --decider-px)
   int input = dec::kBoth;   // dec::kText · kImage · kBoth (kAll 은 시뮬 장면 그림이 필요해 여기서는 안 됨)
   int prompt = 1;           // combine_run --decider-prompt
-  float match_r = 0.5f;     // 답의 후보 칸 → 지금 후보 (m)
+  float match_r = 1.5f;     // 답의 후보 칸 → 지금 후보 (m). hier 후보 칸은 덩어리에서 로봇에 가장 가까운 칸이라 답을 기다리는 동안 옮겨감 — 0.5 m 면 답의 40 ~ 55 % 를 버림 (low_explore_check, 지연 2.6 s)
 };
 
 // 보낸 요청 하나
@@ -140,7 +141,14 @@ class Upper {
     if (cs.size() < 2) { r->cells.clear(); return false; }
     std::vector<uint8_t> png;
     if (p_.input != dec::kText) {
-      int kb[4] = {s.kb_x0, s.kb_y0, s.kb_x1, s.kb_y1};
+      // 자를 범위 = 지도에서 아는 칸(모름이 아닌 칸)의 범위. EnvState::kb_* 를 안 쓰는 까닭: RobotEnv 와 시뮬의 kb_x1 이 한 칸 다를 때가 있음
+      // (low_explore_check small-house 씨앗 2 걸음 70 — 관측에는 영향 없음), 지도는 비트 같음
+      int kb[4] = {1 << 30, 1 << 30, -1, -1};
+      for (int y = 0; y < v.W->gh; ++y)
+        for (int x = 0; x < v.W->gw; ++x)
+          if (v.lmap[(size_t)y * c.size + x] != sim::kUnknown) {
+            kb[0] = std::min(kb[0], x); kb[1] = std::min(kb[1], y); kb[2] = std::max(kb[2], x); kb[3] = std::max(kb[3], y);
+          }
       png = dec::render_png(v.lmap, c.size, v.W->gw, v.W->gh, sim::kUnknown, mdp::kOccL, kb, (s.x + s.ex - v.W->ox) / c.res, (s.y + s.ey - v.W->oy) / c.res, s.th + s.eth, cs, cells, p_.px);
     }
     r->body = dec::build_body(p_.input, p_.prompt, cs, png, c.cand_v2 != 0);

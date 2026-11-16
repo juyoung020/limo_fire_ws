@@ -12,6 +12,7 @@ low_rl:
     decider_input: both       # 지도 사진 + 후보 글 (combine_run --decider-input both). all(카메라 그림)은 시뮬 장면을 광선으로 칠한 그림이라 실물에 없음
     decider_px: 384
     decider_prompt: 1
+    decider_match_r: 1.5      # m, 답의 후보 칸 → 지금 후보 (기다리는 동안 후보 칸이 옮겨감 — 0.5 면 답의 절반쯤 버림)
     map_frame: map
     base_frame: base_link
     scan_topic: /scan

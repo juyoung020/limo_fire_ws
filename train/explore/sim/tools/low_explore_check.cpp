@@ -6,8 +6,15 @@
 //   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 실물 노드 upper:=slot0)
 //   --lower rule: 아래층 규칙 추종기 (combine_run 을 --policy 없이 — 실물 노드 lower:=rule). --ckpt 없이, 관측 설정은 env.yaml 그대로.
 //                 준비 단계 행동 칸 = 위층 Ctl::slot() (combine_run 의 act[0] — 규칙: 후보 번호 · fuel 이면 0), 두 쪽 다 RobotEnv::low_act 계층형 가지
+//   --upper decider [--dec-period 3.0] [--dec-latency 2.6] [--dec-input both]: 실물 노드 upper:=decider (scripts/low_decider.h) — 판단 모델 대신 정해진 가짜 응답기
+//     (요청 본문의 FNV 해시로 글자를 고르고 --dec-latency 초 뒤 걸음에 답을 냄). 두 쪽 요청 본문도 비트 비교. 시뮬이 판단 모델 답을 몇 걸음 뒤에 받는 것과 같은 길
+//     --dec-url http://127.0.0.1:8171: 가짜 대신 진짜 llama-server (실물 노드와 같은 소켓 일꾼 limo_fire_rl/decider_client.h). 시뮬 시계는 답을 기다리는 동안 멈추고,
+//     답은 --dec-latency 초 뒤 걸음에 줌 (실물 답 시간을 시뮬 걸음으로). 실물 쪽은 같은 답을 같은 차례로 받음 — 판단 모델 위층을 시뮬에서 실물과 같은 코드로 평가
 // 지도 자세 오차·관측 지연은 끈다 (rl_node_check 와 같은 까닭). 판이 끝나면 둘 다 새 판 (위층 기억도 비움). 관측 설정은 체크포인트 꼬리(mdp/ckpt_cfg.h)
+#include <chrono>
 #include <cmath>
+#include <memory>
+#include <thread>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -15,11 +22,56 @@
 
 #include "ckpt_cfg.h"
 #include "env_api.h"
+#include "limo_fire_rl/decider_client.h"
 #include "limo_fire_rl/robot_env.h"
+#include "low_decider.h"
 #include "low_explore_ctl.h"
 #include "policy_cpu.h"
 
 namespace {
+// 가짜 판단 모델: 본문 해시로 글자, lat 걸음 뒤 답 (now 는 부르는 쪽이 걸음마다 맞춤)
+struct FakeModel : lxd::Transport {
+  int lat = 26, now = 0;
+  struct P { int ready; lxd::Answer a; std::string body; };
+  std::vector<P> q;
+  std::vector<std::string> sent;   // 보낸 본문 (두 쪽 비교)
+  limo_fire_rl::DeciderClient* real = nullptr;   // 진짜 서버 (시뮬 쪽만 — 답을 기다림)
+  std::vector<lxd::Answer>* log = nullptr;       // 진짜 답 기록 (시뮬 쪽이 씀, 실물 쪽이 같은 차례로 읽음)
+  size_t replay = 0;
+  void send(const lxd::Req& r) override {
+    if (real || log) {
+      lxd::Answer a;
+      if (real) {
+        real->send(r);
+        while (!real->poll(&a)) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        log->push_back(a);
+      } else if (replay < log->size()) {
+        a = (*log)[replay++];
+      } else {
+        a.err = "답 기록 없음";
+      }
+      a.id = r.id;
+      q.push_back({now + lat, a, r.body});
+      sent.push_back(r.body);
+      return;
+    }
+    uint64_t h = 1469598103934665603ull;
+    for (unsigned char ch : r.body) { h ^= ch; h *= 1099511628211ull; }
+    lxd::Answer a;
+    a.id = r.id;
+    a.ok = true;
+    a.choice = std::string(1, (char)('A' + (int)(h % (uint64_t)(r.cells.size()))));
+    q.push_back({now + lat, a, r.body});
+    sent.push_back(r.body);
+  }
+  bool poll(lxd::Answer* a) override {
+    if (q.empty() || q.front().ready > now) return false;
+    *a = q.front().a;
+    q.erase(q.begin());
+    return true;
+  }
+};
+void write_text(const std::string& p, const std::string& t) { std::FILE* f = std::fopen(p.c_str(), "wb"); if (f) { std::fwrite(t.data(), 1, t.size(), f); std::fclose(f); } }
 struct Tap : sim::CpuTap {
   limo_fire_rl::RobotEnv* robot = nullptr;
   limo_fire_rl::Scan sc;
@@ -58,7 +110,9 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", ckpt;
   int steps = 1500, people = 0;
   uint64_t seed = 1;
-  bool use_fuel = true, rule = false;
+  bool use_fuel = true, rule = false, use_dec = false;
+  double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
+  std::string dec_input = "both", dec_url;
   fu::Opt fo;
   fo.time = fo.global = fo.vp = true;   // 고른 조합 (scripts/README "combine_run — 위층 fuel": 시간 + 전역 + 시점)
   fo.v_eff = 0.981f;
@@ -72,8 +126,13 @@ int main(int argc, char** argv) {
     else if (a == "--people") people = std::stoi(nx());
     else if (a == "--ckpt") ckpt = nx();
     else if (a == "--env") env_path = nx();
-    else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0") throw std::runtime_error("--upper 는 fuel · slot0"); use_fuel = u == "fuel"; }
+    else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0" && u != "decider") throw std::runtime_error("--upper 는 fuel · slot0 · decider"); use_fuel = u == "fuel"; use_dec = u == "decider"; }
     else if (a == "--lower") { const std::string l = nx(); if (l != "rl" && l != "rule") throw std::runtime_error("--lower 는 rl · rule"); rule = l == "rule"; }
+    else if (a == "--dec-period") dec_period = std::stod(nx());
+    else if (a == "--dec-latency") dec_lat = std::stod(nx());
+    else if (a == "--dec-input") dec_input = nx();
+    else if (a == "--dec-match") dec_match = std::stod(nx());
+    else if (a == "--dec-url") dec_url = nx();
     else if (a == "--fuel-v") fo.v_eff = std::stof(nx());
     else if (a == "--fuel-w") fo.w_eff = std::stof(nx());
     else if (a == "--fuel-t0") fo.t0 = std::stof(nx());
@@ -83,7 +142,7 @@ int main(int argc, char** argv) {
     else scenes.push_back(a);
   }
   if (scenes.empty() || (ckpt.empty() && !rule)) {
-    std::fprintf(stderr, "low_explore_check <장면.scene> … (--ckpt 아래층.bin | --lower rule) [--upper fuel|slot0] [--steps 1500] [--seed 1] [--people 0] [--fuel-*]\n");
+    std::fprintf(stderr, "low_explore_check <장면.scene> … (--ckpt 아래층.bin | --lower rule) [--upper fuel|slot0|decider] [--steps 1500] [--seed 1] [--people 0] [--fuel-*]\n");
     return 2;
   }
   try {
@@ -124,6 +183,24 @@ int main(int argc, char** argv) {
     lp.use_fuel = use_fuel;
     lp.rule = rule;
     lxc::Ctl cs(lp), cr(lp);
+    const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
+    lxd::Params dp;
+    dp.period_steps = std::max(1, (int)std::lround(dec_period / dt));
+    dp.input = dec::input_of(dec_input);
+    if (dec_match > 0.0) dp.match_r = (float)dec_match;
+    if (use_dec && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("--dec-input text · image · both");
+    lxd::Upper us(dp), ur(dp);
+    FakeModel ms, mr;
+    ms.lat = mr.lat = std::max(0, (int)std::lround(dec_lat / dt));
+    std::unique_ptr<limo_fire_rl::DeciderClient> real;
+    std::vector<lxd::Answer> real_log;
+    double real_ms = 0, real_max = 0;
+    if (use_dec && !dec_url.empty()) {
+      real = std::make_unique<limo_fire_rl::DeciderClient>(dec_url, 60000);
+      ms.real = real.get();
+      ms.log = mr.log = &real_log;
+    }
+    long d_body = 0, n_ans = 0, n_sent_all = 0, n_nomatch_all = 0, n_fb_all = 0;
     fu::Work ws, wr;
     Tap tap;
     tap.robot = &robot;
@@ -149,6 +226,8 @@ int main(int argc, char** argv) {
       robot.reset(e.x0, e.y0, e.th0, p0, e.noise.fov, &win);
       rw.gw = w.gw; rw.gh = w.gh; rw.ox = w.ox; rw.oy = w.oy;
       cs.restart(); cr.restart();
+      n_sent_all += us.n_sent(); n_nomatch_all += us.n_nomatch(); n_fb_all += us.n_fallback();
+      us.restart(); ur.restart();
       cs.set_geom(w.gw, hc.cfg.res); cr.set_geom(w.gw, hc.cfg.res);
       ++n_ep;
     };
@@ -159,8 +238,35 @@ int main(int argc, char** argv) {
     std::vector<int32_t> dn;
     for (int t = 0; t < steps; ++t) {
       cpu.get_state(st);
+      if (use_dec) {   // 판단 모델 위층 (걸음마다 — 보내기 · 받기 · 목표 잃으면 slot0 차례)
+        ms.now = mr.now = t;
+        cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur); cpu.get_obs(img, o1d);
+        const sim::World& w = worlds[(size_t)st[0].map];
+        const lxc::View vs{&hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
+        sim::LowCmd c1;
+        int why = 0;
+        const long a0 = us.n_ans();
+        if (us.step(vs, o1d.data() + mdp::obs::POLICY_1D, cs, ms, &c1, &why)) {
+          why_n[why] += 1;
+          cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
+          ++n_dec;
+          if (c1.target != prev_tgt) { ++n_sw; prev_tgt = c1.target; }
+        }
+        n_ans += us.n_ans() - a0;
+        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
+        sim::LowCmd c2;
+        if (ur.step(vr, robot.obs_1d() + mdp::obs::POLICY_1D, cr, mr, &c2)) robot.set_cmd(c2);
+        if (ms.sent.size() != mr.sent.size()) { ++d_body; if (first_bad < 0) first_bad = t; }
+        else if (!ms.sent.empty() && ms.sent.back() != mr.sent.back()) {
+          if (d_body == 0 && std::getenv("DEC_DUMP")) {
+            const sim::EnvState& A = st[0]; const sim::EnvState& B = robot.state();
+            std::fprintf(stderr, "kb sim %d %d %d %d rob %d %d %d %d | xy sim %.6f %.6f %.6f ex %.6f %.6f %.6f rob %.6f %.6f %.6f ex %.6f %.6f %.6f | win sim %d %d %.3f %.3f rob %d %d %.3f %.3f\n",
+                         A.kb_x0, A.kb_y0, A.kb_x1, A.kb_y1, B.kb_x0, B.kb_y0, B.kb_x1, B.kb_y1, A.x, A.y, A.th, A.ex, A.ey, A.eth, B.x, B.y, B.th, B.ex, B.ey, B.eth,
+                         worlds[(size_t)A.map].gw, worlds[(size_t)A.map].gh, worlds[(size_t)A.map].ox, worlds[(size_t)A.map].oy, rw.gw, rw.gh, rw.ox, rw.oy); write_text(std::string(std::getenv("DEC_DUMP")) + ".sim.json", ms.sent.back()); write_text(std::string(std::getenv("DEC_DUMP")) + ".robot.json", mr.sent.back()); }
+          ++d_body; if (first_bad < 0) first_bad = t; }
+      }
       // 위층 (시뮬 쪽: combine_run 과 같은 입력 — Env 에서 꺼낸 지도·지나간 길·깊이 층·후보)
-      if (cs.due(st[0])) {
+      if (!use_dec && cs.due(st[0])) {
         cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur);
         const sim::World& w = worlds[(size_t)st[0].map];
         const lxc::View vs{&hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
@@ -172,7 +278,7 @@ int main(int argc, char** argv) {
         if (c1.target != prev_tgt) { ++n_sw; prev_tgt = c1.target; }
       }
       // 위층 (실물 쪽: RobotEnv 자기 값)
-      if (cr.due(robot.state())) {
+      if (!use_dec && cr.due(robot.state())) {
         const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
         const sim::LowCmd c2 = cr.decide(vr, wr);
         robot.set_cmd(c2);
@@ -216,12 +322,18 @@ int main(int argc, char** argv) {
       cr.after_step(robot.state(), robot.low_rl(), robot.low_ep());
     }
     sim::set_cpu_tap(nullptr);
-    std::printf("위층 %s · 아래층 %s · ", use_fuel ? "fuel" : "slot0", rule ? "규칙 추종기" : "RL");
-    std::printf("관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
+    for (const auto& x : real_log) { real_ms += x.ms; real_max = std::max(real_max, x.ms); }
+    if (real) std::printf("진짜 판단 모델 %s: 답 %zu 개 · 평균 %.0f ms · 최대 %.0f ms (시뮬 시계에는 --dec-latency %.1f s 로)\n", dec_url.c_str(), real_log.size(),
+                          real_log.empty() ? 0.0 : real_ms / real_log.size(), real_max, dec_lat);
+    std::printf("위층 %s · 아래층 %s · ", use_dec ? "decider (가짜 응답기)" : use_fuel ? "fuel" : "slot0", rule ? "규칙 추종기" : "RL");
+    if (use_dec)
+      std::printf("판단 모델: 주기 %d 걸음 · 지연 %d 걸음 · 보냄 %ld · 답 적용 %ld · 후보 안 맞음 %ld · slot0 대신 %ld · 본문 다름 %ld | ", dp.period_steps, ms.lat, n_sent_all + us.n_sent(), n_ans,
+                  n_nomatch_all + us.n_nomatch(), n_fb_all + us.n_fallback(), d_body);
+    std::printf(use_dec ? "관측 %ld 번 · 판 %ld · 위층 결정 %ld (판단 모델 후보 %ld · slot0 차례 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n" : "관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
                 why_n[2], n_sw, cs.n_reach(), cs.n_stall());
     std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld (정책 아닌 걸음 %ld — 두 쪽 다 규칙 추종기)\n", d_dec, d_img,
                 d_1d, d_cmd, ng_steps);
-    const bool ok = d_dec == 0 && d_img == 0 && d_1d == 0 && d_cmd == 0;
+    const bool ok = d_dec == 0 && d_img == 0 && d_1d == 0 && d_cmd == 0 && d_body == 0;
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");
     return ok ? 0 : 1;
   } catch (const std::exception& ex) {

@@ -104,7 +104,7 @@ class Ctl {
     if (why) *why = w;
     return cmd_;
   }
-  // 위층 판단 모델 (upper decider — low_decider.h): 후보 want 를 고른 결정. want < 0 이거나 피하는 칸 · 빈 칸이면 slot0 차례(피하지 않는 첫 후보).
+  // 위층 판단 모델 (upper decider — low_decider.h): 후보 want 를 고른 결정. why: 0 판단 모델 후보 · 1 slot0 차례 · 2 목표 없음. want < 0 이거나 피하는 칸 · 빈 칸이면 slot0 차례(피하지 않는 첫 후보).
   // 목표 넘기기는 decide 의 slot0 가지 그대로 (combine_run.cpp:1127-1146 — 판단 모델 · slot0 위층이 같은 길)
   sim::LowCmd decide_slot(const View& v, int want, int* why = nullptr) {
     const sim::EnvState& s = *v.s;
@@ -124,7 +124,7 @@ class Ctl {
     }
     int tgt = pick >= 0 ? v.cand[pick] : -1;
     if (p_.stick && pick >= 0 && ((v.cand_cur >> pick) & 1u) && live(s)) tgt = cmd_.target;
-    int w = 1;
+    int w = want >= 0 && pick == want ? 0 : 1;   // 0 = 판단 모델이 고른 후보 · 1 = slot0 차례
     if (tgt >= 0) {
       if (tgt != cmd_.target || cmd_.follow != 2) sw_step_ = s.step;
       cmd_ = sim::LowCmd{tgt, 2};

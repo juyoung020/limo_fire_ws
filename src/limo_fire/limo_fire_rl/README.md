@@ -91,6 +91,7 @@ ros2 topic echo /explore_frontier/state
 | 확인 (이 PC, 2026-11-16) | 결과 |
 |---|---|
 | `train/explore/sim/tools/low_explore_check` — CPU 시뮬과 `RobotEnv` 가 각자 위층 결정, 시뮬 라이다 장·감각·깊이를 `RobotEnv` 에 넣고 걸음마다 비교 | bookstore · small-house, 씨앗 1~3, 사람 0 · 2, 800~2500 걸음: 위층 명령 · 아래층 관측(그림·1D) · 명령 · 판 끝 **비트 같음** (목표 없는 걸음 포함) |
+| `low_explore_check … --upper decider [--dec-latency 2.6] [--dec-period 3.0] [--dec-match 1.5] [--dec-url http://…]` — 판단 모델 위층(`scripts/low_decider.h`)을 가짜 응답기(본문 해시로 글자, 지연 뒤 걸음에 답)로 두 쪽이 같이; `--dec-url` 이면 진짜 llama-server 답을 지연 걸음 뒤에 (시뮬로 평가) | bookstore · small-house, 씨앗 1~3, 사람 0 · 2, 지연 0 · 2.6 · 7.5 s, 1200~2500 걸음: 요청 본문 · 위층 명령 · 아래층 관측 · 명령 · 판 끝 **비트 같음**. 답의 후보 칸 맞춤 반경 0.5 m 면 답의 40 ~ 55 % 를 버려 기본 1.5 m (버림 10 ~ 25 %) |
 | 녹화 `1104_M_cmd_mix` (깊이 정렬) 에 `explore_fuel_rl.launch.xml` dry run (`map_frame:=odom`, `use_sim_time:=true`) | 발행자에 `/cmd_vel` 없음. 켬 뒤 결정 141 · 통과 24. x86 한 코어: 걸음 7.3 · 관측 2.1 · 정책 7.7 · 위층 평균 12 ms (최대 22) |
 | 리모컨 (녹화 대신 손으로 낸 `/rc_state`) | 수동(1) → paused · 다시 오토(2) → 그대로 paused · `~/enable` → running · 안 옴 → paused · 안 오는데 `~/enable` → 거절 |
 

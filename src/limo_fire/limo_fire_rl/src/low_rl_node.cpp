@@ -100,6 +100,7 @@ class LowRlNode : public rclcpp::Node {
     dp.px = (int)declare_parameter<int>("decider_px", 384);
     dp.prompt = (int)declare_parameter<int>("decider_prompt", 1);
     dp.input = dec::input_of(dec_input);
+    dp.match_r = (float)declare_parameter<double>("decider_match_r", 1.5);
     if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "topic" && upper_ != "decider") throw std::runtime_error("upper 는 fuel · slot0 · topic · decider");
     if (upper_ == "decider" && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("decider_input 은 text · image · both (all 은 시뮬 장면 그림이라 실물에 없음)");
     if (lower_ != "rl" && lower_ != "rule") throw std::runtime_error("lower 는 rl · rule");
