@@ -100,6 +100,8 @@ int main(int argc, char** argv) {
   bool depth_stat = false;
   bool cand_on = false;   // --cand: 위층 결정 때마다 후보 생성(cand_view.h)과 옛 hier 후보 품질 (정답 없음 — 녹화)
   std::string cand_dump;
+  int stage_step = -1;
+  std::string stage_pre;
   int cand_every = 10;   // 깊이 카메라 층이 표시하는 점(띠 0.03~0.25 m 안)의 높이·거리 표 — 바닥이 장애물로 찍히는지
   long dh[6][8] = {};        // [거리 0.5 m 칸 0~3 m][높이 칸 띠 8]
   bool use_fuel = true;
@@ -131,6 +133,7 @@ int main(int argc, char** argv) {
       else if (a == "--cand") cand_on = true;
       else if (a == "--cand-dump") { cand_on = true; cand_dump = nx(); }
       else if (a == "--cand-every") cand_every = std::stoi(nx());
+      else if (a == "--cand-stages") { cand_on = true; stage_step = std::stoi(nx()); stage_pre = nx(); }   // 이 걸음 뒤 첫 결정의 단계별 그림 재료 (candq::dump_stages)
       else if (a == "--pgm") pgm = nx();
       else if (a == "--pgm-every") pgm_every = std::stoi(nx());
       else throw std::runtime_error("모르는 인자 " + a);
@@ -225,7 +228,10 @@ int main(int argc, char** argv) {
         dg = fu::Diag();
         if (cand_on) {
           const cand::In ci{&c, &wd, robot.lmap(), robot.trail(), robot.cam_layer(), &s, [&](int cell) { return ctl.avoided(cell, s.step); }, ctl.cmd().target};
+          const bool stage_now = stage_step >= 0 && s.step >= stage_step;
+          if (stage_now) { candq::dump_stages(stage_pre, ci, copt, cmem); stage_step = -1; }
           const cand::Out co_ = cand::build(ci, copt, cmem, cwork);
+          if (stage_now) candq::dump(stage_pre + "_map", ci, co_, robot.cand());
           ++n_cdec;
           c_ms += co_.ms; c_ms_max = std::max(c_ms_max, co_.ms);
           candq::eval(ci, copt, cwork, co_, robot.cand(), nullptr, s.map_closed != 0, qacc);

@@ -206,8 +206,8 @@ inline void eval(const cand::In& in, const cand::Opt& o, const cand::Work& w, co
       }
     }
     if (verbose && fi == 1 && best_cell >= 0)
-      std::printf("    [정답 최선] 칸 (%d,%d) 로봇에서 %.2f m · 참 %.2f m² · 참/시간 %.3f · 모름까지 %.2f m · 막힘까지 %.2f m\n", best_cell % gw, best_cell / gw,
-                  std::hypot(best_cell % gw + 0.5 - rxf, best_cell / gw + 0.5 - ryf) * res, truth(best_cell), best, W.dtu[best_cell] * res / 3.0, W.dto[best_cell] * res / 3.0);
+      std::printf("    [정답 최선] 칸 (%d,%d) 로봇에서 %.2f m · 참 %.2f m² · 참/시간 %.3f · 막힘까지 %.2f m\n", best_cell % gw, best_cell / gw,
+                  std::hypot(best_cell % gw + 0.5 - rxf, best_cell / gw + 0.5 - ryf) * res, truth(best_cell), best, W.dto[best_cell] * res / 3.0);
     for (int b = 0; b < 8; ++b) F.sectors += (sec >> b) & 1;
     if (std::getenv("CANDQ_TRACE") && gt && best > 0) std::printf("    결정 %ld %s 최선 비 %.3f 0번 %.3f (후보 %zu)\n", acc.dec, fi ? "새" : "옛", bc / best, s0 / best, cells.size());
     if (gt && best > 0 && !cells.empty()) { F.n_or += 1; F.best_ratio += std::min(1.0, bc / best); F.slot0_ratio += std::min(1.0, s0 / best); }
@@ -259,6 +259,74 @@ inline void dump(const std::string& pre, const cand::In& in, const cand::Out& ou
     }
     std::fclose(f);
   }
+}
+
+
+// 단계별 그림 재료 (README "후보 뽑기") — build 와 같은 단계 함수를 차례로 부르며 중간 결과를 TSV 로. mem 은 복사본을 줌 (build 와 같은 시점의 기억)
+//   frontier x y · cluster k x y · sample k x y tier why(0 통과 · 1 못 감·피함 · 2 로봇 곁 · 3 간격 · 4 안 보임) · best k x y score · rest k x y pocket
+//   id k id age kept · pick order k x y marg score · cover order x y   (y 는 그림 위가 0)
+inline void dump_stages(const std::string& pre, const cand::In& in, const cand::Opt& o, cand::Mem mem) {
+  cand::Work w;
+  cand::Out out;
+  w.fit(in.W->gw * in.W->gh);
+  cand::detail::Run R(in, o, mem, w, out);
+  FILE* f = std::fopen((pre + ".tsv").c_str(), "w");
+  if (!f) return;
+  const int gw = R.gw, gh = R.gh;
+  const auto P = [&](int idx) { return std::to_string(idx % gw) + "\t" + std::to_string(gh - 1 - idx / gw); };
+  std::fprintf(f, "robot\t%.3f\t%.3f\t%.4f\t%d\n", R.rxf, gh - R.ryf, R.th, gh);
+  if (!R.frontier()) { std::fclose(f); return; }
+  R.dist_maps();
+  for (int q = 0; q < R.nr0; ++q) { const int idx = R.fw.qa[q]; if (R.fw.flag[idx] & 2) std::fprintf(f, "frontier\t%s\n", P(idx).c_str()); }
+  const std::vector<fu::Node> nodes = R.clusters();
+  for (size_t k = 0; k < nodes.size(); ++k) for (int idx : nodes[k].cells) std::fprintf(f, "cluster\t%zu\t%s\n", k, P(idx).c_str());
+  R.robot_dist();
+  R.coarse_stats();
+  std::vector<cand::detail::Run::Live> live;
+  std::vector<uint8_t> used(mem.prev.size(), 0);
+  for (int k = 0; k < (int)nodes.size(); ++k) {
+    const fu::Node& nd = nodes[k];
+    // 3 · 4: 뽑은 칸마다 거른 까닭 (첫 간격 단계 — best_view 와 같은 칸 차례)
+    const double need = R.c.close_radius + o.margin;
+    const auto why = [&](int cell) {
+      if (cell < 0 || cell >= R.n || !R.pass(cell) || in.avoided(cell) || R.fw.dist[cell] < mdp::hier::kCandMinDist) return 1;
+      if (std::hypot(cell % gw + 0.5 - R.rxf, cell / gw + 0.5 - R.ryf) * R.res < R.dmin) return 2;
+      if (R.dto_m(cell) < need) return 3;
+      if (cell != nd.anc && !R.los(cell, nd.anc)) return 4;
+      return 0;
+    };
+    std::fprintf(f, "sample\t%d\t%s\t0\t%d\n", k, P(nd.anc).c_str(), why(nd.anc));
+    for (int ri = 0; ri < 3; ++ri)
+      for (int a = 0; a < o.ring_n; ++a) {
+        const double rr = o.ring_m[ri], ang = 2 * M_PI * (a + 0.5 * ri) / o.ring_n;
+        const int x = (int)std::floor(nd.cx + rr / R.res * std::cos(ang)), y = (int)std::floor(nd.cy + rr / R.res * std::sin(ang));
+        if (x >= 0 && y >= 0 && x < gw && y < gh) std::fprintf(f, "sample\t%d\t%s\t0\t%d\n", k, P(y * gw + x).c_str(), why(y * gw + x));
+      }
+    cand::detail::Run::Live L;
+    const bool pk = R.pocket(nd);
+    if (pk || !R.best_view(k, nd, L)) { std::fprintf(f, "rest\t%d\t%s\t%d\n", k, P(nd.anc).c_str(), (int)pk); continue; }
+    std::fprintf(f, "best\t%d\t%s\t%.4f\n", k, P(L.vp).c_str(), L.g / (L.t + o.t0));
+    R.match(nd, L, used);
+    std::fprintf(f, "id\t%d\t%d\t%d\t%d\t%s\n", k, L.id, L.age, L.kept, P(L.vp).c_str());
+    live.push_back(L);
+  }
+  const auto picks = R.select(live);
+  for (size_t i = 0; i < picks.size(); ++i) {
+    const auto& L = live[picks[i].i];
+    std::fprintf(f, "pick\t%zu\t%d\t%s\t%.3f\t%.4f\t%d\n", i, L.node, P(L.vp).c_str(), picks[i].m * R.area_k, picks[i].sc, L.id);
+  }
+  // 덮음: 고른 차례마다 그 시점 광선이 지난 모름 칸 (앞 후보가 덮은 칸은 앞 차례)
+  std::vector<int> owner((size_t)R.n, -1);
+  for (size_t i = 0; i < picks.size(); ++i) {
+    const int vp = live[picks[i].i].vp;
+    for (int a = 0; a < mdp::hier::kGainRays; a += R.step)
+      mdp::gain_ray_walk(R.mv, vp % gw, vp / gw, a, R.Rg, [&](int x, int y, int, uint8_t cl) {
+        if (cl != mdp::kUnk || owner[y * gw + x] >= 0) return;
+        owner[y * gw + x] = (int)i;
+        std::fprintf(f, "cover\t%zu\t%s\n", i, P(y * gw + x).c_str());
+      });
+  }
+  std::fclose(f);
 }
 
 }  // namespace candq

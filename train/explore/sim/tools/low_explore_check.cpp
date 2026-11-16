@@ -169,18 +169,14 @@ int main(int argc, char** argv) {
     else if (a == "--cand") cand_on = true;
     else if (a == "--cand-dump") { cand_on = true; cand_dump = nx(); }   // 결정 --cand-every 째마다 지도·후보 그림 재료 (cand_quality.h dump)
     else if (a == "--cand-every") cand_every = std::stoi(nx());
-    else if (a == "--cand-unk-depth") co.unk_depth_m = std::stof(nx());
-    else if (a == "--cand-sliver") co.sliver_m = std::stof(nx());
     else if (a == "--cand-gain-m") co.gain_m = std::stof(nx());
     else if (a == "--cand-vp-min") co.vp_min = std::stof(nx());
-    else if (a == "--cand-unk-clear") co.unk_clear = std::stof(nx());
-    else if (a == "--cand-path-unk") co.path_unk_m = std::stof(nx());
     else if (a == "--cand-margin") co.margin = std::stof(nx());
     else if (a == "--cand-coarse") co.coarse_m = std::stof(nx());
     else if (a == "--cand-commit") cand_commit = std::stoi(nx());
     else if (a == "--cand-keep") co.keep = std::stof(nx());
     else if (a == "--cand-known") co.known_frac = std::stof(nx());
-    else if (a == "--cand-path-skip") co.path_skip_m = std::stof(nx());   // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
+    // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
     else if (a == "--dec-cand") dec_cand = std::stoi(nx()) != 0;   // 판단 모델 후보: 1 = cand_view.h (기본) · 0 = hier 8 칸
     else if (a == "--dec-hint") dec_hint = std::stoi(nx()) != 0;
