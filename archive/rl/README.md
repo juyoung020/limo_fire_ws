@@ -34,7 +34,6 @@
 | `train/explore/mdp/tools/reward_probe.cu` | 보상 해킹 시험 |
 | `train/explore/sim/tools/rl_node_check.cpp` · `low_node_check.cpp` · `low_node_replay.cpp` · `contact_eval.cpp` | 실물 RL 노드 관측 == 시뮬 확인, 닿음 센서 일치도 |
 | `train/explore/ROADMAP.md` | 두 층 RL 계획 |
-| `train/aim/README.md` | 조준 강화학습 계획(시작 안 함) |
 | `src/limo_fire/limo_fire_rl/src/explore_rl_node.cpp` · `config/explore_rl.yaml` · `launch/explore_rl.launch.xml` | 위층 RL 실물 노드 (`/explore_rl`) |
 | `src/limo_fire/limo_fire_rl/README.md` | RL 을 빼기 전 패키지 README (explore_rl · 아래층 RL · 확인 표) |
 | `docs/assets/explore_rl_*.gif` | 위층 RL 정책 시뮬 영상 (README 에 있던 것) |
