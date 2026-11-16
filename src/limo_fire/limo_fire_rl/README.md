@@ -62,6 +62,7 @@ ros2 topic echo /explore_frontier/state
 | 결정 때 | 걸음 % 10 == 0 또는 다시 결정 | 544 |
 | 목표 | fuel (시간 + 전역 + 시점, v 0.981 · ω 3.232 · t0 0.10 — `config/low_rl.yaml`) | 629-645 · 1118-1123 |
 | fuel 이 못 냄 | 피하지 않는 첫 후보(slot0), 같은 덩어리·경로 있음이면 그대로(stick) | 546-555 · 1127-1143 |
+| `upper:=slot0` | fuel 을 안 부르고 늘 위 slot0 차례 (시뮬 `combine_run --upper slot0 --policy` — fuel 과 A/B 용, launch 인자 `upper`) | 546-555 · 1127-1146 |
 | 목표 없음 | 시뮬 규칙 추종기와 같은 제자리 회전 (`RobotEnv::low_act` → env.h `path_step_*`) | 1144-1146 |
 | 다시 결정 | 통과 · 경로 끝 밖 · 경로 없음 · 막힘 신호 → fuel 기억 비움(경로 끝 밖·없음·막힘은 그 칸 0.5 m 를 10 s 피함) | 1326-1335 · 1351-1371 · 345-359 |
 | 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `~/done` true | 1270 (`finish_step`) |

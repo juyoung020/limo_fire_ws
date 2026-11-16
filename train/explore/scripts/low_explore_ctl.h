@@ -24,6 +24,7 @@ struct Params {
   float bl_r = 0.5f;        // 피하는 칸 반경 (m) — EnvCfg::rec_bl_r (0 이면 0.5)
   int bl_steps = 100;       // 피하는 시간 (걸음) — EnvCfg::rec_bl_steps (0 이면 10 s)
   bool avoid = true, redecide = true, stick = true;   // combine_run 기본 (--no-avoid · --no-redecide · --no-stick 로 끔)
+  bool use_fuel = true;     // false = combine_run --upper slot0 (fuel 을 안 부르고 늘 아래 slot0 차례 — 피하지 않는 첫 후보 · stick)
   fu::Opt fuel;             // --fuel-* (부르는 쪽이 채움)
   static Params from_cfg(const sim::EnvCfg& c) {
     Params p;
@@ -54,7 +55,7 @@ class Ctl {
   }
   // 이번 걸음에 결정하나 (combine_run.cpp:544)
   bool due(const sim::EnvState& s) const { return s.step % p_.decide_steps == 0 || redo_; }
-  // 결정 → 아래층 명령 (combine_run.cpp:546-555 · 629-645 · 1086-1146). why: 0 fuel · 1 slot0 대신 · 2 목표 없음
+  // 결정 → 아래층 명령 (combine_run.cpp:546-555 · 629-645 · 1086-1146). why: 0 fuel · 1 slot0 (fuel 대신 또는 use_fuel 끔) · 2 목표 없음
   sim::LowCmd decide(const View& v, fu::Work& work, int* why = nullptr) {
     const sim::EnvState& s = *v.s;
     const int K = mdp::hier::K;
@@ -64,7 +65,7 @@ class Ctl {
       if (cell >= 0 && !avoided(cell, s.step)) pick = j;
     }
     const fu::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, v.cand, [this, &s](int cell) { return avoided(cell, s.step); }};
-    const int tcell = fu::decide(in, p_.fuel, fmem_, work);
+    const int tcell = p_.use_fuel ? fu::decide(in, p_.fuel, fmem_, work) : -1;
     redo_ = false;
     last_dec_ = s.step;
     ++n_dec_;

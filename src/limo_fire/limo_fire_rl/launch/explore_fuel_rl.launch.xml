@@ -1,5 +1,5 @@
 <!-- 합친 탐사 실물 (위층 fuel + 아래층 순수 RL — limo_fire_rl/README "합친 탐사 low_rl"). 먼저 robot.launch.xml (센서·섀시·EKF) 를 켜 둔다.
-     ros2 launch limo_fire_rl explore_fuel_rl.launch.xml [checkpoint:=~/ckpt/low_w3_36000.bin] [dry_run:=true|false] [stack:=true] [rviz:=true]
+     ros2 launch limo_fire_rl explore_fuel_rl.launch.xml [checkpoint:=~/ckpt/low_w3_36000.bin] [dry_run:=true|false] [stack:=true] [rviz:=true] [upper:=fuel|slot0]
      stack:=true 면 Cartographer(mapping.launch.xml — 지도 TF map → base_link)를 같이 띄운다. Nav2 는 안 쓴다 (아래층 RL 이 바로 /cmd_vel).
      늘 꺼진 채 뜬다 → RViz 탐사 패널 "fuel + 아래층 RL (/low_rl)" 또는 ros2 service call /low_rl/enable std_srvs/srv/SetBool "{data: true}" (리모컨 오토일 때만 켜짐) -->
 <launch>
@@ -10,6 +10,7 @@
   <arg name="map_frame" default="map"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="record" default="" description="입력·관측·명령 녹화 파일 (비우면 안 씀)"/>
+  <arg name="upper" default="fuel" description="위층: fuel · slot0 (피하지 않는 가장 가까운 후보 — A/B 용)"/>
 
   <group if="$(var stack)">
     <include file="$(find-pkg-share limo_fire_bringup)/launch/mapping.launch.xml">
@@ -30,5 +31,6 @@
     <arg name="map_frame" value="$(var map_frame)"/>
     <arg name="use_sim_time" value="$(var use_sim_time)"/>
     <arg name="record" value="$(var record)"/>
+    <arg name="upper" value="$(var upper)"/>
   </include>
 </launch>

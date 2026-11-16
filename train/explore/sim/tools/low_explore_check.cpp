@@ -2,7 +2,8 @@
 // 시뮬(환경 하나, CPU 참조판)과 RobotEnv(합친 탐사 모드)가 각자 자기 상태로 위층 결정(scripts/low_explore_ctl.h — combine_run 의 환경 하나 몫)을 하고,
 // 걸음마다 시뮬 라이다 장·감각·깊이를 RobotEnv 에 넣어(rl_node_check 와 같은 탭) 두 쪽의 위층 명령(목표 칸·follow)·아래층 관측(그림·1D)·명령(v, ω)을 비트 비교한다.
 // 아래층 행동은 실물 CPU 정책(network/policy_cpu.h LowPolicy)이 RobotEnv 관측으로 낸 것을 두 쪽에 같이 준다. 목표 없는 걸음은 두 쪽 다 규칙 추종기(제자리 회전).
-//   low_explore_check <장면.scene> … --ckpt 아래층.bin [--steps 1500] [--seed 1] [--people 0] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
+//   low_explore_check <장면.scene> … --ckpt 아래층.bin [--steps 1500] [--seed 1] [--people 0] [--upper fuel|slot0] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
+//   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 실물 노드 upper:=slot0)
 // 지도 자세 오차·관측 지연은 끈다 (rl_node_check 와 같은 까닭). 판이 끝나면 둘 다 새 판 (위층 기억도 비움). 관측 설정은 체크포인트 꼬리(mdp/ckpt_cfg.h)
 #include <cmath>
 #include <cstdio>
@@ -55,6 +56,7 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", ckpt;
   int steps = 1500, people = 0;
   uint64_t seed = 1;
+  bool use_fuel = true;
   fu::Opt fo;
   fo.time = fo.global = fo.vp = true;   // 고른 조합 (scripts/README "combine_run — 위층 fuel": 시간 + 전역 + 시점)
   fo.v_eff = 0.981f;
@@ -68,6 +70,7 @@ int main(int argc, char** argv) {
     else if (a == "--people") people = std::stoi(nx());
     else if (a == "--ckpt") ckpt = nx();
     else if (a == "--env") env_path = nx();
+    else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0") throw std::runtime_error("--upper 는 fuel · slot0"); use_fuel = u == "fuel"; }
     else if (a == "--fuel-v") fo.v_eff = std::stof(nx());
     else if (a == "--fuel-w") fo.w_eff = std::stof(nx());
     else if (a == "--fuel-t0") fo.t0 = std::stof(nx());
@@ -111,6 +114,7 @@ int main(int argc, char** argv) {
     const int NI = robot.low_img_n(), N1 = robot.low_1d_n(), AW = mdp::act::DIM, K = mdp::hier::K;
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
+    lp.use_fuel = use_fuel;
     lxc::Ctl cs(lp), cr(lp);
     fu::Work ws, wr;
     Tap tap;
@@ -202,6 +206,7 @@ int main(int argc, char** argv) {
       cr.after_step(robot.state(), robot.low_rl(), robot.low_ep());
     }
     sim::set_cpu_tap(nullptr);
+    std::printf("위층 %s · ", use_fuel ? "fuel" : "slot0");
     std::printf("관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
                 why_n[2], n_sw, cs.n_reach(), cs.n_stall());
     std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld (목표 없음 걸음 %ld — 두 쪽 다 규칙 추종기)\n", d_dec, d_img,

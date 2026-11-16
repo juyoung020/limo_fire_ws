@@ -86,7 +86,7 @@ class LowRlNode : public rclcpp::Node {
     fo.v_eff = (float)declare_parameter<double>("fuel_v", 0.981);
     fo.w_eff = (float)declare_parameter<double>("fuel_w", 3.232);
     fo.t0 = (float)declare_parameter<double>("fuel_t0", 0.10);
-    if (upper_ != "fuel" && upper_ != "topic") throw std::runtime_error("upper 는 fuel · topic");
+    if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "topic") throw std::runtime_error("upper 는 fuel · slot0 · topic");
     if (ckpt_.empty()) throw std::runtime_error("checkpoint 파라미터 (아래층 체크포인트 .bin) 가 비었음");
     {
       std::string log;
@@ -104,7 +104,7 @@ class LowRlNode : public rclcpp::Node {
       hc_.cfg.con_mask &= ~sim::kConStall;
       RCLCPP_WARN(get_logger(), "dry run: 닿음 신호에서 멈춤(명령 대비 바퀴 정지)을 뺌 — 명령이 실제로 안 나가서");
     }
-    env_ = std::make_unique<RobotEnv>(hc_, true, upper_ == "fuel");
+    env_ = std::make_unique<RobotEnv>(hc_, true, ctl_upper());
     pol_.load(ckpt_);
     if (pol_.n1d() != env_->low_1d_n())
       throw std::runtime_error("체크포인트 1D " + std::to_string(pol_.n1d()) + " 칸 ≠ 관측 설정 " + std::to_string(env_->low_1d_n()) + " 칸");
@@ -113,6 +113,7 @@ class LowRlNode : public rclcpp::Node {
     if (!(max_speed_ > 0.0)) max_speed_ = c.act_v_fwd;   // 기본 = 학습 한도 (자르지 않음)
     lp_ = lxc::Params::from_cfg(c);
     lp_.fuel = fo;
+    lp_.use_fuel = upper_ == "fuel";   // slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick)
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
     RCLCPP_INFO(get_logger(),
                 "아래층 정책 %s (반복 %d, GRU %d, 1D %d) · 위층 %s (fuel 시간 %d 전역 %d 시점 %d v %.3f ω %.3f t0 %.2f) · 결정 %d 걸음 · 피하기 %.2f m %.0f s · 닿음 마스크 %d "
@@ -157,6 +158,7 @@ class LowRlNode : public rclcpp::Node {
 
  private:
   double dt() const { return (double)env_->cfg().substeps * env_->cfg().dt; }
+  bool ctl_upper() const { return upper_ == "fuel" || upper_ == "slot0"; }   // 위층을 low_explore_ctl.h Ctl 이 정함 (fuel · slot0)
 
   // ---- 상태 (RViz 탐사 패널: ~/state running 이면 켜짐, ~/done, ~/status)
   void set_state(const std::string& st, const std::string& why) {
@@ -331,7 +333,7 @@ class LowRlNode : public rclcpp::Node {
         pub_done_->publish(d);
         return;
       }
-      if (upper_ == "fuel") ctl_->after_step(e, env_->low_rl(), env_->low_ep());
+      if (ctl_upper()) ctl_->after_step(e, env_->low_rl(), env_->low_ep());
     }
     const double step_ms = std::chrono::duration<double, std::milli>(clk::now() - t0).count();
     // 깊이 (센서 입력)
@@ -347,7 +349,7 @@ class LowRlNode : public rclcpp::Node {
     // 위층
     const auto t1 = clk::now();
     double dec_ms = -1.0;
-    if (upper_ == "fuel") {
+    if (ctl_upper()) {
       if (running() && ctl_->due(env_->state())) {
         const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur()};
         int why = 0;

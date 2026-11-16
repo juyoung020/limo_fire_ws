@@ -5,7 +5,7 @@ low_rl:
     checkpoint: ""            # 아래층 체크포인트 .bin (launch 인자 checkpoint 로)
     dry_run: true             # true: /cmd_vel 발행자를 안 만들고 명령을 ~/cmd_debug 에만. 실제 주행은 false (README 점검표 뒤)
     enabled: false            # 늘 꺼진 채 뜸 → ~/enable true (RViz 탐사 패널 "/low_rl") — 리모컨 오토일 때만 켜짐
-    upper: fuel               # fuel: 로봇 지도에서 fuel 이 목표 (combine_run --upper fuel) · topic: ~/goal (시험용)
+    upper: fuel               # fuel: 로봇 지도에서 fuel 이 목표 (combine_run --upper fuel) · slot0: 피하지 않는 첫 후보 + stick (combine_run --upper slot0) · topic: ~/goal (시험용)
     map_frame: map
     base_frame: base_link
     scan_topic: /scan
