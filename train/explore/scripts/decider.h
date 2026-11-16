@@ -78,6 +78,8 @@ struct FinishInfo {
 };
 // fin 을 주면 (choice 방식의 끝 선언) 같은 요청에 score 질문 하나(answers.left — "남은 탐사가 얼마나 되나")를 더한다. choice 질문은 후보만(FINISH 선택지 없음), 후보가 2 개보다 적으면 choice 질문은 뺌.
 // 상태 글에 exploration_status 가 붙고 임무 문장은 fin->cfg->mission
+// 입력 all · fuel 후보의 후보 표 꼴 (combine_run --decider-compact): 0 = 후보마다 JSON 객체(기본), 1 = 압축 표(열 이름 한 줄 + 후보마다 값 한 줄 — 토큰 약 1/3), 2 = 1 에서 extra 열(fuel 이 고른 후보는 0) 뺌
+void set_compact(int m);
 std::string build_body_all(int mode, int prompt, const std::vector<Cand>& cand, const std::vector<uint8_t>& cam_png, const std::vector<uint8_t>& map_png, bool v2, int n_ask, const FinishInfo* fin = nullptr);
 
 // 점수 방식 (--decider-mode score) 설정 — scripts/config/decider.yaml 에서 읽음 (글·단계 수·값을 코드에 박지 않음)

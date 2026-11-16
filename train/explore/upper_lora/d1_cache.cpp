@@ -7,6 +7,8 @@
 //   d1_cache -m d1-3B-Q8_0.gguf --mmproj mmproj.gguf --out cache.bin  req1.json [req2.json …]   (또는 --list 파일)
 //   --list 파일은 줄마다 "<요청 경로> [정답 선택지 번호]" (번호 없으면 −1)
 //   출력 (작은 끝, 표본마다): u32 n_opt · u32 n_tok(label 토큰 수) · i32 target · u32 group[n_opt] · i32 tok[n_tok] · f32 logit[n_tok] (llama 가 낸 값) · f32 h[5][2048]
+//   --full-from L (예: 27): 학습을 L 층부터 할 때 — L 층 입력 l_out-(L−1) 을 시퀀스 전체로 <out>.seq 에 따로 (표본마다 u32 T · f16 h[T][2048], 같은 차례).
+//     자리(position)는 0 … T−1 이라고 봄 (그림 조각도 1 차원 자리 — 아니면 실패로 셈)
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -30,9 +32,21 @@ struct Cap {
   std::vector<float> last;   // 마지막 kT 행 (구르는 고리)
   int seen = 0;
   std::string want = "l_out-27";
+  std::string want_full;            // --full-from: 이 이름의 행을 전부
+  std::vector<ggml_fp16_t> full;
 };
 bool cb_eval(struct ggml_tensor* t, bool ask, void* ud) {
   Cap* c = (Cap*)ud;
+  if (!c->want_full.empty() && std::strcmp(t->name, c->want_full.c_str()) == 0) {
+    if (ask) return true;
+    const int ne0 = (int)t->ne[0], ne1 = (int)t->ne[1];
+    std::vector<float> buf((size_t)ne0 * ne1);
+    ggml_backend_tensor_get(t, buf.data(), 0, buf.size() * sizeof(float));
+    const size_t o = c->full.size();
+    c->full.resize(o + buf.size());
+    for (size_t k = 0; k < buf.size(); ++k) c->full[o + k] = ggml_fp32_to_fp16(buf[k]);
+    return true;
+  }
   if (std::strcmp(t->name, c->want.c_str()) != 0) return ask ? false : true;
   if (ask) return true;
   const int ne0 = (int)t->ne[0], ne1 = (int)t->ne[1];
@@ -54,7 +68,7 @@ int main(int argc, char** argv) {
   std::string model, mmproj, out, list, lora;   // --lora: LoRA GGUF 를 켜고 돌림 (lora_export 결과 확인용 — 은닉은 28 층 입력이라 LoRA 와 무관, 로짓만 달라짐)
   std::vector<std::string> reqs;
   std::vector<int> tgt;
-  int ngl = 99, nctx = 8192;
+  int ngl = 99, nctx = 8192, full_from = -1;
   for (int i = 1; i < argc; ++i) {
     const std::string k = argv[i];
     if (k == "-m") model = argv[++i];
@@ -64,6 +78,7 @@ int main(int argc, char** argv) {
     else if (k == "--lora") lora = argv[++i];
     else if (k == "-ngl") ngl = std::stoi(argv[++i]);
     else if (k == "-c") nctx = std::stoi(argv[++i]);
+    else if (k == "--full-from") full_from = std::stoi(argv[++i]);
     else reqs.push_back(k);
   }
   tgt.assign(reqs.size(), -1);
@@ -84,6 +99,7 @@ int main(int argc, char** argv) {
   llama_model* m = llama_model_load_from_file(model.c_str(), mp);
   if (!m) { std::fprintf(stderr, "모델을 못 엶\n"); return 1; }
   Cap cap;
+  if (full_from > 0) cap.want_full = "l_out-" + std::to_string(full_from - 1);
   llama_context_params cp = llama_context_default_params();
   cp.n_ctx = nctx;
   cp.n_batch = std::min(nctx, 2048);
@@ -106,6 +122,7 @@ int main(int argc, char** argv) {
   dc.init(m);
   const mtmd_helper_init_opt iopt = mtmd_helper_init_opt_default();
   std::FILE* fo = std::fopen(out.c_str(), "wb");
+  std::FILE* fs = full_from > 0 ? std::fopen((out + ".seq").c_str(), "wb") : nullptr;
   const int n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(m));
   long n_ok = 0;
   for (size_t ri = 0; ri < reqs.size(); ++ri) {
@@ -122,6 +139,7 @@ int main(int argc, char** argv) {
       dc.fill_task(state, qs, *q, 0, files, mctx, iopt, task);
       llama_memory_clear(llama_get_memory(ctx), true);
       cap.seen = 0;
+      cap.full.clear();
       llama_pos n_past = 0;
       const server_tokens& toks = task.tokens;
       size_t idx = 0;
@@ -160,6 +178,7 @@ int main(int argc, char** argv) {
       const auto& labels = task.decision.labels;
       const auto& groups = task.decision.label_groups;
       if (cap.seen < kT || labels.empty()) throw std::runtime_error("은닉·라벨 없음");
+      if (fs && cap.full.size() != (size_t)n_past * cap.n_embd) throw std::runtime_error("전체 은닉 행 수가 자리 수와 다름");
       const uint32_t no = (uint32_t)groups.size(), nt = (uint32_t)labels.size();
       const int32_t tg = tgt[ri];
       std::fwrite(&no, 4, 1, fo); std::fwrite(&nt, 4, 1, fo); std::fwrite(&tg, 4, 1, fo);
@@ -167,6 +186,7 @@ int main(int argc, char** argv) {
       for (llama_token t : labels) { const int32_t v = t; std::fwrite(&v, 4, 1, fo); }
       for (llama_token t : labels) { const float v = (t >= 0 && t < n_vocab) ? lg[t] : 0.f; std::fwrite(&v, 4, 1, fo); }
       std::fwrite(cap.last.data(), 4, cap.last.size(), fo);
+      if (fs) { const uint32_t T = (uint32_t)n_past; std::fwrite(&T, 4, 1, fs); std::fwrite(cap.full.data(), 2, cap.full.size(), fs); }
       ++n_ok;
       std::fprintf(stderr, "%s: 선택지 %u · 라벨 토큰 %u · 프롬프트 %d\n", rp.c_str(), no, nt, (int)n_past);
     } catch (const std::exception& e) {
@@ -174,6 +194,7 @@ int main(int argc, char** argv) {
     }
   }
   std::fclose(fo);
+  if (fs) std::fclose(fs);
   std::fprintf(stderr, "표본 %ld / %zu\n", n_ok, reqs.size());
   mtmd_free(mctx);
   llama_free(ctx);

@@ -354,6 +354,56 @@ const char* kRichGuide =
 const char* kLowNote =
     "The map is made by a flat 2D laser scanner 0.11 m above the floor, so obstacles lower than that (boxes, sills, steps) do NOT appear on the map. The robot cannot drive over "
     "anything taller than 3 cm. Such low obstacles are visible only in the camera image, so a way that looks free on the map can in fact be blocked.";
+int g_compact = 0;   // set_compact: 0 = 후보마다 JSON 객체(기본), 1 = 압축 표, 2 = 압축 표에서 extra 열 뺌
+// 압축 표 (fuel 후보 전용): 열 이름 한 줄 + 후보마다 값 한 줄. 값은 cand_json 과 같은 반올림 · 같은 숫자 글(json dump), 참/거짓은 1/0
+struct Col { const char* name; const char* key; const char* what; };
+const Col kCols[] = {
+    {"t", "travel_time_s", "estimated driving time there in s, including turning"},
+    {"dist", "path_distance_m", "path length in m"},
+    {"bear", "bearing_deg_left_positive", "bearing in degrees, left positive"},
+    {"width", "frontier_width_m", "frontier width in m"},
+    {"new", "expected_new_area_ratio", "share of the area around it (8 m disk) still unmapped and visible from it"},
+    {"rate", "new_area_per_second", "new divided by t"},
+    {"extra", "extra_total_time_if_chosen_first_s", "how much longer in s a full tour over all frontiers becomes if this one is visited first (0 for the best first stop)"},
+    {"depth", "open_depth_beyond_m", "how far free or unknown space continues beyond the opening in m (short = closet or corner, long = room or corridor)"},
+    {"same", "same_room_as_robot", "1 if in the robot's room"},
+    {"roomleft", "other_frontiers_in_its_room", "other candidates in the same room"},
+    {"gap", "narrowest_gap_on_way_m", "smallest distance in m from the way to a mapped obstacle"},
+    {"clutter", "clutter_on_way", "share of mapped obstacle cells near the way"},
+    {"ppl", "people_near_way", "tracked people within 1 m of the way"},
+    {"cur", "is_current_target", "1 if it is the current target"},
+    {"cam", "marked_in_camera_image", "1 if marked in the camera image"},
+    {"tried", "times_tried_as_goal", "times tried as goal"},
+    {"aband", "times_abandoned_no_progress_or_path_lost", "times abandoned (no progress or path lost)"},
+};
+json cand_json(const Cand& c, bool v2);
+void compact_table(const std::vector<Cand>& cand, bool v2, json& st) {
+  std::vector<json> O;
+  for (const Cand& c : cand) O.push_back(cand_json(c, v2));
+  std::string leg = "Candidates are rows of a comma-separated table; the first row names the columns: id = letter";
+  std::string hdr = "id", rows;
+  std::vector<const Col*> use;
+  for (const Col& k : kCols) {
+    if (g_compact == 2 && std::string(k.name) == "extra") continue;
+    bool any = false;
+    for (const json& o : O) any = any || o.contains(k.key);
+    if (!any) continue;
+    use.push_back(&k);
+    leg += std::string("; ") + k.name + " = " + k.what;
+    hdr += std::string(",") + k.name;
+  }
+  for (const json& o : O) {
+    rows += "\n" + o["id"].get<std::string>();
+    for (const Col* k : use) {
+      rows += ",";
+      if (!o.contains(k->key)) continue;
+      const json& v = o[k->key];
+      rows += v.is_boolean() ? (v.get<bool>() ? "1" : "0") : v.dump();
+    }
+  }
+  st["candidate_columns"] = leg + ".";
+  st["candidates"] = hdr + rows;
+}
 json cand_json(const Cand& c, bool v2) {
   json o;
   o["id"] = std::string(1, c.key);
@@ -388,6 +438,8 @@ json cand_json(const Cand& c, bool v2) {
 }
 }  // namespace
 
+void set_compact(int m) { g_compact = m; }
+
 // 프롬프트 판 (입력 all):
 //   choice 1 : 과제 + 그림 설명 둘 + 후보 표(JSON) → "어느 후보로?" (prompt 3 꼴 그대로에 카메라 그림만 더함)
 //   choice 2 : 1 + 낮은 장애물 설명(kLowNote) + "카메라에 보이는 장애물로 길이 막힌 후보는 고르지 마라"
@@ -401,9 +453,12 @@ std::string build_body_all(int mode, int prompt, const std::vector<Cand>& cand, 
   st["camera_image"] = kCamLegend;
   st["map_image"] = kMapLegend2;
   if (mode == kPrune || prompt == 2) st["warning"] = kLowNote;
-  if (!cand.empty() && cand[0].rich) st["candidate_fields"] = kRichGuide;
-  st["candidates"] = json::array();
-  for (const Cand& c : cand) st["candidates"].push_back(cand_json(c, v2));
+  if (g_compact && !cand.empty() && cand[0].rich) compact_table(cand, v2, st);
+  else {
+    if (!cand.empty() && cand[0].rich) st["candidate_fields"] = kRichGuide;
+    st["candidates"] = json::array();
+    for (const Cand& c : cand) st["candidates"].push_back(cand_json(c, v2));
+  }
   if (fin) {
     json es;
     es["candidate_frontiers_now"] = fin->n_valid;

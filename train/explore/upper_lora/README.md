@@ -17,6 +17,7 @@ d1-3B 는 lfm2(층 30 개)이고 28·29 층은 커널 3 의 인과 shortconv 층
 | `head_check` | CPU 참조(`d1_ref.h`, double)로 캐시에서 다시 계산한 로짓이 llama.cpp 로짓과 같은지 |
 | `lora_train` | GPU(f32, cuBLAS + 손으로 쓴 역전파 커널) LoRA 학습. `--gradcheck` 은 CPU 참조의 유한 차분과 해석 기울기를 견줌 |
 | `lora_train --pred p.txt` | 끝난 어댑터로 검증 표본마다 `정답 n p_0 … p_{n−1}` 한 줄 — 차례 두 가지 확률 평균 · 정보 뺀 묶음과의 비교용 (`--epochs 0 --init <어댑터>` 면 평가만) |
+| `d1_cache --full-from 27` · `lora_train --attn` | 27 층(마지막 attention)부터 학습: 캐시 옆 `<캐시>.seq` 에 l_out-26 시퀀스 전체(f16), 27 층 q · k · v · o · FFN 에도 LoRA (`--mats27`) — 확인: 27 층 출력이 llama.cpp 28 층 입력과 최대 0.003 차, 기울기 검사 34 칸 최대 1.0e-4, 27 층 어댑터 왕복(lora_export → llama.cpp --lora) 로짓 최대 0.015 차 · 고른 것 4/4 같음 |
 | `lora_export` | 어댑터 → llama.cpp LoRA GGUF (`llama-server --lora`, 텐서 `blk.N.….weight.lora_a/b`) |
 
 확인한 것 (2026-11-15): `head_check` — 받은 요청 4 개에서 다시 계산한 로짓과 llama.cpp 로짓 차 최대 0.023(로짓 크기 14~18, Q8_0 활성 양자화 몫), 고른 것 4/4 같음.

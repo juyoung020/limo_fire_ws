@@ -6,7 +6,7 @@
 
 #include "ggml.h"
 #include "gguf.h"
-#include "d1_ref.h"
+#include "d1_attn.h"
 
 int main(int argc, char** argv) {
   if (argc < 3) { std::fprintf(stderr, "lora_export adapter.bin out.gguf\n"); return 2; }
@@ -38,6 +38,26 @@ int main(int argc, char** argv) {
       gguf_add_tensor(g, B);
       ++n;
     }
+  int tag = 0;   // 27 층 몫 (lora_train --attn)
+  if (std::fread(&tag, 4, 1, f) == 1) {
+    if (tag != 27) { std::fprintf(stderr, "모르는 꼬리표 %d\n", tag); return 1; }
+    const char* base27[d1::kAMats] = {"attn_q", "attn_k", "attn_v", "attn_output", "ffn_gate", "ffn_up", "ffn_down"};
+    for (int m = 0; m < d1::kAMats; ++m) {
+      int on = 0;
+      if (std::fread(&on, 4, 1, f) != 1) { std::fprintf(stderr, "어댑터가 짧음\n"); return 1; }
+      if (!on) continue;
+      const int in = d1::amat_in(m), out = d1::amat_out(m);
+      ggml_tensor* A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, in, r);
+      ggml_tensor* B = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, r, out);
+      if (std::fread(A->data, 4, (size_t)in * r, f) != (size_t)in * r || std::fread(B->data, 4, (size_t)out * r, f) != (size_t)out * r) { std::fprintf(stderr, "어댑터가 짧음\n"); return 1; }
+      const std::string nm = std::string("blk.27.") + base27[m] + ".weight";
+      ggml_set_name(A, (nm + ".lora_a").c_str());
+      ggml_set_name(B, (nm + ".lora_b").c_str());
+      gguf_add_tensor(g, A);
+      gguf_add_tensor(g, B);
+      ++n;
+    }
+  }
   std::fclose(f);
   if (!gguf_write_to_file(g, argv[2], false)) { std::fprintf(stderr, "못 씀\n"); return 1; }
   std::printf("%s: LoRA %d 쌍 · r %d · α %.1f\n", argv[2], n, r, alpha);
