@@ -36,6 +36,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <rviz_2d_overlay_msgs/msg/overlay_text.hpp>
 
 #include "limo_fire_rl/decider_client.h"
 #include "limo_fire_rl/robot_env.h"
@@ -171,6 +172,7 @@ class LowRlNode : public rclcpp::Node {
     pub_done_ = create_publisher<std_msgs::msg::Bool>("~/done", rclcpp::QoS(1).transient_local());
     pub_goal_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/goal_marker", 10);
     pub_cand_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/candidates", 10);
+    pub_cand_txt_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>("~/candidates_text", rclcpp::QoS(1).transient_local());
     srv_enable_ = create_service<std_srvs::srv::SetBool>("~/enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
     watchdog_ = create_wall_timer(std::chrono::milliseconds(50), [this] { check_inputs(); });
@@ -490,14 +492,28 @@ class LowRlNode : public rclcpp::Node {
       sp.scale.x = sp.scale.y = sp.scale.z = 0.22;
       color(sp, r, g, b, 0.9f);
       ma.markers.push_back(sp);
-      auto tx = base("cand_text", (int)i, visualization_msgs::msg::Marker::TEXT_VIEW_FACING);
-      tx.pose.position = pt(c.vp);
-      tx.pose.position.z = 0.35;
-      tx.scale.z = 0.18;
+      const bool asked = upper_ == "decider" && dec_up_ && dec_up_->last_pick_id() == c.id;   // 판단 모델의 마지막 답이 고른 후보
       char buf[96];
-      std::snprintf(buf, sizeof buf, "%c #%d %.1fm2/%.1fs%s", 'A' + (int)i, c.id, c.gain_m2, c.t_s, c.aborts > 0 ? " !" : "");
+      std::snprintf(buf, sizeof buf, "%c#%d:%.0fm2/%.0fs%s%s", 'A' + (int)i, c.id, c.gain_m2, c.t_s, c.aborts > 0 ? "!" : "", asked ? "<" : "");   // RViz 글은 빈칸이 넓어 빈칸 없이
+      const double tsz = 0.30;   // 글 높이 (m) — 지도 위에서 읽히게
+      const geometry_msgs::msg::Point at = pt(c.vp);
+      auto bg = base("cand_text_bg", (int)i, visualization_msgs::msg::Marker::CUBE);   // 글 밑 어두운 판 (TEXT 는 배경이 없음)
+      bg.pose.position = at;
+      bg.pose.position.x += 0.0;
+      bg.pose.position.y += 0.30;
+      bg.pose.position.z = 0.30;
+      bg.scale.x = 0.55 * tsz * (double)std::strlen(buf) + 0.1;
+      bg.scale.y = 1.25 * tsz;
+      bg.scale.z = 0.01;
+      color(bg, 0.f, 0.f, 0.f, 0.65f);
+      ma.markers.push_back(bg);
+      auto tx = base("cand_text", (int)i, visualization_msgs::msg::Marker::TEXT_VIEW_FACING);
+      tx.pose.position = at;
+      tx.pose.position.y += 0.30;
+      tx.pose.position.z = 0.35;
+      tx.scale.z = tsz;
       tx.text = buf;
-      color(tx, r, g, b, 1.0f);
+      color(tx, std::min(1.f, r + 0.4f), std::min(1.f, g + 0.3f), std::min(1.f, b + 0.4f), 1.0f);   // 어두운 판 위 밝은 색
       ma.markers.push_back(tx);
       auto ln = base("cand_link", (int)i, visualization_msgs::msg::Marker::LINE_LIST);
       ln.points.push_back(pt(c.vp));
@@ -535,22 +551,32 @@ class LowRlNode : public rclcpp::Node {
       color(tr, 0.8f, 0.2f, 0.8f, 1.0f);
       ma.markers.push_back(tr);
     }
-    {   // 글: 후보 수 · 쉬는 덩어리 · 판단 모델 마지막 답 시간
-      auto tx = base("cand_info", 0, visualization_msgs::msg::Marker::TEXT_VIEW_FACING);
-      float x = 0.f, y = 0.f;
-      const sim::EnvState& e = env_->state();
-      x = e.x + e.ex; y = e.y + e.ey;
-      tx.pose.position.x = x; tx.pose.position.y = y; tx.pose.position.z = 0.8;
-      tx.scale.z = 0.16;
-      char buf[200];
-      if (dec_up_) std::snprintf(buf, sizeof buf, "cand %zu (dormant %d) %.1f ms | decider %ld/%ld ans · last %.1f s%s%s", o.c.size(), o.n_dormant, o.ms, dec_up_->n_ans(), dec_up_->n_sent(),
-                                 dec_up_->last_ms() / 1000.0, dec_up_->last_err().empty() ? "" : " err ", dec_up_->last_err().c_str());
-      else std::snprintf(buf, sizeof buf, "cand %zu (dormant %d) %.1f ms%s", o.c.size(), o.n_dormant, o.ms, o.rotate ? " rotate" : "");
-      tx.text = buf;
-      color(tx, 1.f, 1.f, 1.f, 1.f);
-      ma.markers.push_back(tx);
-    }
     pub_cand_->publish(ma);
+    {   // 상태 글 (화면 고정 · 어두운 바탕 — RViz TextOverlay "Candidates text"): 후보 수 · 쉬는 덩어리 · 후보 시간 · 지금 목표 · 판단 모델 마지막 답 글자·지연
+      rviz_2d_overlay_msgs::msg::OverlayText ot;
+      ot.action = rviz_2d_overlay_msgs::msg::OverlayText::ADD;
+      ot.width = 640; ot.height = 70;
+      ot.horizontal_alignment = rviz_2d_overlay_msgs::msg::OverlayText::LEFT;
+      ot.vertical_alignment = rviz_2d_overlay_msgs::msg::OverlayText::TOP;
+      ot.horizontal_distance = 10; ot.vertical_distance = 10;
+      ot.bg_color.r = ot.bg_color.g = ot.bg_color.b = 0.f; ot.bg_color.a = 0.75f;
+      ot.fg_color.r = 1.f; ot.fg_color.g = 1.f; ot.fg_color.b = 0.6f; ot.fg_color.a = 1.f;
+      ot.text_size = 13.f; ot.line_width = 2; ot.font = "DejaVu Sans Mono";
+      int cur_k = -1;
+      for (size_t i = 0; i < o.c.size(); ++i) if (o.c[i].id == ctl_->cur_id()) cur_k = (int)i;
+      const double dt_s = (double)env_->cfg().substeps * env_->cfg().dt;
+      char buf[400];
+      int n = std::snprintf(buf, sizeof buf, "candidates %zu  dormant %d  build %.1f ms%s\ngoal: %s", o.c.size(), o.n_dormant, o.ms, o.rotate ? "  (rotate)" : "",
+                            cur_k >= 0 ? (std::string(1, (char)('A' + cur_k)) + " #" + std::to_string(ctl_->cur_id())).c_str() : "none");
+      if (upper_ == "decider" && dec_up_) {
+        const int as = dec_up_->last_ans_step();
+        n += std::snprintf(buf + n, sizeof buf - (size_t)n, "\ndecider: %s #%d  %.1f s ago  latency %.1f s  ans %ld/%ld%s%s", dec_up_->last_choice().empty() ? "-" : dec_up_->last_choice().c_str(),
+                           dec_up_->last_pick_id(), as >= 0 ? (env_->state().step - as) * dt_s : -1.0, dec_up_->last_ms() / 1000.0, dec_up_->n_ans(), dec_up_->n_sent(),
+                           dec_up_->last_err().empty() ? "" : "  err: ", dec_up_->last_err().c_str());
+      }
+      ot.text = buf;
+      pub_cand_txt_->publish(ot);
+    }
   }
 
   // 키프레임 하나 (컬러 256 × 192 · 깊이 128 × 96 — 정렬된 깊이라 같은 시야, 지도 자세). 카메라 달린 자리는 처음 한 번 tf 로
@@ -668,6 +694,7 @@ class LowRlNode : public rclcpp::Node {
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_status_, pub_state_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_done_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_goal_, pub_cand_;
+  rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr pub_cand_txt_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr srv_enable_;
   rclcpp::TimerBase::SharedPtr watchdog_;
 };

@@ -6,8 +6,9 @@
 //   예상 넓이    : 광선(32 · gain_m)이 닿는 로봇 지도 모름 넓이 > 0
 //   참 넓이      : (시뮬만) 같은 광선을 정답 격자로 — 정답에서 안 막힌 동안 로봇 지도 모름 칸 넓이. 예상 대비 비 = 실제로 보일 몫
 //   방향 퍼짐    : 후보 방위가 차지한 45° 칸 수 (0 ~ 8)
+//   정답 갈 수 있음: (시뮬만) 정답 격자 막힘을 몸통 반경만큼 키운 밖으로 로봇 참 자리에서 닿음 — 로봇 지도로는 갈 수 있어 보여도 실제로는 막힌 후보(빔 틈 너머)
 //   0 후보       : 후보가 없는데 지도가 안 닫힘 (닫힘을 막는 프론티어가 남음)
-//   정답 견줌    : (시뮬만) 갈 수 있는 칸 0.1 m 격자 + 두 무리 후보 중 로봇에서 vp_min 밖 전부에서 참 넓이 / (가는 시간 + t0) 최댓값 = 정답 최선. 후보 가운데 최선 · 0 번 후보의 같은 값 비
+//   정답 견줌    : (시뮬만) 로봇 지도와 정답 격자 둘 다로 갈 수 있는 칸 0.1 m 격자 + 두 무리 후보 중 로봇에서 vp_min 밖 전부에서 (정답으로 못 가는 후보는 0) 참 넓이 / (가는 시간 + t0) 최댓값 = 정답 최선. 후보 가운데 최선 · 0 번 후보의 같은 값 비
 #pragma once
 #include <cmath>
 #include <cstdio>
@@ -20,7 +21,7 @@
 namespace candq {
 
 struct Fam {   // 한 후보 무리 (옛 · 새)
-  long n = 0, reach = 0, clear = 0, near = 0, gain0 = 0, dec = 0, sectors = 0, none = 0, failed = 0;
+  long n = 0, reach = 0, clear = 0, near = 0, gain0 = 0, dec = 0, sectors = 0, none = 0, failed = 0, gt_reach = 0, gt_n = 0, gt_stand = 0, gt_lidar = 0;
   double pred = 0, truth = 0, best_ratio = 0, slot0_ratio = 0;
   long n_or = 0;
 };
@@ -66,6 +67,53 @@ inline void eval(const cand::In& in, const cand::Opt& o, const cand::Work& w, co
     return g * area_k;
   };
   const auto t_of = [&](int idx) { return W.fw.cd[idx] >= 0 ? W.fw.cd[idx] * 0.2 * res / o.v_eff : 1e6; };   // 정답 견줌용 (회전 뺌 — 두 무리 같은 잣대)
+  // 정답 격자로 정말 갈 수 있나 (시뮬만): 정답 막힘을 몸통 반경(close_radius)만큼 키운 밖의 칸을 로봇 참 자리에서 4 이웃으로 번짐
+  static std::vector<uint8_t> gst, gfl;
+  static std::vector<int32_t> gq;
+  static const sim::World* gst_w = nullptr;
+  if (gt) {
+    const int n = gw * gh;
+    if (gst_w != gt || (int)gst.size() != n) {   // 설 수 있음 (장면마다 한 번)
+      gst.assign(n, 0);
+      const mdp::Robot rb = mdp::robot_cells(c.close_radius, c.res);
+      for (int y = 0; y < gh; ++y)
+        for (int x = 0; x < gw; ++x) {
+          bool ok = !(gt->grid[(size_t)y * gw + x] & sim::kCellBlocked);
+          for (int dy = -rb.r; dy <= rb.r && ok; ++dy)
+            for (int dx = -rb.r; dx <= rb.r && ok; ++dx) {
+              if (dx * dx + dy * dy > rb.r2) continue;
+              const int u = x + dx, v = y + dy;
+              if (u >= 0 && v >= 0 && u < gw && v < gh && (gt->grid[(size_t)v * gw + u] & sim::kCellBlocked)) ok = false;
+            }
+          gst[(size_t)y * gw + x] = ok;
+        }
+      gst_w = gt;
+    }
+    gfl.assign(n, 0);
+    gq.resize(n);
+    int tx = (int)std::floor((s.x - in.W->ox) * c.inv_res), ty = (int)std::floor((s.y - in.W->oy) * c.inv_res);
+    int h = 0, t = 0;
+    // 참 자리에서 가장 가까운 설 수 있는 칸 (몸통이 벽에 붙어 있으면)
+    for (int r = 0; r <= 6 && t == 0; ++r)
+      for (int dy = -r; dy <= r && t == 0; ++dy)
+        for (int dx = -r; dx <= r && t == 0; ++dx) {
+          const int u = tx + dx, v = ty + dy;
+          if (u >= 0 && v >= 0 && u < gw && v < gh && gst[(size_t)v * gw + u]) { gq[t++] = v * gw + u; gfl[(size_t)v * gw + u] = 1; }
+        }
+    while (h < t) {
+      const int idx = gq[h++], x = idx % gw, y = idx / gw;
+      for (int k = 0; k < 4; ++k) {
+        int dx, dy;
+        mdp::nb4(k, &dx, &dy);
+        const int u = x + dx, v = y + dy;
+        if (u < 0 || v < 0 || u >= gw || v >= gh) continue;
+        const int j = v * gw + u;
+        if (gfl[j] || !gst[j]) continue;
+        gfl[j] = 1;
+        gq[t++] = j;
+      }
+    }
+  }
   // 정답 최선 (시뮬만)
   double best = 0;
   int best_cell = -1;
@@ -74,7 +122,7 @@ inline void eval(const cand::In& in, const cand::Opt& o, const cand::Work& w, co
   if (gt) {
     const auto try_cell = [&](int idx) {
       const int x = idx % gw, y = idx / gw;
-      if (!pass(idx) || std::hypot(x + 0.5 - rxf, y + 0.5 - ryf) * res < o.vp_min) return;   // 로봇 곁(가자마자 통과)은 뺌 — 돌기만 하면 보임
+      if (!pass(idx) || !gfl[idx] || std::hypot(x + 0.5 - rxf, y + 0.5 - ryf) * res < o.vp_min) return;   // 정답으로 갈 수 있는 칸만 · 로봇 곁(가자마자 통과)은 뺌
       const double sc = truth(idx) / (t_of(idx) + o.t0);
       if (sc > best) { best = sc; best_cell = idx; }
     };
@@ -110,9 +158,14 @@ inline void eval(const cand::In& in, const cand::Opt& o, const cand::Work& w, co
       const double b = std::atan2(cell / gw + 0.5 - ryf, cell % gw + 0.5 - rxf) - th, bw = std::atan2(std::sin(b), std::cos(b));
       sec |= (uint8_t)(1u << ((int)std::floor((bw + M_PI) / (M_PI / 4)) & 7));
       if (gt) {
+        F.gt_n += 1;
+        F.gt_reach += gfl[cell];
+        if (!gfl[cell]) {   // 왜 못 가나: 시점 자리가 정답에서 설 수 없음(가구 밑·곁 — 라이다 아래 막힘) · 설 수는 있는데 끊긴 곳(틈 너머)
+          F.gt_stand += gst[cell];
+        }
         const double tr = truth(cell);
         F.truth += tr;
-        const double sc = pass(cell) && std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res >= o.vp_min ? tr / (t_of(cell) + o.t0) : 0.0;   // 로봇 곁은 0 (정답 쪽과 같은 잣대)
+        const double sc = pass(cell) && gfl[cell] && std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res >= o.vp_min ? tr / (t_of(cell) + o.t0) : 0.0;   // 로봇 곁은 0 (정답 쪽과 같은 잣대)
         bc = std::max(bc, sc);
         if (i == 0) s0 = sc;
         if (verbose) std::printf("    [%s %zu] 칸 (%d,%d) 로봇에서 %.2f m 길 %.2f m · 예상 %.2f · 참 %.2f m² · 참/시간 %.3f\n", fi ? "새" : "옛", i, cell % gw, cell / gw,
@@ -136,6 +189,8 @@ inline void print(const Acc& a, const char* tag) {
     const double n = F.n ? (double)F.n : 1.0;
     std::printf("  %-9s 결정당 %.2f 개 · 길 있음 %.3f · 간격 %.3f · 로봇 곁 %.3f · 예상 넓이 0 %.3f · 예상 넓이 평균 %.2f m²", nm[i], (double)F.n / std::max(1L, F.dec), F.reach / n, F.clear / n,
                 F.near / n, F.gain0 / n, F.pred / n);
+    if (F.gt_n) std::printf(" · 정답 지도로 갈 수 있음 %.3f (못 가는 것 중 자리는 설 수 있는데 끊김 %.3f)", (double)F.gt_reach / F.gt_n,
+                            F.gt_n > F.gt_reach ? (double)F.gt_stand / (F.gt_n - F.gt_reach) : 0.0);
     if (F.n_or) std::printf(" · 참 넓이 평균 %.2f m² (예상의 %.2f) · 정답 최선 대비 — 후보 중 최선 %.3f · 0 번 %.3f", F.truth / n, F.pred > 0 ? F.truth / F.pred : 0.0, F.best_ratio / F.n_or, F.slot0_ratio / F.n_or);
     std::printf(" · 방향 45° 칸 %.2f · 후보 0 인데 안 닫힘 %ld · 실패 자리 1 m 안 %.3f\n", (double)F.sectors / std::max(1L, F.dec), F.none, F.failed / n);
   }

@@ -159,7 +159,7 @@ struct Frontier {
 
 // 버퍼(쓰는 쪽이 w·h 칸씩): flag(u8), qa·qb(int32). 장치에서는 환경마다 따로.
 struct SearchBuf {
-  uint8_t* flag;        // bit0 번진 칸(설 수 있음), bit1 덩어리로 묶임, bit2 nearestCell 지나감
+  uint8_t* flag;        // bit0 번진 칸(설 수 있음), bit1 덩어리로 묶임, bit2 nearestCell 지나감, bit3 plan_ok 셈 · bit4 그 값 (같은 칸을 이웃마다 다시 안 셈 — 값은 같음)
   int32_t* qa;          // nearestCell·번지기 큐
   int32_t* qb;          // 덩어리 BFS 큐
   int32_t* dist = nullptr;   // 있으면 번진 칸마다 시작 칸에서 4 이웃 BFS 거리(칸)를 적고 덩어리 near_dist·near_cell 을 셈 (번지기는 FIFO 라 거리 = 부모 + 1)
@@ -258,8 +258,11 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
   // 번지기: 설 수 있는 칸, 4 이웃 (닫힘 판정과 같은 flood fill). 닫힘 규칙(b.vis)이면 계획기가 설 수 있는 칸 (plan_ok)
   const Robot rc = b.rbc.r < 0 ? rb : b.rbc;
   const auto plan_ok = [&](int x, int y) {
-    if (!b.vis) return standable(m, x, y, rb);
-    return standable(m, x, y, rc) && !(b.cam && byte_near(b.cam, m.stride, m, x, y, rc));
+    uint8_t& f = b.flag[y * m.w + x];
+    if (f & 8) return (f & 16) != 0;
+    const bool ok = !b.vis ? standable(m, x, y, rb) : (standable(m, x, y, rc) && !(b.cam && byte_near(b.cam, m.stride, m, x, y, rc)));
+    f |= ok ? 24 : 8;
+    return ok;
   };
   int head = 0, tail = 0;
   b.qa[tail++] = r.start;

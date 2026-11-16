@@ -33,7 +33,9 @@ struct Opt {
   int k = mdp::hier::K;       // 후보 상한
   float vp_min = 0.75f;       // m — 로봇에서 이 거리 안 시점은 안 씀 (FUEL min_candidate_dist)
   float unk_clear = 0.0f;     // m — 시점 둘레 모름 간격 (FUEL min_candidate_clearance 0.21 — 3D 비행체 값. 2D 에서는 프론티어 가에 서야 가장 많이 봐 정답 견줌이 0.77 → 0.30 으로 떨어져 끔)
-  float margin = 0.05f;       // m — 시점의 막힘 간격 = 몸통 반경(close_radius) + 이것 (잠정)
+  float margin = 0.25f;       // m — 시점의 막힘 간격 = 몸통 반경(close_radius) + 이것. 라이다 면(0.11 m) 아래 가구 다리·받침·낮은 물체는 로봇 지도에 없어
+                              //   막힘 곁 시점은 실제로 못 서는 일이 많음 — 정답 격자로 갈 수 있는 후보 0.72~0.79 → 0.88~0.91 (0.05 → 0.25, 시험·실물 방 장면)
+  float margin_min = 0.05f;   // m — margin 으로 시점이 없는 덩어리는 이 간격으로 한 번 더 (좁은 문·복도)
   float merge_m = 1.0f;       // m — 덩어리 합침 (fuel_upper.h Opt::merge_m 과 같은 값)
   float split_m = 1.5f;       // m — 덩어리 나눔 (fuel_upper.h Opt::split_m)
   float gain_m = 4.0f;        // m — 예상 새 넓이 광선 길이 (잠정 — 실물 방 7 × 8 m, 라이다 8 m)
@@ -43,6 +45,8 @@ struct Opt {
   float keep = 0.8f;          // 지난 시점 점수가 새 최선의 이 배 이상이면 그 칸 그대로
   float door_m = 0.45f;       // m — 막힘까지 이 거리 미만 칸에서 방을 끊음 (fuel_upper.h Opt::door_m)
   float unk_depth_m = 0.0f;   // m — 광선마다 처음 만난 모름에서 이 길이까지만 셈 (0 = 끝까지). 1 m 로 줄이면 정답 견줌이 나빠짐 (0.75 → 0.30, bookstore 씨앗 4)
+  float path_unk_m = 0.0f;    // m — 길(시점 → 로봇)이 시점에서 path_skip_m 넘게 떨어진 곳에서는 모름에서 이만큼 떨어져야 (빔 줄 사이 가는 빈 칸 길 · 벽 틈 너머로 가는 길 막기, 0 = 끔)
+  float path_skip_m = 0.6f;   // m — 시점 둘레 이 길이는 검사 안 함 (프론티어 곁이라 늘 모름 가까움)
   float sliver_m = 0.0f;      // m — 예상 넓이는 아는 칸에서 이 거리 이상인 모름만 (빔 사이 가는 모름 줄 빼기, 0 = 끔 — 0.1 m 는 정답 견줌에 차이 없음)
 };
 
@@ -233,8 +237,10 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
   const int Rg = std::max(1, (int)std::lround(o.gain_m * c.inv_res));
   bx0 = std::max(0, bx0 - Rg); by0 = std::max(0, by0 - Rg); bx1 = std::min(gw - 1, bx1 + Rg); by1 = std::min(gh - 1, by1 + Rg);
   detail::chamfer34(gw, bx0, by0, bx1, by1, [&](int x, int y) { return mdp::cls_at(mv, x, y) == mdp::kOcc || (in.cam && in.cam[y * c.size + x]); }, w.dto);
-  detail::chamfer34(gw, bx0, by0, bx1, by1, [&](int x, int y) { return mdp::cls_at(mv, x, y) == mdp::kUnk; }, w.dtu);
-  detail::chamfer34(gw, bx0, by0, bx1, by1, [&](int x, int y) { return mdp::cls_at(mv, x, y) != mdp::kUnk; }, w.dtk);
+  if (o.unk_clear > 0.f || o.path_unk_m > 0.f)   // 모름까지 거리 — 쓰는 잣대가 켜졌을 때만 (기본 끔, 값은 같음)
+    detail::chamfer34(gw, bx0, by0, bx1, by1, [&](int x, int y) { return mdp::cls_at(mv, x, y) == mdp::kUnk; }, w.dtu);
+  if (o.sliver_m > 0.f)                           // 아는 칸까지 거리 — 가는 모름 줄 빼기를 켰을 때만
+    detail::chamfer34(gw, bx0, by0, bx1, by1, [&](int x, int y) { return mdp::cls_at(mv, x, y) != mdp::kUnk; }, w.dtk);
   const int32_t sliver3 = (int32_t)std::lround(o.sliver_m * c.inv_res * 3.0);
   const auto dto_m = [&](int idx) { return w.dto[idx] * res / 3.0; };
   const auto dtu_m = [&](int idx) { return w.dtu[idx] * res / 3.0; };
@@ -350,7 +356,7 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
         if (t_u < 0) t_u = t;
         if (t - t_u >= Ud) return;
         const int j = y * gw + x;
-        if (w.dtk[j] < sliver3) return;   // 빔 사이 가는 모름 줄
+        if (sliver3 > 0 && w.dtk[j] < sliver3) return;   // 빔 사이 가는 모름 줄
         if (marginal && (w.stamp[j] == w.cov_id || w.seen[j] == w.seen_id)) return;
         w.seen[j] = w.seen_id;
         g += t;
@@ -367,14 +373,22 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
     }
     return true;
   };
-  const double clear_need = c.close_radius + o.margin;
   const double dmin = std::max((double)o.vp_min, (double)c.low_pass_r);
-  const auto vp_ok = [&](int cell, int anc, bool unk) {
+  const auto vp_ok = [&](int cell, int anc, bool unk, double clear_need) {
     if (cell < 0 || cell >= n || !pass(cell) || in.avoided(cell) || fw.dist[cell] < mdp::hier::kCandMinDist) return false;
     if (std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res < dmin) return false;
     if (dto_m(cell) < clear_need) return false;
     if (unk && dtu_m(cell) < o.unk_clear) return false;
-    return cell == anc || los(cell, anc);
+    if (cell != anc && !los(cell, anc)) return false;
+    if (o.path_unk_m > 0.f) {   // 길 위 모름 간격 (시점 곁 path_skip_m 은 뺌)
+      const int skip = (int)std::lround(o.path_skip_m * c.inv_res * 5.0);   // 모따기 거리 단위 (칸 × 5)
+      const int32_t need3 = (int32_t)std::lround(o.path_unk_m * c.inv_res * 3.0);
+      const int c0 = fw.cd[cell];
+      bool ok = true;
+      descend(cell, [&](int a) { if (c0 - fw.cd[a] > skip && w.dtu[a] < need3) { ok = false; return false; } return true; });
+      if (!ok) return false;
+    }
+    return true;
   };
   struct Live { int node, vp, id, age, kept; long g; double t; };
   std::vector<Live> live;
@@ -385,10 +399,12 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
     int bv = -1;
     long bg = 0;
     double bs = -1, bt = 0;
-    for (int pass_i = 0; pass_i < 2 && bv < 0; ++pass_i) {
+    for (int pass_i = 0; pass_i < 3 && bv < 0; ++pass_i) {   // 0: 간격 margin + 모름 간격 · 1: margin · 2: margin_min
+      if (pass_i == 1 && o.unk_clear <= 0.f) continue;   // 모름 간격을 안 쓰면 0 과 같음
       const bool unk = pass_i == 0;
+      const double clear_need = c.close_radius + (pass_i < 2 ? o.margin : o.margin_min);
       const auto test = [&](int cell) {
-        if (!vp_ok(cell, nd.anc, unk)) return;
+        if (!vp_ok(cell, nd.anc, unk, clear_need)) return;
         const long g = gain(cell, false);
         if (g <= 0) return;
         const double t = t_of(cell), sc = g / (t + o.t0);
@@ -426,7 +442,7 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
       const Mem::Prev& p = mem.prev[pi];
       L.id = p.id;
       L.age = p.age + 1;
-      if (p.vp != bv && vp_ok(p.vp, nd.anc, false)) {   // 지난 칸이 아직 자격 있고 점수가 keep 배 이상이면 그대로
+      if (p.vp != bv && vp_ok(p.vp, nd.anc, false, c.close_radius + o.margin_min)) {   // 지난 칸이 아직 자격 있고 점수가 keep 배 이상이면 그대로
         const long g = gain(p.vp, false);
         const double t = t_of(p.vp);
         if (g > 0 && g / (t + o.t0) >= o.keep * bs) { L.vp = p.vp; L.g = g; L.t = t; L.kept = 1; }
@@ -465,7 +481,7 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
         mdp::gain_ray_walk(mv, vp % gw, vp / gw, a, Rg, [&](int x, int y, int t, uint8_t cl) {
           if (cl != mdp::kUnk) return;
           if (t_u < 0) t_u = t;
-          if (t - t_u < Ud && w.dtk[y * gw + x] >= sliver3) w.stamp[y * gw + x] = w.cov_id;
+          if (t - t_u < Ud && (sliver3 <= 0 || w.dtk[y * gw + x] >= sliver3)) w.stamp[y * gw + x] = w.cov_id;
         }); }
     Cand cd;
     const Live& L = live[bi];

@@ -109,6 +109,9 @@ class Upper {
       const int k = a.choice[0] - 'A';
       if (k < 0 || k >= (int)req_.cells.size()) { ++n_fail_; last_err_ = "letter out of range"; continue; }
       ++n_ans_;
+      last_choice_ = a.choice;   // 그림용 (RViz ~/candidates): 마지막 답 글자 · 그 후보 번호 · 걸음
+      last_pick_id_ = p_.cand ? req_.ids[(size_t)k] : -1;
+      last_ans_step_ = s.step;
       if (p_.cand) {   // 후보 모드: 지금 목록을 새로 만들고 안정 번호로, 없으면 서는 자리 match_r 안
         ctl.build_cands(v);
         int idx = ctl.cand_index(req_.ids[(size_t)k]);
@@ -414,6 +417,9 @@ class Upper {
   long n_fallback() const { return n_fallback_; }
   long n_late() const { return n_late_; }
   double last_ms() const { return last_ms_; }
+  const std::string& last_choice() const { return last_choice_; }   // 마지막으로 받아 쓴 답 글자 (없으면 빈 글)
+  int last_pick_id() const { return last_pick_id_; }                // 그 답의 후보 안정 번호 (후보 모드, 없으면 −1)
+  int last_ans_step() const { return last_ans_step_; }              // 그 답을 받은 걸음 (없으면 −1)
   const std::string& last_err() const { return last_err_; }
   const Params& params() const { return p_; }
   void set_input(int input) { p_.input = input; }
@@ -439,6 +445,8 @@ class Upper {
   std::deque<std::pair<int, std::vector<int16_t>>> hist_;   // 꼴 B 지난 지도 (걸음, 지도)
   long next_id_ = 0, n_sent_ = 0, n_ans_ = 0, n_timeout_ = 0, n_fail_ = 0, n_nomatch_ = 0, n_fallback_ = 0, n_late_ = 0;
   double last_ms_ = 0;
+  std::string last_choice_;
+  int last_pick_id_ = -1, last_ans_step_ = -1;
   std::string last_err_;
 };
 

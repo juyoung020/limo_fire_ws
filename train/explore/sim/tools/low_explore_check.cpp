@@ -149,7 +149,10 @@ int main(int argc, char** argv) {
     else if (a == "--cand-sliver") co.sliver_m = std::stof(nx());
     else if (a == "--cand-gain-m") co.gain_m = std::stof(nx());
     else if (a == "--cand-vp-min") co.vp_min = std::stof(nx());
-    else if (a == "--cand-unk-clear") co.unk_clear = std::stof(nx());   // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
+    else if (a == "--cand-unk-clear") co.unk_clear = std::stof(nx());
+    else if (a == "--cand-path-unk") co.path_unk_m = std::stof(nx());
+    else if (a == "--cand-margin") co.margin = std::stof(nx());
+    else if (a == "--cand-path-skip") co.path_skip_m = std::stof(nx());   // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
     else if (a == "--dec-cand") dec_cand = std::stoi(nx()) != 0;   // 판단 모델 후보: 1 = cand_view.h (기본) · 0 = hier 8 칸
     else if (a == "--dec-hint") dec_hint = std::stoi(nx()) != 0;
@@ -250,6 +253,7 @@ int main(int argc, char** argv) {
     struct Snap { std::vector<int> id, vp; };
     std::vector<Snap> hist, hhist;   // 새 후보 · 환경 hier 후보 (최근 결정들)
     candq::Acc qacc;
+    long g_chosen = 0, g_fail[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, g_reach = 0;
     int c_sig = 0, c_last_dec = 0;
     long c_dec = 0, c_diff = 0, c_n = 0, c_rot = 0, c_none = 0, c_dorm = 0, c_near = 0, c_kept = 0;
     double c_ms = 0, c_ms_max = 0, c_part[6] = {0, 0, 0, 0, 0, 0};
@@ -269,6 +273,12 @@ int main(int argc, char** argv) {
       const limo_fire_rl::RobotEnv::Window win{w.ox, w.oy, w.gw, w.gh};
       robot.reset(e.x0, e.y0, e.th0, p0, e.noise.fov, &win);
       rw.gw = w.gw; rw.gh = w.gh; rw.ox = w.ox; rw.oy = w.oy;
+      if (use_cand) {   // 후보 모드 목표 끝 셈 (판마다 Ctl 이 새로 — 그 전에 더함)
+        const cand::Mem& m = cr.cand_mem();
+        for (const auto& h : m.hist) g_chosen += h.chosen;
+        for (const auto& f : m.fails) g_fail[f.why < 9 && f.why >= 0 ? f.why : 0] += 1;
+        g_reach += cr.n_reach();
+      }
       cs.restart(); cr.restart();
       cms = cand::Mem(); cmr = cand::Mem(); hist.clear(); hhist.clear();
       n_sent_all += us.n_sent(); n_nomatch_all += us.n_nomatch(); n_fb_all += us.n_fallback();
@@ -496,6 +506,13 @@ int main(int argc, char** argv) {
       std::printf("3 결정 뒤 (판단 모델 답 지연쯤): 새 후보 — 같은 번호 남음 %.3f · 그중 같은 칸 %.3f · 옮긴 거리 평균 %.2f m | 환경 hier 후보 — 1.5 m 안 후보 있음 %.3f · 같은 칸 %.3f · 거리 평균 %.2f m\n",
                   s_n ? (double)s_alive / s_n : 0.0, s_alive ? (double)s_same / s_alive : 0.0, s_alive ? s_move / s_alive : 0.0, h_n ? (double)h_alive / h_n : 0.0,
                   h_alive ? (double)h_same / h_alive : 0.0, h_alive ? h_move / h_alive : 0.0);
+    }
+    if (use_cand) {
+      const cand::Mem& m = cr.cand_mem();   // 마지막 판 몫
+      for (const auto& h : m.hist) g_chosen += h.chosen;
+      for (const auto& f : m.fails) g_fail[f.why < 9 && f.why >= 0 ? f.why : 0] += 1;
+      g_reach += cr.n_reach();
+      std::printf("후보 모드 목표: 보냄 %ld · 통과 %ld · 실패 — 경로 없음 %ld · 막힘·정체 %ld · 경로 끝 밖 %ld\n", g_chosen, g_reach, g_fail[cand::kNoPath], g_fail[cand::kStall], g_fail[cand::kOffPath]);
     }
     std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_obs %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번)\n", n_step ? t_step / n_step : 0.0,
                 n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec);
