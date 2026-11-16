@@ -39,7 +39,8 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
       sb.tws = ws;
       sb.close_min = c.close_min;
       sb.rbc = mdp::robot_cells(c.close_radius, c.res);
-      sb.cam = b.cvox ? b.cvox + (size_t)env * c.size * c.size : nullptr;   // 깊이 카메라 층 (계층형 cam_on)
+      // 깊이 카메라 층 (계층형 cam_on). 합친 탐사 low_explore 2 는 안 씀 — 닫힘은 로봇 지도(라이다)로만 (mdp/frontier.h 머리글 "합친 탐사의 닫힘", 켜야 씀)
+      sb.cam = b.cvox && c.low_explore != 2 ? b.cvox + (size_t)env * c.size * c.size : nullptr;
     }
     // reach_summary 와 같음: 문턱 1 로 모든 덩어리를 out 에, 문턱은 고를 때
     const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, out.data(), (int)out.size());

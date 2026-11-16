@@ -208,7 +208,7 @@ struct EnvCfg {
                                    // 2 = 탐사 판 학습 (low_explore 와 같이 — low_rl.h lowrl_goal_explore): 위층 0 번 후보 규칙을 환경이 걸음마다 돌려 LowCmd 를 넣는다
   int low_solo;                    // low_auto 2 일 때 단독 과제(자동 목표 · 단독 과제 판 끝 규칙)로 도는 환경의 몫 (%, 환경 번호 해시 — low_step.h low_xenv). 나머지가 탐사 판
   int low_period;                  // 경로를 다시 살피는 주기 (걸음 — 목표가 바뀌면 바로). 0 이면 decide_steps
-  int low_explore;                 // 1 = 두 층을 합친 탐사 (low_rl 위 스위치 — low_task.h "합친 탐사"): 탐사 판 끝 규칙(닫힘 성공·진행 없음)을 그대로 두고,
+  int low_explore;                 // 2 = 1 + 닫힘·후보 번지기를 라이다 지도만으로 (깊이 카메라 층 뺌 — mdp/frontier.h "합친 탐사의 닫힘", 켜야 씀). 1 = 두 층을 합친 탐사 (low_rl 위 스위치 — low_task.h "합친 탐사"): 탐사 판 끝 규칙(닫힘 성공·진행 없음)을 그대로 두고,
                                    //     단독 과제의 정체·시간·목표 수는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
   int low_act_w;                   // 행동 줄 한 환경 칸 수 (정책 환경은 a[0] = v, a[1] = ω 만 읽음). 0 이면 mdp::act::DIM
 };

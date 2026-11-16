@@ -68,14 +68,19 @@ class Ctl {
       const int cell = v.cand[j];
       if (cell >= 0 && !avoided(cell, s.step)) pick = j;
     }
-    const fu::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, v.cand, [this, &s](int cell) { return avoided(cell, s.step); }};
+    fu::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, v.cand, [this, &s](int cell) { return avoided(cell, s.step); }};
+    in.diag = diag_;
     const int tcell = p_.use_fuel ? fu::decide(in, p_.fuel, fmem_, work) : -1;
     redo_ = false;
     last_dec_ = s.step;
     ++n_dec_;
     int tgt = pick >= 0 ? v.cand[pick] : -1;
     int w = 1;
-    if (tcell >= 0 && p_.rule) {   // 규칙 추종기 + fuel: 목표 칸을 그대로 따라감 (combine_run.cpp:1124-1126)
+    if (tcell == fu::kNone) {   // 프론티어는 있으나 시점 자격 되는 덩어리 없음: 목표 없음 (combine_run 과 같음 — slot0 로 안 떨어짐)
+      cmd_ = sim::LowCmd{-1, 0};
+      w = 2;
+      slot_ = -1;
+    } else if (tcell >= 0 && p_.rule) {   // 규칙 추종기 + fuel: 목표 칸을 그대로 따라감 (combine_run.cpp:1124-1126)
       tgt = tcell;
       w = 0;
       cmd_ = sim::LowCmd{tgt, 1};
@@ -164,7 +169,7 @@ class Ctl {
     }
   }
   // 판을 새로 (실물: 노드를 다시 켤 때) — 피하는 칸·기억·명령을 비움
-  void restart() { *this = Ctl(p_); }
+  void restart() { fu::Diag* d = diag_; *this = Ctl(p_); diag_ = d; }
   void force_redo() { redo_ = true; }   // 실물: 다시 켤 때 바로 결정 (시뮬에는 없음 — 판 중간에 멈추지 않으므로)
   const sim::LowCmd& cmd() const { return cmd_; }
   int slot() const { return slot_; }   // 준비 단계 행동 칸 (규칙: 고른 후보 번호 · fuel 이면 0 · 없으면 −1. RL 은 늘 −1 — 정책 환경은 계획 칸 0)
@@ -182,6 +187,7 @@ class Ctl {
     }
     return false;
   }
+  void set_diag(fu::Diag* d) { diag_ = d; }   // 결정 속 적기 (재기만 — 다시 돌리기 도구)
   void set_geom(int gw, float res) { gw_ = gw; res_ = res; }   // 칸 번호 → 칸 좌표 (지도 창 너비 · 칸 크기)
 
  private:
@@ -196,6 +202,7 @@ class Ctl {
   sim::LowCmd cmd_{-1, 0};
   int slot_ = -1;
   fu::Mem fmem_;
+  fu::Diag* diag_ = nullptr;
   void avoid_add(int cell, int step) {
     if (!p_.avoid || cell < 0) return;
     av_cell_[av_n_ % kBl] = cell;

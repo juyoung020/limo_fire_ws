@@ -86,6 +86,7 @@ struct Args {
   std::string policy, out;
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
   bool eval_seed = false, avoid = true, redecide = true, stick = true;
+  bool close_lidar = false;   // --close-lidar: 합친 탐사 닫힘·후보 번지기를 라이다 지도만으로 (깊이 카메라 층 뺌, EnvCfg::low_explore 2)
   double rule_near = 0.0;   // > 0 이면 아래층 RL 판에서도 목표까지 직선 거리가 이 값 아래인 결정은 규칙 추종기에 맡김 (실험용)
   double stall_s = 0.0;   // > 0 이면 정체 판정 시간(env.yaml follow.stall_time)을 이 값으로 (실험용)
   bool autox = false;   // --auto: 위층 규칙을 환경이 돌림 (EnvCfg::low_auto 2 — 탐사 판 학습과 같은 길). 호스트 규칙과 결과가 같은지 재는 용
@@ -228,7 +229,7 @@ int run(const Args& a) {
   hc.cfg.low_auto = 0;      // 목표는 호스트(위층 규칙)가 — Env::low_prepare
   hc.cfg.low_act_w = 0;     // 행동 줄 폭 mdp::act::DIM — 규칙 추종 환경이 후보 번호를 읽음
   if (a.stall_s > 0.0) hc.cfg.low_idle_steps = std::max(1, (int)std::lround(a.stall_s / (hc.cfg.substeps * hc.cfg.dt)));
-  hc.cfg.low_explore = 1;   // 합친 탐사: 탐사 판 끝 규칙 그대로 · 정체는 막힘 신호만
+  hc.cfg.low_explore = a.close_lidar ? 2 : 1;   // 합친 탐사: 탐사 판 끝 규칙 그대로 · 정체는 막힘 신호만 (2 = 닫힘을 라이다 지도만으로 — mdp/frontier.h)
   hc.cfg.end_hold = !a.video.empty() && !a.autox && a.end_hold > 0.0 ? 1 : 0;   // 녹화: 판이 끝나면 리셋 없이 멈춤 (env.h EnvCfg::end_hold). 녹화 안 하면 0 — 환경 동작 그대로
   hc.cfg.finish_declare = a.dec_finish ? 1 : 0;   // 판단 모델의 끝 선언 (env.h EnvCfg::finish_declare) — 끄면 환경 동작 그대로
   if (a.autox) hc.cfg.low_auto = 2;   // 위층 규칙을 환경이 (low_rl.h lowrl_goal_explore) — 준비 단계는 step·reset 이 끝에서 부름
@@ -1116,7 +1117,9 @@ int run(const Args& a) {
         slot[i] = k;
         int tgt = k >= 0 ? cand[(size_t)i * K + k] : -1;
         const bool fz = (upper == kFuel || fcand) && tcell[i] >= 0;   // fuel 이 낸 목표 칸 (못 내면 slot0 차례 그대로)
+        const bool fnone = upper == kFuel && tcell[i] == fu::kNone;   // 프론티어는 있으나 시점 자격 되는 덩어리 없음: 목표 없음 (slot0 로 안 떨어짐)
         if (fz) tgt = tcell[i];
+        if (fnone) tgt = -1;
         if (br_cell[i] >= 0) tgt = br_cell[i];
         if (use_pol && (fz || br_cell[i] >= 0)) {   // fuel · 갈래: 목표 칸 그대로 (붙들기는 fuel 이 · 갈래는 위에서)
           if (tgt != cmd[i].target || cmd[i].follow != 2) { sw_step[i] = s.step; h_try[i].push_back(tgt); }
@@ -1126,8 +1129,8 @@ int run(const Args& a) {
           act[(size_t)AW * i] = 0.f;
         } else if (use_pol) {
           const bool live = cmd[i].follow == 2 && cmd[i].target >= 0 && cmd[i].target == s.goal_cell && s.p_n > 0 && !avoided(i, cmd[i].target, s.step);
-          if (a.hold > 0 && !forced && live && s.step - sw_step[i] < a.hold) tgt = cmd[i].target;
-          else if (a.stick && k >= 0 && ((cur[i] >> k) & 1) && cmd[i].follow == 2 && cmd[i].target >= 0 && cmd[i].target == s.goal_cell && s.p_n > 0 && !avoided(i, cmd[i].target, s.step)) tgt = cmd[i].target;
+          if (a.hold > 0 && !fnone && !forced && live && s.step - sw_step[i] < a.hold) tgt = cmd[i].target;
+          else if (a.stick && !fnone && k >= 0 && ((cur[i] >> k) & 1) && cmd[i].follow == 2 && cmd[i].target >= 0 && cmd[i].target == s.goal_cell && s.p_n > 0 && !avoided(i, cmd[i].target, s.step)) tgt = cmd[i].target;
           const double dn = tgt >= 0 ? std::hypot(W.ox + ((double)(tgt % W.gw) + 0.5) * c.res - (s.x + s.ex), W.oy + ((double)(tgt / W.gw) + 0.5) * c.res - (s.y + s.ey)) : 0.0;
           if (tgt >= 0 && dn < a.rule_near) {   // 가까운 목표: 규칙 추종기 (후보 번호 그대로)
             cmd[i] = sim::LowCmd{-1, 0};
@@ -1148,7 +1151,7 @@ int run(const Args& a) {
           }
         } else {
           cmd[i] = sim::LowCmd{-1, 0};
-          act[(size_t)AW * i] = (float)k;
+          act[(size_t)AW * i] = fnone ? -1.f : (float)k;   // fuel 시점 자격 없음: 규칙 추종기도 목표 없음 (low_explore_ctl.h slot_ −1)
         }
         if (decl[i]) {   // 판단 모델이 끝을 선언: 이 걸음에 환경이 판을 끝냄 (low_task.h kLowFinish) — 이 걸음은 규칙 추종기의 "목표 없음"
           cmd[i] = sim::LowCmd{sim::kLowFinish, 0};
@@ -1576,6 +1579,10 @@ int main(int argc, char** argv) {
       else if (k == "--fuel-vp") a.fuel.vp = std::stoi(nx()) != 0;
       else if (k == "--fuel-room") a.fuel.room = std::stoi(nx()) != 0;
       else if (k == "--fuel-hyst") a.fuel.hyst = std::stof(nx());
+      else if (k == "--fuel-vp-min") a.fuel.vp_min = std::stof(nx());
+      else if (k == "--fuel-vp-clear") a.fuel.vp_clear = std::stof(nx());
+      else if (k == "--fuel-first") a.fuel.first = std::stoi(nx()) != 0;
+      else if (k == "--close-lidar") a.close_lidar = true;
       else if (k == "--fuel-v") a.fuel.v_eff = std::stof(nx());
       else if (k == "--fuel-w") a.fuel.w_eff = std::stof(nx());
       else if (k == "--fuel-t0") a.fuel.t0 = std::stof(nx());

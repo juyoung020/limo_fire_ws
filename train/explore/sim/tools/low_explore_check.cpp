@@ -4,6 +4,8 @@
 // 아래층 행동은 실물 CPU 정책(network/policy_cpu.h LowPolicy)이 RobotEnv 관측으로 낸 것을 두 쪽에 같이 준다. 목표 없는 걸음은 두 쪽 다 규칙 추종기(제자리 회전).
 //   low_explore_check <장면.scene> … --ckpt 아래층.bin [--steps 1500] [--seed 1] [--people 0] [--upper fuel|slot0] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
 //   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 실물 노드 upper:=slot0)
+//   fuel 기본 = 실물 노드 config/low_rl.yaml (시간 + 전역 + 시점, 붙들기 0.2, 시점 자격 0.75 m · 0.21 m). --fuel-hyst · --fuel-vp-min · --fuel-vp-clear · --fuel-first 로 바꿈
+//   --log 파일: 시뮬 쪽 결정마다 한 줄 (판·시각·목표·바뀜·뜀·목표 없음 까닭·닫힘) — 실물 녹화 low_explore_replay --log 와 같은 꼴로 견줌
 //   --lower rule: 아래층 규칙 추종기 (combine_run 을 --policy 없이 — 실물 노드 lower:=rule). --ckpt 없이, 관측 설정은 env.yaml 그대로.
 //                 준비 단계 행동 칸 = 위층 Ctl::slot() (combine_run 의 act[0] — 규칙: 후보 번호 · fuel 이면 0), 두 쪽 다 RobotEnv::low_act 계층형 가지
 //   --upper decider [--dec-period 3.0] [--dec-latency 2.6] [--dec-input both]: 실물 노드 upper:=decider (scripts/low_decider.h) — 판단 모델 대신 정해진 가짜 응답기
@@ -113,11 +115,18 @@ int main(int argc, char** argv) {
   bool use_fuel = true, rule = false, use_dec = false;
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
   std::string dec_input = "both", dec_url;
+  std::string ep_log;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
+  int max_ep = 0;
+  bool close_lidar = false;
+  std::string logp;   // --log: 시뮬 쪽 결정마다 한 줄 (판 · 시각 · 목표 · 바뀜 · 뜀 · 목표 없음 까닭 · 닫힘) — 실물 녹화 low_explore_replay --log 와 견줌
   fu::Opt fo;
   fo.time = fo.global = fo.vp = true;   // 고른 조합 (scripts/README "combine_run — 위층 fuel": 시간 + 전역 + 시점)
   fo.v_eff = 0.981f;
   fo.w_eff = 3.232f;
   fo.t0 = 0.10f;
+  fo.hyst = 0.2f;      // 실물 노드 기본 (limo_fire_rl config/low_rl.yaml fuel_hyst · fuel_vp_min · fuel_vp_clear)
+  fo.vp_min = 0.75f;
+  fo.vp_clear = 0.21f;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     auto nx = [&]() -> std::string { if (i + 1 >= argc) throw std::runtime_error(a + " 뒤에 값"); return argv[++i]; };
@@ -126,6 +135,8 @@ int main(int argc, char** argv) {
     else if (a == "--people") people = std::stoi(nx());
     else if (a == "--ckpt") ckpt = nx();
     else if (a == "--env") env_path = nx();
+    else if (a == "--log") logp = nx();
+    else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
     else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0" && u != "decider") throw std::runtime_error("--upper 는 fuel · slot0 · decider"); use_fuel = u == "fuel"; use_dec = u == "decider"; }
     else if (a == "--lower") { const std::string l = nx(); if (l != "rl" && l != "rule") throw std::runtime_error("--lower 는 rl · rule"); rule = l == "rule"; }
     else if (a == "--dec-period") dec_period = std::stod(nx());
@@ -133,9 +144,15 @@ int main(int argc, char** argv) {
     else if (a == "--dec-input") dec_input = nx();
     else if (a == "--dec-match") dec_match = std::stod(nx());
     else if (a == "--dec-url") dec_url = nx();
+    else if (a == "--ep-log") ep_log = nx();
+    else if (a == "--max-ep") max_ep = std::stoi(nx());
     else if (a == "--fuel-v") fo.v_eff = std::stof(nx());
     else if (a == "--fuel-w") fo.w_eff = std::stof(nx());
     else if (a == "--fuel-t0") fo.t0 = std::stof(nx());
+    else if (a == "--fuel-hyst") fo.hyst = std::stof(nx());
+    else if (a == "--fuel-vp-min") fo.vp_min = std::stof(nx());
+    else if (a == "--fuel-vp-clear") fo.vp_clear = std::stof(nx());
+    else if (a == "--fuel-first") fo.first = std::stoi(nx()) != 0;
     else if (a == "--fuel-time") fo.time = std::stoi(nx()) != 0;
     else if (a == "--fuel-global") fo.global = std::stoi(nx()) != 0;
     else if (a == "--fuel-vp") fo.vp = std::stoi(nx()) != 0;
@@ -158,7 +175,7 @@ int main(int argc, char** argv) {
     hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
     hc.cfg.low_auto = 0;
     hc.cfg.low_act_w = 0;
-    hc.cfg.low_explore = 1;
+    hc.cfg.low_explore = close_lidar ? 2 : 1;
     hc.cfg.lo_aux = 0;
     hc.cfg.pe_xy = hc.cfg.pe_yaw = 0.f;
     const sim::LidarModel lidar = sim::load_lidar_model(model_path);
@@ -201,6 +218,11 @@ int main(int argc, char** argv) {
       ms.log = mr.log = &real_log;
     }
     long d_body = 0, n_ans = 0, n_sent_all = 0, n_nomatch_all = 0, n_fb_all = 0;
+    fu::Diag dgs;
+    cs.set_diag(&dgs);
+    FILE* lf = logp.empty() ? nullptr : std::fopen(logp.c_str(), "w");
+    if (lf) std::fprintf(lf, "ep\tt_s\tstep\tcmd_why\ttgt\tchanged\tjump_m\trobot_tgt_m\tn_clu\tn_node\tno_goal_why\tclosed\n");
+    int prev_cell = -2;
     fu::Work ws, wr;
     Tap tap;
     tap.robot = &robot;
@@ -212,6 +234,7 @@ int main(int argc, char** argv) {
     std::vector<sim::LowRl> R;
     std::vector<sim::LowEp> L;
     sim::World rw;   // RobotEnv 지도 창 (gw · gh · ox · oy 만)
+    long ep_dec0 = 0, ep_sw0 = 0;   // --ep-log: 이 판 시작 때 셈
     long n_obs = 0, d_img = 0, d_1d = 0, d_cmd = 0, d_dec = 0, n_dec = 0, n_ep = 0, why_n[3] = {0, 0, 0}, n_sw = 0;
     long ng_steps = 0;   // 목표 없음 걸음 (두 쪽 다 규칙 추종기 — 시뮬 apply_action 계층형 가지)
     int first_bad = -1, prev_tgt = -2;
@@ -228,6 +251,7 @@ int main(int argc, char** argv) {
       cs.restart(); cr.restart();
       n_sent_all += us.n_sent(); n_nomatch_all += us.n_nomatch(); n_fb_all += us.n_fallback();
       us.restart(); ur.restart();
+      prev_cell = -2;
       cs.set_geom(w.gw, hc.cfg.res); cr.set_geom(w.gw, hc.cfg.res);
       ++n_ep;
     };
@@ -271,8 +295,20 @@ int main(int argc, char** argv) {
         const sim::World& w = worlds[(size_t)st[0].map];
         const lxc::View vs{&hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
         int why = 0;
+        dgs = fu::Diag();
         const sim::LowCmd c1 = cs.decide(vs, ws, &why);
         why_n[why] += 1;
+        if (lf) {
+          const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
+          const auto wx = [&](int cell) { return w.ox + (cell % w.gw + 0.5) * hc.cfg.res; };
+          const auto wy = [&](int cell) { return w.oy + (cell / w.gw + 0.5) * hc.cfg.res; };
+          const bool chg = prev_cell != -2 && c1.target != prev_cell;
+          const double jump = chg && c1.target >= 0 && prev_cell >= 0 ? std::hypot(wx(c1.target) - wx(prev_cell), wy(c1.target) - wy(prev_cell)) : 0.0;
+          const double rt = c1.target >= 0 ? std::hypot(wx(c1.target) - st[0].x, wy(c1.target) - st[0].y) : -1.0;
+          std::fprintf(lf, "%ld\t%.1f\t%d\t%s\t%d\t%d\t%.2f\t%.2f\t%d\t%d\t%d\t%d\n", n_ep, st[0].step * dt, st[0].step, why == 0 ? "fuel" : why == 1 ? "slot0" : "none", c1.target, chg ? 1 : 0,
+                       jump, rt, dgs.n_clu, dgs.n_node, why == 2 ? dgs.why : -1, (int)st[0].map_closed);
+          prev_cell = c1.target;
+        }
         cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
         ++n_dec;
         if (c1.target != prev_tgt) { ++n_sw; prev_tgt = c1.target; }
@@ -298,30 +334,67 @@ int main(int argc, char** argv) {
       long di = 0, d1 = 0;
       for (int i = 0; i < NI; ++i) di += li[(size_t)i] != robot.low_img()[i];
       for (int i = 0; i < N1; ++i) d1 += std::memcmp(&l1[(size_t)i], &robot.low_1d()[i], 4) != 0;
+      if (d1 && std::getenv("LOW_CHECK_VERBOSE"))
+        for (int i = 0; i < N1; ++i)
+          if (std::memcmp(&l1[(size_t)i], &robot.low_1d()[i], 4) != 0) std::printf("  걸음 %d 1D 칸 %d 시뮬 %g 실물 %g\n", t, i, l1[(size_t)i], robot.low_1d()[i]);
       ng_steps += cs.cmd().follow != 2;
       d_img += di; d_1d += d1;
       if ((di || d1) && first_bad < 0) first_bad = t;
       // 아래층 정책 (RobotEnv 관측) → 두 쪽에 같은 행동
       if (!rule) pol.act(robot.low_img(), robot.low_1d(), a3.data());
       if (!rule && cs.cmd().follow == 2) { act[0] = a3[0]; act[1] = a3[1]; }
+      if (std::getenv("LOW_CHECK_VERBOSE")) {
+        cpu.get_state(st);
+        if (std::memcmp(&st[0].ws, &robot.state().ws, 4) != 0 || std::memcmp(&st[0].vs, &robot.state().vs, 4) != 0)
+          std::printf("  걸음 %d 속도 다듬기 상태 시뮬 (%g, %g) 실물 (%g, %g) · 시뮬 몸통 닿음 %d\n", t, st[0].vs, st[0].ws, robot.state().vs, robot.state().ws, st[0].collided);
+      }
       float v, w;
       robot.low_act(a3.data(), &v, &w);
       cpu.step(act.data());
       cpu.get_state(st);
       cpu.get_reward(rew, dn);
       if (dn[0] != 0) {   // 판 끝 (시뮬은 리셋됨) — 실물 쪽 판 끝 코드가 같은지
-        if (robot.done() != dn[0]) { ++d_cmd; if (first_bad < 0) first_bad = t; }
+        if (robot.done() != dn[0]) {
+          ++d_cmd;
+          if (first_bad < 0) first_bad = t;
+          if (std::getenv("LOW_CHECK_VERBOSE")) std::printf("  걸음 %d 판 끝 시뮬 %d 실물 %d\n", t, dn[0], robot.done());
+        }
+        if (!ep_log.empty()) {
+          if (FILE* ef = std::fopen(ep_log.c_str(), "a")) {
+            std::fprintf(ef, "%ld\t%d\t%.1f\t%ld\t%ld\n", n_ep, dn[0], robot.state().step * (double)hc.cfg.substeps * hc.cfg.dt, n_dec - ep_dec0, n_sw - ep_sw0);
+            std::fclose(ef);
+          }
+          ep_dec0 = n_dec;
+          ep_sw0 = n_sw;
+        }
+        if (max_ep > 0 && n_ep >= max_ep) break;
         if (!rule) pol.reset();
         no_delay();
         start();
         continue;
       }
-      if ((std::memcmp(&st[0].cmd_v, &v, 4) != 0 || std::memcmp(&st[0].cmd_w, &w, 4) != 0)) { ++d_cmd; if (first_bad < 0) first_bad = t; }
+      if ((std::memcmp(&st[0].cmd_v, &v, 4) != 0 || std::memcmp(&st[0].cmd_w, &w, 4) != 0)) {
+        ++d_cmd;
+        if (first_bad < 0) first_bad = t;
+        if (std::getenv("LOW_CHECK_VERBOSE"))
+          std::printf("  걸음 %d 명령 시뮬 (%g, %g) 실물 (%g, %g) · 위층 목표 %d follow %d · 경로 칸 시뮬 %d 실물 %d · 목표 칸 시뮬 %d 실물 %d\n", t, st[0].cmd_v, st[0].cmd_w, v, w, cs.cmd().target,
+                      cs.cmd().follow, (int)st[0].p_n, (int)robot.state().p_n, st[0].goal_cell, robot.state().goal_cell);
+        if (std::getenv("LOW_CHECK_VERBOSE")) {   // 두 쪽 지도·깊이 층·지나간 칸이 같은지 (어디서 갈라졌나)
+          cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts);
+          long dm = 0, dc = 0, dt = 0;
+          for (size_t i = 0; i < lm.size(); ++i) dm += lm[i] != robot.lmap()[i];
+          for (size_t i = 0; i < vox.size(); ++i) dc += vox[i] != robot.cam_layer()[i];
+          for (size_t i = 0; i < tr.size(); ++i) dt += tr[i] != robot.trail()[i];
+          std::printf("    지도 다른 칸 %ld · 깊이 층 다른 칸 %ld · 지나간 칸 다른 낱말 %ld · 닫힘 시뮬 %d 실물 %d · 자세 시뮬 (%.4f %.4f %.4f) 실물 (%.4f %.4f %.4f)\n", dm, dc, dt, st[0].map_closed,
+                      robot.state().map_closed, st[0].x, st[0].y, st[0].th, robot.state().x, robot.state().y, robot.state().th);
+        }
+      }
       cpu.get_low_rl(R); cpu.get_low(L);
       cs.after_step(st[0], R[0], L[0]);
       cr.after_step(robot.state(), robot.low_rl(), robot.low_ep());
     }
     sim::set_cpu_tap(nullptr);
+    if (lf) std::fclose(lf);
     for (const auto& x : real_log) { real_ms += x.ms; real_max = std::max(real_max, x.ms); }
     if (real) std::printf("진짜 판단 모델 %s: 답 %zu 개 · 평균 %.0f ms · 최대 %.0f ms (시뮬 시계에는 --dec-latency %.1f s 로)\n", dec_url.c_str(), real_log.size(),
                           real_log.empty() ? 0.0 : real_ms / real_log.size(), real_max, dec_lat);

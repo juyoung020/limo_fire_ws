@@ -70,6 +70,7 @@ class LowRlNode : public rclcpp::Node {
     max_speed_ = declare_parameter<double>("max_speed", -1.0);
     record_ = declare_parameter<std::string>("record", "");
     const bool camera_layer = declare_parameter<bool>("camera_layer", true);
+    const bool close_lidar = declare_parameter<bool>("close_lidar", false);   // 닫힘을 라이다 지도만으로 (깊이 카메라 층 뺌 — combine_run --close-lidar, 기본 끔)
     const std::string scan_topic = declare_parameter<std::string>("scan_topic", "/scan");
     const std::string odom_topic = declare_parameter<std::string>("odom_topic", "/odom");
     const std::string imu_topic = declare_parameter<std::string>("imu_topic", "/imu");
@@ -87,10 +88,13 @@ class LowRlNode : public rclcpp::Node {
     fo.global = declare_parameter<bool>("fuel_global", true);
     fo.vp = declare_parameter<bool>("fuel_vp", true);
     fo.room = declare_parameter<bool>("fuel_room", false);
-    fo.hyst = (float)declare_parameter<double>("fuel_hyst", 0.0);
+    fo.hyst = (float)declare_parameter<double>("fuel_hyst", 0.2);
     fo.v_eff = (float)declare_parameter<double>("fuel_v", 0.981);
     fo.w_eff = (float)declare_parameter<double>("fuel_w", 3.232);
     fo.t0 = (float)declare_parameter<double>("fuel_t0", 0.10);
+    fo.vp_min = (float)declare_parameter<double>("fuel_vp_min", 0.75);
+    fo.vp_clear = (float)declare_parameter<double>("fuel_vp_clear", 0.21);
+    const bool slot_vp = declare_parameter<bool>("slot_vp", false);
     // 위층 판단 모델 (upper:=decider — scripts/low_decider.h). 주기 = 로봇에서 잰 답 시간(약 2.6 s) + 여유
     const std::string dec_url = declare_parameter<std::string>("decider_url", "http://127.0.0.1:8171");
     const double dec_period = declare_parameter<double>("decider_period", 3.0);
@@ -115,6 +119,7 @@ class LowRlNode : public rclcpp::Node {
       if (!w.empty()) RCLCPP_WARN(get_logger(), "*** %s ***", w.c_str());
     }
     hc_ = sim::load_env_cfg(env_yaml_);
+    if (close_lidar) hc_.cfg.low_explore = 2;   // RobotEnv 합친 탐사 모드가 이어받음 (녹화 머리 hc 에도 남아 다시 돌리기가 같은 규칙)
     if (!camera_layer) hc_.cfg.cam_on = 0;
     if (con_mask >= 0) hc_.cfg.con_mask = con_mask;
     if (con_stall >= 0) hc_.cfg.con_stall = con_stall;
@@ -135,7 +140,8 @@ class LowRlNode : public rclcpp::Node {
     lp_ = lxc::Params::from_cfg(c);
     lp_.fuel = fo;
     lp_.rule = rule_;   // 아래층 규칙: 목표 넘기기 규칙 가지 (combine_run --policy 없음)
-    lp_.use_fuel = upper_ == "fuel";   // slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick)
+    lp_.use_fuel = upper_ == "fuel" || (upper_ == "slot0" && slot_vp);   // slot0: 피하지 않는 첫 후보 · stick (slot_vp 면 그 덩어리의 시점 — fu::slot_view)
+    if (upper_ == "slot0" && slot_vp) lp_.fuel = fu::slot_view(fo);
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
     if (upper_ == "decider") {
       dp.period_steps = std::max(1, (int)std::lround(dec_period / dt()));

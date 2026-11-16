@@ -310,7 +310,7 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   const auto REp = [&](int wi) -> uint32_t* { return small ? &s_r[bidx(wi)] : &RE[wi]; };
   // 0. 계획기가 설 수 있는 칸 (mdp::frontier_search plan_ok): 닫힘 반경 rbc 로 지도 막힘 팽창(STC, reach_fix) & 깊이 카메라 층 막힘을 같은 반경으로 팽창한 곳 밖
   const mdp::Robot rbc = mdp::robot_cells(c.close_radius, c.res);
-  const bool cam = b.cvox != nullptr;
+  const bool cam = b.cvox != nullptr && c.low_explore != 2;   // 합친 탐사 low_explore 2: 닫힘·후보 번지기는 라이다 지도만 — obs_ref.h write_obs 와 같은 규칙 (mdp/frontier.h 머리글)
   if (cam) {   // 층 비트: 범위 ± rbc 줄 · ± 1 낱말 (팽창이 읽는 곳 — 맵 안만)
     const int y0 = max(0, by0 - rbc.r), y1 = min(m.gh - 1, by1 + rbc.r), w0 = max(0, bw0 - 1), w1 = min(ws - 1, bw1 + 1), nw = w1 - w0 + 1;
     const uint32_t* V = reinterpret_cast<const uint32_t*>(b.cvox + (size_t)env * c.size * c.size);

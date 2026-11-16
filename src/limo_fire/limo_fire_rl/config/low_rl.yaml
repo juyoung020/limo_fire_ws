@@ -5,7 +5,7 @@ low_rl:
     checkpoint: ""            # 아래층 체크포인트 .bin (launch 인자 checkpoint 로)
     dry_run: true             # true: /cmd_vel 발행자를 안 만들고 명령을 ~/cmd_debug 에만. 실제 주행은 false (README 점검표 뒤)
     enabled: false            # 늘 꺼진 채 뜸 → ~/enable true (RViz 탐사 패널 "/low_rl") — 리모컨 오토일 때만 켜짐
-    upper: fuel               # fuel: 로봇 지도에서 fuel 이 목표 (combine_run --upper fuel) · slot0: 피하지 않는 첫 후보 + stick (combine_run --upper slot0) · decider: 로봇 안 llama-server 판단 모델 (README) · topic: ~/goal (시험용)
+    upper: fuel               # fuel: 로봇 지도에서 fuel 이 목표 (combine_run --upper fuel) · slot0: 피하지 않는 첫 후보 + stick (combine_run --upper slot0, slot_vp 면 그 덩어리 시점) · decider: 로봇 안 llama-server 판단 모델 (README) · topic: ~/goal (시험용)
     decider_url: http://127.0.0.1:8171   # upper:=decider — llama-server (POST /v1/systemone)
     decider_period: 3.0       # s, 요청 주기 — 로봇에서 잰 답 시간(후보 8 개 약 2.6 s) + 여유. 기다리는 동안 지금 목표로 몰고, 목표가 죽으면 slot0 차례로 바로
     decider_timeout: 8.0      # s, 이보다 늦은 답은 버림 (지금 목표 그대로)
@@ -41,8 +41,13 @@ low_rl:
     fuel_global: true
     fuel_vp: true
     fuel_room: false
-    fuel_hyst: 0.0
+    fuel_hyst: 0.2            # 지금 목표로 시작하는 순회가 가장 좋은 순회의 1.2 배 안이면 그대로 (1116_fuel_rl_1: 0 이면 39 s 에 목표 14 번, 2.8 m 씩 뜀)
     fuel_v: 0.981
     fuel_w: 3.232
     fuel_t0: 0.10
+    # 시점 자격 (FUEL 저자 설정 min_candidate_dist 0.75 · min_candidate_clearance 0.21 — scripts/fuel_upper.h Opt::vp_min · vp_clear)
+    fuel_vp_min: 0.75         # 로봇에서 이 거리(m) 안 시점은 안 씀 — 통과 반경(0.5) 안 목표를 내자마자 통과하던 것
+    fuel_vp_clear: 0.21       # 시점 둘레 이 거리(m) 안에 모름 칸이 없어야 (없으면 거리 문턱만으로 다시, 그래도 없으면 그 덩어리는 쉼)
+    close_lidar: false        # true: 지도 닫힘(성공 끝)을 라이다 지도만으로 — 깊이 카메라 층에만 막힌 곳이 남으면 안 닫힘. 시뮬에서 아래층 규칙 + slot0 성공이 크게 떨어져 기본 끔 (scripts/README)
+    slot_vp: false            # upper:=slot0 에서 후보 칸 대신 그 덩어리의 시점 (fu::slot_view) — 시뮬 시험 장면에서 slot0 보다 나빠 기본 끔 (scripts/README)
     record: ""                # 비우지 않으면 입력·관측·명령 녹화 (sim/tools/low_node_replay 로 다시 돌림)

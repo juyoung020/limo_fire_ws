@@ -20,6 +20,7 @@ void RobotEnv::init(const sim::EnvHostCfg& hc, bool low, bool explore) {
   if (low) {   // 아래층 정책: train --low 와 같은 설정 (scripts/train.cpp run_low — 목표는 위층이 주지만 관측 길은 학습 판 low_auto 1 그대로)
     // 경로 판(목적지만 아님)은 합친 탐사 모드만 — low_obs 가 plan_ref 로 경로를 짬 (아래층 규칙 lower:=rule · combine_run --policy 없음은 env.yaml 그대로라 경로 판)
     if (!c.lo_goalonly && !explore) throw std::runtime_error("RobotEnv 아래층 학습 판 모드: 목적지만(SIM_LOW_GOALONLY=1) 정책만 — 경로 판은 합친 탐사 모드에서만");
+    const int close_lidar = hc.cfg.low_explore == 2 ? 2 : 1;   // 합친 탐사 닫힘을 라이다 지도만으로 (부르는 쪽이 low_explore 2 로 줌 — env.h EnvCfg::low_explore)
     c.low_stat = c.low_task = c.low_rl = c.low_auto = 1;
     c.low_explore = 0;
     c.low_solo = 0;
@@ -27,7 +28,7 @@ void RobotEnv::init(const sim::EnvHostCfg& hc, bool low, bool explore) {
     c.lo_aux = 0;   // 보조 예측 재료는 학습 전용 (관측 아님)
     if (explore) {   // 합친 탐사 (scripts/combine_run.cpp:224-231 와 같게): 목표는 호스트(위층) · 탐사 판 끝 규칙 · 정체는 막힘 신호만
       c.low_auto = 0;
-      c.low_explore = 1;
+      c.low_explore = close_lidar;
       c.low_act_w = 0;
       explore_ = true;
     }

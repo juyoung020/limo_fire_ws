@@ -44,7 +44,20 @@ struct Opt {
   float split_m = 1.5f;    // global: 첫 주성분 표준편차가 이 값(m)을 넘으면 둘로 (잠정)
   float room_pen = 10.f;   // room: 로봇 방을 덩어리 남기고 떠나는 구간 벌점 (s, 잠정)
   float door_m = 0.45f;    // room: 벽까지 거리 이 값 미만인 좁은 칸에서 방을 끊음 (잠정, 문 폭 0.8~1.1 m 의 반)
+  // 시점 자격 (FUEL frontier_finder — 저자 저장소 HKUST-Aerial-Robotics/FUEL exploration_manager/launch/algorithm.xml 값):
+  //   vp_min  : 로봇에서 이 거리(m) 안 시점은 안 씀 (FUEL frontier/min_candidate_dist 0.75 — getTopViewpointsInfo 의 거리 문턱). 덩어리 가장 가까운 칸도 예외 없음.
+  //             통과 반경(low_pass_r) 안 목표는 내자마자 "통과" 라 결정만 되풀이된다 — 로봇 몸 둘레(라이다 뒤 140° 사각지대) 프론티어는 제자리 회전이 봄
+  //   vp_clear: 시점 둘레 이 거리(m) 안에 모름 칸이 없어야 함 (FUEL frontier/min_candidate_clearance 0.21 — isNearUnknown). 막힘 쪽 간격은 pass (설 수 있음 + 깊이 층)
+  //   둘 중 하나라도 > 0 이면: 시점 없는 덩어리는 순회에서 뺌 (FUEL 의 dormant — 시점이 없는 프론티어는 쉬게 둠). 간격(vp_clear) 맞는 시점이 없으면 거리 문턱만으로 한 번 더 찾고,
+  //   그래도 없으면 뺌. 모든 덩어리가 빠지면 목표 없음(kNone — 부르는 쪽은 slot0 로 안 떨어지고 제자리 회전: 덩어리는 있는데 다 로봇 곁이면 돌아서 봄).
+  //   다른 못 냄(시작 칸 없음 · 덩어리 없음)은 전처럼 −1 (slot0 차례) — kNone 으로 하면 시험 장면 성공이 0.71 → 0.39 (2026-11-16, 진척 없음 끝이 늚)
+  float vp_min = 0.f, vp_clear = 0.f;
+  bool first = false;      // 순회 대신 덩어리 차례(후보 K 개면 시뮬 후보 차례 = 가장 가까운 순)의 첫 시점 — slot0 를 시점으로 (--fuel-first). 지금 목표가 첫 덩어리면 그대로 (slot0 stick 과 같은 뜻)
 };
+// slot0 를 시점으로: 시뮬 후보 차례의 첫 덩어리 (순회 · 시간 비용 · 붙들기 · 방 없이), 시점 자격은 base 그대로 — 실물 노드 upper:=slot0 (slot_vp) ·
+// combine_run --upper fuel --fuel-first 1 --fuel-global 0 --fuel-time 0 --fuel-vp 1 과 같은 값
+inline Opt slot_view(Opt b) { b.first = true; b.global = false; b.time = false; b.vp = true; b.hyst = 0.f; b.room = false; return b; }
+constexpr int kNone = -2;   // decide: 프론티어는 있지만 시점 자격이 되는 덩어리가 없음 → 목표 없음 (slot0 로 안 떨어짐)
 
 // 환경마다 기억 — 지금 목표
 struct Mem {
@@ -103,6 +116,18 @@ struct CandOut {
   bool cur = false, fuel = false;   // 지금 목표 덩어리 · fuel 순회가 고른 것
 };
 
+// 결정 하나의 속 (재기만 — 결정에 영향 없음): 다시 돌리기 도구(sim/tools/low_explore_replay)가 결정마다 왜 그 목표·왜 목표 없음인지 적는 데
+struct Diag {
+  int why = 0;          // 0 목표 냄 · 1 설 수 있는 시작 칸 없음 · 2 번진 곳에 프론티어 덩어리 없음 · 3 덩어리는 있으나 자격(거리·본 칸) 칸 없음 · 4 모두 피하는 칸 · 5 시점 자격 되는 덩어리 없음 (kNone)
+  int n_clu = 0;        // 번진 곳(로봇 시작 칸에서) 프론티어 덩어리 수 (크기 무관)
+  int n_node = 0;       // 합침·나눔·피하기 뒤 순회 노드 수
+  int cur = -1, pick = -1, best_first = -1;   // 지금 목표 노드 · 고른 노드 · 가장 좋은 순회의 첫 노드
+  double best = 0, cur_cost = 0;              // 가장 좋은 순회 값 · 지금 목표로 시작하는 순회 값 (cur ≥ 0 일 때)
+  std::vector<int> vp, anc, ncell;            // 노드마다 시점 칸 · 가장 가까운 칸 · 칸 수
+  std::vector<double> t0;                     // 노드마다 로봇 → 시점 비용
+  std::vector<int> order;                     // 가장 좋은 순회 차례 (노드 번호 0 …)
+};
+
 struct In {
   const sim::EnvCfg* c;
   const sim::World* W;
@@ -116,6 +141,7 @@ struct In {
   int cand_cap = 16;
   int cand_big = 0;            // 상한 안에서 이 수만큼은 틈(open_m) 큰 순으로 채움 — 멀리 있는 큰 미탐사 구역이 gpt 차례로 밀려 빠지지 않게 (잠정 4)
   const std::vector<float>* people = nullptr;   // 추적된 사람 자리 (x, y 세계 m 쌍)
+  Diag* diag = nullptr;                          // 주면 결정 속을 채움 (재기만)
 };
 
 namespace detail {
@@ -245,11 +271,12 @@ struct Node {
   int anc = -1;             // 로봇에서 BFS 거리가 가장 짧은 칸
   int anc_d = 0;
   double cx = 0, cy = 0;    // 칸 가운데 (칸 단위)
+  bool dead = false;        // 자격 되는 시점 없음 (vp_min · vp_clear 켬일 때 — FUEL dormant)
   int vp = -1;              // 시점 칸
   double yaw = 0;           // 시점에서 볼 방향
 };
 
-// 결정 하나: 보낼 목표 칸 (없으면 −1 → 부르는 쪽이 slot0 로)
+// 결정 하나: 보낼 목표 칸 (없으면 −1 → 부르는 쪽이 slot0 로 · kNone → 목표 없음)
 inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   const auto t_start = std::chrono::steady_clock::now();
   const sim::EnvCfg& c = *in.c;
@@ -279,7 +306,10 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
     st.ms_max = std::max(st.ms_max, ms);
     return v;
   };
-  if (!r.start_free) { mem = Mem(); st.fallback += 1; return done(-1); }
+  Diag* dg = in.diag;
+  if (dg) *dg = Diag();
+  const bool strict = o.vp_min > 0.f || o.vp_clear > 0.f;   // 시점 자격 켬 (아래 "시점")
+  if (!r.start_free) { if (dg) dg->why = 1; mem = Mem(); st.fallback += 1; return done(-1); }
   const int nr0 = r.n_reach0;   // 로봇 시작 칸에서 번진 칸 = 갈 수 있는 칸 (qa[0 … nr0))
   const auto pass = [&](int idx) { return (w.flag[idx] & 1) && w.dist[idx] >= 0; };
   const auto eligible = [&](int idx) {   // cand_keys 와 같은 자격
@@ -290,10 +320,12 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   };
   // ---- 노드 만들기
   std::vector<Node> nodes;
+  int n_raw = 0;   // 자격 칸이 있는 덩어리 수 (전역) · 쓸 수 있는 후보 수 (후보 K 개)
   if (o.global) {
     std::vector<std::vector<int>> by(n_out);
     for (int q = 0; q < nr0; ++q) { const int idx = w.qa[q]; if (eligible(idx)) by[w.label[idx]].push_back(idx); }
     for (int l = 0; l < n_out; ++l) if (!by[l].empty()) { Node nd; nd.cells.swap(by[l]); nodes.push_back(std::move(nd)); }
+    n_raw = (int)nodes.size();
     st.g_raw += (long)nodes.size(); st.g_rawmax = std::max(st.g_rawmax, (long)nodes.size()); st.g_dec += 1;
   } else {
     // 시뮬 후보 K 개: 후보 칸의 덩어리(라벨) 칸들. 후보 v2 의 합친 덩어리는 칸만 첫 덩어리 것 (가운데·시점 뽑기에만 씀)
@@ -308,6 +340,7 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
       if (nd.cells.empty()) nd.cells.push_back(cell);
       nd.anc = cell;   // 후보 칸 그대로 (cand_tsp 와 같은 목표)
       nodes.push_back(std::move(nd));
+      n_raw += 1;
     }
   }
   const auto fill = [&](Node& nd, bool keep_anc) {
@@ -390,9 +423,17 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
       nodes.resize(o.max_nodes);
     }
   }
-  const int m = (int)nodes.size();
+  int m = (int)nodes.size();
   st.nodes += m;
-  if (m == 0) { mem = Mem(); st.fallback += 1; return done(-1); }
+  if (dg) {
+    std::vector<uint8_t> seen(n_out, 0);
+    for (int q = 0; q < nr0; ++q) { const int idx = w.qa[q]; if ((w.flag[idx] & 2) && w.label[idx] >= 0 && w.label[idx] < n_out && !seen[w.label[idx]]) { seen[w.label[idx]] = 1; dg->n_clu += 1; } }
+    dg->n_node = m;
+  }
+  if (m == 0) {
+    if (dg) dg->why = dg->n_clu == 0 ? 2 : (o.global && n_raw == 0 ? 3 : 4);
+    mem = Mem(); st.fallback += 1; return done(-1);
+  }
   // ---- 로봇에서 거리 (time 이면 모따기 거리, 아니면 BFS 칸 거리)
   std::vector<int32_t> cells0(w.qa.begin(), w.qa.begin() + nr0);
   if (o.time || o.vp || in.cands) detail::chamfer(r.start, gw, gh, pass, cells0, nr0, w.cd, w.bk);
@@ -456,29 +497,54 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
     }
     return true;
   };
+  const int Rc = (int)std::ceil(o.vp_clear * c.inv_res - 1e-4f);
+  const auto near_unknown = [&](int cell) {   // FUEL isNearUnknown: 둘레 vp_clear 안 (원) 에 모름 칸
+    const int x = cell % gw, y = cell / gw;
+    for (int dy = -Rc; dy <= Rc; ++dy)
+      for (int dx = -Rc; dx <= Rc; ++dx) {
+        if ((dx * dx + dy * dy) * res * res > (double)o.vp_clear * o.vp_clear) continue;
+        const int u = x + dx, v = y + dy;
+        if (u >= 0 && v >= 0 && u < gw && v < gh && mdp::cls_at(mv, u, v) == mdp::kUnk) return true;
+      }
+    return false;
+  };
   for (Node& nd : nodes) {
     nd.vp = nd.anc;
     if (o.vp) {
       double bs = -1;
       int bv = -1;
+      bool clear_on = o.vp_clear > 0.f;
       const auto test = [&](int cell) {
         if (cell < 0 || cell >= n || !pass(cell) || in.avoided(cell) || w.dist[cell] < mdp::hier::kCandMinDist) return;
-        if (cell != nd.anc && std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res <= c.low_pass_r) return;   // 이미 통과 반경 안 = 가도 그 자리
+        const double dr = std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res;
+        if (strict) {
+          if (dr < std::max((double)o.vp_min, (double)c.low_pass_r)) return;   // 통과 반경 안은 늘 뺌 (가자마자 통과)
+          if (clear_on && near_unknown(cell)) return;
+        } else if (cell != nd.anc && dr <= c.low_pass_r) {
+          return;   // 이미 통과 반경 안 = 가도 그 자리 (옛 규칙: 가장 가까운 칸은 예외)
+        }
         if (cell != nd.anc && !los(cell, nd.anc)) return;
         const double g = gain(cell);
         if (g <= 0) return;
         const double t = (o.time ? t_robot(cell, look_yaw(nd, cell)) : len0(cell) / o.v_eff) + o.t0;
         if (g / t > bs) { bs = g / t; bv = cell; }
       };
-      test(nd.anc);
-      static const double kR[3] = {0.6, 1.2, 1.8};
-      for (int ri = 0; ri < 3; ++ri)
-        for (int a = 0; a < 12; ++a) {
-          const double rr = kR[ri], ang = 2 * M_PI * (a + 0.5 * ri) / 12;
-          const int x = (int)std::floor(nd.cx + rr / res * std::cos(ang)), y = (int)std::floor(nd.cy + rr / res * std::sin(ang));
-          if (x >= 0 && y >= 0 && x < gw && y < gh) test(y * gw + x);
-        }
+      const auto sample = [&]() {
+        test(nd.anc);
+        static const double kR[3] = {0.6, 1.2, 1.8};
+        for (int ri = 0; ri < 3; ++ri)
+          for (int a = 0; a < 12; ++a) {
+            const double rr = kR[ri], ang = 2 * M_PI * (a + 0.5 * ri) / 12;
+            const int x = (int)std::floor(nd.cx + rr / res * std::cos(ang)), y = (int)std::floor(nd.cy + rr / res * std::sin(ang));
+            if (x >= 0 && y >= 0 && x < gw && y < gh) test(y * gw + x);
+          }
+      };
+      sample();
+      if (bv < 0 && clear_on) { clear_on = false; sample(); }   // 간격 맞는 시점이 없으면 거리 문턱만으로
       if (bv >= 0) nd.vp = bv;
+      else if (strict) nd.dead = true;
+    } else if (strict && std::hypot(nd.anc % gw + 0.5 - rxf, nd.anc / gw + 0.5 - ryf) * res < std::max((double)o.vp_min, (double)c.low_pass_r)) {
+      nd.dead = true;
     }
     nd.yaw = look_yaw(nd, nd.vp);
   }
@@ -493,7 +559,21 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
         const long dx = idx % gw - ax, dy = idx / gw - ay;
         if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; cur = k; }
       }
-    if (cur >= 0) { nodes[cur].vp = mem.vp; nodes[cur].yaw = look_yaw(nodes[cur], mem.vp); }   // 같은 덩어리면 같은 목표 칸 (아래층 경로를 이어 감)
+    if (cur >= 0) { nodes[cur].vp = mem.vp; nodes[cur].yaw = look_yaw(nodes[cur], mem.vp); nodes[cur].dead = false; }   // 같은 덩어리면 같은 목표 칸 (아래층 경로를 이어 감)
+  }
+  if (strict) {   // 시점 없는 덩어리 빼기 (지금 목표 덩어리는 그 목표 칸 그대로 남김)
+    std::vector<Node> live;
+    int cur2 = -1;
+    for (int k = 0; k < m; ++k) {
+      if (nodes[k].dead) continue;
+      if (k == cur) cur2 = (int)live.size();
+      live.push_back(std::move(nodes[k]));
+    }
+    nodes.swap(live);
+    cur = cur2;
+    m = (int)nodes.size();
+    if (dg) dg->n_node = m;
+    if (m == 0) { if (dg) dg->why = 5; mem = Mem(); st.fallback += 1; return done(kNone); }
   }
   // ---- 방 마무리 (room): 좁은 칸(벽까지 거리 < door_m)을 빼고 갈 수 있는 칸을 4 이웃으로 나눔 → 로봇 방
   std::vector<uint8_t> inroom(m, 0);
@@ -543,14 +623,14 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
     };
     for (int k = 0; k < m; ++k) { rid[k] = room_of(nodes[k].vp); inroom[k] = o.room && rroom >= 0 && rid[k] == rroom; }
   }
-  // ---- 비용 행렬 (0 = 로봇, 1 … m = 노드). 식 5: 노드 → 로봇 0
+  // ---- 비용 행렬 (0 = 로봇, 1 … m = 노드). 식 5: 노드 → 로봇 0  (first 면 순회를 안 짬 — 행렬도 로봇 줄만)
   const int S = m + 1;
   std::vector<double> C((size_t)S * S, 0.0);
   const double pen = o.time ? o.room_pen : o.room_pen * o.v_eff;   // 시간 끔이면 비용이 길이(m) — 같은 뜻의 길이로
   bool any_in = false;
   for (int k = 0; k < m; ++k) any_in = any_in || inroom[k];
   for (int k = 0; k < m; ++k) C[k + 1] = t_robot(nodes[k].vp, nodes[k].yaw) + (any_in && !inroom[k] ? pen : 0.0);
-  if (m > 1) {
+  if (m > 1 && !o.first) {
     for (int a = 0; a < m; ++a) {
       if (o.time || o.vp) detail::chamfer(nodes[a].vp, gw, gh, pass, cells0, nr0, w.cd2, w.bk);
       else {   // BFS 칸 거리 (cand_tsp 와 같음)
@@ -583,13 +663,21 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   }
   std::vector<int> order;
   bool exact = false;
-  const double best = detail::tour(C, m, -1, order, &exact);
+  double best = 0;
+  if (o.first) order.push_back(1);   // 덩어리 차례의 첫 것 (지금 목표가 첫 것이면 위에서 목표 칸 그대로)
+  else best = detail::tour(C, m, -1, order, &exact);
   st.exact += exact;
   int pick = order.empty() ? 0 : order[0] - 1;
-  if (cur >= 0 && pick != cur) {
+  if (cur >= 0 && pick != cur && !o.first) {
     std::vector<int> o2;
     const double cc = o.hyst > 0 ? detail::tour(C, m, cur + 1, o2, &exact) : 1e18;
     if (cc <= (1.0 + o.hyst) * best) pick = cur;
+  }
+  if (dg) {
+    dg->cur = cur; dg->best_first = order.empty() ? -1 : order[0] - 1; dg->best = best; dg->pick = pick;
+    if (cur >= 0 && !o.first) { std::vector<int> o4; bool ex4 = false; dg->cur_cost = m > 1 ? detail::tour(C, m, cur + 1, o4, &ex4) : best; }
+    for (int k = 0; k < m; ++k) { dg->vp.push_back(nodes[k].vp); dg->anc.push_back(nodes[k].anc); dg->ncell.push_back((int)nodes[k].cells.size()); dg->t0.push_back(C[k + 1]); }
+    for (int x : order) dg->order.push_back(x - 1);
   }
   if (cur >= 0 && pick == cur) st.kept += 1;
   if (cur >= 0 && pick != cur) st.sw += 1;
@@ -613,7 +701,7 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
     }
     if (ns > 0) { st.slot_n += 1; if (hit >= 0) { st.slot_in += 1; st.slot_d += bd; st.slot_vp += bd <= 0.5; } }
   }
-  if (in.cands) {   // ---- 후보 특징 (판단 모델·규칙 견줌용)
+  if (in.cands && !o.first) {   // ---- 후보 특징 (판단 모델·규칙 견줌용)
     std::vector<CandOut> all(m);
     const int R6 = (int)std::lround(0.6 / res), R5 = (int)std::lround(0.5 / res);
     for (int k = 0; k < m; ++k) {
