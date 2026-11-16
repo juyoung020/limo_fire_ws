@@ -90,3 +90,12 @@ GPU 길: 기준 판 106 s 를 2.7 s, 갈래 600 판(요청 28 개 × 후보 × 4
 갈래 굴리기 후보 (2026-11-17): 실물 노드 upper:=decider 의 기본(decider_cand)과 같은 새 후보(`scripts/cand_view.h`, Ctl use_cand · 판단 모델 Upper cand)로 돈다. 줄마다 `cand_ver` "cand-v1-b8d942b",
 후보마다 cand::Cand 필드 전부(안정 번호 · 기억 필드 포함)와 판 기억 `mem`(trail · goals · fails)을, `.map.bin` 에 지금 지도와 5 · 15 · 30 s 전 지도(같은 범위)를 남겨 그림 꼴 A · B 를 나중에 다시 그린다.
 갈래 칸은 후보를 만들 걸음(위층 결정 차례 · 답 · 보냄)에만 그 칸의 지도 · 지나간 길 · 깊이 층을 장치에서 꺼낸다. 확인: 글자 A · 반복 0 갈래 = 기준 판 (122.0 s, 요청 3 개).
+
+## llama-server 패치 (판단 모델 앞부분 캐시 — `patches/`)
+
+기준: llama.cpp 31953bc (판단 모델 판, `tools/server/server-context.cpp` md5 fa397489…, PC `~/models/decision/runtime/llama.cpp` · 로봇 `~/decider_test/llama.cpp` 같은 소스). `patch -p1 < …` 뒤 `cmake --build build --target llama-server`.
+- `llama-server-decision-checkpoint.patch`: 판단 요청(DECISION)에도 context checkpoint 를 128 토큰마다 만든다 (원래는 COMPLETION 만 — LFM2 는 short conv 상태라 checkpoint 없이는 매 요청을 0 부터 다시 처리). 다음 요청은 같은 앞부분의 가장 긴 checkpoint 에서 이어 간다.
+- `llama-server-decision-images-last.patch`: `LLAMA_DECISION_IMAGES_LAST=1` 이면 systemone 템플릿에서 그림을 상태 뒤 · 질문 앞으로 옮긴다 (원래는 그림이 맨 앞이라 결정마다 바뀌는 지도 그림 때문에 같은 앞부분이 5 토큰뿐). 모델이 보는 차례가 바뀌므로 학습 캐시(d1_cache — 같은 서버 코드를 링크)와 서비스에 같은 값을 쓴다.
+- 확인 (PC, 같은 요청 차례): 차갑게 처리한 것과 checkpoint 를 복원해 처리한 것의 선택지 확률이 같음 (lat_comp2 B 0.5119291607677683 두 쪽). 128 토큰마다 끊어 처리하므로 패치 전과는 확률이 소수 둘째 자리에서 조금 다름 (0.4977 → 0.5119) — 학습·서비스를 같은 판으로.
+- 로봇 지연 (Q8, -lm dio, 2026-11-16): 압축 요청 차갑게 2429 ms → 앞 요청과 앞부분이 같으면 2242 ms, 그림 128 토큰이면 1953 → 1770 ms. 같은 앞부분이 고정 글(약 300 토큰)뿐이라 몫이 작음 — 바뀌는 글(후보 · 기록)을 줄이는 쪽이 더 큼.
+- `robot_latency_table.sh`: 로봇 `~/decider_test` 에서 설정마다 서버를 띄워 요청 꼴별로 재는 스크립트.

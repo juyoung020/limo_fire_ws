@@ -1,0 +1,32 @@
+--- a/tools/server/server-decision.cpp	2026-11-16 22:27:12.201372745 +0900
++++ b/tools/server/server-decision.cpp	2026-11-16 22:27:26.305090919 +0900
+@@ -1,3 +1,4 @@
++#include <cstdlib>
+ #include "server-decision.h"
+ 
+ #include "../../src/llama-ext.h" // staging API: llama_decision_order
+@@ -53,7 +54,23 @@
+     if (tmpl_src == nullptr) {
+         throw std::runtime_error("decision model has no \"systemone\" template");
+     }
+-    tmpl = std::make_shared<const common_chat_template>(tmpl_src, "", "");
++    // limo_fire patch (decision_ckpt): LLAMA_DECISION_IMAGES_LAST=1 puts the images after the state and before the question, so that the
++    // fixed part of the state (task, legends, field descriptions — first keys of the request) is a prompt prefix shared by consecutive
++    // decisions and can be restored from a context checkpoint (the map image changes at every decision). The model sees a different order
++    // than with the stock template — use the same setting for training caches (upper_lora d1_cache) and serving.
++    std::string tmpl_str = tmpl_src;
++    if (const char * e = std::getenv("LLAMA_DECISION_IMAGES_LAST"); e != nullptr && std::atoi(e) != 0) {
++        const std::string loop = "{% for image in images %}{{ image }}{% endfor %}";
++        const std::string q    = "{{ '\\n\\n\\nQUESTION:\\n' }}";
++        const size_t i = tmpl_str.find(loop), j = tmpl_str.find(q);
++        if (i == std::string::npos || j == std::string::npos || i > j) {
++            throw std::runtime_error("LLAMA_DECISION_IMAGES_LAST: the systemone template has an unexpected form");
++        }
++        tmpl_str.erase(i, loop.size());
++        tmpl_str.insert(tmpl_str.find(q), loop);
++        SRV_INF("%s", "decision template: images after the state (LLAMA_DECISION_IMAGES_LAST=1)\n");
++    }
++    tmpl = std::make_shared<const common_chat_template>(tmpl_str, "", "");
+ 
+     const std::string prefix_temp = prefix + "temperature.";
+     for (int32_t i = 0; i < llama_model_meta_count(model); i++) {

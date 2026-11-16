@@ -1,0 +1,47 @@
+--- a/tools/server/server-context.cpp	2026-11-16 22:25:35.894298072 +0900
++++ b/tools/server/server-context.cpp	2026-11-16 22:28:21.308992119 +0900
+@@ -4415,7 +4415,12 @@
+                     bool do_checkpoint = params_base.n_ctx_checkpoints > 0;
+ 
+                     // make checkpoints only for completion tasks
+-                    do_checkpoint = do_checkpoint && slot.task->type == SERVER_TASK_TYPE_COMPLETION;
++                    // limo_fire patch (decision_ckpt): also for decision tasks, every kDecisionCkptStep prompt tokens before the question,
++                    // so that the next decision request (same task text / legend / fields, new state) restores the longest common prefix.
++                    // hybrid models (LFM2 short convs) cannot roll the memory back, so without a checkpoint every request starts from 0.
++                    const bool is_decision = slot.task->type == SERVER_TASK_TYPE_DECISION;
++                    static const int32_t kDecisionCkptStep = 128;
++                    do_checkpoint = do_checkpoint && (slot.task->type == SERVER_TASK_TYPE_COMPLETION || is_decision);
+ 
+                     // make a checkpoint of the parts of the memory that cannot be rolled back.
+                     // checkpoints are created only if:
+@@ -4523,6 +4528,13 @@
+                         }
+                         slot.prompt.tokens.push_back(cur_tok);
+ 
++                        // decision: break every kDecisionCkptStep tokens before the question, a checkpoint is made before the next batch
++                        // (lfm2-d1 reads the last token only — pos_first() is −1, so keep clear of the last n_ubatch + 4 tokens instead)
++                        if (do_checkpoint && is_decision && slot.prompt.n_tokens() % kDecisionCkptStep == 0 &&
++                            (n_decision_first > 0 ? slot.prompt.n_tokens() < n_decision_first : slot.task->n_tokens() - slot.prompt.n_tokens() > n_ubatch + 4)) {
++                            break;
++                        }
++
+                         // break at the last user message, or at user messages at least min step past the last checkpoint
+                         if (do_checkpoint && spans.is_user_start(slot.prompt.n_tokens())) {
+                             const auto pos = slot.prompt.n_tokens();
+@@ -4581,7 +4593,7 @@
+                     } else {
+                         // skip ordinary mid-prompt checkpoints, unless the batch starts a user
+                         // message or we are near the end of the prompt
+-                        if (!is_user_start && !near_prompt_end) {
++                        if (!is_user_start && !near_prompt_end && !is_decision) {
+                             do_checkpoint = false;
+                         }
+                     }
+@@ -4602,6 +4614,7 @@
+                     do_checkpoint = do_checkpoint && (
+                             slot.prompt.checkpoints.empty() ||
+                             is_last_user_message || near_prompt_end ||
++                            (is_decision && (n_decision_first <= 0 || n_tokens_start <= n_decision_first) && n_tokens_start > slot.prompt.checkpoints.back()->n_tokens) ||
+                             n_tokens_start > slot.prompt.checkpoints.back()->n_tokens + params_base.checkpoint_min_step);
+                     SLT_DBG(slot, "main/do_checkpoint = %s, pos_min = %d, pos_max = %d\n", do_checkpoint ? "yes" : "no", pos_min, pos_max);
+ 
