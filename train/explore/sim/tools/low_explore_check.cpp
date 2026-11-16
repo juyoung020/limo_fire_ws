@@ -23,6 +23,7 @@
 #include "env_api.h"
 #include "limo_fire_rl/decider_client.h"
 #include "limo_fire_rl/robot_env.h"
+#include "coverage.h"
 #include "low_decider.h"
 #include "low_explore_ctl.h"
 #include "cand_view.h"
@@ -120,7 +121,7 @@ int main(int argc, char** argv) {
   int dec_mode = 0, dec_max = 0, dec_order = 0;
   bool dec_compact = false, dec_memf = true;
   std::string dec_input = "both", dec_url;
-  std::string ep_log, lat_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 아는 넓이 m² 30/60/90/120/180 s)
+  std::string ep_log, lat_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
   bool dec_fake_a = false;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
   int max_ep = 0;
   bool close_lidar = false;
@@ -237,8 +238,9 @@ int main(int argc, char** argv) {
     ms.lat = mr.lat = std::max(0, (int)std::lround(dec_lat / dt));
     ms.first = mr.first = dec_fake_a;
     long l_fb0 = 0, l_rw = 0, l_sent0 = 0, l_pf0 = 0, l_pt0 = 0, l_ans0 = 0;
-    double l_area[5] = {-1, -1, -1, -1, -1};
-    const double l_mark[5] = {30, 60, 90, 120, 180};
+    std::vector<std::vector<float>> l_cov;   // 덮음 값들, 1 s 마다 (판 끝까지)
+    covm::Coverage cov;
+    int cov_map = -1;
     std::unique_ptr<limo_fire_rl::DeciderClient> real;
     std::vector<lxd::Answer> real_log;
     double real_ms = 0, real_max = 0;
@@ -454,11 +456,15 @@ int main(int argc, char** argv) {
             const long sent = (n_sent_all + us.n_sent()) - l_sent0;
             std::fprintf(lf2, "%ld\t%d\t%.1f\t%ld\t%ld\t%ld\t%ld\t%ld\t%ld", n_ep, dn[0], robot.state().step * dt, fb, l_rw, sent, n_ans - l_ans0, us.n_pick_failed() - l_pf0,
                          us.n_pick_top() - l_pt0);
-            for (int q = 0; q < 5; ++q) std::fprintf(lf2, "\t%.1f", l_area[q]);
+            std::fprintf(lf2, "\t%d\t", worlds[(size_t)st[0].map].n_floor);
+            for (int m = 0; m < cov.n_values(); ++m) {   // 지표마다 1 s 값들을 쉼표로, 지표 사이는 ;
+              if (m) std::fprintf(lf2, ";");
+              for (size_t q = 0; q < l_cov.size(); ++q) std::fprintf(lf2, "%s%.4f", q ? "," : "", l_cov[q][(size_t)m]);
+            }
             std::fprintf(lf2, "\n");
             std::fclose(lf2);
           }
-          for (double& x : l_area) x = -1;
+          l_cov.clear();
           l_rw = 0;
           l_fb0 = n_fb_all + us.n_fallback();
           l_sent0 = n_sent_all + us.n_sent(); l_ans0 = n_ans; l_pf0 = 0; l_pt0 = 0;   // us 는 판마다 새로 (restart) — 고름 셈도 0 부터
@@ -496,14 +502,11 @@ int main(int argc, char** argv) {
       cs.after_step(st[0], R[0], L[0]);
       if (!lat_log.empty()) {
         if (use_dec && L[0].reach_step == st[0].step && L[0].reached > 0 && us.waiting()) ++l_rw;
-        const double ts = st[0].step * dt;
-        for (int q = 0; q < 5; ++q)
-          if (l_area[q] < 0 && ts >= l_mark[q]) {
-            if (!use_dec) cpu.get_map(lm);   // 판단 모델이 아니면 지도를 이때만 꺼냄
-            long kn = 0;
-            for (int16_t v_ : lm) kn += v_ != sim::kUnknown;
-            l_area[q] = kn * hc.cfg.res * hc.cfg.res;
-          }
+        if (st[0].step % 10 == 0) {   // 덮음 (1 s 마다, scripts/coverage.h — 가는 칸 · 굵은 칸 0.5 / 1.0 m × 문턱 10 · 20 · 30 · 50 %)
+          if (!use_dec) cpu.get_map(lm);
+          if (cov_map != st[0].map) { cov.init(worlds[(size_t)st[0].map]); cov_map = st[0].map; }
+          l_cov.push_back(cov.eval(lm.data(), hc.cfg.size));
+        }
       }
       if (cand_on) {   // 후보 기억: 자취 · 실패 자리 (Ctl::after_step 과 같은 판정 — 막힘 신호 · 경로 끝 밖 · 경로 없음)
         const sim::EnvState& e = robot.state();

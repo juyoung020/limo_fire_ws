@@ -20,6 +20,7 @@
 
 #include <cuda_runtime.h>
 
+#include "coverage.h"
 #include "env_api.h"
 #include "low_decider.h"
 #include "low_explore_ctl.h"
@@ -61,6 +62,7 @@ struct Out {
   int done = 0;
   double t = 0;
   long known = 0;
+  std::vector<std::vector<float>> cov;   // 갈래 뒤 1 s 마다 덮음 지표 (scripts/coverage.h 차례 — 가는 칸 · 굵은 0.5 / 1.0 m × 문턱) — 라벨 = 굵은 칸 덮음 AUC
 };
 struct Snap {   // 요청을 보낸 때의 원시 상태 (후보 꼴이 바뀌면 이것으로 요청을 다시 그림)
   long id;
@@ -400,6 +402,8 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
     std::vector<uint32_t> trs;
     std::vector<uint8_t> vx;
     GpuAct da(n);
+    covm::Coverage cov;
+    cov.init(C.worlds[0]);
     for (int i = 0; i < n; ++i) cmd[(size_t)i] = sl[(size_t)i].cs.cmd();
     g.set_low_cmd(cmd);
     int live = n;
@@ -449,6 +453,12 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
         if (dn[(size_t)i]) { o.done = dn[(size_t)i]; o.t = ep[(size_t)i].t; x.live = false; --live; continue; }
         x.cs.after_step(st[(size_t)i], R[(size_t)i], L[(size_t)i]);
         x.t += 1;
+        if ((x.t - x.t_branch) % 10 == 0) {   // 1 s 마다 덮음 (이 칸 지도만 꺼냄)
+          const size_t cells = (size_t)C.hc.cfg.size * C.hc.cfg.size;
+          lm.resize(cells);
+          cudaMemcpy(lm.data(), g.batch().lmap + (size_t)i * cells, cells * 2, cudaMemcpyDeviceToHost);
+          o.cov.push_back(cov.eval(lm.data(), C.hc.cfg.size));
+        }
         if (horizon_steps > 0 && x.t - x.t_branch >= horizon_steps) {
           o.done = 0; o.t = x.t * dt;
           g.get_map_env(i, lm);
@@ -595,7 +605,16 @@ int main(int argc, char** argv) {
                      L ? "," : "", q.id, q.age, q.vp, q.anc, q.len_m, q.turn_rad, q.t_s, q.bearing, q.gain_m2, q.marg_m2, q.score, q.open_m, q.clear_m, q.path_clear_m, q.same_room,
                      q.room_left, q.cur, q.kept, q.chosen, q.aborts, q.last_fail, q.since_fail_s, q.fail_near, q.in_avoid, q.visited);
         for (int rp = 0; rp < reps; ++rp)
-          if (L < br[k].size()) std::fprintf(f, "%s[%d,%.2f,%ld]", rp ? "," : "", br[k][L][(size_t)rp].done, br[k][L][(size_t)rp].t, br[k][L][(size_t)rp].known);
+          if (L < br[k].size()) {
+            const Out& o = br[k][L][(size_t)rp];
+            std::fprintf(f, "%s[%d,%.2f,%ld,[", rp ? "," : "", o.done, o.t, o.known);   // 덮음: 지표마다 1 s 값 (판이 끝나면 거기서 멈춤 — 끝 값을 이어 씀)
+            for (size_t m = 0; m < (o.cov.empty() ? 0 : o.cov[0].size()); ++m) {
+              std::fprintf(f, "%s[", m ? "," : "");
+              for (size_t q = 0; q < o.cov.size(); ++q) std::fprintf(f, "%s%.3f", q ? "," : "", o.cov[q][m]);
+              std::fprintf(f, "]");
+            }
+            std::fprintf(f, "]]");
+          }
         std::fprintf(f, "]}");
       }
       std::fprintf(f, "]}\n");
