@@ -42,13 +42,11 @@ void plan_cpu(const EnvBatch& b, EnvState& e, int env, int k) { plan_ref(b, e, e
 void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   const EnvCfg& c = b.cfg;
   if (sub > 0 && b.done[env] != 0) return;   // 계층형: 이 묶음 앞 걸음에서 판이 끝나 쉼
-  if (gdec_idle(b, env, sub)) return;          // 그래프 모드: 결정이 앞 걸음에서 끝남
   Shared sh;
   Shared& g = b.scratch[env];   // 걸음을 넘어 남는 칸 (먼 지도 다시 그릴 곳 — GPU 와 같은 증분)
   mdp::obsgen::far_dirty_clear(g);
   EnvState e = b.st[env];
   e.collided = 0;
-  if (sub == 0) gdec_begin(b, e, env);
   apply_action(b, e, env, actions + (size_t)mdp::act::DIM * env);
   int new_wall = 0, new_floor = 0, d_known = 0, n_new = 0, n_occ = 0;
   sh.scanned = 0;
@@ -98,7 +96,6 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
       for (int k = 0; k < mdp::rew::kTerms; ++k) A[k] += T[k];
     }
   }
-  gdec_step_ref(b, e, env, sub);   // 그래프 모드: 결정 끝 판정 (GPU env_finish_kernel 과 같은 자리)
   if (CpuTap* tap = g_tap) tap->step_end(env, e);   // 시험 탭: 걸음 끝 상태 (판 끝 리셋·관측 전)
   if (sh.scanned) ring_advance(e);
   if (sh.scanned)
@@ -110,7 +107,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   }
   if (was_done) reset_env(b, e, env);
   write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, was_done),
-            sub < 0 || (b.gdec ? b.gdec[env].reason != kGdRun : sub == c.decide_steps - 1) || (b.lowcmd && b.low[env].hold) || b.lowrl);   // 깊이는 묶음의 마지막 걸음에만 (아래층 단독 과제: 결정이 끝난 걸음)
+            sub < 0 || sub == c.decide_steps - 1 || (b.lowcmd && b.low[env].hold) || b.lowrl);   // 깊이는 묶음의 마지막 걸음에만 (아래층 단독 과제: 결정이 끝난 걸음)
   shape_obs(b, e, env, sh.reach);   // approach·front_cells 보상 (GPU env_reach_kernel 과 같은 때)
   b.st[env] = e;
 }
@@ -171,14 +168,7 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
     hier_camlayer_cpu(b, e, env);   // 깊이 카메라 장애물 층 (cam_on 일 때만) — 계획 앞, 지난 묶음 끝 깊이 장으로
     plan_cpu(b, e, env, slot_of(b, actions[(size_t)mdp::act::DIM * env]));
     b.st[env] = e;
-    if (b.gdec) {   // 그래프 모드: 결정 하나 = 노드 하나 이동 — 닿거나 실패·시간 초과까지 (graph_env.h gdec_step)
-      for (int s = 0; s < c.graph_max_steps && (s == 0 || b.gdec[env].reason == kGdRun); ++s) step_env(b, actions, env, s);
-      // 묶음 끝 (GPU env_graph_kernel gate 1 과 같은 차례): 안 끝난 환경은 다음 결정 관측 + 결정 결과·전작 방식 판 끝, 걸음에서 끝난 환경은 결과만
-      if (b.done[env] == 0) graph_ref(b, b.st[env], env, true);
-      else graph_finish(b, b.st[env], env, -1, 0);
-    } else {
-      for (int s = 0; s < c.decide_steps; ++s) step_env(b, actions, env, s);
-    }
+    for (int s = 0; s < c.decide_steps; ++s) step_env(b, actions, env, s);
     b.reward[env] = b.racc[env];
     for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = b.tacc[(size_t)env * mdp::rew::kTerms + k];
     if (b.done[env] == 0) return;
@@ -188,7 +178,6 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
     reset_env(b, e, env);
     write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, true));
     b.st[env] = e;
-    graph_ref(b, b.st[env], env);
   });
 }
 
@@ -201,7 +190,6 @@ void env_reset_cpu(const EnvBatch& b) {
     shape_obs(b, e, env, sh.reach);   // 판 첫 관측: 값만 적음
     b.scratch[env].far_ok = 0;   // GPU 리셋 커널과 같게: 다음 걸음은 다시 전부
     b.st[env] = e;
-    graph_ref(b, b.st[env], env);
     b.reward[env] = 0.f;
     b.done[env] = 0;
     for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = 0.f;
@@ -209,8 +197,5 @@ void env_reset_cpu(const EnvBatch& b) {
   });
 }
 
-void env_graph_cpu(const EnvBatch& b) {
-  for_envs(b.n_env, [&](int env) { graph_ref(b, b.st[env], env); });
-}
 
 }  // namespace sim

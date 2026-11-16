@@ -7,7 +7,7 @@
 explore/
 ├── sim/         시뮬레이터: 물리·센서·지도 (상태 EnvState). 실측 값은 sim/config/env.yaml, 근거는 sim/analysis
 ├── mdp/         관측 + 크기 · 판 끝 판정 · 프론티어·닫힘 (시뮬과 실물 노드가 같이 씀)
-├── scripts/     combine_run(두 층 합친 탐사 측정) · frontier_run · oracle_run · 위층 규칙(fuel_upper.h · low_explore_ctl.h · low_decider.h)
+├── scripts/     combine_run(두 층 합친 탐사 측정) · frontier_run(프론티어 기준선) · 위층 규칙(fuel_upper.h · low_explore_ctl.h · low_decider.h)
 ├── baselines/   비교 기준선: frontier/ = 프론티어 탐사(explore_lite + Nav2 식)
 ├── upper_lora/  위층 판단 모델 LoRA 학습 (지도 학습)
 ├── viewer/      실행 폴더 뷰어(trainview): 곡선·표·2D 재생 + 러너가 쓰는 실행 폴더 헤더 include/runfolder.h

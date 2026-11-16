@@ -466,19 +466,18 @@ DEV bool path_clear(const EnvState& e, const S& stand) {
 // 지난 결정이 "목표로 못 나아감"이었는지 셈: (a) 충돌 검사가 결정 걸음의 절반 넘게 멈춤·물러남, (b) 목표는 있는데 경로를 못 짬, (c) 허용 칸(목표 아닌 경로 끝)에
 // 도착해 섬 — 같은 목표(rec_bl_r 안)에서 이어지면 1·2 번째 다시 계획(*force = 1), 3 번째 (a) 면 물러나기, 4 번째 포기(rec_bl_steps 동안 그 둘레 후보 안 감).
 // 포기한 목표 둘레 후보를 고르면 포기 안 한 후보 중 번호가 가장 작은 것으로 바꿈 (explore_lite 가 실패한 목표를 goal_blacklist 에 넣고 다음 프론티어로 가는 꼴)
-// 행동 칸: 계층형은 후보 K 칸(b.cand), 그래프 모드는 현재 노드의 이웃 NB 칸(b.gcand) — 계획·복구는 이 셋으로만 고른 칸을 본다
-DEV int act_slots(const EnvBatch& b) { return b.gcand ? mdp::graph::NB : mdp::hier::K; }
+// 행동 칸: 계층형 후보 K 칸(b.cand) — 계획·복구는 이것으로만 고른 칸을 본다
+DEV int act_slots(const EnvBatch&) { return mdp::hier::K; }
 // 아래층 단독 과제 (low_task.h): 그 환경이 follow 면 행동 칸은 호스트가 넣은 목표 칸 하나
 DEV bool low_follow(const EnvBatch& b, int env) { return b.lowcmd && b.lowcmd[env].follow != 0; }
 DEV const int32_t* act_cells(const EnvBatch& b, int env) {
   if (low_follow(b, env)) return &b.lowcmd[env].target;
-  return b.gcand ? b.gcand + (size_t)env * mdp::graph::NB : b.cand + (size_t)env * mdp::hier::K;
+  return b.cand + (size_t)env * mdp::hier::K;
 }
 DEV int slot_of(const EnvBatch& b, float a) { return (a >= 0.f && a < (float)act_slots(b)) ? (int)a : -1; }   // 범위 밖·NaN 은 −1 (빈 칸과 같음 — 제자리 회전)
-// 고른 칸이 지금 목표와 같은가: 계층형은 그 덩어리가 지금 목표 칸을 품음(cand_cur 비트), 그래프 모드는 같은 노드 칸
+// 고른 칸이 지금 목표와 같은가: 그 덩어리가 지금 목표 칸을 품음(cand_cur 비트)
 DEV bool act_same(const EnvBatch& b, const EnvState& e, int env, int k) {
   if (low_follow(b, env)) return k == 0 && b.lowcmd[env].target == e.goal_cell;
-  if (b.gcand) return k >= 0 && b.gcand[(size_t)env * mdp::graph::NB + k] == e.goal_cell;
   return ((b.cand_cur[env] >> k) & 1) != 0;
 }
 DEV bool path_near(const EnvCfg& c, const MapDev& m, int a, int b, float r) {
@@ -757,8 +756,8 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
   }
   vc = dm::maxf(dm::minf(v_curv, v_cost), c.reg_min_speed);
   int why_bind = vc >= c.path_v ? kLowFull : (v_cost < v_curv ? kLowCost : kLowCurv);   // 아래층 계측: 목표 속도를 묶은 항
-  // 경로 끝 감속 (RPP approach scaling). 그래프 모드 graph_pass: 경로 끝 = 다음 노드일 뿐 서는 곳이 아니라 감속하지 않음 (닿으면 바로 다음 결정 — graph_env.h gdec_step)
-  if (d_goal < c.approach_dist && !(b.gdec && c.graph_pass)) {
+  // 경로 끝 감속 (RPP approach scaling)
+  if (d_goal < c.approach_dist) {
     const float va = dm::maxf(c.path_v * d_goal / c.approach_dist, c.approach_min_v);
     if (va < vc) why_bind = kLowApproach;
     vc = dm::minf(vc, va);

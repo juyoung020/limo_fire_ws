@@ -30,12 +30,11 @@
 #include "frontier.h"      // mdp/ — 칸 종류 (안 넓이·프론티어 요약)
 #include "lidar_real.h"
 #include "obs_layout.h"    // mdp/ — 관측·행동 크기
-#include "graph.h"         // mdp/ — 그래프 모드 관측 (순수 함수)
 #include "rewards.h"       // mdp/ — 보상 항
 #include "people.h"
 #include "sensor_model.h"
 #include "sensors.h"
-#include "low_task.h"      // 아래층 계측·단독 과제 기록 꼴 (걸음 함수는 아래 low_step.h)
+#include "low_task.h"      // 아래층 계측·목표 넣기·합친 탐사 기록 꼴 (걸음 함수는 아래 low_step.h)
 
 namespace sim {
 
@@ -175,8 +174,8 @@ struct EnvCfg {
   int graph_step, graph_term, graph_max_steps, graph_max_dec, graph_pass, graph_view, graph_cover;
   float graph_rew_dist, graph_rew_done, graph_arrive;
   int graph_fixed;   // 결정 길이: 0 = 한 결정 한 노드(닿을 때까지 — 논문 학습 방식) · 1 = 고정 주기 decide_steps(1 Hz 재계획 — 논문 실물 방식 V-C)
-  // 아래층 계측·단독 과제 (include/low_task.h · env.yaml action.path.follow — 스위치 둘은 도구가 켠다, 기본 0)
-  int low_stat, low_task;          // 1 = 걸음 분류 누적(EnvBatch::low) · 1 = 호스트가 목표 칸을 넣는 단독 과제(EnvBatch::lowcmd, low_stat 도 켜짐)
+  // 아래층 계측·목표 넣기 (include/low_task.h · env.yaml action.path.follow — 스위치 둘은 도구가 켠다, 기본 0)
+  int low_stat, low_task;          // 1 = 걸음 분류 누적(EnvBatch::low) · 1 = 호스트가 목표 칸을 넣음(합친 탐사 low_explore 와 같이만 — EnvBatch::lowcmd, low_stat 도 켜짐)
   int low_goals, low_idle_steps, low_time_steps;   // 판 끝: 목표 수 · 정체 걸음 수 · 과제 시간 걸음 수
   float low_pass_r, low_idle_d, low_front;         // 통과 반경 (m) · 정체 거리 (m) · 사람 충돌 방위의 앞 반각 (rad)
   // 아래층 걸음 길 (include/low_task.h · low_rl.h — 도구가 켠다, 기본 0. low_task 도 켜야 함)
@@ -184,7 +183,7 @@ struct EnvCfg {
   int32_t gone_rl_c[2];            // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
   int low_period;                  // 경로를 다시 살피는 주기 (걸음 — 목표가 바뀌면 바로). 0 이면 decide_steps
   int low_explore;                 // 2 = 1 + 닫힘·후보 번지기를 라이다 지도만으로 (깊이 카메라 층 뺌 — mdp/frontier.h "합친 탐사의 닫힘", 켜야 씀). 1 = 두 층을 합친 탐사 (low_rl 위 스위치 — low_task.h "합친 탐사"): 탐사 판 끝 규칙(닫힘 성공·진행 없음)을 그대로 두고,
-                                   //     단독 과제의 정체·시간·목표 수는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
+                                   //     정체·통과는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
   int32_t gone_rl_d;               // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
 };
 
@@ -316,30 +315,6 @@ struct ClassLog {
   int* n;
 };
 
-// 그래프 모드 결정 하나(= 이웃 노드 하나로 이동)의 결과 — EnvBatch::gdec [env]. EnvState·EpInfo 밖에 둬 계층형·직접 제어 상태와 무관 (graph_env.h 가 채움)
-enum : int {
-  kGdRun = 0,      // 진행 중
-  kGdArrive = 1,   // 고른 노드에 닿음 (지도 자세가 그 노드 graph_arrive 안이거나 경로 끝이고, 현재 노드 규칙 find_cur 가 그 노드)
-  kGdBlocked = 2,  // 추종기 충돌 검사로 결정 주기(decide_steps)의 절반 넘게 멈춤·물러남 (hier_path.h 복구 (a) — 다음 결정이 복구 단계를 밟음)
-  kGdTimeout = 3,  // graph_max_steps 걸음
-  kGdNoPath = 4,   // 고른 칸이 없거나(간선 없는 번호·포기한 목표) 경로를 못 짬 — 결정 주기 하나 동안 제자리 회전 뒤 끝
-  kGdOff = 5,      // 경로 끝에 섰는데 현재 노드가 고른 노드가 아님 (목표 허용으로 경로 끝이 노드에서 떨어짐)
-  kGdEpisode = 6,  // 판이 걸음에서 끝남 (충돌·끊김, graph_term 0 이면 닫힘·진행 없음도)
-};
-struct GraphDec {
-  int32_t steps;     // 이번 결정의 걸음 수 (걸린 시간 = steps × 속도 행동 주기)
-  int32_t reason;    // kGd*
-  int32_t target;    // 고른 노드 번호 (없으면 −1)
-  int32_t n_dec;     // 이 판의 결정 수 (이번 것 포함)
-  int32_t n_util;    // 결정 끝 관측에서 유틸리티 > 0 인 노드 수 (판이 걸음에서 끝났으면 −1)
-  int32_t n_gone;    // 지난 결정 관측의 프론티어 복셀 중 사라진 수 (전작 env.py delta_num)
-  int32_t closed;    // 결정 끝 지도 닫힘 (EnvState::map_closed — slot0 성공 판정이 보는 값)
-  int32_t term;      // 판 끝: 0 안 끝남 · 1 유틸리티 합 0 · 2 걸음에서 끝남 · 3 결정 수 상한
-  float dist;        // 이번 결정 동안 참 자세 이동 거리 (m, 걸음 끝 자세 사이 직선의 합)
-  float px, py;      // 지난 걸음 끝 참 자세
-  float r_dist, r_front, r_done;   // 보상 조각 (graph_term 1 일 때 보상 = 셋의 합, 이 차례로 더함)
-};
-
 // 장치·호스트 공용 묶음 (포인터는 GPU 면 장치, CPU 면 호스트)
 struct EnvBatch {
   EnvCfg cfg;
@@ -409,21 +384,7 @@ struct EnvBatch {
   // 마지막 깊이 장 열마다 가장 가까운 높이 띠 안 점 (지도 좌표 x, y — 앞으로 모음, 끝 x = kCamNone) [env · DEPTH_W · 2] — collision_monitor 점 출처
   uint8_t* cvox;
   float* cpts;
-  // 그래프 모드 (graph_on 일 때만, 아니면 nullptr — mdp/obs_layout.h mdp::graph, mdp/graph.h): 노드 특징 [env · N · FEAT] (uint8),
-  // 간선 비트 [env · N], 현재 노드 [env], 전역 숫자 [env · GLOB], cur 의 이웃 칸 = 행동 목표 [env · NB] (−1 간선 없음),
-  // 방문 노드 비트 [env · N / 32] (판 동안 남는 상태 — 판 첫 관측이 비움), GPU 프론티어 복셀 대표 칸 [env · kVoxMax]
-  uint8_t* gfeat;
-  uint32_t* gedge;
-  int32_t* gcur;
-  float* gglob;
-  int32_t* gcand;
-  uint32_t* gvis;
-  int32_t* gwork;
-  uint32_t* gfront;   // 닫힘을 막는 프론티어 칸 비트 판 [env · size · fmap_row] (mdp::frontier_search n_block 이 세는 칸 — reach_block·obs_ref reach_obs 가 관측마다 건드린 범위 안을 씀)
-  // 전작 방식 (2026-11-11): 결정 하나의 결과 [env] (graph_env.h GraphDec — 도구·학습기가 읽음), 지난 결정 관측의 프론티어 복셀 대표 칸 [env · kVoxMax] (보상의 사라진 프론티어)
-  GraphDec* gdec;
-  int32_t* gprev;
-  // 아래층 계측·단독 과제 (low_stat·low_task 일 때만, 아니면 nullptr — include/low_task.h): 판 누적 [env] · 호스트가 넣는 목표 [env]
+  // 아래층 계측·목표 넣기 (low_stat·low_task 일 때만, 아니면 nullptr — include/low_task.h): 판 누적 [env] · 호스트가 넣는 목표 [env]
   LowEp* low;
   LowCmd* lowcmd;
   // 아래층 걸음 길 (low_rl 일 때만, 아니면 nullptr — include/low_task.h): 걸음 사이 값 [env] · 아래층 관측 그림 [env · kLowImg] · 숫자 [env · kLow1d]
@@ -723,8 +684,7 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
 }
 
 #include "hier_path.h"   // 계층형 경로 추종 (apply_action 이 부름)
-#include "graph_env.h"   // 그래프 모드 풀 (hier_path.h 뒤)
-#include "low_step.h"    // 아래층 계측·단독 과제 걸음 함수
+#include "low_step.h"    // 아래층 계측·합친 탐사 걸음 함수
 #include "low_rl.h"      // 아래층 걸음 길 함수 (low_step.h 뒤)
 #include "contact.h"     // 로봇이 재는 간격·닿음
 
@@ -1388,7 +1348,7 @@ DEV void trail_mark(const EnvBatch& b, const EnvState& e, int env, int tid, int 
 
 // ---------- 3. 보상·끝·관측 ----------
 
-// 스레드 0. 판 끝 기록(EpInfo)·커리큘럼 — e.done 을 정한 바로 뒤 (finish_step, 그래프 모드 전작 방식 종료는 graph_env.h graph_finish)
+// 스레드 0. 판 끝 기록(EpInfo)·커리큘럼 — e.done 을 정한 바로 뒤 (finish_step)
 DEV void episode_end(const EnvBatch& b, EnvState& e, int env, float cov, float dt_act) {
   const EnvCfg& c = b.cfg;
   EpInfo& I = b.ep[env];
@@ -1431,9 +1391,6 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   in.closed = !e.contact && (float)e.since_occ * dt_act >= c.close_idle_s && (e.step + 1) % c.close_every == 0 && e.map_closed ? 1 : 0;
   const bool decl = e.declared && !e.contact && !in.closed;   // 판단 모델의 끝 선언 (finish_declare — lowrl_begin 이 LowCmd 로만 켬)
   if (decl && e.map_closed) in.closed = 1;   // 닫힌 지도에서 선언 = 성공 (보상도 닫힘 성공과 같게). 안 닫혔으면 이른 선언(끝 코드 4) — 감점 없음 (옛 감점은 정답 덮음이라 뺌)
-  const bool gterm = c.graph_on && c.graph_term;   // 그래프 모드 전작 방식: 닫힘 성공·진행 없음 규칙 없음 (끝 = 유틸리티 합 0 — graph_env.h graph_finish)
-  if (gterm) in.closed = 0;
-  if (b.lowcmd && !low_xenv(b, env)) in.closed = 0;   // 아래층 단독 과제: 탐사 판 끝 규칙(닫힘 성공·진행 없음) 없음 (low_task.h) — 합친 탐사(low_explore)는 그대로 둠
   // 덮음 보상 자리: 로봇 지도에서 이번 행동 동안 판 처음 막힘이 된 칸 수 (map_progress 가 이 걸음 칸에 막 넣은 값 — 진행 없음 시계와 같은 셈)
   // 진행 없음 시계와 같은 문턱: 한 행동에 kIdleOccMin 개 미만이면 0 — 멈춰 있어도 자세 오차·빔 잡음으로 드문드문 생기는 막힘 칸을 보상하지 않는다
   {
@@ -1463,8 +1420,6 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   // 진행 없음 (curriculums.h kIdleTime·kIdleOccMin): 지도 시계 since_occ(map_progress, 이 함수 앞에서 갱신) — 충돌·선언이 먼저.
   // 막힘 칸 아무 하나가 아니라 한 행동에 kIdleOccMin 개 이상일 때만 되돌림: 멈춰 있어도 자세 오차·빔 잡음으로 막힘 칸이 드문드문 생기므로.
   in.idle = !e.contact && !in.closed && !decl && (float)e.since_occ * dt_act >= mdp::cur::kIdleTime;
-  if (gterm) in.idle = false;
-  if (b.lowcmd && !low_xenv(b, env)) in.idle = false;
   float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
   e.reward = mdp::rew::terms(in, T);
   e.slip_acc = 0.f;
@@ -1491,7 +1446,7 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
         if (dx * dx + dy * dy <= 5 && u >= 0 && v >= 0 && u < m.gw && v < m.gh) mark(M, c.size, u, v, 32u);
       }
   }
-  const bool low_end = low_finish(b, e, env);   // 아래층 계측: 걸음 거리 · 단독 과제 판 끝 (끄면 false)
+  low_finish(b, e, env);   // 아래층 계측: 걸음 거리 · 통과 · 정체 (끄면 아무것도 안 함)
   // 판 끝: 닿음 > 닫힘(성공) > 선언(finish_declare — 로봇 지도 닫힘이면 성공) > 진행 없음 > 끊김. 닿음은 센서(contact.h).
   // con_end = 0 (진단)이면 닿아도 안 끝냄 — 정답 충돌은 물리가 몸통을 멈출 뿐
   if (e.halt) e.done = 0;   // 판 끝 뒤 멈춤 (end_hold): 더 판정 안 함
@@ -1500,7 +1455,6 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   else if (decl) e.done = e.map_closed ? mdp::cur::kDeclareOk : mdp::cur::kDeclareShort;   // 선언 (닫힘 규칙을 끈 모드에서도 지도 닫힘이면 성공)
   else if (in.idle) e.done = mdp::cur::kNoProgress;
   else if (e.step >= c.max_steps) e.done = mdp::cur::kTruncated;
-  else if (low_end) e.done = mdp::cur::kTruncated;   // 단독 과제 끝 (까닭은 LowEp::end)
   if (e.done) episode_end(b, e, env, cov, dt_act);
   lowrl_finish(b, e, env);   // 아래층 걸음 길: 막힘 신호 (끄면 아무것도 안 함)
 }

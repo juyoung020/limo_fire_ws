@@ -1,4 +1,4 @@
-// 아래층 계측·단독 과제의 걸음 함수 (기록 꼴·설명은 low_task.h). env.h 가운데서 include (hier_path.h·graph_env.h 뒤). 모두 스레드 0. env.h 가 namespace sim 안에서 포함한다.
+// 아래층 계측·목표 따라가기·합친 탐사의 걸음 함수 (기록 꼴·설명은 low_task.h). env.h 가운데서 include (hier_path.h 뒤). 모두 스레드 0. env.h 가 namespace sim 안에서 포함한다.
 #pragma once
 
 // 이 환경이 합친 탐사 판인가 (EnvCfg::low_explore)
@@ -26,7 +26,7 @@ DEV void low_begin(const EnvBatch& b, const EnvState& e, int env, const PathWhy&
   const MapDev& m = b.maps[e.map];
   LowEp& L = b.low[env];
   const bool fol = b.lowcmd && b.lowcmd[env].follow != 0;
-  if (e.step == 0 || (fol && !L.following)) {   // 판 첫 걸음 · 단독 과제 구간 첫 걸음: 누적을 0 으로
+  if (e.step == 0 || (fol && !L.following)) {   // 판 첫 걸음 · 목표 따라가기 구간 첫 걸음: 누적을 0 으로
     LowEp z = {};
     L = z;
     L.goal_prev = -1;
@@ -98,9 +98,10 @@ DEV void low_begin(const EnvBatch& b, const EnvState& e, int env, const PathWhy&
   L.y0 = e.y;
 }
 
-// 걸음 끝 (finish_step 의 e.step += 1 뒤, 판 끝 판정 앞). 단독 과제 판을 끝내야 하면 true (충돌은 기존 규칙이 끝냄)
-DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
-  if (!b.low) return false;
+// 걸음 끝 (finish_step 의 e.step += 1 뒤, 판 끝 판정 앞): 걸음 거리 · 닿음 까닭 · 합친 탐사의 통과·경로 끝 표시와 정체(막힘 신호 재료).
+// 판은 안 끝낸다 (옛 단독 과제의 목표 수·시간 끝은 2026-11-17 에 걷어냄, archive/rl)
+DEV void low_finish(const EnvBatch& b, const EnvState& e, int env) {
+  if (!b.low) return;
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   LowEp& L = b.low[env];
@@ -113,7 +114,7 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
   }
   if (e.contact && c.con_end) {   // 닿음 (센서 — contact.h). 로봇은 닿은 것이 사람인지 모름 — 늘 벽
     L.end = kLowEndWall;
-    return false;
+    return;
   }
   if (low_xenv(b, env)) {   // 합친 탐사 (low_task.h): 판은 탐사 규칙이 끝낸다. 통과·경로 끝은 표시만(위층이 바로 다시 고름), 정체는 신호만 올리고 닻을 새로
     const int tgt = b.lowcmd && b.lowcmd[env].follow != 0 ? b.lowcmd[env].target : -1;
@@ -140,38 +141,6 @@ DEV bool low_finish(const EnvBatch& b, const EnvState& e, int env) {
       L.ax = e.x + e.ex;
       L.ay = e.y + e.ey;
     }
-    return false;
   }
-  if (!L.following || !b.lowcmd) return false;
-  const int tgt = b.lowcmd[env].target;
-  const float px = e.x + e.ex, py = e.y + e.ey;   // 지도 자세 (로봇이 아는 자기 자리)
-  if (tgt >= 0 && e.goal_cell == tgt) {
-    const float tx = m.ox + ((float)(tgt % m.gw) + 0.5f) * c.res - px, ty = m.oy + ((float)(tgt / m.gw) + 0.5f) * c.res - py;
-    if (tx * tx + ty * ty <= c.low_pass_r * c.low_pass_r) {
-      L.reached += 1;
-      L.reach_step = e.step;
-      L.hold = e.step - L.d_step;
-      if (L.reached >= c.low_goals) { L.end = kLowEndGoals; return true; }
-    } else if (e.p_n > 0 && !e.p_trunc) {
-      const float ex = m.ox + ((float)e.wp[2 * (e.p_n - 1)] + 0.5f) * c.res - px, ey = m.oy + ((float)e.wp[2 * (e.p_n - 1) + 1] + 0.5f) * c.res - py;
-      if (ex * ex + ey * ey <= c.goal_tol * c.goal_tol) {
-        L.off += 1;
-        L.hold = e.step - L.d_step;
-      }
-    }
-  }
-  if (!L.hold) {
-    const float ax = e.x + e.ex - L.ax, ay = e.y + e.ey - L.ay;   // 정체: 지도 자세
-    if (ax * ax + ay * ay >= c.low_idle_d * c.low_idle_d) {
-      L.a_step = e.step;
-      L.ax = e.x + e.ex;
-      L.ay = e.y + e.ey;
-    } else if (e.step - L.a_step >= c.low_idle_steps) {
-      L.end = kLowEndStall;
-      return true;
-    }
-  }
-  if (e.step - L.f_start >= c.low_time_steps) { L.end = kLowEndTime; return true; }
-  return false;
 }
 

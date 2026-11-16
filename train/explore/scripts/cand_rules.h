@@ -1,4 +1,4 @@
-// 계층형 후보 고르기 규칙 정책 (frontier_run --modes cand_* — mdp/README "후보 고르기 규칙 견줌"). 측정 전용, 호스트(CPU)에서만 돈다.
+// 계층형 후보 고르기 규칙 (combine_run --upper cand_tsp · --gt-bound — 옛 frontier_run --modes cand_* 는 archive/rl). 측정 전용, 호스트(CPU)에서만 돈다.
 // 시뮬이 준 후보 칸(Env::get_cand, 정책이 보는 것과 같은 K 개) 가운데 하나를 고른다 — 후보 밖은 못 고른다(정책과 같은 행동 공간).
 //   cand_gain   : 정보량 / 거리 탐욕. 정보량 = 후보 칸에 닿는 방향(BFS 경로 끝 방향)으로 섰을 때 라이다 시야각(220°)·사거리 안에서 지도 막힘에 안 가리고 보이는
 //                 모름 칸 수 (로봇 지도만 씀). 틀: Bircher 2016 NBVP 의 "보이는 모름 복셀 수", González-Baños 2002 의 정보량 ÷ 거리 꼴

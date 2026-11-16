@@ -325,19 +325,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
       b_.cvox = alloc<uint8_t>(cells * n_env);
       b_.cpts = alloc<float>((size_t)mdp::obs::DEPTH_W * 2 * n_env);
     }
-    if (hc.cfg.graph_on) {   // 그래프 모드 (env.h EnvBatch 아래 칸, mdp/graph.h)
-      b_.gfeat = alloc<uint8_t>((size_t)mdp::graph::N * mdp::graph::FEAT * n_env);
-      b_.gedge = alloc<uint32_t>((size_t)mdp::graph::N * n_env);
-      b_.gcur = alloc<int32_t>(n_env);
-      b_.gglob = alloc<float>((size_t)mdp::graph::GLOB * n_env);
-      b_.gcand = alloc<int32_t>((size_t)mdp::graph::NB * n_env);
-      b_.gvis = alloc<uint32_t>((size_t)(mdp::graph::N / 32) * n_env);
-      b_.gfront = alloc<uint32_t>((size_t)hc.cfg.size * fmap_row(hc.cfg) * n_env);
-      if (gpu) b_.gwork = alloc<int32_t>((size_t)mdp::graphgen::kVoxMax * n_env);
-      b_.gdec = alloc<GraphDec>(n_env);
-      b_.gprev = alloc<int32_t>((size_t)mdp::graphgen::kVoxMax * n_env);
-    }
     if (hc.cfg.low_stat || hc.cfg.low_task) b_.low = alloc<LowEp>(n_env);   // 아래층 계측·단독 과제 (include/low_task.h)
+    if (hc.cfg.low_task && !hc.cfg.low_explore) throw std::runtime_error("low_task 는 low_explore(합친 탐사)와 같이 켠다 — 단독 과제 모드는 걷어냄 (archive/rl)");
     if (hc.cfg.low_task) b_.lowcmd = alloc<LowCmd>(n_env);
     if (hc.cfg.low_rl) {   // 아래층 걸음 길 (include/low_task.h · low_rl.h)
       if (!hc.cfg.low_task) throw std::runtime_error("low_rl 은 low_task 와 같이 켠다");
@@ -425,16 +414,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.pplanes, (size_t)kPathPlanes * nf * sizeof(uint32_t));
     reg(b_.cvox, cells);
     reg(b_.cpts, (size_t)mdp::obs::DEPTH_W * 2 * sizeof(float));
-    reg(b_.gfeat, (size_t)mdp::graph::N * mdp::graph::FEAT);
-    reg(b_.gedge, (size_t)mdp::graph::N * sizeof(uint32_t));
-    reg(b_.gcur, sizeof(int32_t));
-    reg(b_.gglob, (size_t)mdp::graph::GLOB * sizeof(float));
-    reg(b_.gcand, (size_t)mdp::graph::NB * sizeof(int32_t));
-    reg(b_.gvis, (size_t)(mdp::graph::N / 32) * sizeof(uint32_t));
-    reg(b_.gfront, (size_t)hc.cfg.size * fmap_row(hc.cfg) * sizeof(uint32_t));
-    reg(b_.gwork, (size_t)mdp::graphgen::kVoxMax * sizeof(int32_t));
-    reg(b_.gdec, sizeof(GraphDec));
-    reg(b_.gprev, (size_t)mdp::graphgen::kVoxMax * sizeof(int32_t));
     reg(b_.low, sizeof(LowEp));
     reg(b_.lowcmd, sizeof(LowCmd));
     reg(b_.lowrl, sizeof(LowRl));
@@ -568,24 +547,6 @@ void Env::get_cand(std::vector<int32_t>& out) const {
 void Env::get_cand_cur(std::vector<int32_t>& out) const {
   if (!b_.cand_cur) throw std::runtime_error("get_cand_cur: 계층형 모드가 아님");
   fetch(gpu_, b_.cand_cur, (size_t)b_.n_env, out);
-}
-void Env::graph_refresh() {
-  if (gpu_) env_graph_gpu(b_);
-  else env_graph_cpu(b_);
-}
-GraphOut Env::graph() const { return GraphOut{b_.gfeat, b_.gedge, b_.gcur, b_.gglob, b_.gcand}; }
-void Env::get_graph(std::vector<uint8_t>& feat, std::vector<uint32_t>& edge, std::vector<int32_t>& cur, std::vector<float>& glob, std::vector<int32_t>& cand) const {
-  if (!b_.gfeat) { feat.clear(); edge.clear(); cur.clear(); glob.clear(); cand.clear(); return; }
-  const size_t n = b_.n_env;
-  fetch(gpu_, b_.gfeat, n * mdp::graph::N * mdp::graph::FEAT, feat);
-  fetch(gpu_, b_.gedge, n * mdp::graph::N, edge);
-  fetch(gpu_, b_.gcur, n, cur);
-  fetch(gpu_, b_.gglob, n * mdp::graph::GLOB, glob);
-  fetch(gpu_, b_.gcand, n * mdp::graph::NB, cand);
-}
-void Env::get_gdec(std::vector<GraphDec>& out) const {
-  if (!b_.gdec) { out.clear(); return; }
-  fetch(gpu_, b_.gdec, (size_t)b_.n_env, out);
 }
 void Env::get_low(std::vector<LowEp>& out) const {
   if (!b_.low) { out.clear(); return; }

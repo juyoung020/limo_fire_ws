@@ -46,18 +46,6 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
     const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, out.data(), (int)out.size());
     const int n_out = r.n_found < (int)out.size() ? r.n_found : (int)out.size();
     mdp::reach_pick(r, out.data(), n_out, mdp::obsgen::reach_min_cells(c), n_tot, &sh.reach);
-    if (b.gfront) {   // 그래프 모드: 닫힘을 막는 칸 비트 판 (GPU reach_block 과 같은 값 — 넘침·시작 칸 없음이면 비움)
-      const int gws = fmap_row(c);
-      uint32_t* GF = b.gfront + (size_t)env * c.size * gws;
-      for (int y = e.kb_y0; y <= e.kb_y1; ++y)
-        for (int wx = e.kb_x0 >> 5; wx <= (e.kb_x1 >> 5); ++wx) GF[y * gws + wx] = 0u;
-      if (n_tot <= mdp::kReachCap && r.start_free)
-        for (int i = 0; i < r.n_reach; ++i) {
-          const int idx = qa[i], x = idx % m.gw, y = idx / m.gw;
-          if (!(flag[idx] & 2) || !mdp::frontier_cell(mv, x, y) || out[label[idx]].n < c.close_min) continue;
-          if (!mdp::looked_cell(mv, sb.look, sb.vis, sb.tws, x, y)) GF[y * gws + (x >> 5)] |= 1u << (x & 31);
-        }
-    }
     if (b.cand) {
       thread_local std::vector<uint64_t> key2;
       if (key2.size() < out.size()) key2.resize(out.size());
@@ -88,7 +76,7 @@ inline void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, const
   mdp::obsgen::obs_finish(b, e, env, sh, true);
 }
 
-// 아래 참조판 함수들이 HD 템플릿(cam_pixel · mdp/graph.h)에 넘기는 함수 객체 — 람다 대신 DEV operator() (2026-11-16): .cu 번역 단위(env_verify 등)가 이 머리를
+// 아래 참조판 함수가 HD 템플릿(cam_pixel)에 넘기는 함수 객체 — 람다 대신 DEV operator() (2026-11-16): .cu 번역 단위(env_verify 등)가 이 머리를
 // 포함하면 호스트 람다를 HD 템플릿에 넘긴 것이 nvcc 20013 진단이 되는데, 저장소는 그 진단을 오류로 한다 (cmake/cuda_strict.cmake — 장치 쪽 값이 틀리게 나온 일)
 struct CamClear {
   uint8_t* V;
@@ -97,35 +85,6 @@ struct CamClear {
 struct CamMark {
   uint8_t* V;
   DEV void operator()(int ci, uint8_t bit) const { V[ci] |= bit; }
-};
-// 그래프 모드 칸 판정 (graph_ref · gdec_step_ref 의 옛 람다 in_map · free · pass · front 와 같은 식)
-struct GraphCells {
-  const EnvCfg* c;
-  mdp::MapView mv;
-  mdp::Robot rb;
-  int gw, gh;
-  const EnvState* e;
-  const uint32_t* gf;
-  int tws;
-  DEV bool in_map(int x, int y) const { return x >= 0 && y >= 0 && x < gw && y < gh; }
-  DEV bool free(int x, int y) const { return in_map(x, y) && mdp::cls_at(mv, x, y) == mdp::kFree; }
-  DEV bool pass(int x, int y) const { return c->graph_stand ? (in_map(x, y) && mdp::standable(mv, x, y, rb)) : free(x, y); }
-  DEV bool front(int x, int y) const {
-    if (!c->graph_open) return mdp::frontier_cell(mv, x, y);
-    return x >= e->kb_x0 && x <= e->kb_x1 && y >= e->kb_y0 && y <= e->kb_y1 && mdp::plane_bit(gf, tws, x, y);
-  }
-};
-struct GraphFree {
-  const GraphCells* g;
-  DEV bool operator()(int x, int y) const { return g->free(x, y); }
-};
-struct GraphPass {
-  const GraphCells* g;
-  DEV bool operator()(int x, int y) const { return g->pass(x, y); }
-};
-struct GraphFront {
-  const GraphCells* g;
-  DEV bool operator()(int x, int y) const { return g->front(x, y); }
 };
 
 // 깊이 카메라 장애물 층 갱신 (GPU env_camlayer_kernel 과 같은 차례: 모든 픽셀 지우기 → 모든 픽셀 표시 → 몸통 밑 지우기 — 끄기·켜기라 픽셀 차례와 무관)
@@ -141,50 +100,6 @@ inline void camlayer_ref(const EnvBatch& b, const EnvState& e, int env) {
     const int ci = cam_fp_cell(b, e, j);
     if (ci >= 0) V[ci] = 0;
   }
-}
-
-// 그래프 모드 관측 (mdp/graph.h graph_build) — graph_on 일 때만. 지도(lmap)와 지도 자세만 쓴다: 시뮬 CPU 참조와 실물 노드가 같은 함수.
-// 부르는 때 = 결정 관측(묶음 끝·판 시작) 뒤. 판 첫 관측(e.step == 0)이 방문 표시를 비운다.
-// finish = true: 묶음 끝의 안 끝난 환경 — 결정 결과·전작 방식 판 끝·보상 (graph_env.h graph_finish), 판을 끝냈으면 true (GPU env_graph_kernel gate 1 과 같음)
-inline bool graph_ref(const EnvBatch& b, EnvState& e, int env, bool finish = false) {
-  if (!b.gfeat) return false;
-  const EnvCfg& c = b.cfg;
-  const MapDev& m = b.maps[e.map];
-  const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
-  const mdp::Robot rb = mdp::obsgen::reach_robot(c);
-  const mdp::graphgen::Params p = graph_params(c, m, e);
-  const int tws = fmap_row(c);
-  const uint32_t* gf = b.gfront + (size_t)env * c.size * tws;   // 닫힘을 막는 칸 (reach_obs 가 이번 관측에 씀)
-  const GraphCells gc{&c, mv, rb, m.gw, m.gh, &e, gf, tws};
-  const GraphPass pass{&gc};
-  const GraphFree free{&gc};
-  const GraphFront front{&gc};
-  uint32_t* vis = b.gvis + (size_t)env * (mdp::graph::N / 32);
-  if (e.step == 0)
-    for (int i = 0; i < mdp::graph::N / 32; ++i) vis[i] = 0u;
-  int rx, ry;
-  cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
-  int n_gone = 0, n_util = 0;
-  const int cur = mdp::graphgen::graph_build(p, rx, ry, pass, free, front, vis, b.gfeat + (size_t)env * mdp::graph::N * mdp::graph::FEAT,
-                                             b.gedge + (size_t)env * mdp::graph::N, b.gcand + (size_t)env * mdp::graph::NB, nullptr,
-                                             b.gprev + (size_t)env * mdp::graphgen::kVoxMax, e.step == 0, &n_gone, &n_util);
-  b.gcur[env] = cur;
-  graph_glob(b, e, env, p, cur);
-  if (!finish) return false;
-  const bool end = graph_finish(b, e, env, n_util, n_gone);
-  if (end) b.done[env] = e.done;
-  return end;
-}
-
-// 걸음 끝의 결정 끝 판정 (graph_env.h gdec_step) — 지나는 칸은 graph_ref 와 같은 함수
-inline void gdec_step_ref(const EnvBatch& b, const EnvState& e, int env, int sub) {
-  if (!b.gdec) return;
-  const EnvCfg& c = b.cfg;
-  const MapDev& m = b.maps[e.map];
-  const mdp::MapView mv{b.lmap + (size_t)env * c.size * c.size, c.size, m.gw, m.gh};
-  const mdp::Robot rb = mdp::obsgen::reach_robot(c);
-  const GraphCells gc{&c, mv, rb, m.gw, m.gh, &e, nullptr, 0};
-  gdec_step(b, e, env, sub, GraphPass{&gc});   // 칸 안 · (graph_stand ? 설 수 있음 : 빈 칸) — 옛 람다와 같은 식
 }
 
 }  // namespace sim

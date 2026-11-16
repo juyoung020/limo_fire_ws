@@ -1,18 +1,16 @@
-// 아래층(경로 추종) 계측·단독 과제 (2026-11-12, mdp/README "아래층 계측·단독 과제"). 이 파일은 기록 꼴만 (env.h 맨 위에서 include),
-// 걸음마다 부르는 함수는 low_step.h (env.h 가운데 — EnvState·EnvBatch·hier_path.h 뒤).
+// 아래층(경로 추종) 계측·목표 넣기·합친 탐사의 기록 꼴 (env.h 맨 위에서 include). 걸음마다 부르는 함수는 low_step.h (env.h 가운데 — EnvState·EnvBatch·hier_path.h 뒤),
+// 아래층 걸음 길(0.1 s 걸음)은 low_rl.h.
 //
-// 둘 다 스위치 — 끄면(EnvBatch::low·lowcmd = nullptr) 아래 함수는 첫 줄에서 돌아가고 환경 상태는 한 비트도 안 바뀐다.
+// 모두 스위치 — 끄면(EnvBatch::low·lowcmd·lowrl = nullptr) 아래 함수는 첫 줄에서 돌아가고 환경 상태는 한 비트도 안 바뀐다.
 //  (1) 시간 손실 분해 (EnvCfg::low_stat): 속도 행동 걸음(0.1 s)마다 추종기가 "왜 그 속도였나" 를 하나로 분류해 판 누적(LowEp)에 더한다.
 //      환경 상태(EnvState)는 읽기만 한다 → 켜도 판 자체는 끈 것과 비트 같다. 판 첫 걸음에 0 으로 — 판이 끝나도 다음 판 첫 걸음 전까지 남아
 //      호스트가 done 을 본 뒤 읽는다 (Env::get_low).
-//  (2) 아래층 단독 과제 (EnvCfg::low_task, 설계 문서 3 절 "부목표를 따라 목표까지"): 호스트가 환경마다 목표 칸을 넣는다 (LowCmd, Env::set_low_cmd).
-//      follow = 0 이면 그 환경은 보통 계층형(후보 번호 행동 — 지도 예열용 탐사), follow = 1 이면 행동 칸이 target 하나.
-//      통과 반경(low_pass_r) 안에 들면 그 결정을 거기서 끝내고(남은 걸음은 쉼 — 그래프 모드 gdec 과 같은 꼴) 다음 결정이 새 목표를 받는다.
-//      판 끝: 벽·사람 충돌(기존 규칙) · 정체(low_idle_steps 동안 low_idle_d 를 못 벗어남) · 시간(low_time_steps) · 목표 low_goals 개.
-//      탐사 판 끝 규칙(지도 닫힘 성공·지도 진행 없음)은 low_task 면 끈다 (env.h finish_step).
-//  (3) 합친 탐사 (EnvCfg::low_explore, 2026-11-13 — 도구 scripts/combine_run.cpp · 실물 노드 limo_fire_rl low_rl): (2) 위에서
-//      위층이 고른 후보 칸을 아래층 규칙 추종기가 몰아 탐사를 끝까지 한다. 탐사 판 끝 규칙을 안 끄고, 정체·통과·경로 끝은 판을 안 끝낸다:
-//      통과·경로 끝이 목표 밖은 LowEp 에 적기만(reached·off·hold), 정체는 막힘 신호(LowRl::stall)만 세우고 기준점을 새로 잡는다 (low_step.h low_finish).
+//  (2) 목표 넣기 (EnvCfg::low_task — 합친 탐사 low_explore 와 같이만): 호스트(위층)가 환경마다 LowCmd 를 넣는다 (Env::set_low_cmd).
+//      follow = 0 이면 후보 번호 행동(계층형 그대로), follow = 1 이면 행동 칸이 목표 칸 target 하나.
+//  (3) 합친 탐사 (EnvCfg::low_explore — 도구 scripts/combine_run.cpp · 실물 노드 limo_fire_rl low_rl): 위층이 고른 칸을 아래층 규칙 추종기가 몰아 탐사를 끝까지 한다.
+//      판 끝은 탐사 규칙(닫힘 성공·진행 없음·닿음·안전 시간)만. 통과·경로 끝이 목표 밖은 LowEp 에 적기만(reached·off·hold),
+//      정체는 막힘 신호(LowRl::stall)만 세우고 기준점을 새로 잡는다 (low_step.h low_finish).
+//  (옛 단독 과제 — 목표 수·시간·정체로 판을 끝내던 아래층 RL 학습 판 — 은 2026-11-17 에 걷어냄, archive/rl)
 #pragma once
 
 namespace sim {
@@ -55,7 +53,7 @@ struct PathWhy {
   float d_goal;      // 경로 끝까지 직선 거리 (m, kWhyRot·kWhyGo·도착)
 };
 
-// 호스트 → 환경 (단독 과제). 결정마다 호스트가 씀
+// 호스트(위층) → 환경. 결정마다 호스트가 씀
 constexpr int32_t kLowFinish = -3;   // LowCmd::target 자리 (follow 0 일 때): 위층이 이 걸음에 판 끝을 선언 (EnvCfg::finish_declare 를 켰을 때만 봄 — low_rl.h lowrl_begin)
 struct LowCmd {
   int32_t target;    // 목표 칸 (cy · gw + cx, −1 없음) — follow 1 일 때만 봄
@@ -80,13 +78,13 @@ struct LowEp {
   int32_t n_goal;                  // 목적지를 받은 수 (없음 → 칸 포함)
   int32_t end;                     // kLowEnd*
   int32_t hit_dir;                 // 사람 충돌: 1 = 그 사람이 로봇 앞 ±low_front 안 · 2 = 밖 (충돌 걸음의 로봇 자세 기준 방위)
-  // 단독 과제
-  int32_t following;               // 이 판이 단독 과제 구간에 들어감 (들어갈 때 위 누적을 0 으로)
+  // 목표 따라가기 (follow ≠ 0)
+  int32_t following;               // 이 판이 목표 따라가기 구간에 들어감 (들어갈 때 위 누적을 0 으로)
   int32_t f_start;                 // 그때 걸음 번호
   int32_t reached;                 // 통과 반경에 든 목표 수
   int32_t reach_step;              // 마지막으로 든 걸음 번호 (걸음 끝 기준)
   int32_t off;                     // 경로 끝에 섰는데 목표가 통과 반경 밖 (계획이 목표 칸에 못 섬 — 도달 불가로 치고 새 목표)
-  int32_t hold;                    // 이 결정이 끝난 걸음 (결정 안 걸음 수, 0 = 진행 중) — 그 뒤 걸음은 쉼 (그래프 모드 GraphDec::steps 와 같은 꼴, 다음 결정 앞 path_recovery 가 지움)
+  int32_t hold;                    // 이 결정이 끝난 걸음 (결정 안 걸음 수, 0 = 진행 중) — 그 뒤 걸음은 쉼 (다음 결정 앞 path_recovery 가 지움)
   int32_t d_step;                  // 이 결정 첫 걸음의 걸음 번호
   // 진행 중 (걸음 사이에 들고 가는 값)
   int32_t goal_prev, plans_prev;
@@ -105,14 +103,14 @@ struct LowEp {
 };
 
 // ---------- 아래층 걸음 길 (EnvCfg::low_rl — 걸음 함수는 low_rl.h) ----------
-// 단독 과제(low_task) 위에 얹는 스위치. 켜면 env.step 한 번 = 걸음 하나(0.1 s — 묶음 없음). 아래층은 규칙 추종기만 (경로 계획·단독 과제 판 끝 규칙은 그대로).
+// 목표 넣기(low_task) 위에 얹는 스위치. 켜면 env.step 한 번 = 걸음 하나(0.1 s — 묶음 없음). 아래층은 규칙 추종기만.
 // 끄면(EnvBatch::lowrl = nullptr) 관련 함수는 첫 줄에서 돌아가고 환경은 한 비트도 안 바뀐다.
 
 // 환경마다 걸음 사이에 들고 가는 값
 struct LowRl {
   int32_t p_step;      // 마지막으로 계획 단계를 돈 걸음 번호 (low_period 걸음마다 · 목표가 바뀌면 바로)
   int32_t tgt_seen, fol_seen;   // 그때 본 LowCmd
-  // 위층에 알리는 막힘 신호: 이번 결정 구간(계획 단계 ~ 다음 계획 단계)에 단독 과제의 정체 판정(low_idle_steps 동안 low_idle_d 를 못 벗어남 —
+  // 위층에 알리는 막힘 신호: 이번 결정 구간(계획 단계 ~ 다음 계획 단계)에 정체 판정(low_idle_steps 동안 low_idle_d 를 못 벗어남 —
   // LowEp::end == kLowEndStall)이 났나 · 그때 가던 목적지 칸(−1 없음). 정체가 판을 끝내도 남는다 — 다음 계획 단계 뒤 첫 걸음이 지움.
   // 위층이 그 후보를 빼고 다시 고르는 데 쓴다 (호스트: Env::get_low_rl, 장치: EnvBatch::lowrl)
   int32_t stall;
