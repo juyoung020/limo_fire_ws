@@ -335,6 +335,24 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /low_rl/goal_marker
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Candidates
+      Namespaces:
+        cand: true
+        cand_text: true
+        cand_link: true
+        cand_frontier: true
+        cand_dormant: true
+        cand_info: true
+        trail: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /low_rl/candidates
+      Value: true
     - Align Bottom: false
       Background Alpha: 0.800000011920929
       Background Color: 0; 0; 0

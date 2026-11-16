@@ -10,6 +10,7 @@
 //   멈추고 꺼짐, contact_resume_s > 0 이면 그만큼 뒤 저절로 켬) · 끝(지도 닫힘 + 진척 없음 10 s · 진척 없음 · 시간 — 시뮬 판 끝 규칙).
 // 위층 목표가 없는 걸음(판 시작·프론티어 없음)은 시뮬과 같게 규칙 추종기의 제자리 회전.
 // dry_run:=true (기본): /cmd_vel 발행자를 아예 안 만들고 같은 명령을 ~/cmd_debug 에만.
+// upper:=cand: 위층 후보 scripts/cand_view.h 의 0 번 (low_explore_ctl.h Ctl 후보 모드). ~/candidates 에 후보 그림 (cand · decider 모드 — 결정마다).
 // upper:=decider: 위층을 로봇 안 llama-server 판단 모델에 (scripts/low_decider.h — decider_period 마다 비동기 요청, 기다리는 동안 지금 목표로 몰고, 답이 오면 바꿈).
 #include <chrono>
 #include <cmath>
@@ -98,7 +99,7 @@ class LowRlNode : public rclcpp::Node {
     dp.prompt = (int)declare_parameter<int>("decider_prompt", 1);
     dp.input = dec::input_of(dec_input);
     dp.match_r = (float)declare_parameter<double>("decider_match_r", 1.5);
-    if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "decider") throw std::runtime_error("upper 는 fuel · slot0 · decider");
+    if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "decider" && upper_ != "cand") throw std::runtime_error("upper 는 fuel · slot0 · decider · cand");
     if (upper_ == "decider" && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("decider_input 은 text · image · both (all 은 시뮬 장면 그림이라 실물에 없음)");
     hc_ = sim::load_env_cfg(env_yaml_);
     if (close_lidar) hc_.cfg.low_explore = 2;   // RobotEnv 합친 탐사 모드가 이어받음 (녹화 머리 hc 에도 남아 다시 돌리기가 같은 규칙)
@@ -115,6 +116,7 @@ class LowRlNode : public rclcpp::Node {
     if (!(max_speed_ > 0.0)) max_speed_ = c.act_v_fwd;   // 기본 = 시뮬 한도 (자르지 않음)
     lp_ = lxc::Params::from_cfg(c);
     lp_.fuel = fo;
+    lp_.use_cand = upper_ == "cand";   // 위층 후보 scripts/cand_view.h 의 0 번(지금 목표 번호가 있으면 붙듦) — low_explore_check --upper cand
     lp_.use_fuel = upper_ == "fuel" || (upper_ == "slot0" && slot_vp);   // slot0: 피하지 않는 첫 후보 · stick (slot_vp 면 그 덩어리의 시점 — fu::slot_view)
     if (upper_ == "slot0" && slot_vp) lp_.fuel = fu::slot_view(fo);
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
@@ -152,6 +154,7 @@ class LowRlNode : public rclcpp::Node {
     pub_state_ = create_publisher<std_msgs::msg::String>("~/state", rclcpp::QoS(1).transient_local());
     pub_done_ = create_publisher<std_msgs::msg::Bool>("~/done", rclcpp::QoS(1).transient_local());
     pub_goal_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/goal_marker", 10);
+    pub_cand_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/candidates", 10);
     srv_enable_ = create_service<std_srvs::srv::SetBool>("~/enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
     watchdog_ = create_wall_timer(std::chrono::milliseconds(50), [this] { check_inputs(); });
@@ -167,7 +170,7 @@ class LowRlNode : public rclcpp::Node {
 
  private:
   double dt() const { return (double)env_->cfg().substeps * env_->cfg().dt; }
-  bool ctl_upper() const { return upper_ == "fuel" || upper_ == "slot0"; }   // 위층을 low_explore_ctl.h Ctl 이 정함 (fuel · slot0)
+  bool ctl_upper() const { return upper_ == "fuel" || upper_ == "slot0" || upper_ == "cand"; }   // 위층을 low_explore_ctl.h Ctl 이 정함 (fuel · slot0)
 
   // ---- 상태 (RViz 탐사 패널: ~/state running 이면 켜짐, ~/done, ~/status)
   void set_state(const std::string& st, const std::string& why) {
@@ -362,6 +365,7 @@ class LowRlNode : public rclcpp::Node {
         why_dec_ = why;
         dec_ms = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
         publish_goal(cmd.target);
+        if (upper_ == "cand") publish_cands();
       } else if (!running() && env_->low_cmd().follow != 0) {
         env_->set_cmd(sim::LowCmd{-1, 0});   // 꺼짐·멈춤: 목표 없음 (다시 켜면 바로 결정)
       }
@@ -376,6 +380,10 @@ class LowRlNode : public rclcpp::Node {
           publish_goal(cmd.target);
         }
         dec_ms = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
+        if (env_->state().step % lp_.decide_steps == 0) {   // 그림만: 새 후보(cand_view.h)를 만들어 ~/candidates 로 (판단 모델 결정에는 안 씀 — 판단 모델 쪽이 아직 hier 후보)
+          ctl_->build_cands(v);
+          publish_cands();
+        }
       } else if (env_->low_cmd().follow != 0) {
         env_->set_cmd(sim::LowCmd{-1, 0});
       }
@@ -422,6 +430,109 @@ class LowRlNode : public rclcpp::Node {
       pub_status_->publish(st);
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 10000, "%s", st.data.c_str());
     }
+  }
+
+  // ~/candidates (map 틀, 결정마다): DELETEALL 뒤 후보마다 구(시점) · 글(판단 모델 글자 · 번호 · 넓이/시간) · 시점→덩어리 대표 칸 선 · 덩어리 프론티어 칸(작은 상자),
+  // 색 = 보통 초록 · 지금 목표 파랑 · 실패 기억(이 번호 포기 또는 1 m 안 실패 자리) 주황 · 쉬는 덩어리 회색, 판단 모델 마지막 답 시간 글, 로봇 자취(최근 60 s, 오래될수록 옅음)
+  void publish_cands() {
+    const cand::Out& o = ctl_->cands();
+    const cand::Mem& mem = ctl_->cand_mem();
+    visualization_msgs::msg::MarkerArray ma;
+    const rclcpp::Time t = now();
+    const auto base = [&](const char* ns, int id, int type) {
+      visualization_msgs::msg::Marker mk;
+      mk.header.frame_id = map_frame_;
+      mk.header.stamp = t;
+      mk.ns = ns;
+      mk.id = id;
+      mk.type = type;
+      mk.action = visualization_msgs::msg::Marker::ADD;
+      mk.pose.orientation.w = 1.0;
+      return mk;
+    };
+    visualization_msgs::msg::Marker del;
+    del.header.frame_id = map_frame_;
+    del.action = visualization_msgs::msg::Marker::DELETEALL;
+    ma.markers.push_back(del);
+    const auto color = [](visualization_msgs::msg::Marker& mk, float r, float g, float b, float a) { mk.color.r = r; mk.color.g = g; mk.color.b = b; mk.color.a = a; };
+    const auto pt = [&](int cell) {
+      geometry_msgs::msg::Point p;
+      float x = 0.f, y = 0.f;
+      env_->cell_xy(cell, &x, &y);
+      p.x = x; p.y = y; p.z = 0.05;
+      return p;
+    };
+    for (size_t i = 0; i < o.c.size(); ++i) {
+      const cand::Cand& c = o.c[i];
+      float r = 0.1f, g = 0.8f, b = 0.2f;
+      if (c.aborts > 0 || c.fail_near > 0) { r = 1.0f; g = 0.55f; b = 0.0f; }
+      if (c.id == ctl_->cur_id() && ctl_->cmd().follow != 0) { r = 0.1f; g = 0.4f; b = 1.0f; }
+      auto sp = base("cand", (int)i, visualization_msgs::msg::Marker::SPHERE);
+      sp.pose.position = pt(c.vp);
+      sp.scale.x = sp.scale.y = sp.scale.z = 0.22;
+      color(sp, r, g, b, 0.9f);
+      ma.markers.push_back(sp);
+      auto tx = base("cand_text", (int)i, visualization_msgs::msg::Marker::TEXT_VIEW_FACING);
+      tx.pose.position = pt(c.vp);
+      tx.pose.position.z = 0.35;
+      tx.scale.z = 0.18;
+      char buf[96];
+      std::snprintf(buf, sizeof buf, "%c #%d %.1fm2/%.1fs%s", 'A' + (int)i, c.id, c.gain_m2, c.t_s, c.aborts > 0 ? " !" : "");
+      tx.text = buf;
+      color(tx, r, g, b, 1.0f);
+      ma.markers.push_back(tx);
+      auto ln = base("cand_link", (int)i, visualization_msgs::msg::Marker::LINE_LIST);
+      ln.points.push_back(pt(c.vp));
+      ln.points.push_back(pt(c.anc));
+      ln.scale.x = 0.02;
+      color(ln, r, g, b, 0.8f);
+      ma.markers.push_back(ln);
+      auto cl = base("cand_frontier", (int)i, visualization_msgs::msg::Marker::CUBE_LIST);
+      if (i < o.cells.size())
+        for (size_t q = 0; q < o.cells[i].size(); q += 2) cl.points.push_back(pt(o.cells[i][q]));   // 2 칸마다 (메시지 크기)
+      cl.scale.x = cl.scale.y = 0.05;
+      cl.scale.z = 0.02;
+      color(cl, r, g, b, 0.7f);
+      ma.markers.push_back(cl);
+    }
+    {
+      auto dm = base("cand_dormant", 0, visualization_msgs::msg::Marker::SPHERE_LIST);
+      for (int cell : o.dormant) dm.points.push_back(pt(cell));
+      dm.scale.x = dm.scale.y = dm.scale.z = 0.12;
+      color(dm, 0.5f, 0.5f, 0.5f, 0.8f);
+      if (!dm.points.empty()) ma.markers.push_back(dm);
+    }
+    if (!mem.trail.empty()) {   // 자취: 오래될수록 옅게
+      auto tr = base("trail", 0, visualization_msgs::msg::Marker::LINE_STRIP);
+      tr.scale.x = 0.03;
+      const int n = (int)mem.trail.size();
+      for (int k = 0; k < n; ++k) {
+        geometry_msgs::msg::Point p;
+        p.x = mem.trail[k].x; p.y = mem.trail[k].y; p.z = 0.02;
+        tr.points.push_back(p);
+        std_msgs::msg::ColorRGBA cc;
+        cc.r = 0.8f; cc.g = 0.2f; cc.b = 0.8f; cc.a = 0.15f + 0.85f * (float)(k + 1) / n;
+        tr.colors.push_back(cc);
+      }
+      color(tr, 0.8f, 0.2f, 0.8f, 1.0f);
+      ma.markers.push_back(tr);
+    }
+    {   // 글: 후보 수 · 쉬는 덩어리 · 판단 모델 마지막 답 시간
+      auto tx = base("cand_info", 0, visualization_msgs::msg::Marker::TEXT_VIEW_FACING);
+      float x = 0.f, y = 0.f;
+      const sim::EnvState& e = env_->state();
+      x = e.x + e.ex; y = e.y + e.ey;
+      tx.pose.position.x = x; tx.pose.position.y = y; tx.pose.position.z = 0.8;
+      tx.scale.z = 0.16;
+      char buf[200];
+      if (dec_up_) std::snprintf(buf, sizeof buf, "cand %zu (dormant %d) %.1f ms | decider %ld/%ld ans · last %.1f s%s%s", o.c.size(), o.n_dormant, o.ms, dec_up_->n_ans(), dec_up_->n_sent(),
+                                 dec_up_->last_ms() / 1000.0, dec_up_->last_err().empty() ? "" : " err ", dec_up_->last_err().c_str());
+      else std::snprintf(buf, sizeof buf, "cand %zu (dormant %d) %.1f ms%s", o.c.size(), o.n_dormant, o.ms, o.rotate ? " rotate" : "");
+      tx.text = buf;
+      color(tx, 1.f, 1.f, 1.f, 1.f);
+      ma.markers.push_back(tx);
+    }
+    pub_cand_->publish(ma);
   }
 
   void publish_goal(int cell) {
@@ -482,7 +593,7 @@ class LowRlNode : public rclcpp::Node {
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pub_cmd_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_status_, pub_state_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_done_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_goal_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_goal_, pub_cand_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr srv_enable_;
   rclcpp::TimerBase::SharedPtr watchdog_;
 };

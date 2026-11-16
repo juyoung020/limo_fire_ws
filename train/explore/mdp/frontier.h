@@ -511,20 +511,25 @@ DEV void cand_pick2(const Frontier* out, uint64_t* key2, int n_out, int n_tot, i
 // 프론티어 칸 수, DSVP 는 시야 안 모름 복셀 수 — 여기는 DSVP 쪽(모름 넓이)이고 시야는 220° 가 아니라 360° (닿을 때 머리 방향을 후보 칸만으론 모름 — 규칙 정책 쪽에서 220° 로 잼)
 DEV int cand_gain_cells(float max_range, float res) { return (int)(hier::kGainRange * max_range / res); }
 DEV int cand_gain_norm(int R) { return hier::kGainRays * R * (R + 1) / 2; }
-DEV int cand_gain_ray(const MapView& m, int cx, int cy, int a, int R) {
+// 광선 a (0 … 63) 위 칸을 (cx, cy) 에서 1 … R 칸 차례로 걸음: 막힘이면 멈춤, 맵 밖이면 멈춤, 아니면 fn(x, y, t, 칸 종류). cand_gain_ray · 후보 생성(scripts/cand_view.h)이 같은 광선
+template <class Fn>
+DEV void gain_ray_walk(const MapView& m, int cx, int cy, int a, int R, const Fn& fn) {
   // 광선 방향 cos(2π(a + 0.5) / 64) × 16384 — 정수 표 (CPU·GPU 가 같은 값을 내게). sin 은 16 칸 앞 (hier::kGainRays = 64 에 맞춘 표)
   const int16_t T[64] = {16364,16207,15893,15426,14811,14053,13160,12140,11003,9760,8423,7005,5520,3981,2404,804,-804,-2404,-3981,-5520,-7005,-8423,-9760,-11003,-12140,-13160,-14053,-14811,-15426,-15893,-16207,-16364,-16364,-16207,-15893,-15426,-14811,-14053,-13160,-12140,-11003,-9760,-8423,-7005,-5520,-3981,-2404,-804,804,2404,3981,5520,7005,8423,9760,11003,12140,13160,14053,14811,15426,15893,16207,16364};
   static_assert(hier::kGainRays == 64, "광선 표는 64 방향");
   const int C = T[a], S = T[(a + 48) & 63];
   const auto rnd = [](int v) { v += 8192; return v >= 0 ? v >> 14 : -((-v + 16383) >> 14); };   // 내림 나눗셈 (음수 옮김은 구현마다 다를 수 있어 따로)
-  int g = 0;
   for (int t = 1; t <= R; ++t) {
     const int x = cx + rnd(t * C), y = cy + rnd(t * S);
     if (x < 0 || y < 0 || x >= m.w || y >= m.h) break;
     const uint8_t cl = cls_at(m, x, y);
     if (cl == kOcc) break;
-    if (cl == kUnk) g += t;
+    fn(x, y, t, cl);
   }
+}
+DEV int cand_gain_ray(const MapView& m, int cx, int cy, int a, int R) {
+  int g = 0;
+  gain_ray_walk(m, cx, cy, a, R, [&](int, int, int t, uint8_t cl) { if (cl == kUnk) g += t; });
   return g;
 }
 

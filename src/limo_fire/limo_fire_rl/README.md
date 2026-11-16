@@ -91,7 +91,8 @@ Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`
 | 끝 (위 표) | 명령 0 · `done` |
 
 - `dry_run:=true`(기본): `/cmd_vel` 발행자를 아예 안 만들고 같은 명령을 `~/cmd_debug`(TwistStamped)에만. dry run 에서는 닿음의 "멈춤" 신호(명령 대비 바퀴 정지)를 뺀다 — 명령이 안 나가 늘 참.
-- `max_speed`: 기본 = 시뮬 한도(자르지 않음). 토픽: `~/state`(idle · running · paused · done) · `~/status`(한 줄 — 까닭·리모컨·목표·명령·시간) · `~/done` · `~/goal_marker` · `~/cmd_debug`.
+- `max_speed`: 기본 = 시뮬 한도(자르지 않음). 토픽: `~/state`(idle · running · paused · done) · `~/status`(한 줄 — 까닭·리모컨·목표·명령·시간) · `~/done` · `~/goal_marker` · `~/cmd_debug` · `~/candidates`.
+- `~/candidates` (MarkerArray, map 틀, 결정마다 — `upper:=cand` · `decider`): 새 후보(`train/explore/scripts/cand_view.h`)마다 구(서는 자리)·글(판단 모델 글자 · 안정 번호 · 예상 넓이/시간)·덩어리 대표 칸까지 선·덩어리 프론티어 칸, 색 초록 보통 · 파랑 지금 목표 · 주황 실패 기억 · 회색 쉬는 덩어리, 로봇 자취(60 s), 판단 모델 답 수·마지막 답 시간. RViz `explore_fuel_rl.rviz` 의 Candidates 표시. `upper:=cand` 는 그 후보 0 번으로 감(지금 목표 번호가 있으면 붙듦 — `low_explore_check --upper cand`).
 - RViz 탐사 패널: 고르기에서 "합친 탐사 (/low_rl)". `paused` 면 상세 줄에 까닭.
 - 리모컨 칸 확인: 녹화 `1103_M_drive3`(리모컨으로 몬 것)의 `/rc_state` buttons 는 모두 `[3, 1, 3, 3]`, `1104_M_cmd_mix`(ROS 명령으로 몬 것)는 모두 `[3, 2, 3, 3]`.
 

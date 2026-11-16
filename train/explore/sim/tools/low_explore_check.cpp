@@ -25,8 +25,13 @@
 #include "limo_fire_rl/robot_env.h"
 #include "low_decider.h"
 #include "low_explore_ctl.h"
+#include "cand_view.h"
+#include "cand_quality.h"
 
 namespace {
+// 실물 쪽 걸음 시간 (이 기기 한 코어) — RobotEnv::step(라이다 장 → 지도·관측·닫힘) · low_obs · 위층 결정(Ctl::decide)
+double t_step = 0, t_obs = 0, t_dec = 0, t_dec_max = 0;
+long n_step = 0, n_tdec = 0;
 // 가짜 판단 모델: 본문 해시로 글자, lat 걸음 뒤 답 (now 는 부르는 쪽이 걸음마다 맞춤)
 struct FakeModel : lxd::Transport {
   int lat = 26, now = 0;
@@ -96,7 +101,7 @@ struct Tap : sim::CpuTap {
     p.wheel_w = e.drive.ww;
     p.gyro_z = e.gyro;
     for (int i = 0; i < 7; ++i) p.imu[i] = e.imu.out[i];
-    robot->step(p, sc);
+    { const auto t0 = std::chrono::steady_clock::now(); robot->step(p, sc); t_step += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); ++n_step; }
     have = false;
   }
 };
@@ -108,12 +113,16 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml";
   int steps = 1500, people = 0;
   uint64_t seed = 1;
-  bool use_fuel = true, use_dec = false;
+  bool use_fuel = true, use_dec = false, use_cand = false;
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
   std::string dec_input = "both", dec_url;
   std::string ep_log;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
   int max_ep = 0;
   bool close_lidar = false;
+  bool cand_on = false, open_scene = false;
+  std::string cand_dump;
+  int cand_every = 20;
+  cand::Opt co;   // --cand-* 로 바꿈 (기본 = cand_view.h)
   std::string logp;   // --log: 시뮬 쪽 결정마다 한 줄 (판 · 시각 · 목표 · 바뀜 · 뜀 · 목표 없음 까닭 · 닫힘) — 실물 녹화 low_explore_replay --log 와 견줌
   fu::Opt fo;
   fo.time = fo.global = fo.vp = true;   // 고른 조합 (scripts/README "combine_run — 위층 fuel": 시간 + 전역 + 시점)
@@ -131,8 +140,17 @@ int main(int argc, char** argv) {
     else if (a == "--people") people = std::stoi(nx());
     else if (a == "--env") env_path = nx();
     else if (a == "--log") logp = nx();
+    else if (a == "--open-scene") open_scene = true;   // 닫히지 않은 장면도 (실물 방 재현 room_run 장면 — 판 끝은 로봇 지도만 봄)
+    else if (a == "--cand") cand_on = true;
+    else if (a == "--cand-dump") { cand_on = true; cand_dump = nx(); }   // 결정 --cand-every 째마다 지도·후보 그림 재료 (cand_quality.h dump)
+    else if (a == "--cand-every") cand_every = std::stoi(nx());
+    else if (a == "--cand-unk-depth") co.unk_depth_m = std::stof(nx());
+    else if (a == "--cand-sliver") co.sliver_m = std::stof(nx());
+    else if (a == "--cand-gain-m") co.gain_m = std::stof(nx());
+    else if (a == "--cand-vp-min") co.vp_min = std::stof(nx());
+    else if (a == "--cand-unk-clear") co.unk_clear = std::stof(nx());   // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
-    else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0" && u != "decider") throw std::runtime_error("--upper 는 fuel · slot0 · decider"); use_fuel = u == "fuel"; use_dec = u == "decider"; }
+    else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0" && u != "decider" && u != "cand") throw std::runtime_error("--upper 는 fuel · slot0 · decider · cand"); use_fuel = u == "fuel"; use_dec = u == "decider"; use_cand = u == "cand"; }
     else if (a == "--dec-period") dec_period = std::stod(nx());
     else if (a == "--dec-latency") dec_lat = std::stod(nx());
     else if (a == "--dec-input") dec_input = nx();
@@ -169,7 +187,7 @@ int main(int argc, char** argv) {
     hc.cfg.pe_xy = hc.cfg.pe_yaw = 0.f;
     const sim::LidarModel lidar = sim::load_lidar_model(model_path);
     std::vector<sim::World> worlds;
-    for (const auto& p : scenes) worlds.push_back(sim::build_world(p, sim::load_scene(p), hc));
+    for (const auto& p : scenes) worlds.push_back(sim::build_world(p, sim::load_scene(p), hc, !open_scene));
     sim::set_cpu_threads(1);
     sim::Env cpu(hc, worlds, lidar, 1, seed, false);
     if (people > 0) cpu.set_people_max(std::vector<int>(1, people));
@@ -182,6 +200,8 @@ int main(int argc, char** argv) {
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
+    lp.use_cand = use_cand;
+    lp.cand = co;
     lxc::Ctl cs(lp), cr(lp);
     const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
     lxd::Params dp;
@@ -217,6 +237,18 @@ int main(int argc, char** argv) {
     std::vector<sim::LowRl> R;
     std::vector<sim::LowEp> L;
     sim::World rw;   // RobotEnv 지도 창 (gw · gh · ox · oy 만)
+    // --cand: 후보 생성 두 쪽 (시뮬 Env 값 · RobotEnv 값) · 안정성 (3 결정 뒤 — 판단 모델 답 지연 2.6 s 쯤)
+    cand::Mem cms, cmr;
+    cand::Work cws, cwr;
+    struct Snap { std::vector<int> id, vp; };
+    std::vector<Snap> hist, hhist;   // 새 후보 · 환경 hier 후보 (최근 결정들)
+    candq::Acc qacc;
+    int c_sig = 0, c_last_dec = 0;
+    long c_dec = 0, c_diff = 0, c_n = 0, c_rot = 0, c_none = 0, c_dorm = 0, c_near = 0, c_kept = 0;
+    double c_ms = 0, c_ms_max = 0, c_part[6] = {0, 0, 0, 0, 0, 0};
+    long s_n = 0, s_same = 0, h_n = 0, h_same = 0;   // 3 결정 뒤에도 남음 (새: 같은 번호 · 같은 칸 / hier: 1.5 m 안 후보 있음)
+    double s_move = 0, h_move = 0;
+    long s_alive = 0, h_alive = 0, s_m15 = 0;
     long ep_dec0 = 0, ep_sw0 = 0;   // --ep-log: 이 판 시작 때 셈
     long n_obs = 0, d_img = 0, d_1d = 0, d_cmd = 0, d_dec = 0, n_dec = 0, n_ep = 0, why_n[3] = {0, 0, 0}, n_sw = 0;
     int first_bad = -1, prev_tgt = -2;
@@ -231,6 +263,7 @@ int main(int argc, char** argv) {
       robot.reset(e.x0, e.y0, e.th0, p0, e.noise.fov, &win);
       rw.gw = w.gw; rw.gh = w.gh; rw.ox = w.ox; rw.oy = w.oy;
       cs.restart(); cr.restart();
+      cms = cand::Mem(); cmr = cand::Mem(); hist.clear(); hhist.clear();
       n_sent_all += us.n_sent(); n_nomatch_all += us.n_nomatch(); n_fb_all += us.n_fallback();
       us.restart(); ur.restart();
       prev_cell = -2;
@@ -276,6 +309,47 @@ int main(int argc, char** argv) {
         cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur);
         const sim::World& w = worlds[(size_t)st[0].map];
         const lxc::View vs{&hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
+        if (cand_on) {
+          const cand::In ci{&hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], [&](int cell) { return cs.avoided(cell, st[0].step); }, cs.cmd().target};
+          const cand::In ri{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), [&](int cell) { return cr.avoided(cell, robot.state().step); }, cr.cmd().target};
+          const cand::Out a = cand::build(ci, co, cms, cws);
+          const cand::Out b = cand::build(ri, co, cmr, cwr);
+          ++c_dec;
+          c_ms += b.ms; c_ms_max = std::max(c_ms_max, b.ms);
+          for (int q = 0; q < 6; ++q) c_part[q] += b.ms_part[q];
+          bool same = a.c.size() == b.c.size() && a.rotate == b.rotate && a.n_clu == b.n_clu && a.n_dormant == b.n_dormant;
+          for (size_t i = 0; same && i < a.c.size(); ++i) same = std::memcmp(&a.c[i], &b.c[i], sizeof(cand::Cand)) == 0;
+          if (!same) { ++c_diff; if (first_bad < 0) first_bad = t; }
+          c_n += (long)b.c.size(); c_rot += b.rotate; c_none += b.c.empty(); c_dorm += b.n_dormant; c_near += b.n_near;
+          for (const cand::Cand& x : b.c) c_kept += x.kept;
+          c_last_dec = robot.state().step;
+          candq::eval(ri, co, cwr, b, robot.cand(), &w, robot.state().map_closed != 0, qacc, &cmr);
+          if (!cand_dump.empty() && (c_dec - 1) % cand_every == 0)
+            candq::dump(cand_dump + "_ep" + std::to_string(n_ep) + "_s" + std::to_string(robot.state().step), ri, b, robot.cand());
+          Snap sn, hs;
+          for (const cand::Cand& x : b.c) { sn.id.push_back(x.id); sn.vp.push_back(x.vp); }
+          for (int k = 0; k < K; ++k) if (robot.cand()[k] >= 0) { hs.id.push_back(k); hs.vp.push_back(robot.cand()[k]); }
+          hist.push_back(sn); hhist.push_back(hs);
+          const auto dist_m = [&](int a1, int b1) { return std::hypot(a1 % rw.gw - b1 % rw.gw, a1 / rw.gw - b1 / rw.gw) * hc.cfg.res; };
+          if (hist.size() > 3) {
+            const Snap& o = hist[hist.size() - 4];
+            for (size_t i = 0; i < o.id.size(); ++i) {
+              ++s_n;
+              for (size_t j = 0; j < sn.id.size(); ++j)
+                if (sn.id[j] == o.id[i]) { ++s_alive; s_move += dist_m(sn.vp[j], o.vp[i]); s_same += sn.vp[j] == o.vp[i]; }
+              double bd = 1e9;   // hier 와 같은 잣대: 1.5 m 안 후보 있음
+              for (size_t j = 0; j < sn.vp.size(); ++j) bd = std::min(bd, dist_m(sn.vp[j], o.vp[i]));
+              s_m15 += bd <= 1.5;
+            }
+            const Snap& ho = hhist[hhist.size() - 4];
+            for (size_t i = 0; i < ho.vp.size(); ++i) {
+              ++h_n;
+              double bd = 1e9;
+              for (size_t j = 0; j < hs.vp.size(); ++j) bd = std::min(bd, dist_m(hs.vp[j], ho.vp[i]));
+              if (bd <= 1.5) { ++h_alive; h_move += bd; h_same += bd == 0.0; }
+            }
+          }
+        }
         int why = 0;
         dgs = fu::Diag();
         const sim::LowCmd c1 = cs.decide(vs, ws, &why);
@@ -298,7 +372,9 @@ int main(int argc, char** argv) {
       // 위층 (실물 쪽: RobotEnv 자기 값)
       if (!use_dec && cr.due(robot.state())) {
         const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
+        const auto td0 = std::chrono::steady_clock::now();
         const sim::LowCmd c2 = cr.decide(vr, wr);
+        { const double d = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - td0).count(); t_dec += d; t_dec_max = std::max(t_dec_max, d); ++n_tdec; }
         robot.set_cmd(c2);
       }
       if (cs.cmd().target != cr.cmd().target || cs.cmd().follow != cr.cmd().follow || cs.slot() != cr.slot()) { ++d_dec; if (first_bad < 0) first_bad = t; }
@@ -309,7 +385,7 @@ int main(int argc, char** argv) {
       cpu.low_prepare(act.data());
       cpu.get_obs(img, o1d);
       robot.set_depth(img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE);
-      robot.low_obs();
+      { const auto t0 = std::chrono::steady_clock::now(); robot.low_obs(); t_obs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
       cpu.get_low_obs(li, l1);
       ++n_obs;
       long di = 0, d1 = 0;
@@ -367,6 +443,27 @@ int main(int argc, char** argv) {
       }
       cpu.get_low_rl(R); cpu.get_low(L);
       cs.after_step(st[0], R[0], L[0]);
+      if (cand_on) {   // 후보 기억: 자취 · 실패 자리 (Ctl::after_step 과 같은 판정 — 막힘 신호 · 경로 끝 밖 · 경로 없음)
+        const sim::EnvState& e = robot.state();
+        const sim::LowRl& rl = robot.low_rl();
+        const sim::LowEp& le = robot.low_ep();
+        const sim::LowCmd cm = cr.cmd();
+        const auto fail = [&](int cell, int why) {
+          if (cell < 0) return;
+          const float fx = rw.ox + (cell % rw.gw + 0.5f) * hc.cfg.res, fy = rw.oy + (cell / rw.gw + 0.5f) * hc.cfg.res;
+          cms.note_fail_at(fx, fy, why, e.step); cmr.note_fail_at(fx, fy, why, e.step);
+        };
+        if (rl.stall && !c_sig) fail(rl.stall_tgt, cand::kStall);
+        c_sig = rl.stall;
+        if (cm.follow != 0 && cm.target >= 0) {
+          const bool reached = le.reach_step == e.step && le.reached > 0;
+          const bool off = !reached && le.hold != 0;
+          const bool nopath = !reached && !off && e.step > c_last_dec && (e.goal_cell != cm.target || e.p_n <= 0);
+          if (off) fail(cm.target, cand::kOffPath);
+          else if (nopath) fail(cm.target, cand::kNoPath);
+        }
+        cms.note_pose(e.step, e.x + e.ex, e.y + e.ey, e.th + e.eth); cmr.note_pose(e.step, e.x + e.ex, e.y + e.ey, e.th + e.eth);
+      }
       cr.after_step(robot.state(), robot.low_rl(), robot.low_ep());
     }
     sim::set_cpu_tap(nullptr);
@@ -374,12 +471,25 @@ int main(int argc, char** argv) {
     for (const auto& x : real_log) { real_ms += x.ms; real_max = std::max(real_max, x.ms); }
     if (real) std::printf("진짜 판단 모델 %s: 답 %zu 개 · 평균 %.0f ms · 최대 %.0f ms (시뮬 시계에는 --dec-latency %.1f s 로)\n", dec_url.c_str(), real_log.size(),
                           real_log.empty() ? 0.0 : real_ms / real_log.size(), real_max, dec_lat);
-    std::printf("위층 %s · 아래층 %s · ", use_dec ? "decider (가짜 응답기)" : use_fuel ? "fuel" : "slot0", "규칙 추종기");
+    std::printf("위층 %s · 아래층 %s · ", use_dec ? "decider (가짜 응답기)" : use_cand ? "cand (후보 0 번 · 붙듦)" : use_fuel ? "fuel" : "slot0", "규칙 추종기");
     if (use_dec)
       std::printf("판단 모델: 주기 %d 걸음 · 지연 %d 걸음 · 보냄 %ld · 답 적용 %ld · 후보 안 맞음 %ld · slot0 대신 %ld · 본문 다름 %ld | ", dp.period_steps, ms.lat, n_sent_all + us.n_sent(), n_ans,
                   n_nomatch_all + us.n_nomatch(), n_fb_all + us.n_fallback(), d_body);
     std::printf(use_dec ? "관측 %ld 번 · 판 %ld · 위층 결정 %ld (판단 모델 후보 %ld · slot0 차례 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n" : "관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
                 why_n[2], n_sw, cs.n_reach(), cs.n_stall());
+    if (cand_on && c_dec) {
+      std::printf("후보 생성 (scripts/cand_view.h): 결정 %ld · 두 쪽 다름 %ld · 평균 후보 %.2f 개 · 후보 0 %ld (제자리 회전 %ld) · 쉬는 덩어리 평균 %.2f (로봇 곁 %.2f) · 지난 칸 그대로 %.2f · 시간 평균 %.2f ms 최대 %.2f ms\n",
+                  c_dec, c_diff, (double)c_n / c_dec, c_none, c_rot, (double)c_dorm / c_dec, (double)c_near / c_dec, c_n ? (double)c_kept / c_n : 0.0, c_ms / c_dec, c_ms_max);
+      std::printf("  나눠 본 시간 (평균 ms): 찾기 %.2f · 거리 지도·방 %.2f · 덩어리 %.2f · 로봇 거리 %.2f · 시점 %.2f · 고르기 %.2f\n", c_part[0] / c_dec, c_part[1] / c_dec, c_part[2] / c_dec,
+                  c_part[3] / c_dec, c_part[4] / c_dec, c_part[5] / c_dec);
+      candq::print(qacc, "시뮬 RobotEnv 쪽");
+      std::printf("3 결정 뒤 1.5 m 안 후보 있음 (판단 모델 답 맞춤 반경): 새 %.3f\n", s_n ? (double)s_m15 / s_n : 0.0);
+      std::printf("3 결정 뒤 (판단 모델 답 지연쯤): 새 후보 — 같은 번호 남음 %.3f · 그중 같은 칸 %.3f · 옮긴 거리 평균 %.2f m | 환경 hier 후보 — 1.5 m 안 후보 있음 %.3f · 같은 칸 %.3f · 거리 평균 %.2f m\n",
+                  s_n ? (double)s_alive / s_n : 0.0, s_alive ? (double)s_same / s_alive : 0.0, s_alive ? s_move / s_alive : 0.0, h_n ? (double)h_alive / h_n : 0.0,
+                  h_alive ? (double)h_same / h_alive : 0.0, h_alive ? h_move / h_alive : 0.0);
+    }
+    std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_obs %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번)\n", n_step ? t_step / n_step : 0.0,
+                n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec);
     std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld\n", d_dec, d_img, d_1d, d_cmd);
     const bool ok = d_dec == 0 && d_img == 0 && d_1d == 0 && d_cmd == 0 && d_body == 0;
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");

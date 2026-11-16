@@ -276,6 +276,52 @@ struct Node {
   double yaw = 0;           // 시점에서 볼 방향
 };
 
+namespace detail {
+// 덩어리 합침 · 나눔 (전역 순회 노드 · 후보 생성 cand_view.h 가 같이 씀). 노드마다 cells · anc · anc_d 가 차 있어야 함. 나온 노드는 cells 만 (부르는 쪽이 다시 채움).
+//   합침: 가장 가까운 칸끼리 Rm 칸 안 · BFS 거리 차 2 Rm 안 — 합집합 찾기.  나눔: 첫 주성분 표준편차 > lim 칸이면 가운데에서 그 축으로 둘로 (되풀이)
+inline void merge_split(std::vector<Node>& nodes, int gw, int Rm, double lim) {
+  // 합침: 가장 가까운 칸끼리 merge_m 안 · BFS 거리 차 2 배 안 (후보 v2 cand2_near 와 같은 꼴) — 합집합 찾기
+  std::vector<int> par(nodes.size());
+  for (size_t i = 0; i < par.size(); ++i) par[i] = (int)i;
+  const std::function<int(int)> root = [&](int x) { return par[x] == x ? x : par[x] = root(par[x]); };
+  for (size_t i = 0; i < nodes.size(); ++i)
+    for (size_t j = i + 1; j < nodes.size(); ++j) {
+      const int dx = nodes[i].anc % gw - nodes[j].anc % gw, dy = nodes[i].anc / gw - nodes[j].anc / gw, dd = std::abs(nodes[i].anc_d - nodes[j].anc_d);
+      if (dx * dx + dy * dy <= Rm * Rm && dd <= 2 * Rm) par[root((int)i)] = root((int)j);
+    }
+  std::vector<Node> mg;
+  std::vector<int> at(nodes.size(), -1);
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    const int rt = root((int)i);
+    if (at[rt] < 0) { at[rt] = (int)mg.size(); mg.emplace_back(); }
+    Node& t = mg[at[rt]];
+    t.cells.insert(t.cells.end(), nodes[i].cells.begin(), nodes[i].cells.end());
+  }
+  // 나눔: 첫 주성분 표준편차 > split_m 이면 가운데에서 그 축으로 둘로 (되풀이)
+  std::vector<Node> fin;
+  while (!mg.empty()) {
+    Node nd = std::move(mg.back());
+    mg.pop_back();
+    double mx = 0, my = 0;
+    for (int idx : nd.cells) { mx += idx % gw; my += idx / gw; }
+    mx /= nd.cells.size(); my /= nd.cells.size();
+    double sxx = 0, syy = 0, sxy = 0;
+    for (int idx : nd.cells) { const double dx = idx % gw - mx, dy = idx / gw - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+    sxx /= nd.cells.size(); syy /= nd.cells.size(); sxy /= nd.cells.size();
+    const double tr = sxx + syy, det = sxx * syy - sxy * sxy, l1 = 0.5 * tr + std::sqrt(std::max(0.0, 0.25 * tr * tr - det));
+    if (nd.cells.size() >= 4 && l1 > lim * lim) {
+      double ex = sxy, ey = l1 - sxx;   // 첫 고유벡터
+      if (std::fabs(ex) + std::fabs(ey) < 1e-9) { ex = sxx >= syy ? 1 : 0; ey = sxx >= syy ? 0 : 1; }
+      Node a, b;
+      for (int idx : nd.cells) ((idx % gw - mx) * ex + (idx / gw - my) * ey < 0 ? a : b).cells.push_back(idx);
+      if (!a.cells.empty() && !b.cells.empty()) { mg.push_back(std::move(a)); mg.push_back(std::move(b)); continue; }
+    }
+    fin.push_back(std::move(nd));
+  }
+  nodes.swap(fin);
+}
+}  // namespace detail
+
 // 결정 하나: 보낼 목표 칸 (없으면 −1 → 부르는 쪽이 slot0 로 · kNone → 목표 없음)
 inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   const auto t_start = std::chrono::steady_clock::now();
@@ -357,47 +403,8 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   };
   for (Node& nd : nodes) fill(nd, !o.global ? true : false);
   if (o.global && !nodes.empty()) {
-    // 합침: 가장 가까운 칸끼리 merge_m 안 · BFS 거리 차 2 배 안 (후보 v2 cand2_near 와 같은 꼴) — 합집합 찾기
-    const int Rm = (int)(o.merge_m * c.inv_res + 0.5f);
-    std::vector<int> par(nodes.size());
-    for (size_t i = 0; i < par.size(); ++i) par[i] = (int)i;
-    const std::function<int(int)> root = [&](int x) { return par[x] == x ? x : par[x] = root(par[x]); };
-    for (size_t i = 0; i < nodes.size(); ++i)
-      for (size_t j = i + 1; j < nodes.size(); ++j) {
-        const int dx = nodes[i].anc % gw - nodes[j].anc % gw, dy = nodes[i].anc / gw - nodes[j].anc / gw, dd = std::abs(nodes[i].anc_d - nodes[j].anc_d);
-        if (dx * dx + dy * dy <= Rm * Rm && dd <= 2 * Rm) par[root((int)i)] = root((int)j);
-      }
-    std::vector<Node> mg;
-    std::vector<int> at(nodes.size(), -1);
-    for (size_t i = 0; i < nodes.size(); ++i) {
-      const int rt = root((int)i);
-      if (at[rt] < 0) { at[rt] = (int)mg.size(); mg.emplace_back(); }
-      Node& t = mg[at[rt]];
-      t.cells.insert(t.cells.end(), nodes[i].cells.begin(), nodes[i].cells.end());
-    }
-    // 나눔: 첫 주성분 표준편차 > split_m 이면 가운데에서 그 축으로 둘로 (되풀이)
-    const double lim = (double)o.split_m * c.inv_res;
-    std::vector<Node> fin;
-    while (!mg.empty()) {
-      Node nd = std::move(mg.back());
-      mg.pop_back();
-      double mx = 0, my = 0;
-      for (int idx : nd.cells) { mx += idx % gw; my += idx / gw; }
-      mx /= nd.cells.size(); my /= nd.cells.size();
-      double sxx = 0, syy = 0, sxy = 0;
-      for (int idx : nd.cells) { const double dx = idx % gw - mx, dy = idx / gw - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
-      sxx /= nd.cells.size(); syy /= nd.cells.size(); sxy /= nd.cells.size();
-      const double tr = sxx + syy, det = sxx * syy - sxy * sxy, l1 = 0.5 * tr + std::sqrt(std::max(0.0, 0.25 * tr * tr - det));
-      if (nd.cells.size() >= 4 && l1 > lim * lim) {
-        double ex = sxy, ey = l1 - sxx;   // 첫 고유벡터
-        if (std::fabs(ex) + std::fabs(ey) < 1e-9) { ex = sxx >= syy ? 1 : 0; ey = sxx >= syy ? 0 : 1; }
-        Node a, b;
-        for (int idx : nd.cells) ((idx % gw - mx) * ex + (idx / gw - my) * ey < 0 ? a : b).cells.push_back(idx);
-        if (!a.cells.empty() && !b.cells.empty()) { mg.push_back(std::move(a)); mg.push_back(std::move(b)); continue; }
-      }
-      fin.push_back(std::move(nd));
-    }
-    nodes.swap(fin);
+    // 합침 · 나눔 (detail::merge_split — 후보 생성 cand_view.h 와 같은 함수)
+    detail::merge_split(nodes, gw, (int)(o.merge_m * c.inv_res + 0.5f), (double)o.split_m * c.inv_res);
     for (Node& nd : nodes) fill(nd, false);
     // 피하는 칸 빼기
     nodes.erase(std::remove_if(nodes.begin(), nodes.end(), [&](const Node& nd) { return in.avoided(nd.anc); }), nodes.end());

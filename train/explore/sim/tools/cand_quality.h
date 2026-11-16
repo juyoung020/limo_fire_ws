@@ -1,0 +1,176 @@
+// 위층 목표 후보 품질 재기 (low_explore_check --cand · low_explore_replay --cand 가 같이 씀) — 환경 hier 후보 8 개(옛)와 scripts/cand_view.h 후보(새)를 같은 잣대로.
+// 한 결정마다 cand::build 바로 뒤에 부른다 (그 Work 의 갈 수 있는 칸·로봇 거리·막힘 거리 지도를 그대로 씀). 잣대:
+//   길 있음      : 로봇 지도의 설 수 있는 칸(몸통 반경 close_radius + 깊이 층)으로 로봇에서 닿음 (계획기와 같은 칸)
+//   간격         : 후보 칸에서 막힘(지도 막힘 + 깊이 층)까지 ≥ close_radius + margin
+//   로봇 곁      : 후보 칸이 로봇에서 vp_min(0.75 m) 안 — 몸·뒤 사각지대 몫, 가자마자 "통과"
+//   예상 넓이    : 광선(32 · gain_m)이 닿는 로봇 지도 모름 넓이 > 0
+//   참 넓이      : (시뮬만) 같은 광선을 정답 격자로 — 정답에서 안 막힌 동안 로봇 지도 모름 칸 넓이. 예상 대비 비 = 실제로 보일 몫
+//   방향 퍼짐    : 후보 방위가 차지한 45° 칸 수 (0 ~ 8)
+//   0 후보       : 후보가 없는데 지도가 안 닫힘 (닫힘을 막는 프론티어가 남음)
+//   정답 견줌    : (시뮬만) 갈 수 있는 칸 0.1 m 격자 + 두 무리 후보 중 로봇에서 vp_min 밖 전부에서 참 넓이 / (가는 시간 + t0) 최댓값 = 정답 최선. 후보 가운데 최선 · 0 번 후보의 같은 값 비
+#pragma once
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+#include "cand_view.h"
+
+namespace candq {
+
+struct Fam {   // 한 후보 무리 (옛 · 새)
+  long n = 0, reach = 0, clear = 0, near = 0, gain0 = 0, dec = 0, sectors = 0, none = 0, failed = 0;
+  double pred = 0, truth = 0, best_ratio = 0, slot0_ratio = 0;
+  long n_or = 0;
+};
+struct Acc {
+  long dec = 0, open = 0;
+  Fam f[2];   // 0 옛 hier · 1 새
+};
+
+struct Cell { int cell; int id; int anc; };
+
+// 한 결정 재기. hier = 환경 후보 칸 K 개 (−1 빈 칸), gt = 정답 격자 (없으면 nullptr — 실물 녹화), closed = 지금 지도 닫힘
+inline void eval(const cand::In& in, const cand::Opt& o, const cand::Work& w, const cand::Out& out, const int32_t* hier, const sim::World* gt, bool closed, Acc& acc,
+                 const cand::Mem* mem = nullptr) {
+  const sim::EnvCfg& c = *in.c;
+  const int gw = in.W->gw, gh = in.W->gh;
+  const mdp::MapView mv{in.L, c.size, gw, gh};
+  const sim::EnvState& s = *in.s;
+  const double res = c.res, rxf = (s.x + s.ex - in.W->ox) * c.inv_res, ryf = (s.y + s.ey - in.W->oy) * c.inv_res, th = s.th + s.eth;
+  const int Rg = std::max(1, (int)std::lround(o.gain_m * c.inv_res)), step = std::max(1, mdp::hier::kGainRays / std::max(1, o.rays));
+  const double area_k = (double)step * 2.0 * M_PI / mdp::hier::kGainRays * res * res;
+  const cand::Work& W = w;
+  const auto pass = [&](int idx) { return (W.fw.flag[idx] & 1) && W.fw.dist[idx] >= 0 && W.fw.cd[idx] >= 0; };
+  const auto pred = [&](int vp) {
+    long g = 0;
+    for (int a = 0; a < mdp::hier::kGainRays; a += step) mdp::gain_ray_walk(mv, vp % gw, vp / gw, a, Rg, [&](int, int, int t, uint8_t cl) { if (cl == mdp::kUnk) g += t; });
+    return g * area_k;
+  };
+  const auto truth = [&](int vp) {   // 정답 격자로 광선 — 정답 막힘에서 멈춤, 로봇 지도 모름 칸만 셈
+    long g = 0;
+    const int cx = vp % gw, cy = vp / gw;
+    for (int a = 0; a < mdp::hier::kGainRays; a += step) {
+      // gain_ray_walk 는 로봇 지도 막힘에서 멈추므로 여기서는 정답 격자로 같은 광선 (같은 표)
+      static const int16_t T[64] = {16364,16207,15893,15426,14811,14053,13160,12140,11003,9760,8423,7005,5520,3981,2404,804,-804,-2404,-3981,-5520,-7005,-8423,-9760,-11003,-12140,-13160,-14053,-14811,-15426,-15893,-16207,-16364,-16364,-16207,-15893,-15426,-14811,-14053,-13160,-12140,-11003,-9760,-8423,-7005,-5520,-3981,-2404,-804,804,2404,3981,5520,7005,8423,9760,11003,12140,13160,14053,14811,15426,15893,16207,16364};
+      const int C = T[a], S = T[(a + 48) & 63];
+      const auto rnd = [](int v) { v += 8192; return v >= 0 ? v >> 14 : -((-v + 16383) >> 14); };
+      for (int t = 1; t <= Rg; ++t) {
+        const int x = cx + rnd(t * C), y = cy + rnd(t * S);
+        if (x < 0 || y < 0 || x >= gw || y >= gh) break;
+        if (gt->grid[(size_t)y * gw + x] & sim::kCellBlocked) break;
+        if (mdp::cls_at(mv, x, y) == mdp::kUnk) g += t;
+      }
+    }
+    return g * area_k;
+  };
+  const auto t_of = [&](int idx) { return W.fw.cd[idx] >= 0 ? W.fw.cd[idx] * 0.2 * res / o.v_eff : 1e6; };   // 정답 견줌용 (회전 뺌 — 두 무리 같은 잣대)
+  // 정답 최선 (시뮬만)
+  double best = 0;
+  int best_cell = -1;
+  const char* dbg = std::getenv("CANDQ_DEBUG");
+  const bool verbose = dbg && std::atol(dbg) == acc.dec;
+  if (gt) {
+    const auto try_cell = [&](int idx) {
+      const int x = idx % gw, y = idx / gw;
+      if (!pass(idx) || std::hypot(x + 0.5 - rxf, y + 0.5 - ryf) * res < o.vp_min) return;   // 로봇 곁(가자마자 통과)은 뺌 — 돌기만 하면 보임
+      const double sc = truth(idx) / (t_of(idx) + o.t0);
+      if (sc > best) { best = sc; best_cell = idx; }
+    };
+    for (int y = 0; y < gh; y += 2)
+      for (int x = 0; x < gw; x += 2) try_cell(y * gw + x);
+    for (int k = 0; k < mdp::hier::K; ++k) if (hier[k] >= 0) try_cell(hier[k]);   // 두 무리 후보도 넣어 비가 1 을 안 넘게
+    for (const cand::Cand& x : out.c) try_cell(x.vp);
+  }
+  acc.dec += 1;
+  acc.open += !closed;
+  for (int fi = 0; fi < 2; ++fi) {
+    std::vector<int> cells;
+    if (fi == 0) { for (int k = 0; k < mdp::hier::K; ++k) if (hier[k] >= 0) cells.push_back(hier[k]); }
+    else for (const cand::Cand& x : out.c) cells.push_back(x.vp);
+    Fam& F = acc.f[fi];
+    F.dec += 1;
+    if (cells.empty() && !closed) F.none += 1;
+    uint8_t sec = 0;
+    double bc = 0, s0 = 0;
+    for (size_t i = 0; i < cells.size(); ++i) {
+      const int cell = cells[i];
+      F.n += 1;
+      F.reach += pass(cell);
+      F.clear += W.dto[cell] * res / 3.0 >= c.close_radius + o.margin;
+      F.near += std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res < o.vp_min;
+      if (mem) {   // 실패 자리 fail_m 안 후보 (다시 나온 실패 자리)
+        const double wx = in.W->ox + (cell % gw + 0.5) * res, wy = in.W->oy + (cell / gw + 0.5) * res;
+        for (const auto& f : mem->fails) if (std::hypot(f.x - wx, f.y - wy) < in.fail_m) { F.failed += 1; break; }
+      }
+      const double p = pred(cell);
+      F.gain0 += p <= 0;
+      F.pred += p;
+      const double b = std::atan2(cell / gw + 0.5 - ryf, cell % gw + 0.5 - rxf) - th, bw = std::atan2(std::sin(b), std::cos(b));
+      sec |= (uint8_t)(1u << ((int)std::floor((bw + M_PI) / (M_PI / 4)) & 7));
+      if (gt) {
+        const double tr = truth(cell);
+        F.truth += tr;
+        const double sc = pass(cell) && std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res >= o.vp_min ? tr / (t_of(cell) + o.t0) : 0.0;   // 로봇 곁은 0 (정답 쪽과 같은 잣대)
+        bc = std::max(bc, sc);
+        if (i == 0) s0 = sc;
+        if (verbose) std::printf("    [%s %zu] 칸 (%d,%d) 로봇에서 %.2f m 길 %.2f m · 예상 %.2f · 참 %.2f m² · 참/시간 %.3f\n", fi ? "새" : "옛", i, cell % gw, cell / gw,
+                                 std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res, W.fw.cd[cell] * 0.2 * res, p, tr, sc);
+      }
+    }
+    if (verbose && fi == 1 && best_cell >= 0)
+      std::printf("    [정답 최선] 칸 (%d,%d) 로봇에서 %.2f m · 참 %.2f m² · 참/시간 %.3f · 모름까지 %.2f m · 막힘까지 %.2f m\n", best_cell % gw, best_cell / gw,
+                  std::hypot(best_cell % gw + 0.5 - rxf, best_cell / gw + 0.5 - ryf) * res, truth(best_cell), best, W.dtu[best_cell] * res / 3.0, W.dto[best_cell] * res / 3.0);
+    for (int b = 0; b < 8; ++b) F.sectors += (sec >> b) & 1;
+    if (std::getenv("CANDQ_TRACE") && gt && best > 0) std::printf("    결정 %ld %s 최선 비 %.3f 0번 %.3f (후보 %zu)\n", acc.dec, fi ? "새" : "옛", bc / best, s0 / best, cells.size());
+    if (gt && best > 0 && !cells.empty()) { F.n_or += 1; F.best_ratio += std::min(1.0, bc / best); F.slot0_ratio += std::min(1.0, s0 / best); }
+  }
+}
+
+inline void print(const Acc& a, const char* tag) {
+  static const char* nm[2] = {"옛 hier 8", "새 cand"};
+  std::printf("후보 품질 (%s, 결정 %ld · 안 닫힌 결정 %ld):\n", tag, a.dec, a.open);
+  for (int i = 0; i < 2; ++i) {
+    const Fam& F = a.f[i];
+    const double n = F.n ? (double)F.n : 1.0;
+    std::printf("  %-9s 결정당 %.2f 개 · 길 있음 %.3f · 간격 %.3f · 로봇 곁 %.3f · 예상 넓이 0 %.3f · 예상 넓이 평균 %.2f m²", nm[i], (double)F.n / std::max(1L, F.dec), F.reach / n, F.clear / n,
+                F.near / n, F.gain0 / n, F.pred / n);
+    if (F.n_or) std::printf(" · 참 넓이 평균 %.2f m² (예상의 %.2f) · 정답 최선 대비 — 후보 중 최선 %.3f · 0 번 %.3f", F.truth / n, F.pred > 0 ? F.truth / F.pred : 0.0, F.best_ratio / F.n_or, F.slot0_ratio / F.n_or);
+    std::printf(" · 방향 45° 칸 %.2f · 후보 0 인데 안 닫힘 %ld · 실패 자리 1 m 안 %.3f\n", (double)F.sectors / std::max(1L, F.dec), F.none, F.failed / n);
+  }
+}
+
+// 그림 재료: 로봇 지도 PPM + 후보 표 (옛 칸 · 새 시점·대표 칸·번호) — 그리기는 scratchpad 스크립트가 (글자·둘을 나란히)
+inline void dump(const std::string& pre, const cand::In& in, const cand::Out& out, const int32_t* hier) {
+  const sim::EnvCfg& c = *in.c;
+  const int gw = in.W->gw, gh = in.W->gh;
+  const mdp::MapView mv{in.L, c.size, gw, gh};
+  std::vector<uint8_t> im((size_t)gw * gh * 3);
+  for (int y = 0; y < gh; ++y)
+    for (int x = 0; x < gw; ++x) {
+      const uint8_t k = mdp::cls_at(mv, x, y);
+      uint8_t v = k == mdp::kUnk ? 150 : k == mdp::kOcc ? 0 : 255;
+      uint8_t* q = &im[((size_t)(gh - 1 - y) * gw + x) * 3];
+      q[0] = q[1] = q[2] = v;
+      if (k == mdp::kFree && mdp::frontier_cell(mv, x, y)) { q[0] = 60; q[1] = 120; q[2] = 255; }
+      if (in.cam && in.cam[y * c.size + x] && k != mdp::kOcc) { q[0] = 255; q[1] = 170; q[2] = 60; }
+    }
+  if (FILE* f = std::fopen((pre + ".ppm").c_str(), "wb")) {
+    std::fprintf(f, "P6\n%d %d\n255\n", gw, gh);
+    std::fwrite(im.data(), 1, im.size(), f);
+    std::fclose(f);
+  }
+  if (FILE* f = std::fopen((pre + ".tsv").c_str(), "w")) {
+    const sim::EnvState& s = *in.s;
+    std::fprintf(f, "robot\t%.3f\t%.3f\t%.4f\t%d\n", (s.x + s.ex - in.W->ox) * c.inv_res, gh - (s.y + s.ey - in.W->oy) * c.inv_res, s.th + s.eth, gh);
+    for (int k = 0; k < mdp::hier::K; ++k) if (hier[k] >= 0) std::fprintf(f, "old\t%d\t%d\t%d\n", k, hier[k] % gw, gh - 1 - hier[k] / gw);
+    for (size_t i = 0; i < out.c.size(); ++i) {
+      const cand::Cand& x = out.c[i];
+      std::fprintf(f, "new\t%zu\t%d\t%d\t%d\t%d\t%d\t%.2f\t%.2f\t%d\n", i, x.id, x.vp % gw, gh - 1 - x.vp / gw, x.anc % gw, gh - 1 - x.anc / gw, x.gain_m2, x.t_s, x.kept);
+    }
+    std::fclose(f);
+  }
+}
+
+}  // namespace candq

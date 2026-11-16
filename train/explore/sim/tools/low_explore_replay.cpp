@@ -19,6 +19,7 @@
 #include "limo_fire_rl/robot_env.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
+#include "cand_quality.h"
 
 namespace {
 const char* kWhyNo[] = {"목표 냄", "설 수 있는 시작 칸 없음", "번진 곳에 프론티어 덩어리 없음", "덩어리 있으나 자격 칸 없음", "모두 피하는 칸", "시점 자격 되는 덩어리 없음"};
@@ -96,7 +97,10 @@ int main(int argc, char** argv) {
   }
   std::string logp, pgm;
   int pgm_every = 0;
-  bool depth_stat = false;   // 깊이 카메라 층이 표시하는 점(띠 0.03~0.25 m 안)의 높이·거리 표 — 바닥이 장애물로 찍히는지
+  bool depth_stat = false;
+  bool cand_on = false;   // --cand: 위층 결정 때마다 후보 생성(cand_view.h)과 옛 hier 후보 품질 (정답 없음 — 녹화)
+  std::string cand_dump;
+  int cand_every = 10;   // 깊이 카메라 층이 표시하는 점(띠 0.03~0.25 m 안)의 높이·거리 표 — 바닥이 장애물로 찍히는지
   long dh[6][8] = {};        // [거리 0.5 m 칸 0~3 m][높이 칸 띠 8]
   bool use_fuel = true;
   fu::Opt fo;   // 실물 노드 기본 (config/low_rl.yaml)
@@ -124,6 +128,9 @@ int main(int argc, char** argv) {
       else if (a == "--fuel-vp") fo.vp = std::stoi(nx()) != 0;
       else if (a == "--log") logp = nx();
       else if (a == "--depth-stat") depth_stat = true;
+      else if (a == "--cand") cand_on = true;
+      else if (a == "--cand-dump") { cand_on = true; cand_dump = nx(); }
+      else if (a == "--cand-every") cand_every = std::stoi(nx());
       else if (a == "--pgm") pgm = nx();
       else if (a == "--pgm-every") pgm_every = std::stoi(nx());
       else throw std::runtime_error("모르는 인자 " + a);
@@ -139,6 +146,12 @@ int main(int argc, char** argv) {
     fu::Diag dg;
     ctl.set_diag(&dg);
     fu::Work work;
+    cand::Opt copt;
+    cand::Mem cmem;
+    cand::Work cwork;
+    candq::Acc qacc;
+    long n_cdec = 0;
+    double c_ms = 0, c_ms_max = 0;
     sim::World wd;
     FILE* lf = logp.empty() ? nullptr : std::fopen(logp.c_str(), "w");
     if (lf) std::fprintf(lf, "t_s\tstep\tx\ty\tth\tcause\tcmd_why\ttgt\ttx\tty\tchanged\tjump_m\trobot_tgt_m\tn_clu\tn_node\tcur\tpick\tbest_first\tbest\tcur_cost\tno_goal_why\tn_block\tn_front_reach\tn_front_all\tn_block_nocam\tclosed\n");
@@ -165,6 +178,7 @@ int main(int argc, char** argv) {
         const sim::MapDev& md = robot.map();
         wd.gw = md.gw; wd.gh = md.gh; wd.ox = md.ox; wd.oy = md.oy;
         ctl.restart();
+        cmem = cand::Mem();
         ctl.set_geom(md.gw, c.res);
         started = true;
         cause = 5;
@@ -209,6 +223,14 @@ int main(int argc, char** argv) {
         const lxc::View v{&c, &wd, robot.lmap(), robot.trail(), robot.cam_layer(), &s, robot.cand(), (uint32_t)robot.cand_cur()};
         int why = 0;
         dg = fu::Diag();
+        if (cand_on) {
+          const cand::In ci{&c, &wd, robot.lmap(), robot.trail(), robot.cam_layer(), &s, [&](int cell) { return ctl.avoided(cell, s.step); }, ctl.cmd().target};
+          const cand::Out co_ = cand::build(ci, copt, cmem, cwork);
+          ++n_cdec;
+          c_ms += co_.ms; c_ms_max = std::max(c_ms_max, co_.ms);
+          candq::eval(ci, copt, cwork, co_, robot.cand(), nullptr, s.map_closed != 0, qacc);
+          if (!cand_dump.empty() && (n_cdec - 1) % cand_every == 0) candq::dump(cand_dump + "_s" + std::to_string(s.step), ci, co_, robot.cand());
+        }
         const sim::LowCmd cmd = ctl.decide(v, work, &why);
         robot.set_cmd(cmd);
         const int cs = s.step % lp.decide_steps == 0 && cause != 5 ? 0 : cause;
@@ -267,6 +289,10 @@ int main(int argc, char** argv) {
     std::printf("결정 %ld (주기 %ld · 통과 %ld · 경로 끝 밖 %ld · 경로 없음 %ld · 막힘 %ld · 판 시작 %ld) · 목표 바뀜 %ld (%.1f /분, 바뀔 때 평균 %.2f m 뜀) · slot0 %ld · 목표 없음 결정 %ld (%.0f %%) · 목표 없음 걸음 %.0f %%\n",
                 n_dec, cause_n[0], cause_n[1], cause_n[2], cause_n[3], cause_n[4], cause_n[5], n_chg, T > 0 ? n_chg * 60.0 / T : 0.0, n_chg ? jump_sum / n_chg : 0.0, n_slot, n_nogoal,
                 n_dec ? 100.0 * n_nogoal / n_dec : 0.0, n_steps ? 100.0 * nog_steps / n_steps : 0.0);
+    if (cand_on && n_cdec) {
+      candq::print(qacc, "실물 녹화");
+      std::printf("후보 생성 시간 (이 기기): 평균 %.2f ms · 최대 %.2f ms (%ld 결정)\n", c_ms / n_cdec, c_ms_max, n_cdec);
+    }
     if (depth_stat) {
       std::printf("깊이 카메라 층 표시 점 (장마다 합): 행 = 센서 수평 거리 0.5 m 칸, 열 = 높이 칸 (%.3f m 부터 %.4f m 씩)\n", c.cam_min_h, (c.cam_max_h - c.cam_min_h) / c.cam_nz);
       for (int r = 0; r < 6; ++r) { std::printf("  %.1f-%.1f m:", r * 0.5, r * 0.5 + 0.5); for (int k = 0; k < 8; ++k) std::printf(" %7ld", dh[r][k]); std::printf("\n"); }

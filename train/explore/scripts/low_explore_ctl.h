@@ -18,6 +18,7 @@
 
 #include "fuel_upper.h"
 #include "low_task.h"
+#include "cand_view.h"
 
 namespace lxc {
 
@@ -28,6 +29,8 @@ struct Params {
   bool avoid = true, redecide = true, stick = true;   // combine_run 기본 (--no-avoid · --no-redecide · --no-stick 로 끔)
   bool use_fuel = true;     // false = combine_run --upper slot0 (fuel 을 안 부르고 늘 아래 slot0 차례 — 피하지 않는 첫 후보)
   fu::Opt fuel;             // --fuel-* (부르는 쪽이 채움)
+  bool use_cand = false;    // 위층 후보 = scripts/cand_view.h (서는 자리 ≤ 8 개, 안정 번호). decide 는 후보 고르기(cand_pick)로, 판단 모델은 build_cands → go_cand
+  cand::Opt cand;
   static Params from_cfg(const sim::EnvCfg& c) {
     Params p;
     p.decide_steps = c.decide_steps;
@@ -60,6 +63,7 @@ class Ctl {
   // 결정 → 아래층 명령. why: 0 fuel · 1 slot0 (fuel 대신 또는 use_fuel 끔) · 2 목표 없음
   sim::LowCmd decide(const View& v, fu::Work& work, int* why = nullptr) {
     const sim::EnvState& s = *v.s;
+    if (p_.use_cand) { build_cands(v); return go_cand(v, -1, why); }
     const int K = mdp::hier::K;
     int pick = -1;   // slot0: 피하지 않는 첫 후보
     for (int j = 0; j < K && pick < 0; ++j) {
@@ -106,12 +110,55 @@ class Ctl {
     if (why) *why = pick >= 0 ? 1 : 2;   // 판단 모델 후보를 따른 결정도 1 (RL 을 빼기 전 규칙 가지 그대로 — 0 은 안 냄)
     return cmd_;
   }
+  // ---- 후보 모드 (use_cand — scripts/cand_view.h)
+  // 결정 때 후보를 만듦 (판단 모델은 이 목록을 보고 go_cand 로 고름). 기억(cand_mem)은 판 동안 이어짐
+  const cand::Out& build_cands(const View& v) {
+    const sim::EnvState& s = *v.s;
+    const cand::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, [this, &s](int cell) { return avoided(cell, s.step); }, cmd_.follow != 0 ? cmd_.target : -1};
+    cout_ = cand::build(in, p_.cand, cmem_, cwork_);
+    return cout_;
+  }
+  // 후보 idx 로 감 (−1 = 규칙: 지금 목표 번호가 목록에 있고 점수가 0 번의 keep 배 이상이면 그대로, 아니면 0 번). why: 0 후보로 감 · 2 목표 없음
+  sim::LowCmd go_cand(const View& v, int idx, int* why = nullptr) {
+    const sim::EnvState& s = *v.s;
+    redo_ = false;
+    last_dec_ = s.step;
+    ++n_dec_;
+    const int n = (int)cout_.c.size();
+    if (idx < 0 || idx >= n) idx = cand_pick();
+    if (idx < 0) {
+      cmd_ = sim::LowCmd{-1, 0};
+      slot_ = -1;
+      if (why) *why = 2;
+      return cmd_;
+    }
+    const cand::Cand& c = cout_.c[idx];
+    cmem_.note_target(c.id, s.step, v.W->ox + (c.vp % v.W->gw + 0.5f) * v.c->res, v.W->oy + (c.vp / v.W->gw + 0.5f) * v.c->res);
+    cur_id_ = c.id;
+    cmd_ = sim::LowCmd{c.vp, 1};   // 규칙 추종기: 목표 칸 그대로 (fuel 과 같은 길)
+    slot_ = 0;
+    if (why) *why = 0;
+    return cmd_;
+  }
+  int cand_pick() const {
+    if (cout_.c.empty()) return -1;
+    if (cur_id_ >= 0 && cmd_.follow != 0)
+      for (int i = 0; i < (int)cout_.c.size(); ++i)
+        if (cout_.c[i].id == cur_id_ && !cout_.c[i].in_avoid && cout_.c[i].score >= p_.cand.keep * cout_.c[0].score) return i;
+    return 0;
+  }
+  int cand_index(int id) const { for (int i = 0; i < (int)cout_.c.size(); ++i) if (cout_.c[i].id == id) return i; return -1; }
+  const cand::Out& cands() const { return cout_; }
+  const cand::Mem& cand_mem() const { return cmem_; }
+  int cur_id() const { return cur_id_; }
   // 지금 목표가 살아 있나 (고른 후보로 가는 경로가 있고 피하는 칸이 아님)
   bool live(const sim::EnvState& s) const { return slot_ >= 0 && s.goal_cell >= 0 && s.p_n > 0 && !avoided(s.goal_cell, s.step); }
   bool redo_pending() const { return redo_; }   // 막힘 · 통과 · 경로 끝 밖 · 경로 없음 뒤 바로 다시 결정해야 함
   // 걸음 뒤 (환경 step 끝 상태 · LowRl · LowEp)
   void after_step(const sim::EnvState& s, const sim::LowRl& rl, const sim::LowEp& L) {
+    if (p_.use_cand) cmem_.note_pose(s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth);
     if (rl.stall && !sig_prev_) {
+      if (p_.use_cand && cmd_.follow != 0) cmem_.note_end(cur_id_, s.step, cand::kStall);
       ++n_stall_;
       avoid_add(rl.stall_tgt, s.step);
       fmem_ = fu::Mem();
@@ -123,6 +170,11 @@ class Ctl {
       const bool off = !reached && L.hold != 0;
       const bool nopath = !reached && !off && s.step > last_dec_ && (s.goal_cell != cmd_.target || s.p_n <= 0);
       if (reached) ++n_reach_;
+      if (p_.use_cand) {
+        if (reached) cmem_.note_end(cur_id_, s.step, cand::kReached);
+        else if (off) cmem_.note_end(cur_id_, s.step, cand::kOffPath);
+        else if (nopath) cmem_.note_end(cur_id_, s.step, cand::kNoPath);
+      }
       if (reached || off || nopath) fmem_ = fu::Mem();
       if (p_.redecide && (reached || off || nopath)) {
         if (off) avoid_add(cmd_.target, s.step);
@@ -166,6 +218,10 @@ class Ctl {
   int slot_ = -1;
   fu::Mem fmem_;
   fu::Diag* diag_ = nullptr;
+  cand::Mem cmem_;
+  cand::Work cwork_;
+  cand::Out cout_;
+  int cur_id_ = -1;
   void avoid_add(int cell, int step) {
     if (!p_.avoid || cell < 0) return;
     av_cell_[av_n_ % kBl] = cell;
