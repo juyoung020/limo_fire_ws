@@ -1583,7 +1583,10 @@ UpdateStats PPO::finish_update_dev() {
   }
   CK(cudaMemcpyAsync(d_perm_, h_perm_, S_ * sizeof(int), cudaMemcpyHostToDevice, st));
   CK(cudaMemcpyAsync(d_bc_, h_bc_, 2 * nmb * sizeof(float), cudaMemcpyHostToDevice, st));
-  if (cfg_.graph_update && !no_graph_diag()) {
+  // 갱신 CUDA Graph: 기본 끔 (2026-11-16 — ppo/README "비동기 CUDA 오류 위치 찾기"). 그래프를 수백 번 다시 돌리면 드물게 Xid 31 GCC 폴트가 나서,
+  // 끄면 비용 거의 없이 사라짐. 켜려면 graph_update 와 XPPO_UPDATE_GRAPH=1 둘 다 (원인 조사용 — XPPO_NO_GRAPH=1 이면 늘 끔)
+  static const bool graph_on = std::getenv("XPPO_UPDATE_GRAPH") != nullptr;
+  if (cfg_.graph_update && graph_on && !no_graph_diag()) {
     cudaGraphExec_t& ex = reinterpret_cast<cudaGraphExec_t&>(upd_exec_[critic_only_ ? 1 : 0]);
     if (!ex) {   // 처음: 캡처 (실행은 안 함) → 만들기. 이후 반복은 같은 그래프 (포인터·모양 고정, 바뀌는 값은 장치에서 읽음)
       cudaGraph_t g;

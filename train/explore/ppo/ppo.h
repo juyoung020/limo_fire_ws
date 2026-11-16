@@ -69,7 +69,7 @@ struct PPOConfig {
   // 미니배치마다 호스트 왕복 없음, 반복 끝에 기록을 한 번 내림. graph_update 면 update 전체(마지막 가치·GAE·미니배치 루프)를 CUDA Graph 하나로 잡아 돌린다.
   // 값은 옛 길과 비트까지 같다(같은 식·같은 더하기 차례 — ppo/README "장치 갱신"). false 면 옛 길 (A/B 확인용)
   bool device_update = true;
-  bool graph_update = true;
+  bool graph_update = true;   // 켜도 환경변수 XPPO_UPDATE_GRAPH=1 일 때만 그래프 (기본 끔, 2026-11-16 — 드문 Xid 31 GCC 폴트, ppo/README)
   // 롤아웃 그림 줄여 담기 (아래층 그림 배치일 때만 — mdp/obs_layout.h low NEAR_KIND·WIDE_KIND): 0/255 채널은 비트 판, 늘 0 채널은 안 담음.
   // 융합 합성곱이 그 꼴을 바로 읽어 결과는 비트까지 같다. 담을 때마다 꼴이 맞는지 보고 어긋나면 update 가 멈춘다 (ppo/README "롤아웃 그림 줄여 담기")
   bool pack_img = true;

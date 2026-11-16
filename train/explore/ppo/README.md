@@ -226,8 +226,13 @@ A/B 대신 바로 본 학습(`explore_v9`, explore_v8_cur 7400 체크포인트·
 low_w3 가 반복 36394 에서 `ppo.cu` 갱신 끝 동기화에서 `illegal memory access` 로 멈췄다 (같은 때 커널 로그 `NVRM: Xid 31 … MMU Fault: GPCCLIENT_GCC … FAULT_PDE ACCESS_TYPE_VIRT_READ`).
 비동기 오류라 어느 커널인지 몰랐고, 작은 규모(48 · 192 환경)·compute-sanitizer(memcheck · initcheck · racecheck)로는 재현되지 않았다. 다음에 나면 위치가 나오게:
 - 늘 켜짐 (원래 기다리는 자리라 비용 없음): 롤아웃 끝(`train.cpp`) · 갱신 끝(`PPO::finish_update_dev`) · `Env::sync` 의 오류에 **단계 이름**과 반복 번호를 붙임.
+- 결과 (2026-11-16): 두 번째 크래시(반복 40507)도 갱신 단계였고 커널 로그는 두 번 모두 `Xid 31 … GPCCLIENT_GCC … FAULT_PDE ACCESS_TYPE_VIRT_READ`
+  (GCC = 상수 뱅크·명령 인출 — 보통 데이터 배열 범위 밖은 T1 으로 찍힘). 갱신 커널의 값 전달 인자 배열·그래프가 잡은 주소·보조 머리 커널을 정적으로 봐도 못 찾았는데,
+  `XPPO_NO_GRAPH=1` (갱신을 그래프 없이)로 40500 → 42495 약 2000 반복이 탈 없이 돌았다 (그 전 두 번은 재시작 뒤 약 650 · 470 반복 만에 남 — 같은 빈도면 2000 반복 무사고는
+  약 3 %). 갱신 그래프를 수백 번 다시 돌리는 쪽이 원인으로 보여(잠정, 원인 자체는 못 고침) **갱신 그래프를 기본 끔** — 속도 손해 거의 없음 (low_w3 2.4 만 걸음/s).
+  다시 켜려면 `XPPO_UPDATE_GRAPH=1` (원인 조사용).
 - 켤 때만: `SIM_KSYNC=1` — 시뮬 커널·OptiX 발사마다 기다려 오류 난 **커널 이름**을 찍고 멈춤 (롤아웃 그래프 `--rollout-graph` 와는 같이 못 씀).
-  `XPPO_NO_GRAPH=1` — 갱신을 CUDA Graph 로 잡지 않고 단계(보조 정답 · 마지막 가치·GAE · 미니배치 · Adam)마다 기다려 **단계 이름**을 찍음. 둘 다 결과는 같고 느려짐.
+  `XPPO_NO_GRAPH=1` — (갱신 그래프는 이제 기본 꺼짐) 단계(보조 정답 · 마지막 가치·GAE · 미니배치 · Adam)마다 기다려 **단계 이름**을 찍음. 둘 다 결과는 같고 느려짐.
 
 ## 체크포인트 설정 꼬리 (2026-11-16)
 
