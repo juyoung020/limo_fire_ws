@@ -615,7 +615,7 @@ int main(int argc, char** argv) {
           if (FILE* lf2 = std::fopen(lat_log.c_str(), "a")) {
             const long fb = (n_fb_all + us.n_fallback()) - l_fb0;
             const long sent = (n_sent_all + us.n_sent()) - l_sent0;
-            std::fprintf(lf2, "%ld\t%d\t%.1f\t%ld\t%ld\t%ld\t%ld\t%ld\t%ld", n_ep, dn[0], robot.state().step * dt, fb, l_rw, sent, n_ans - l_ans0, us.n_pick_failed() - l_pf0,
+            std::fprintf(lf2, "%ld\t%d\t%.1f\t%ld\t%ld\t%ld\t%ld\t%ld\t%ld", n_ep, end_code, robot.state().step * dt, fb, l_rw, sent, n_ans - l_ans0, us.n_pick_failed() - l_pf0,
                          us.n_pick_top() - l_pt0);
             std::fprintf(lf2, "\t%d\t", worlds[(size_t)st[0].map].n_floor);
             for (int m = 0; m < cov.n_values(); ++m) {   // 지표마다 1 s 값들을 쉼표로, 지표 사이는 ;
