@@ -53,6 +53,12 @@ ros2 topic echo /explore_frontier/state
 
 ## 합친 탐사 (`low_rl` — 위층 fuel + 아래층 순수 RL, 2026-11-16)
 
+> **확정 구성 (2026-11-16 실물 시험):** `explore_fuel_rl.launch.xml` 기본값은 **위층 판단 모델(`upper:=decider`) + 아래층 A* 경로 계획(`lower:=rule`)**.
+> 같은 날 실물에서 fuel+RL · 가까운 후보+RL · 판단 모델+RL · 판단 모델+A* 를 돌려 판단 모델+A* 가 가장 잘 됐다(녹화 `~/limo_bags/1116_*`).
+> 실행: ① 로봇 page cache 비우기(`sync && echo 3 | sudo -n tee /proc/sys/vm/drop_caches` — Orin GPU 메모리 확보) → ② 아래 "판단 모델" 절의 llama-server →
+> ③ `robot.launch.xml` → ④ `ros2 launch limo_fire_rl explore_fuel_rl.launch.xml stack:=true rviz:=true dry_run:=false` → 리모컨 SWB 위 + 패널 버튼. 멈춤은 SWB 내림.
+> 아래 절은 fuel + RL 로 처음 만들 때의 설명이다(`upper:=fuel lower:=rl` 로 그대로 돌릴 수 있음).
+
 시뮬 `combine_run --upper fuel --policy` 와 **같은 코드·같은 값**으로 로봇이 탐사한다. 위층 fuel(`train/explore/scripts/fuel_upper.h`)이 1 s 마다 로봇이 쌓은 지도에서
 목표 칸을 고르고, 아래층 순수 RL 정책(체크포인트)이 0.1 s 마다 `/cmd_vel` 을 낸다. Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`)만 준다.
 
