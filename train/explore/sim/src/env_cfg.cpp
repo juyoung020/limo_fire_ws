@@ -374,6 +374,11 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.con_slip = (int)envf("SIM_CON_SLIP", 0.f);
       c.con_slip_k = (float)std::exp(-(double)c.dt / (double)envf("SIM_CON_SLIP_TAU", 0.25f));   // 55.6~55.9 s 바퀴 v 0.84 → 0.55 → 0.37 (0.1 s 마다 ×0.67) — 잠정
       c.con_imp_k = envf("SIM_CON_IMP_K", 90.f);    // 정면 약 1.0 m/s → 91.9 m/s² · 0.3 m/s → 26.4 (잠정)
+      // 바퀴·자이로 어긋남 (kConYaw — 기본 마스크에 없음): 실물 bag 7 개 676 s 에서 1.5 rad/s · 2 걸음이면 아는 충돌 둘만, 시뮬은 보통 주행에서도
+      // 1.5 를 자주 넘어(새 접촉 모델 진단: 헛것 19 /100 m — 시뮬 회전 미끄러짐이 실물보다 큼) 판정에 못 씀. 값만 재고 기록
+      c.con_yaw = envf("SIM_CON_YAW", 1.5f);
+      c.con_yaw_k = (int)envf("SIM_CON_YAW_K", 2.f);
+      c.con_acc = envf("SIM_CON_ACC", 15.f);         // 실물 보통 세게 몰기 최대 10.8, 99.9 % ≤ 7.5 m/s² (imu_peaks.py)
       // 규칙 추종기 앞 범퍼 정지 끄기 (진단 — 기준선을 앞 정지 없이 잴 때). 정책 명령을 고치는 층은 없음 (2026-11-14 에 없앰)
       if (const char* g = std::getenv("SIM_SAFETY")) c.safety = g[0] == '0' ? 0 : c.safety;
     }

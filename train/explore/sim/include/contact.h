@@ -129,6 +129,11 @@ DEV void sense_step(const EnvBatch& b, EnvState& e, int env, const Shared& sh) {
   if (e.s_cam < c.con_cam) k |= kConCam;
   if (e.s_stall >= c.con_stall) k |= kConStall;
   if (e.s_map < c.con_map) k |= kConMap;
+  // 바퀴 오도메트리 ω vs 자이로 (실물 닿음: 바퀴가 헛돌며 몸통 회전과 어긋남) · IMU 수평 가속 튐 — 둘 다 로봇이 재는 값
+  e.s_yaw = dm::absf(e.drive.ww - e.gyro) > c.con_yaw ? e.s_yaw + 1 : 0;
+  e.a_h = sqrtf(e.imu.out[0] * e.imu.out[0] + e.imu.out[1] * e.imu.out[1]);
+  if (e.s_yaw >= c.con_yaw_k) k |= kConYaw;
+  if (e.a_h > c.con_acc) k |= kConAcc;
   e.contact = (k & c.con_mask) != 0 ? 1 : 0;
   e.s_pgap = tracked_person_gap(b, e, env);
   if (e.contact && e.s_pgap < kConPersonGap) k |= kConPerson;   // 닿음 때 추적 사람이 몸통 곁 → 사람 닿음 (판 끝 코드·보상 항)

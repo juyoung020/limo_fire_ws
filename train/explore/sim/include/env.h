@@ -120,6 +120,9 @@ struct EnvCfg {
   //   con_slip 1 이면 닿은 걸음에 몸통만 멈추고 바퀴(오도메트리)는 con_slip_k 배로 줄며 명령을 계속 따름 (0 = 옛 모델: 바퀴도 0), 수평 가속 튐 = con_imp_k × 다가가던 속도
   int con_slip;
   float con_slip_k, con_imp_k;       //   바퀴 줄임 배 (물리 걸음마다 — exp(−dt / con_slip_tau)), 가속 튐 배 (1/s)
+  float con_yaw;                     //   닿음 신호: |바퀴 오도메트리 ω − 자이로| > con_yaw (rad/s) 가
+  int con_yaw_k;                     //   이 걸음 이어지면 (kConYaw)
+  float con_acc;                     //   닿음 신호: IMU 수평 가속 크기 > con_acc (m/s², kConAcc)
   int con_end;                       //   1: 닿음이 판을 끝냄 (기본). 0: 진단 전용 — 끝내지 않고 정답 충돌·센서 값을 기록만 (일치도 재기)
   float lr_coll_k;               // 벽 닿음 보상 (판 끝 — low_rl.h kLrCollisionK, SIM_LR_COLL_K)
   float lr_pcol_k;               // 사람 충돌 보상 (벽 충돌은 kLrCollisionK 그대로)
@@ -227,7 +230,7 @@ constexpr int kLidarRing = mdp::obs::LIDAR_FRAMES + 1;   // 라이다 칸 링 (�
 constexpr int kProgRing = 20;                             // 탐사 진행 속도: 최근 20 걸음(2 s) 새로 안 칸 수
 constexpr int kBinNone = 1 << 30;                         // 라이다 칸에 점 없음
 // 로봇이 재는 간격·닿음 (contact.h): 닿은 센서 비트, 지도·깊이 층 간격을 보는 몸통 둘레 거리 (m — 근접 항 띠 0.2 m 보다 조금 넓게, 밖은 이 값), 라이다 점이 없을 때 간격
-enum : int32_t { kConLidar = 1, kConCam = 2, kConStall = 4, kConMap = 8, kConPerson = 16 };   // kConPerson: 닿음 때 추적 사람이 곁 (닿음 센서 아님)
+enum : int32_t { kConLidar = 1, kConCam = 2, kConStall = 4, kConMap = 8, kConPerson = 16, kConYaw = 32, kConAcc = 64 };   // kConPerson: 닿음 때 추적 사람이 곁 (닿음 센서 아님) · kConYaw · kConAcc: 바퀴·자이로 어긋남 · IMU 수평 가속 튐 (2026-11-16)
 constexpr float kSenseWin = 0.6f;   // 2026-11-14 low_s4: 0.25 → 0.6 (충돌 시간 항이 1 m/s 에서 0.6 m 앞까지 보게)
 constexpr float kSenseFar = 9.f;
 constexpr int kClassLog = 16384;                          // 한 장에 칸 종류가 바뀐 칸 낱말 목록 길이 (넘으면 장 범위 전체를 다시 셈 — env_kernel.cu)
@@ -285,6 +288,8 @@ struct EnvState {
   float s_close;               // s_dir 점에 다가가는 속도 (m/s, 몸통 둘레 점 속도의 그 점 쪽 성분 — 충돌 시간 항)
   float s_dir;                 // 진행 방향 간격: 위 셋 가운데 몸통이 다가가는 점·칸만 (contact.h rect_toward, 몸통 속도 = 오도메트리·자이로) — 근접 항
   int32_t s_stall, s_kind, contact, gt_touch;
+  float a_h;                   // IMU 수평 가속 크기 (m/s², 걸음 끝 — contact.h kConAcc)
+  int32_t s_yaw;               // |바퀴 오도메트리 ω − 자이로| > con_yaw 이어진 걸음 (contact.h kConYaw)
   // 계층형 행동 (kActPath, include/hier_path.h): 지금 목표 칸 (y · gw + x, −1 없음), 웨이포인트 수·지금 구간·고른 후보 번호·앞 부분만 담았나, 웨이포인트 칸 (x, y)
   int32_t goal_cell, p_n, p_i, p_slot, p_trunc, p_stops;   // p_stops: 판 동안 충돌 검사로 멈추거나 물러난 걸음 수 (기록)
   int32_t p_mode, p_fb, p_plans, p_mon;   // 지난 계획 칸 기준 (1 엄격: 약한 막힘도 피함 · 2 느슨: 지도 막힘만 — hier_path.h), 판 동안 느슨으로 짠 수·계획 수·충돌 감시가 줄인 걸음 수 (기록)
@@ -591,6 +596,8 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.s_dir = kSenseFar;
   e.s_close = 0.f;
   e.s_stall = e.s_kind = e.contact = e.gt_touch = 0;
+  e.a_h = 0.f;
+  e.s_yaw = 0;
   e.reward = 0.f;
   e.coverage = 0.f;
   e.floor_cov = 0.f;

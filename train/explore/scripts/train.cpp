@@ -401,7 +401,14 @@ int run_low(Args a) {
       const size_t q = kv.find('=');
       if (kv.rfind("SIM_", 0) == 0 && q != std::string::npos) ev.set(kv.substr(0, q), kv.substr(q + 1));
     }
-    meta.set("obs_cfg", oc).set("sim_env", ev);
+    // 닿음 정의 (보상·판 끝 — 관측 아님): 실제로 쓴 값 전부 (환경변수를 안 줬으면 기본값)
+    rf::Json cc = rf::Json::object();
+    cc.set("SIM_CON_LID", c.con_lid).set("SIM_CON_CAM", c.con_cam).set("SIM_CON_MAP", c.con_map).set("SIM_CON_STALL", c.con_stall)
+        .set("SIM_CON_MASK", c.con_mask).set("SIM_CON_END", c.con_end).set("SIM_CON_SLIP", c.con_slip).set("con_slip_k", c.con_slip_k)
+        .set("SIM_CON_IMP_K", c.con_imp_k).set("SIM_CON_YAW", c.con_yaw).set("SIM_CON_YAW_K", c.con_yaw_k).set("SIM_CON_ACC", c.con_acc)
+        .set("con_cmd_v", c.con_cmd_v).set("con_cmd_w", c.con_cmd_w).set("con_odo_v", c.con_odo_v).set("con_odo_w", c.con_odo_w)
+        .set("SIM_LR_COLL_K", c.lr_coll_k).set("SIM_LR_PCOL_K", c.lr_pcol_k);
+    meta.set("obs_cfg", oc).set("sim_env", ev).set("con_cfg", cc);
   }
   rf::RunFolder::Options opt;
   opt.every_s = 0;
