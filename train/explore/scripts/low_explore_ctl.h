@@ -54,6 +54,7 @@ struct View {
   const sim::EnvState* s;
   const int32_t* cand;           // 후보 칸 K 개 (−1 빈 칸)
   uint32_t cand_cur;             // 후보마다 "그 덩어리가 지금 목표 칸을 품음" 비트
+  const sim::ReachKeep* reach = nullptr;   // 같은 걸음 관측의 프론티어 찾기 (RobotEnv::reach_keep — 후보 뽑기가 같은 입력이면 다시 안 찾음)
 };
 
 class Ctl {
@@ -120,6 +121,7 @@ class Ctl {
     if (cand_step_ == s.step) return cout_;   // 같은 걸음에 다시 부르면 그대로 (번호 나이 age 가 부른 수로 늘지 않게 · 시간 아낌)
     cand_step_ = s.step;
     cand::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, [this, &s](int cell) { return avoided(cell, s.step); }, cmd_.follow != 0 ? cmd_.target : -1};
+    in.reach = v.reach;
     in.avoid_s = (float)(p_.bl_steps * (double)v.c->substeps * v.c->dt);   // 실패 뒤 피하는 시간과 같게
     cout_ = cand::build(in, p_.cand, cmem_, cwork_);
     // 대충 다 앎 판정: 후보 0 · 남은 덩어리 모두 구멍(대충 아는 굵은 칸 안) — 덩어리 0 개도

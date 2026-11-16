@@ -9,29 +9,48 @@
 
 namespace sim {
 
+// 같은 걸음의 프론티어 찾기 결과를 남겨 두는 곳 (실물 노드 RobotEnv — 후보 뽑기 cand::build 가 같은 입력이면 다시 찾지 않고 씀, cand_view.h).
+// 찾기 입력(지도 · 지나간 칸 판 · 깊이 층 · 시작 칸 · 걸음)을 같이 적어 두고, 쓰는 쪽이 자기 입력과 같을 때만 쓴다
+struct ReachKeep {
+  std::vector<uint8_t> flag;
+  std::vector<int32_t> qa, qb, dist, label, pre;
+  std::vector<mdp::Frontier> out;
+  mdp::SearchResult r{};
+  int rx = -1, ry = -1, step = -1;
+  const int16_t* L = nullptr;
+  const uint32_t* trail = nullptr;
+  const uint8_t* cam = nullptr;
+  bool valid = false;
+};
+
 // 도달 가능한 프론티어 요약 (mdp/frontier.h reach_summary = 기준선 frontier_search 그대로). GPU 는 env_kernel.cu reach_block — 같은 값.
-// 계층형이면 같은 찾기에서 후보(mdp::cand_pick)·주변 프론티어 칸 수(mdp::cand_util)도 → 관측 후보 칸 (GPU env_reach_kernel 과 같은 값)
-inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh) {
+// 계층형이면 같은 찾기에서 후보(mdp::cand_pick)·주변 프론티어 칸 수(mdp::cand_util)도 → 관측 후보 칸 (GPU env_reach_kernel 과 같은 값).
+// cand = false: 계층형 후보를 안 셈 (관측 후보 칸은 빈 칸 — 그 후보를 안 쓰는 실물 위층). keep: 찾기 버퍼·결과를 거기에 남김 (라벨까지)
+inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh, bool cand = true, ReachKeep* keep = nullptr) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   mdp::reach_clear(&sh.reach);
   mdp::CandSummary cs;
   mdp::cand_clear(&cs);
+  if (keep) keep->valid = false;
   if (e.kb_x1 >= 0) {   // 아는 칸이 있을 때
     const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
     const mdp::MapView mv{L, c.size, m.gw, m.gh};
     int n_tot = 0;   // 지도 전체 프론티어 칸 (모두 건드린 범위 안)
     for (int y = e.kb_y0; y <= e.kb_y1; ++y)
       for (int x = e.kb_x0; x <= e.kb_x1; ++x) n_tot += mdp::frontier_cell(mv, x, y) ? 1 : 0;
-    thread_local std::vector<uint8_t> flag;
-    thread_local std::vector<int32_t> qa, qb, dist, label, pre;
-    thread_local std::vector<mdp::Frontier> out;
+    thread_local ReachKeep own;
+    ReachKeep& K = keep ? *keep : own;
+    std::vector<uint8_t>& flag = K.flag;
+    std::vector<int32_t>&qa = K.qa, &qb = K.qb, &dist = K.dist, &label = K.label, &pre = K.pre;
+    std::vector<mdp::Frontier>& out = K.out;
     const size_t n = (size_t)m.gw * m.gh;
     if (flag.size() < n) { flag.resize(n); qa.resize(n); qb.resize(n); dist.resize(n); label.resize(n); pre.resize((size_t)(m.gw + 2) * m.gh); }
     if (out.size() < (size_t)mdp::kReachCap + 1) out.resize(mdp::kReachCap + 1);
     int rx, ry;
     cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
-    mdp::SearchBuf sb{flag.data(), qa.data(), qb.data(), dist.data(), b.cand ? label.data() : nullptr};
+    const bool hier = b.cand && cand;
+    mdp::SearchBuf sb{flag.data(), qa.data(), qb.data(), dist.data(), hier || keep ? label.data() : nullptr};
     {   // 닫힘 규칙 (GPU reach_block 과 같은 값): 지나간 칸 씨앗·본 칸·덩어리 문턱·자격 반경
       const int ws = fmap_row(c), nf = c.size * ws;
       sb.vis = b.trail + (size_t)env * 2 * nf;
@@ -47,7 +66,12 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
     const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, out.data(), (int)out.size());
     const int n_out = r.n_found < (int)out.size() ? r.n_found : (int)out.size();
     mdp::reach_pick(r, out.data(), n_out, mdp::obsgen::reach_min_cells(c), n_tot, &sh.reach);
-    if (b.cand) {
+    if (keep) {
+      keep->r = r; keep->rx = rx; keep->ry = ry; keep->step = e.step;
+      keep->L = L; keep->trail = sb.vis; keep->cam = sb.cam;
+      keep->valid = true;
+    }
+    if (hier) {
       thread_local std::vector<uint64_t> key2;
       if (key2.size() < out.size()) key2.resize(out.size());
       mdp::cand_keys(mv, mdp::obsgen::reach_robot(c), r, sb, out.data(), n_out, key2.data());
@@ -67,11 +91,14 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
 }
 
 // depth = false: 깊이 칸을 안 그림 (계층형 묶음 가운데 걸음 — GPU 도 묶음 끝에만 그림, 깊이는 상태만의 함수라 끝 값이 같다)
-inline void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, const mdp::obsgen::FarDirty& fd, bool depth = true) {
+// cells = false: 위층 관측 그림 · 라이다 1D 칸을 안 그림 (실물 노드는 안 씀 — RobotEnv::set_obs). cand · keep: reach_obs
+inline void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, const mdp::obsgen::FarDirty& fd, bool depth = true, bool cells = true,
+                      bool cand = true, ReachKeep* keep = nullptr) {
   trail_mark(b, e, env, 0, 1);   // 닫힘 규칙의 지나간 길 (GPU env_reach_kernel 처음과 같은 때)
-  reach_obs(b, e, env, sh);
+  reach_obs(b, e, env, sh, cand, keep);
   e.map_closed = sh.reach.closed;   // 다음 걸음 finish_step 성공 판정 (GPU env_reach_kernel 과 같음)
-  for (int tid = 0; tid < kThreads; ++tid) mdp::obsgen::obs_cells(b, e, env, sh, tid, fd);
+  if (cells)
+    for (int tid = 0; tid < kThreads; ++tid) mdp::obsgen::obs_cells(b, e, env, sh, tid, fd);
   if (depth)
     for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) mdp::obsgen::obs_depth(b, e, env, i);
   mdp::obsgen::obs_finish(b, e, env, sh, true);

@@ -130,6 +130,10 @@ class LowRlNode : public rclcpp::Node {
     lp_.fuel = fo;
     lp_.use_cand = upper_ == "cand" || (upper_ == "decider" && dp.cand);   // 위층 후보 scripts/cand_view.h 의 0 번(지금 목표 번호가 있으면 붙듦) — low_explore_check --upper cand
     lp_.use_fuel = upper_ == "fuel" || (upper_ == "slot0" && slot_vp);   // slot0: 피하지 않는 첫 후보 · stick (slot_vp 면 그 덩어리의 시점 — fu::slot_view)
+    // 걸음마다 관측에서 쓰는 것만 (RobotEnv::set_obs): 위층 관측 그림은 노드가 안 씀, 계층형 후보 8 칸은 cand_view 후보가 아닌 위층(fuel · slot0 ·
+    // decider_cand false)만. obs_all true = 시뮬과 같은 관측 전부 (low_explore_check 가 시뮬 == 실물로 비교하는 것과 같게 — 점검용)
+    const bool obs_all = declare_parameter<bool>("obs_all", false);
+    env_->set_obs(obs_all, obs_all || !lp_.use_cand);
     if (upper_ == "slot0" && slot_vp) lp_.fuel = fu::slot_view(fo);
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
     if (upper_ == "decider") {
@@ -427,7 +431,7 @@ class LowRlNode : public rclcpp::Node {
     double dec_ms = -1.0;
     if (ctl_upper()) {
       if (running() && ctl_->due(env_->state())) {
-        const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur()};
+        const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur(), env_->reach_keep()};
         int why = 0;
         const sim::LowCmd cmd = ctl_->decide(v, work_, &why);
         env_->set_cmd(cmd);
@@ -440,7 +444,7 @@ class LowRlNode : public rclcpp::Node {
       }
     } else if (upper_ == "decider") {
       if (running()) {   // 기다리지 않음: 요청은 비차단 소켓으로 걸음마다 조금씩, 답은 다음 걸음들에서 꺼냄
-        const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur()};
+        const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur(), env_->reach_keep()};
         sim::LowCmd cmd;
         int why = 0;
         if (dp_cam_ > 0 && cam_.due(env_->state().step)) push_keyframe();

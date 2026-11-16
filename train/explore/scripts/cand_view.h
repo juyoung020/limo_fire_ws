@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "fuel_upper.h"
+#include "obs_ref.h"   // sim::ReachKeep
 
 namespace cand {
 
@@ -100,6 +101,7 @@ struct Out {
   int n_near = 0;         // 그중 로봇 곁(대표 칸이 vp_min 안) — 로봇 몸·뒤 사각지대 몫
   int n_pocket = 0;       // 그중 구멍: 덩어리 둘레 굵은 칸이 모두 이미 대충 앎 (coarse_m) — 값 0 으로 쉼
   int rotate = 0;         // 후보 0 개인데 쉬는 덩어리가 모두 로봇 곁 → 제자리 회전으로 봄
+  int reused = 0;         // 프론티어 찾기를 같은 걸음 관측 것으로 (In::reach)
   double ms = 0;          // 이 결정에 걸린 시간 (ms)
   double ms_part[6] = {0, 0, 0, 0, 0, 0};   // 찾기 · 거리 지도·방 · 덩어리 · 로봇 거리 · 시점 · 고르기
 };
@@ -178,6 +180,7 @@ struct In {
   int cur_target = -1;                // 지금 목표 칸 (없으면 −1)
   float fail_m = 1.0f;                // m — 실패 자리 이어 받기 반경
   float avoid_s = 10.f;               // s — 실패 뒤 이 시간 동안 recent_fail (Ctl 피하기 시간과 같게 — 부르는 쪽이 줌)
+  const sim::ReachKeep* reach = nullptr;   // 같은 걸음 관측의 프론티어 찾기 (RobotEnv::reach_keep — 입력이 같을 때만 씀, 없으면 직접 찾음)
 };
 
 namespace detail {
@@ -224,6 +227,12 @@ struct Run {
   const double res, rxf, ryf, th;   // 로봇 칸 자리 (실수) · 머리 방향
   fu::Work& fw;
   mdp::SearchBuf sb;
+  // 프론티어 찾기 결과 (fw 의 버퍼 또는 같은 걸음 관측이 남긴 것 — In::reach): 번진 칸 표시 · 번진 차례 · BFS 거리 · 덩어리 라벨 · 덩어리
+  const uint8_t* FL;
+  const std::vector<int32_t>* QA;
+  const int32_t *DI, *LB;
+  const mdp::Frontier* OUT;
+  int reused = 0;
   const int ws;                      // 자취 판 한 줄 낱말 수
   const int Rg;                      // 광선 길이 (칸)
   const int B, bw, bh;               // 굵은 칸 크기 (칸, 0 = 끔) · 굵은 격자 크기
@@ -237,7 +246,7 @@ struct Run {
   Run(const In& in_, const Opt& o_, Mem& m_, Work& w_, Out& out_)
       : in(in_), o(o_), mem(m_), w(w_), out(out_), c(*in_.c), W(*in_.W), s(*in_.s), gw(W.gw), gh(W.gh), n(gw * gh), mv{in_.L, c.size, gw, gh}, res(c.res),
         rxf((s.x + s.ex - W.ox) * c.inv_res), ryf((s.y + s.ey - W.oy) * c.inv_res), th(s.th + s.eth), fw(w_.fw),
-        sb{fw.flag.data(), fw.qa.data(), fw.qb.data(), fw.dist.data(), fw.label.data()}, ws((c.size + 31) / 32),
+        sb{fw.flag.data(), fw.qa.data(), fw.qb.data(), fw.dist.data(), fw.label.data()}, FL(fw.flag.data()), QA(&fw.qa), DI(fw.dist.data()), LB(fw.label.data()), OUT(fw.out.data()), ws((c.size + 31) / 32),
         Rg(std::max(1, (int)std::lround(o_.gain_m * c.inv_res))),
         B(o_.coarse_m > 0.f ? std::max(1, (int)std::lround(o_.coarse_m * c.inv_res)) : 0), bw(B ? (gw + B - 1) / B : 0), bh(B ? (gh + B - 1) / B : 0),
         step(std::max(1, mdp::hier::kGainRays / std::max(1, o_.rays))), ray_k((double)step * 2.0 * M_PI / mdp::hier::kGainRays),
@@ -248,7 +257,7 @@ struct Run {
   void done() { out.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_start).count(); }
 
   // ---- 바탕 (여러 단계가 같이 씀)
-  bool pass(int idx) const { return (fw.flag[idx] & 1) && fw.dist[idx] >= 0; }   // 로봇에서 BFS 로 번진 갈 수 있는 칸
+  bool pass(int idx) const { return (FL[idx] & 1) && DI[idx] >= 0; }   // 로봇에서 BFS 로 번진 갈 수 있는 칸
   double dto_m(int idx) const { return w.dto[idx] * res / 3.0; }                 // 막힘까지 (m)
   double len_m(int idx) const { return fw.cd[idx] >= 0 ? fw.cd[idx] * 0.2 * res : 1e6; }   // 로봇에서 길 (모따기, m)
   // 시점에서 로봇 쪽으로 모따기 거리를 거슬러 감 (visit 가 거짓이면 멈춤)
@@ -311,9 +320,21 @@ struct Run {
     sb.cam = in.cam;
     sb.pre = fw.pre.data();
     const int rx = (int)std::floor(rxf), ry = (int)std::floor(ryf);
-    const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, fw.out.data(), (int)fw.out.size());
-    n_out = std::min(r.n_found, (int)fw.out.size());
+    // 같은 걸음 관측이 같은 입력(지도 · 지나간 칸 판 · 깊이 층 · 시작 칸 · 걸음, 같은 설정 c 의 몸통 반경·닫힘 문턱)으로 이미 찾았으면 그 결과
+    // (obs_ref.h reach_obs · RobotEnv::reach_keep — 실물 노드에서 결정마다 한 번 덜 찾음, 결과는 같은 함수 · 같은 입력이라 같음)
+    const sim::ReachKeep* k = in.reach;
+    mdp::SearchResult r;
+    if (k && k->valid && k->step == s.step && k->L == in.L && k->trail == in.trail && k->cam == in.cam && k->rx == rx && k->ry == ry) {
+      r = k->r;
+      FL = k->flag.data(); QA = &k->qa; DI = k->dist.data(); LB = k->label.data(); OUT = k->out.data();
+      n_out = std::min(r.n_found, (int)k->out.size());
+      reused = 1;
+    } else {
+      r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, fw.out.data(), (int)fw.out.size());
+      n_out = std::min(r.n_found, (int)fw.out.size());
+    }
     out.start_free = r.start_free;
+    out.reused = reused;
     nr0 = r.n_reach0;
     start = r.start;
     return r.start_free;
@@ -324,7 +345,7 @@ struct Run {
   void dist_maps() {
     bx0 = gw; by0 = gh; bx1 = -1; by1 = -1;
     for (int q = 0; q < nr0; ++q) {
-      const int idx = fw.qa[q], x = idx % gw, y = idx / gw;
+      const int idx = (*QA)[q], x = idx % gw, y = idx / gw;
       bx0 = std::min(bx0, x); bx1 = std::max(bx1, x); by0 = std::min(by0, y); by1 = std::max(by1, y);
     }
     bx0 = std::max(0, bx0 - Rg); by0 = std::max(0, by0 - Rg); bx1 = std::min(gw - 1, bx1 + Rg); by1 = std::min(gh - 1, by1 + Rg);
@@ -332,10 +353,10 @@ struct Run {
     chamfer34(gw, bx0, by0, bx1, by1, [&](int x, int y) { return mdp::cls_at(mv, x, y) == mdp::kOcc || (in.cam && in.cam[y * c.size + x]); }, w.dto);
     // 방: 막힘에서 door_m 이상인 갈 수 있는 칸을 4 이웃으로 (좁은 칸은 room_of)
     const int32_t door3 = (int32_t)std::lround(o.door_m * c.inv_res * 3.0);
-    for (int q = 0; q < nr0; ++q) w.room[fw.qa[q]] = -1;
+    for (int q = 0; q < nr0; ++q) w.room[(*QA)[q]] = -1;
     int nroom = 0;
     for (int q = 0; q < nr0; ++q) {
-      const int s0 = fw.qa[q];
+      const int s0 = (*QA)[q];
       if (w.dto[s0] < door3 || w.room[s0] >= 0) continue;
       int h = 0, t = 0;
       fw.qb[t++] = s0;
@@ -356,15 +377,15 @@ struct Run {
       ++nroom;
     }
     rroom = -1;
-    for (int q = 0; q < nr0 && rroom < 0; ++q) if (w.room[fw.qa[q]] >= 0) rroom = w.room[fw.qa[q]];
+    for (int q = 0; q < nr0 && rroom < 0; ++q) if (w.room[(*QA)[q]] >= 0) rroom = w.room[(*QA)[q]];
   }
 
   // ---- 2. 덩어리 — 자격 프론티어 칸(BFS 거리 · 덩어리 크기 · 아직 안 본 칸)을 라벨별로 묶고 합침·나눔 (fuel 전역 노드와 같은 규칙). 로봇에서 가까운 차례
   std::vector<fu::Node> clusters() const {
     const auto eligible = [&](int idx) {
-      if (!(fw.flag[idx] & 2) || fw.dist[idx] < mdp::hier::kCandMinDist) return false;
-      const int l = fw.label[idx];
-      if (l < 0 || l >= n_out || fw.out[l].n < c.close_min || fw.out[l].n < mdp::hier::kCandMinCells) return false;
+      if (!(FL[idx] & 2) || DI[idx] < mdp::hier::kCandMinDist) return false;
+      const int l = LB[idx];
+      if (l < 0 || l >= n_out || OUT[l].n < c.close_min || OUT[l].n < mdp::hier::kCandMinCells) return false;
       return !mdp::looked_cell(mv, sb.look, sb.vis, ws, idx % gw, idx / gw);
     };
     std::vector<fu::Node> nodes;
@@ -372,18 +393,18 @@ struct Run {
       std::vector<int32_t>& cnt = w.lab_n;
       cnt.assign(n_out, 0);
       int ne = 0;
-      for (int q = 0; q < nr0; ++q) { const int idx = fw.qa[q]; if (eligible(idx)) { fw.qb[ne++] = idx; cnt[fw.label[idx]] += 1; } }
+      for (int q = 0; q < nr0; ++q) { const int idx = (*QA)[q]; if (eligible(idx)) { fw.qb[ne++] = idx; cnt[LB[idx]] += 1; } }
       std::vector<int32_t>& at = w.lab_at;
       at.assign(n_out, -1);
       for (int l = 0; l < n_out; ++l) if (cnt[l] > 0) { at[l] = (int)nodes.size(); nodes.emplace_back(); nodes.back().cells.reserve(cnt[l]); }
-      for (int e = 0; e < ne; ++e) nodes[at[fw.label[fw.qb[e]]]].cells.push_back(fw.qb[e]);
+      for (int e = 0; e < ne; ++e) nodes[at[LB[fw.qb[e]]]].cells.push_back(fw.qb[e]);
     }
     const auto fill = [&](fu::Node& nd) {   // 가운데 · 대표 칸 (BFS 가장 가까운 칸)
       double sx = 0, sy = 0;
       int bd = 1 << 30, ba = -1;
       for (int idx : nd.cells) {
         sx += idx % gw + 0.5; sy += idx / gw + 0.5;
-        const int d = fw.dist[idx] >= 0 ? fw.dist[idx] : (1 << 29);
+        const int d = DI[idx] >= 0 ? DI[idx] : (1 << 29);
         if (d < bd || (d == bd && idx < ba)) { bd = d; ba = idx; }
       }
       nd.cx = sx / nd.cells.size(); nd.cy = sy / nd.cells.size();
@@ -399,7 +420,7 @@ struct Run {
 
   // ---- 5 바탕: 로봇에서 모따기 길 (가는 시간) · 굵은 칸마다 아는 칸 수 (예상 넓이)
   void robot_dist() {
-    fu::detail::chamfer(start, gw, gh, [&](int idx) { return pass(idx); }, fw.qa, nr0, fw.cd, fw.bk);   // 번진 칸 = qa[0 … nr0) (chamfer 는 읽기만)
+    fu::detail::chamfer(start, gw, gh, [&](int idx) { return pass(idx); }, *QA, nr0, fw.cd, fw.bk);   // 번진 칸 = qa[0 … nr0) (chamfer 는 읽기만)
   }
   void coarse_stats() {
     if (!B) return;
@@ -466,7 +487,7 @@ struct Run {
 
   // ---- 4. 거르기 — 갈 수 있음(BFS 번진 칸) · 피하는 칸 아님 · 로봇 곁(몸 · 뒤 사각) 아님 · 막힘에서 clear_need 밖 · 덩어리 대표 칸이 보임
   bool vp_ok(int cell, int anc, double clear_need) const {
-    if (cell < 0 || cell >= n || !pass(cell) || in.avoided(cell) || fw.dist[cell] < mdp::hier::kCandMinDist) return false;
+    if (cell < 0 || cell >= n || !pass(cell) || in.avoided(cell) || DI[cell] < mdp::hier::kCandMinDist) return false;
     if (std::hypot(cell % gw + 0.5 - rxf, cell / gw + 0.5 - ryf) * res < dmin) return false;
     if (dto_m(cell) < clear_need) return false;
     if (cell != anc && !los(cell, anc)) return false;

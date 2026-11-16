@@ -96,6 +96,13 @@ class RobotEnv {
 
   const sim::EnvBatch& batch() const { return b_; }
 
+  // 걸음마다 관측에서 무엇을 셀지 (실물 노드는 쓰는 것만 — low_rl_node). 기본은 모두 (시뮬과 같은 관측 — low_explore_check 가 비트 비교)
+  //   cells: 위층 관측 그림 · 라이다 1D 칸 (obs_cells) — 실물 노드는 안 씀
+  //   hier : 계층형 후보 8 칸 (cand() · cand_cur() · 1D 후보 칸) — 위층 fuel · slot0 · 판단 모델 decider_cand false 만 씀. 끄면 빈 칸(−1)
+  void set_obs(bool cells, bool hier) { obs_cells_ = cells; obs_hier_ = hier; }
+  // 이 걸음 관측의 프론티어 찾기 결과 (후보 뽑기 cand::build 가 같은 입력이면 다시 안 찾음). 깊이 층이 바뀌면(low_prepare) 무효 — nullptr
+  const sim::ReachKeep* reach_keep() const { return keep_.valid ? &keep_ : nullptr; }
+
  private:
   void obs();
   sim::EnvBatch b_{};
@@ -104,6 +111,8 @@ class RobotEnv {
   sim::Shared sh_{};
   int done_ = 0;
   float slot_ = -1.f;
+  bool obs_cells_ = true, obs_hier_ = true;
+  sim::ReachKeep keep_;
   // 메모리 (EnvBatch 포인터가 가리킴)
   std::vector<uint8_t> grid_;
   std::vector<int16_t> lmap_;

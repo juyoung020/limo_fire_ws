@@ -174,7 +174,7 @@ void RobotEnv::step(const Proprio& p, const Scan& s) {
 
 void RobotEnv::obs() {
   sim::Shared sh{};
-  sim::write_obs(b_, e_, 0, sh, mdp::obsgen::FarDirty{1, 0.f, 0.f, 0.f, 0.f, nullptr}, false);
+  sim::write_obs(b_, e_, 0, sh, mdp::obsgen::FarDirty{1, 0.f, 0.f, 0.f, 0.f, nullptr}, false, obs_cells_, obs_hier_, &keep_);
 }
 
 void RobotEnv::set_depth(const uint8_t* d) {
@@ -249,6 +249,7 @@ void RobotEnv::hold() {
 
 void RobotEnv::low_prepare() {
   // 시뮬 env_ref.cpp low_prepare_env 와 같은 차례: 계획 차례면 깊이 카메라 층 · 경로 계획(행동 칸 = set_slot — 위층이 고른 후보 번호, fuel 이면 0, −1 목표 없음)
+  if (sim::lowrl_cam_due(b_, e_, 0) || sim::lowrl_due(b_, e_, 0)) keep_.valid = false;   // 깊이 층이 바뀜 → 이 걸음 찾기 결과는 더 안 맞음
   if (sim::lowrl_cam_due(b_, e_, 0) && !sim::lowrl_due(b_, e_, 0)) sim::camlayer_ref(b_, e_, 0);   // cam_every: 계획 차례가 아닌 걸음에도 층만 (시뮬 low_prepare_env 와 같음)
   if (sim::lowrl_due(b_, e_, 0)) {
     sim::camlayer_ref(b_, e_, 0);

@@ -225,7 +225,7 @@ int main(int argc, char** argv) {
           }
         if (!started || !ctl.due(robot.state())) continue;
         const sim::EnvState& s = robot.state();
-        const lxc::View v{&c, &wd, robot.lmap(), robot.trail(), robot.cam_layer(), &s, robot.cand(), (uint32_t)robot.cand_cur()};
+        const lxc::View v{&c, &wd, robot.lmap(), robot.trail(), robot.cam_layer(), &s, robot.cand(), (uint32_t)robot.cand_cur(), robot.reach_keep()};
         int why = 0;
         dg = fu::Diag();
         if (cand_on) {

@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
     for (; t < max_steps; ++t) {
       // 노드 차례: (앞 걸음 step 은 탭에서) → 위층 → 깊이 → set_slot · low_prepare → low_act
       if (ctl.due(robot.state())) {
-        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
+        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur(), robot.reach_keep()};
         sim::LowCmd c = ctl.decide(vr, work);   // 위층 기록(결정 수 등)은 그대로 — --follow 면 목표만 실물 궤적으로 바꿈
         if (!fol.empty()) {
           const double tt = t * dt + follow_ahead;

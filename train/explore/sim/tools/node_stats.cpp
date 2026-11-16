@@ -334,7 +334,7 @@ int main(int argc, char** argv) {
           cam_n += 1;
         }
         if (ctl.due(robot.state())) {
-          const lxc::View v{&c, &w, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
+          const lxc::View v{&c, &w, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur(), robot.reach_keep()};
           int why = 0;
           const sim::LowCmd cmd = ctl.decide(v, work, &why);
           robot.set_cmd(cmd);

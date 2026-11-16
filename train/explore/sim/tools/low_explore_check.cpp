@@ -50,6 +50,7 @@ double rough_cover(const int16_t* L, int stride, const uint8_t* grid, int gw, in
 }
 // 실물 쪽 걸음 시간 (이 기기 한 코어) — RobotEnv::step(라이다 장 → 지도·관측·닫힘) · low_prepare · 위층 결정(Ctl::decide)
 double t_step = 0, t_obs = 0, t_dec = 0, t_dec_max = 0;
+long n_reuse = 0;   // 실물 쪽 후보 뽑기가 같은 걸음 관측의 프론티어 찾기를 쓴 결정 수 (RobotEnv::reach_keep)
 long n_step = 0, n_tdec = 0;
 // 가짜 판단 모델: 본문 해시로 글자, lat 걸음 뒤 답 (now 는 부르는 쪽이 걸음마다 맞춤)
 struct FakeModel : lxd::Transport {
@@ -133,7 +134,7 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml";
   int steps = 1500, people = 0;
   uint64_t seed = 1;
-  bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true;
+  bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true, node_obs = false;
   int dec_img = 0, dec_logk = 8;
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
   int dec_mode = 0, dec_max = 0, dec_order = 0;
@@ -178,6 +179,7 @@ int main(int argc, char** argv) {
     else if (a == "--cand-known") co.known_frac = std::stof(nx());
     // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
+    else if (a == "--node-obs") node_obs = true;   // 실물 쪽 RobotEnv 를 노드처럼 쓰는 관측만 (set_obs — 그림 끔, cand_view 후보 위층이면 계층형 후보도 끔) — 그래도 시뮬과 같은지
     else if (a == "--dec-cand") dec_cand = std::stoi(nx()) != 0;   // 판단 모델 후보: 1 = cand_view.h (기본) · 0 = hier 8 칸
     else if (a == "--dec-hint") dec_hint = std::stoi(nx()) != 0;
     else if (a == "--dec-mem-image") dec_mimg = std::stoi(nx()) != 0;
@@ -256,6 +258,7 @@ int main(int argc, char** argv) {
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
     lp.use_cand = use_cand || (use_dec && dec_cand);
+    if (node_obs) robot.set_obs(false, !lp.use_cand);   // low_rl_node 와 같은 규칙 (obs_all false)
     lp.cand = co;
     lp.cand_commit = cand_commit;
     lxc::Ctl cs(lp), cr(lp);
@@ -386,7 +389,7 @@ int main(int argc, char** argv) {
           }
           std::fflush(tf);
         }
-        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
+        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur(), robot.reach_keep()};
         sim::LowCmd c2;
         if (ur.step(vr, robot.obs_1d() + mdp::obs::POLICY_1D, cr, mr, &c2)) robot.set_cmd(c2);
         if (std::getenv("DEC_SAVE") && ms.sent.size() == (size_t)std::atoi(std::getenv("DEC_SAVE_N") ? std::getenv("DEC_SAVE_N") : "10") && !ms.sent.empty())
@@ -467,9 +470,10 @@ int main(int argc, char** argv) {
       }
       // 위층 (실물 쪽: RobotEnv 자기 값)
       if (!use_dec && cr.due(robot.state())) {
-        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
+        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur(), robot.reach_keep()};
         const auto td0 = std::chrono::steady_clock::now();
         const sim::LowCmd c2 = cr.decide(vr, wr);
+        n_reuse += cr.cands().reused;
         { const double d = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - td0).count(); t_dec += d; t_dec_max = std::max(t_dec_max, d); ++n_tdec; }
         robot.set_cmd(c2);
       }
@@ -738,8 +742,8 @@ int main(int argc, char** argv) {
                   g_end[cand::kStall], g_end[cand::kOffPath]);
       std::printf("최근 실패 후보로 다시 감 %ld 번%s\n", g_refail, use_cand && g_refail > 0 ? " — 규칙(upper cand)은 0 이어야: 틀림" : "");
     }
-    std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_prepare %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번)\n", n_step ? t_step / n_step : 0.0,
-                n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec);
+    std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_prepare %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번 · 후보 찾기 재사용 %ld)\n", n_step ? t_step / n_step : 0.0,
+                n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec, n_reuse);
     std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 경로 다름 %ld · 아래층 명령·판 끝 다름 %ld\n", d_dec, d_path, d_cmd);
     const bool ok = d_dec == 0 && d_path == 0 && d_cmd == 0 && d_body == 0 && !(use_cand && g_refail > 0);   // 후보 규칙이 최근 실패 후보를 다시 고르면 틀림
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");
