@@ -354,7 +354,7 @@ const char* kRichGuide =
 const char* kLowNote =
     "The map is made by a flat 2D laser scanner 0.11 m above the floor, so obstacles lower than that (boxes, sills, steps) do NOT appear on the map. The robot cannot drive over "
     "anything taller than 3 cm. Such low obstacles are visible only in the camera image, so a way that looks free on the map can in fact be blocked.";
-int g_compact = 0;   // set_compact: 0 = 후보마다 JSON 객체(기본), 1 = 압축 표, 2 = 압축 표에서 extra 열 뺌
+int g_compact = 0;   // set_compact: 0 = 후보마다 JSON 객체(기본), 1 = 압축 표, 2 = 압축 표에서 extra 열 뺌, 3 = 후보마다 JSON 객체(짧은 키), 4 = 3 에서 extra 뺌
 // 압축 표 (fuel 후보 전용): 열 이름 한 줄 + 후보마다 값 한 줄. 값은 cand_json 과 같은 반올림 · 같은 숫자 글(json dump), 참/거짓은 1/0
 struct Col { const char* name; const char* key; const char* what; };
 const Col kCols[] = {
@@ -380,16 +380,19 @@ json cand_json(const Cand& c, bool v2);
 void compact_table(const std::vector<Cand>& cand, bool v2, json& st) {
   std::vector<json> O;
   for (const Cand& c : cand) O.push_back(cand_json(c, v2));
-  std::string leg = "Candidates are rows of a comma-separated table; the first row names the columns: id = letter";
+  const bool obj = g_compact >= 3;   // 짧은 키 JSON 객체 (기본 모델이 쉼표 표의 열 짝짓기를 못 함 — 압축 표 기본 맞춤 0.523 vs JSON 0.785)
+  std::string leg = obj ? "Each candidate is an object with short keys: id = letter" : "Candidates are rows of a comma-separated table; the first row names the columns: id = letter";
   std::string hdr = "id", rows;
   std::vector<const Col*> use;
   for (const Col& k : kCols) {
-    if (g_compact == 2 && std::string(k.name) == "extra") continue;
+    if ((g_compact == 2 || g_compact == 4) && std::string(k.name) == "extra") continue;
     bool any = false;
     for (const json& o : O) any = any || o.contains(k.key);
     if (!any) continue;
     use.push_back(&k);
-    leg += std::string("; ") + k.name + " = " + k.what;
+    std::string what = k.what;
+    if (obj && what.rfind("1 if ", 0) == 0) what = "true if " + what.substr(5);   // 짧은 키 JSON 은 참/거짓을 true/false 로 적음
+    leg += std::string("; ") + k.name + " = " + what;
     hdr += std::string(",") + k.name;
   }
   for (const json& o : O) {
@@ -402,6 +405,17 @@ void compact_table(const std::vector<Cand>& cand, bool v2, json& st) {
     }
   }
   st["candidate_columns"] = leg + ".";
+  if (obj) {
+    json arr = json::array();
+    for (const json& o : O) {
+      json x;
+      x["id"] = o["id"];
+      for (const Col* k : use) if (o.contains(k->key)) x[k->name] = o[k->key];
+      arr.push_back(x);
+    }
+    st["candidates"] = arr;
+    return;
+  }
   st["candidates"] = hdr + rows;
 }
 json cand_json(const Cand& c, bool v2) {

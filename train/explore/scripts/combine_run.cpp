@@ -107,7 +107,7 @@ struct Args {
   std::string dec_url, dec_input = "text", dec_dump;
   int dec_prompt = 1, dec_timeout_ms = 10000, dec_parallel = 16, dec_px = 384, dec_dump_n = 6;
   bool dec_shuffle = false;
-  int dec_compact = 0;   // --decider-compact 0|1|2: fuel 후보 표 꼴 (decider.h set_compact)
+  int dec_compact = 0;   // --decider-compact 0~4: fuel 후보 표 꼴 (decider.h set_compact)
   std::string dec_mode = "choice";   // choice: 후보 하나를 고름 · prune: 규칙 차례 그대로, 막혔다는 후보만 건너뜀 (입력 all 만)
   double dec_veto_thr = 0.5;   // prune: "막혔다" 확률이 이 값 이상이면 건너뜀 (잠정)
   int dec_ask_m = 4;           // prune: 규칙 차례 앞에서 이 수만큼만 물음 (잠정)
@@ -253,7 +253,7 @@ int run(const Args& a) {
   if ((upper == kFuel || fcand) && (!(a.fuel.v_eff > 0.f) || !(a.fuel.w_eff > 0.f) || a.fuel.max_nodes < 1)) throw std::runtime_error("--fuel-v · --fuel-w > 0, --fuel-nodes ≥ 1");
   if (a.rule_cell && use_pol) throw std::runtime_error("--rule-cell 은 --policy 없이 (규칙 추종기)");
   if (upper != kSlot0 && a.autox) throw std::runtime_error("--auto 는 slot0 규칙만");
-  if (a.dec_compact < 0 || a.dec_compact > 2) throw std::runtime_error("--decider-compact 0|1|2");
+  if (a.dec_compact < 0 || a.dec_compact > 4) throw std::runtime_error("--decider-compact 0~4");
   dec::set_compact(a.dec_compact);
   if (upper == kDecider && (a.dec_url.empty() || dec_in < 0 || a.dec_prompt < 1 || a.dec_prompt > 3)) throw std::runtime_error("decider: --decider-url · --decider-input text|image|both · --decider-prompt 1~3");
   if (upper == kDecider && (dec_mode < 0 || ((prune || score) && !all) || (all && a.dec_prompt > 2) || a.dec_ask_m < 1 || a.dec_ask_m > 8)) throw std::runtime_error("decider: --decider-mode choice|prune|score (prune · score 는 --decider-input all 만) · 입력 all 의 프롬프트는 1~2 · --decider-ask-m 1~8");

@@ -202,7 +202,7 @@ T=../scenes/test; CK=../runs/<아래층 실험>/ckpt/model_latest.bin
 | `--decider-px` | 384 | 지도 사진 한 변 픽셀 |
 | `--decider-cam-h` · `--decider-cam-div` | 480 · 2 | 카메라 그림 높이(실물 컬러 영상 640 × 480) · 줄이는 배수 (잠정) |
 | `--decider-shuffle` | 끔 | 후보 글자를 번호와 무관하게 섞음 (글자 자리 쏠림 확인용) |
-| `--decider-compact 0\|1\|2` | 0 | fuel 후보 표 꼴: 0 = 후보마다 JSON, 1 = 압축 표(열 이름 한 줄 + 후보마다 값 한 줄, 프롬프트 798 + 57 × 후보 수 토큰 — JSON 은 707 + 231 ×), 2 = 1 에서 extra 열(값이 새는 열) 뺌 |
+| `--decider-compact 0\|1\|2` | 0 | fuel 후보 표 꼴: 0 = 후보마다 JSON, 1 = 압축 표(열 이름 한 줄 + 후보마다 값 한 줄, 프롬프트 798 + 57 × 후보 수 토큰 — JSON 은 707 + 231 ×), 2 = 1 에서 extra 열(값이 새는 열) 뺌, 3 = 후보마다 JSON 객체에 짧은 키(755 + 155 × 후보 수), 4 = 3 에서 extra 뺌. 기본 모델 fuel 맞춤(두 차례 평균): JSON 0.785 · 압축 표 0.523(검증 302 결정), 같은 100 요청에서 JSON 0.76 · 짧은 키 0.70 — 그래서 학습은 JSON(0) 그대로 |
 | `--decider-dump <폴더>` · `--decider-dump-n` | 없음 · 6 | 요청(JSON) · 사진(PNG) · 답을 장면마다 이 수만큼 남김 |
 
 ### 점수 방식 (`--decider-mode score`)
