@@ -146,7 +146,8 @@ int main(int argc, char** argv) {
   bool cand_on = false, open_scene = false;
   std::string cand_dump;
   int cand_every = 20;
-  cand::Opt co;   // --cand-* 로 바꿈 (기본 = cand_view.h)
+  cand::Opt co;
+  int cand_commit = 0;   // --cand-* 로 바꿈 (기본 = cand_view.h)
   std::string logp;   // --log: 시뮬 쪽 결정마다 한 줄 (판 · 시각 · 목표 · 바뀜 · 뜀 · 목표 없음 까닭 · 닫힘) — 실물 녹화 low_explore_replay --log 와 견줌
   fu::Opt fo;
   fo.time = fo.global = fo.vp = true;   // 고른 조합 (scripts/README "combine_run — 위층 fuel": 시간 + 전역 + 시점)
@@ -176,6 +177,8 @@ int main(int argc, char** argv) {
     else if (a == "--cand-path-unk") co.path_unk_m = std::stof(nx());
     else if (a == "--cand-margin") co.margin = std::stof(nx());
     else if (a == "--cand-coarse") co.coarse_m = std::stof(nx());
+    else if (a == "--cand-commit") cand_commit = std::stoi(nx());
+    else if (a == "--cand-keep") co.keep = std::stof(nx());
     else if (a == "--cand-known") co.known_frac = std::stof(nx());
     else if (a == "--cand-path-skip") co.path_skip_m = std::stof(nx());   // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
@@ -259,6 +262,7 @@ int main(int argc, char** argv) {
     lp.use_fuel = use_fuel;
     lp.use_cand = use_cand || (use_dec && dec_cand);
     lp.cand = co;
+    lp.cand_commit = cand_commit;
     lxc::Ctl cs(lp), cr(lp);
     const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
     lxd::Params dp;
@@ -308,14 +312,17 @@ int main(int argc, char** argv) {
     struct Snap { std::vector<int> id, vp; };
     std::vector<Snap> hist, hhist;   // 새 후보 · 환경 hier 후보 (최근 결정들)
     candq::Acc qacc;
-    long g_chosen = 0, g_fail[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, g_reach = 0;
+    long g_chosen = 0, g_fail[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, g_reach = 0, g_end[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, g_refail = 0;
     int c_sig = 0, c_last_dec = 0;
     long c_pocket = 0, c_dec = 0, c_diff = 0, c_n = 0, c_rot = 0, c_none = 0, c_dorm = 0, c_near = 0, c_kept = 0;
     double c_ms = 0, c_ms_max = 0, c_part[6] = {0, 0, 0, 0, 0, 0};
     long s_n = 0, s_same = 0, h_n = 0, h_same = 0;   // 3 결정 뒤에도 남음 (새: 같은 번호 · 같은 칸 / hier: 1.5 m 안 후보 있음)
     double s_move = 0, h_move = 0;
     long s_alive = 0, h_alive = 0, s_m15 = 0;
-    long ep_dec0 = 0, ep_sw0 = 0;   // --ep-log: 이 판 시작 때 셈
+    long ep_dec0 = 0, ep_sw0 = 0;
+    double ep_path = 0, ep_px = 0, ep_py = 0;   // --ep-log: 이 판 지나온 길 (m, 참 자세)
+    long ep_gsw = 0;                            // --ep-log: 이 판 경로 목표 칸(EnvState::goal_cell)이 다른 칸으로 바뀐 수 (위층 방식과 무관한 같은 잣대)
+    int ep_goal = -1;   // --ep-log: 이 판 시작 때 셈
     long n_obs = 0, d_img = 0, d_1d = 0, d_cmd = 0, d_dec = 0, n_dec = 0, n_ep = 0, why_n[3] = {0, 0, 0}, n_sw = 0;
     int first_bad = -1, prev_tgt = -2;
     int st_ep_map = 0;   // 이 판의 장면 번호 (판 끝 대충 앎 넓이)
@@ -335,6 +342,8 @@ int main(int argc, char** argv) {
         for (const auto& h : m.hist) g_chosen += h.chosen;
         for (const auto& f : m.fails) g_fail[f.why < 9 && f.why >= 0 ? f.why : 0] += 1;
         g_reach += cr.n_reach();
+        for (int q = 0; q < 9; ++q) g_end[q] += m.n_end[q];
+        g_refail += cr.n_refail();
       }
       cs.restart(); cr.restart();
       cms = cand::Mem(); cmr = cand::Mem(); hist.clear(); hhist.clear();
@@ -627,12 +636,15 @@ int main(int argc, char** argv) {
         }
         if (!ep_log.empty()) {
           if (FILE* ef = std::fopen(ep_log.c_str(), "a")) {
-            std::fprintf(ef, "%ld\t%d\t%.1f\t%ld\t%ld\t%.4f\n", n_ep, end_code, robot.state().step * (double)hc.cfg.substeps * hc.cfg.dt, n_dec - ep_dec0, n_sw - ep_sw0,
-                         rough_cover(robot.lmap(), hc.cfg.size, worlds[(size_t)st_ep_map].grid.data(), rw.gw, rw.gh, hc.cfg.res));
+            std::fprintf(ef, "%ld\t%d\t%.1f\t%ld\t%ld\t%.4f\t%.2f\t%ld\n", n_ep, end_code, robot.state().step * (double)hc.cfg.substeps * hc.cfg.dt, n_dec - ep_dec0, n_sw - ep_sw0,
+                         rough_cover(robot.lmap(), hc.cfg.size, worlds[(size_t)st_ep_map].grid.data(), rw.gw, rw.gh, hc.cfg.res), ep_path, ep_gsw);
             std::fclose(ef);
           }
           ep_dec0 = n_dec;
           ep_sw0 = n_sw;
+          ep_path = 0;
+          ep_gsw = 0;
+          ep_goal = -1;
         }
         if (max_ep > 0 && n_ep >= max_ep) break;
         if (dn[0] == 0) cpu.reset();   // 대충 다 앎으로 끝낸 판: 시뮬도 새 판
@@ -657,6 +669,9 @@ int main(int argc, char** argv) {
         }
       }
       cpu.get_low_rl(R); cpu.get_low(L);
+      if (st[0].step > 0) ep_path += std::hypot(st[0].x - ep_px, st[0].y - ep_py);
+      ep_px = st[0].x; ep_py = st[0].y;
+      if (st[0].goal_cell >= 0 && st[0].goal_cell != ep_goal) { ep_gsw += ep_goal >= 0; ep_goal = st[0].goal_cell; }
       cs.after_step(st[0], R[0], L[0]);
       if (!lat_log.empty()) {
         if (use_dec && L[0].reach_step == st[0].step && L[0].reached > 0 && us.waiting()) ++l_rw;
@@ -716,12 +731,17 @@ int main(int argc, char** argv) {
       for (const auto& h : m.hist) g_chosen += h.chosen;
       for (const auto& f : m.fails) g_fail[f.why < 9 && f.why >= 0 ? f.why : 0] += 1;
       g_reach += cr.n_reach();
+      for (int q = 0; q < 9; ++q) g_end[q] += m.n_end[q];
+      g_refail += cr.n_refail();
       std::printf("후보 모드 목표: 보냄 %ld · 통과 %ld · 실패 — 경로 없음 %ld · 막힘·정체 %ld · 경로 끝 밖 %ld\n", g_chosen, g_reach, g_fail[cand::kNoPath], g_fail[cand::kStall], g_fail[cand::kOffPath]);
+      std::printf("후보 모드 목표 끝 까닭: 닿음 %ld · 다른 후보로 바꿈 %ld · 경로 없음 %ld · 막힘 %ld · 경로 끝 밖 %ld\n", g_end[cand::kReached], g_end[cand::kSwitched], g_end[cand::kNoPath],
+                  g_end[cand::kStall], g_end[cand::kOffPath]);
+      std::printf("최근 실패 후보로 다시 감 %ld 번%s\n", g_refail, use_cand && g_refail > 0 ? " — 규칙(upper cand)은 0 이어야: 틀림" : "");
     }
     std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_obs %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번)\n", n_step ? t_step / n_step : 0.0,
                 n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec);
     std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld\n", d_dec, d_img, d_1d, d_cmd);
-    const bool ok = d_dec == 0 && d_img == 0 && d_1d == 0 && d_cmd == 0 && d_body == 0;
+    const bool ok = d_dec == 0 && d_img == 0 && d_1d == 0 && d_cmd == 0 && d_body == 0 && !(use_cand && g_refail > 0);   // 후보 규칙이 최근 실패 후보를 다시 고르면 틀림
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");
     return ok ? 0 : 1;
   } catch (const std::exception& ex) {

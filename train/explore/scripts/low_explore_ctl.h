@@ -30,6 +30,7 @@ struct Params {
   bool use_fuel = true;     // false = combine_run --upper slot0 (fuel 을 안 부르고 늘 아래 slot0 차례 — 피하지 않는 첫 후보)
   fu::Opt fuel;             // --fuel-* (부르는 쪽이 채움)
   int rough_steps = 100;    // 후보 모드 "대충 다 앎" 끝: 후보 0 개이고 남은 덩어리가 모두 구멍인 상태가 이 걸음 수 이어지면 (EnvCfg::close_idle_s — 닫힘 끝과 같은 10 s)
+  int cand_commit = 0;      // 후보 0 번 규칙의 붙들기: 0 = 고른 차례 점수(겹침 뺀 값)로 keep 배 · 1 = 겹침 안 뺀 점수(넓이/시간)로 keep 배 (FUEL 처럼 새 것이 margin 넘게 좋을 때만 바꿈)
   bool use_cand = false;    // 위층 후보 = scripts/cand_view.h (서는 자리 ≤ 8 개, 안정 번호). decide 는 후보 고르기(cand_pick)로, 판단 모델은 build_cands → go_cand
   cand::Opt cand;
   static Params from_cfg(const sim::EnvCfg& c) {
@@ -118,7 +119,8 @@ class Ctl {
     const sim::EnvState& s = *v.s;
     if (cand_step_ == s.step) return cout_;   // 같은 걸음에 다시 부르면 그대로 (번호 나이 age 가 부른 수로 늘지 않게 · 시간 아낌)
     cand_step_ = s.step;
-    const cand::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, [this, &s](int cell) { return avoided(cell, s.step); }, cmd_.follow != 0 ? cmd_.target : -1};
+    cand::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, [this, &s](int cell) { return avoided(cell, s.step); }, cmd_.follow != 0 ? cmd_.target : -1};
+    in.avoid_s = (float)(p_.bl_steps * (double)v.c->substeps * v.c->dt);   // 실패 뒤 피하는 시간과 같게
     cout_ = cand::build(in, p_.cand, cmem_, cwork_);
     // 대충 다 앎 판정: 후보 0 · 남은 덩어리 모두 구멍(대충 아는 굵은 칸 안) — 덩어리 0 개도
     if (cout_.c.empty() && cout_.start_free && cout_.n_pocket == cout_.n_dormant) { if (rough_since_ < 0) rough_since_ = s.step; }
@@ -140,6 +142,7 @@ class Ctl {
       return cmd_;
     }
     const cand::Cand& c = cout_.c[idx];
+    if (c.recent_fail) ++n_refail_;   // 최근 실패한 후보로 감 (판단 모델이 골랐을 때만 생겨야 — 규칙은 안 고름)
     cmem_.note_target(c.id, s.step, v.W->ox + (c.vp % v.W->gw + 0.5f) * v.c->res, v.W->oy + (c.vp / v.W->gw + 0.5f) * v.c->res);
     cur_id_ = c.id;
     cmd_ = sim::LowCmd{c.vp, 1};   // 규칙 추종기: 목표 칸 그대로 (fuel 과 같은 길)
@@ -151,13 +154,31 @@ class Ctl {
     if (cout_.c.empty()) return -1;
     if (cur_id_ >= 0 && cmd_.follow != 0)
       for (int i = 0; i < (int)cout_.c.size(); ++i)
-        if (cout_.c[i].id == cur_id_ && !cout_.c[i].in_avoid && cout_.c[i].score >= p_.cand.keep * cout_.c[0].score) return i;
-    return 0;
+        if (cout_.c[i].id == cur_id_ && !cout_.c[i].in_avoid && !cout_.c[i].recent_fail) {
+          if (p_.cand_commit == 0) { if (cout_.c[i].score >= p_.cand.keep * cout_.c[0].score) return i; break; }
+          // 1: 겹침을 안 뺀 넓이/시간 — 지금 목표가 차례에서 밀려 겹침 몫이 빠져도 바꾸지 않게. 가장 좋은 것보다 1/keep 배 넘게 나쁠 때만 바꿈
+          const auto full = [&](const cand::Cand& c) { return c.gain_m2 / (c.t_s + p_.cand.t0); };
+          float best = 0.f;
+          for (const cand::Cand& c : cout_.c) best = std::max(best, full(c));
+          if (full(cout_.c[i]) >= p_.cand.keep * best) return i;
+          break;
+        }
+    // 규칙(대신 고르기)은 최근 실패·피하는 칸 후보를 안 고름 — 목록에서 그런 것은 맨 뒤라 앞에서 처음 나오는 성한 것. 모두 실패면 목표 없음 (제자리 회전)
+    const auto ok = [&](const cand::Cand& c) { return !c.recent_fail && !c.in_avoid; };
+    if (p_.cand_commit == 1) {   // 바꿀 때도 겹침 안 뺀 넓이/시간이 가장 큰 것
+      int bi = -1;
+      for (int i = 0; i < (int)cout_.c.size(); ++i)
+        if (ok(cout_.c[i]) && (bi < 0 || cout_.c[i].gain_m2 / (cout_.c[i].t_s + p_.cand.t0) > cout_.c[bi].gain_m2 / (cout_.c[bi].t_s + p_.cand.t0))) bi = i;
+      return bi;
+    }
+    for (int i = 0; i < (int)cout_.c.size(); ++i) if (ok(cout_.c[i])) return i;
+    return -1;
   }
   int cand_index(int id) const { for (int i = 0; i < (int)cout_.c.size(); ++i) if (cout_.c[i].id == id) return i; return -1; }
   const cand::Out& cands() const { return cout_; }
   const cand::Mem& cand_mem() const { return cmem_; }
   int cur_id() const { return cur_id_; }
+  long n_refail() const { return n_refail_; }   // 최근 실패 후보로 간 수 (재기 — low_explore_check)
   // 대충 다 앎 (사용자 목표 — 공간을 대충 빨리 앎): 후보 0 개이고 남은 덩어리가 모두 구멍인 상태가 rough_steps 이어짐. 노드·확인 도구가 판 끝으로 씀 (시뮬 == 실물 같은 판정)
   bool rough_done(int step) const { return p_.use_cand && rough_since_ >= 0 && step - rough_since_ >= p_.rough_steps; }
   // 지금 목표가 살아 있나 (고른 후보로 가는 경로가 있고 피하는 칸이 아님)
@@ -233,6 +254,7 @@ class Ctl {
   cand::Work cwork_;
   cand::Out cout_;
   int cur_id_ = -1;
+  long n_refail_ = 0;
   int cand_step_ = -1;   // build_cands 를 마지막으로 부른 걸음
   int rough_since_ = -1;   // 후보 0 · 모두 구멍인 결정이 이어진 첫 걸음 (아니면 −1)
   void avoid_add(int cell, int step) {

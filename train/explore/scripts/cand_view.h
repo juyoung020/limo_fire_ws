@@ -80,6 +80,7 @@ struct Cand {
   int fail_near = 0;      // 시점에서 fail_m 안에 남은 실패 자리 수 (번호가 바뀌어도 자리로 이어 받음)
   int in_avoid = 0;       // 지금 피하는 칸 둘레 (Ctl 피하기 반경) 안
   int visited = 0;        // 로봇이 이 시점 visit_m 안에 들어간 적 있음 (판 안 자취)
+  int recent_fail = 0;    // 최근 실패: 이 번호 또는 시점 fail_m 안 실패 자리가 avoid_s 안에 있었음 — 목록 맨 뒤로 (글자는 남김), 규칙(대신 고르기)은 안 고름
 };
 // 목표 끝 까닭 (Cand::last_fail · Mem::note_end)
 enum Why : int { kNone = 0, kNoPath = 1, kStall = 2, kContact = 3, kTimeout = 4, kOffPath = 5, kNoGain = 6, kReached = 7, kSwitched = 8 };
@@ -113,6 +114,7 @@ struct Mem {
   std::vector<Pose> trail;
   std::vector<std::pair<float, float>> visits;  // 지나간 자리 (세계 m, visit_m 격자로 줄인 것)
   int pose_every = 10, trail_n = 60, goal_n = 20;
+  long n_end[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};   // 목표 끝 까닭별 수 (Why — 판 동안, 재기용)
   float visit_m = 0.5f;
   Hist& h(int id) { if ((int)hist.size() <= id) hist.resize(id + 1); return hist[id]; }
   // 걸음마다 (지도 자세)
@@ -135,6 +137,7 @@ struct Mem {
   // 목표 끝 (why: Why). 실패면 그 자리를 기억
   void note_end(int id, int step, int why) {
     if (!goals.empty() && goals.back().id == id && goals.back().end < 0) { goals.back().end = step; goals.back().why = why; }
+    if (why >= 0 && why < 9) n_end[why] += 1;
     if (id < 0 || why == kReached || why == kSwitched) return;
     Hist& q = h(id);
     q.aborts += 1; q.last_fail = why; q.fail_step = step;
@@ -168,6 +171,7 @@ struct In {
   std::function<bool(int)> avoided;   // 피하는 칸 둘레 (low_explore_ctl.h Ctl::avoided)
   int cur_target = -1;                // 지금 목표 칸 (없으면 −1)
   float fail_m = 1.0f;                // m — 실패 자리 이어 받기 반경
+  float avoid_s = 10.f;               // s — 실패 뒤 이 시간 동안 recent_fail (Ctl 피하기 시간과 같게 — 부르는 쪽이 줌)
 };
 
 namespace detail {
@@ -578,6 +582,7 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
           if (f.step > fs) { fs = f.step; fw_ = f.why; }
         }
       if (fs >= 0) { cd.since_fail_s = (float)((s.step - fs) * dt); cd.last_fail = fw_; }
+      cd.recent_fail = fs >= 0 && cd.since_fail_s < in.avoid_s;
       cd.in_avoid = in.avoided(L.vp) || in.avoided(nd.anc) ? 1 : 0;   // 시점은 피하는 칸을 안 고르므로 덩어리 대표 칸까지
       for (const auto& v : mem.visits) if (std::hypot(v.first - wx, v.second - wy) < mem.visit_m) { cd.visited = 1; break; }
     }
@@ -587,6 +592,16 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
   for (Cand& a : out.c) {   // 같은 방의 다른 후보 수
     const int ra = room_of(a.vp);
     for (const Cand& b : out.c) a.room_left += &a != &b && ra >= 0 && room_of(b.vp) == ra;
+  }
+  {   // 최근 실패한 후보는 목록 맨 뒤로 (차례는 유지 — 판단 모델은 실패 값과 함께 보지만 0 번·규칙으로는 안 감)
+    std::vector<size_t> ord;
+    for (size_t i = 0; i < out.c.size(); ++i) if (!out.c[i].recent_fail) ord.push_back(i);
+    for (size_t i = 0; i < out.c.size(); ++i) if (out.c[i].recent_fail) ord.push_back(i);
+    std::vector<Cand> c2;
+    std::vector<std::vector<int32_t>> cl2;
+    for (size_t i : ord) { c2.push_back(out.c[i]); cl2.push_back(std::move(out.cells[i])); }
+    out.c.swap(c2);
+    out.cells.swap(cl2);
   }
   lap(5);
   // 기억: 쉬지 않은 모든 덩어리 (고르지 않은 것도 — 번호가 상한 밖에서도 이어지게)
