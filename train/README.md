@@ -5,9 +5,8 @@ GPU 학습 환경(C++/CUDA/Rust). ROS 패키지가 아니라 빌드에서 빠진
 | 폴더 | 내용 | 상태 |
 |---|---|---|
 | `maps/` | 맵 변환기 `fmap` (Rust): HouseExpo·ProcTHOR·덕트호스 생성기 → 공통 점유 격자 `.fmap` + 소화기·비상구·화재 감지기 배치. 탐사·조준 공용 | 됨 |
-| `explore/sim/` | 탐사 RL — GPU 학습 시뮬(CUDA): 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, 확률 지도, 움직이는 사람, 보상, 로봇 중심 관측. CPU 참조판과 비트 동일 | 됨 |
-| `explore/mdp/` · `network/` · `ppo/` · `scripts/` | 탐사 RL — 관측·보상·커리큘럼, CNN 혼합 정책·가치, PPO, 실행기 ([구조](explore/README.md)) | 됨 — 두 층 구조로 가는 중([계획](explore/ROADMAP.md)) |
-| `aim/` | 조준 RL | 나중 |
+| `explore/sim/` | 탐사 — GPU 시뮬(CUDA): 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, 확률 지도, 움직이는 사람, 보상, 로봇 중심 관측. CPU 참조판과 비트 동일 | 됨 |
+| `explore/mdp/` · `scripts/` · `upper_lora/` | 탐사 — 관측·판 끝(시뮬이 씀), 합친 탐사 측정(`combine_run`), 위층 판단 모델 LoRA ([구조](explore/README.md)) | 됨 — 강화학습(신경망·PPO·학습기)은 2026-11-16 에 그만둠 ([archive/rl](../archive/rl/README.md)) |
 | `detect/` | YOLO 탐지(불·연기·소화기·비상구·사람·문), C++/CUDA 학습기 | 할 일 |
 
 ## 맵 만들기
@@ -33,7 +32,7 @@ M=../../sim/maps
 
 로봇 중심이 벽에서 0.15 m 이상 떨어진 빈 칸의 가장 큰 연결 영역만 도달 영역(FREE)으로 남긴다. 광선은 바깥(0)과 벽(2)에서 모두 막힌다.
 
-## 탐사 학습 시뮬 (`explore/sim/`) — 새 판, 실물에 맞춘 센서
+## 탐사 시뮬 (`explore/sim/`) — 새 판, 실물에 맞춘 센서
 
 환경 하나 = CUDA 블록 하나, 커널 한 번 = 행동 하나(속도 행동 0.1 s · 목표점 행동 0.5 s). 그 안에서 (목표점이면 Nav2 RPP 추종기) → 실물로 맞춘 섀시 구동(지연·가속·바닥 미끄러짐)·몸통 충돌·실물 오차 라이다(`lidar_real.h`)·Cartographer 식 확률 지도·보상·리셋을 다 한다. 설정 `config/env.yaml`, 센서 오차 `config/sensor_model.yaml`, 근거 `analysis/`.
 

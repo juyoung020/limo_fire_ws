@@ -157,7 +157,7 @@ Cartographer 는 `/imu` 를 직접 받고(`use_imu_data = true`, `tracking_frame
 
 - 같은 날 Webots 시뮬·RViz 가 같이 돌 때 정렬을 켜면 19.5~25 Hz 로 떨어졌다. 깊이 주기는 로봇 CPU 부하에 민감하다.
 - 정렬 뒤에는 컬러 화면 아래쪽(대략 아래 1/6) 탐지에 깊이가 없다. 바닥 가까운 물체는 상자 측정이 비어 나온다.
-- 탐사 RL 시뮬의 깊이 모델(`train/explore/sim/config/sensor_model.yaml`)은 아직 정렬 안 된 640×400·fx 478 기준이다 — 따로 바꾼다.
+- 탐사 시뮬의 깊이 모델(`train/explore/sim/config/sensor_model.yaml`)은 아직 정렬 안 된 640×400·fx 478 기준이다 — 따로 바꾼다.
 
 ### 주의 2. 설치본이 소스보다 오래됐다
 

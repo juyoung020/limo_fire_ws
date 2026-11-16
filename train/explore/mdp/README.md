@@ -2,6 +2,10 @@
 
 탐사 과제 정의. 값까지 코드 안에 둔다(바꾸면 다시 컴파일하고 체크포인트에서 이어 학습).
 
+> **2026-11-16: 탐사 강화학습을 그만뒀다** ([archive/rl](../../../archive/rl/README.md)). 이 폴더의 관측·판 끝·프론티어·닫힘은 시뮬과 실물 노드가 그대로 쓰고,
+> 보상·커리큘럼도 시뮬 걸음이 같이 계산해 남겨 두었다. 아래 글 가운데 학습·체크포인트·`reward_probe`·`low_run`·`network/`·`ppo/` 이야기는 그때 기록이다
+> (그 도구들은 `archive/rl/train/explore/…`).
+
 | 파일 | 내용 |
 |---|---|
 | `frontier.h` | 지도 칸 종류·닫힘·프론티어(아래 "덮음·닫힘·끝") — 호스트·장치 공용, CPU == GPU 비트 같음(`baselines/frontier/tools/frontier_check`). 관측 "프론티어 덩어리 요약"(`reach_summary` — GPU 블록 병렬판 비트 비교는 `sim/tools/env_verify`)·프론티어 기준선의 찾기·끝 조건이 같이 쓴다 |
@@ -9,7 +13,7 @@
 | `rewards.h` | 보상 값(점수)·항 모양 값을 맨 위에, 그 아래 식 (판 끝 조건은 `curriculums.h`) |
 | `curriculums.h` | 판 끝 코드(0 진행·1 선언 성공·2 벽 충돌·3 끊김·4 선언 실패·5 사람 충돌, `terminal()`) + 단계별 값(맵 넓이·사람 수·오차 배율) + 단계 오르내림 규칙 |
 | `obs_layout.h` | 관측·행동 크기·배치, 행동 한도(`mdp::act`) — 모든 모듈이 같이 씀 |
-| `tools/reward_probe.cu` | 보상 해킹 시험(제자리·0 걸음 선언·일부러 박기·프론티어 기준선 따라가기) — 빌드는 `baselines/frontier` CMake |
+| (`archive/rl/…/mdp/tools/reward_probe.cu`) | 보상 해킹 시험(제자리·0 걸음 선언·일부러 박기·프론티어 기준선 따라가기) — 빌드는 `baselines/frontier` CMake |
 
 시뮬 쪽: `sim/include/env.h` 가 이 헤더들을 부르고(`finish_step` → `rewards.h`·`curriculums.h`, 끝에서 `observations.h`), 러너는
 `sim::Env::step(actions)`·`outputs()`(`sim/include/env_api.h` `StepOut`, 모두 장치 포인터)로 쓴다. 확인: `sim/tools/env_verify`(관측·보상·끝까지 GPU == CPU 비트 같음,

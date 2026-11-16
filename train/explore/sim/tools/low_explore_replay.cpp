@@ -1,10 +1,11 @@
 // 실물 합친 탐사 노드(limo_fire_rl low_rl) 녹화를 RobotEnv 합친 탐사 모드 + 위층(scripts/low_explore_ctl.h)으로 다시 돌린다 (GPU·ROS 없이).
-// 노드가 부르는 차례 그대로 (low_rl_node.cpp on_scan): 'R' reset → ['S' step → 판 끝 → 위층 걸음 뒤] → 'D' 깊이 → [결정 차례면 위층 결정 → set_cmd] → 'O' low_obs → 'A' low_act.
+// 노드가 부르는 차례 그대로 (low_rl_node.cpp on_scan): 'R' reset → ['S' step → 판 끝 → 위층 걸음 뒤] → 'D' 깊이 → [결정 차례면 위층 결정 → set_cmd] → 'O' set_slot · low_obs → 'A' low_act.
+// 아래층은 규칙 추종기 (2026-11-16 RL 을 뺀 뒤의 노드 — 행동 칸 = 위층 Ctl::slot()). 아래층 RL 노드 녹화(1116_fuel_rl_1 등)는 RL 을 뺀 판(archive/rl/README.md)보다 앞 판으로 돌린다.
 // 행동은 녹화 값을 쓰므로 궤적·지도는 녹화 그대로이고, 위층만 다시 결정한다. 녹화와 같은 위층 설정이면 'O' 관측이 비트까지 같아야 한다(위층 결정이 녹화 때와 같음).
 // 다른 위층 설정(--upper · --fuel-*)이면 관측은 다르지만(목표가 다름) 지도·궤적은 녹화 그대로 — "그 자리에서 이 위층이면 무엇을 골랐나" 를 본다.
 //   low_explore_replay 녹화.bin [--upper fuel|slot0] [--fuel-* …] [--log 결정.tsv] [--pgm 접두사 --pgm-every N] [--depth-stat]
 //   fuel 기본 = 지금 실물 노드 기본(config/low_rl.yaml). 옛 설정으로 녹화한 것을 비트로 다시 내려면 그때 값을 준다 (2026-11-16 앞: --fuel-hyst 0 --fuel-vp-min 0 --fuel-vp-clear 0)
-//   (1116_fuel_rl_1 659 / 659 · 1116_slot0_1 --upper slot0 86 / 86 비트 같음). 노드가 close_lidar 로 돌았으면 녹화 머리 hc 의 low_explore 2 를 그대로 이어받는다.
+//   (RL 을 빼기 전 판으로 1116_fuel_rl_1 659 / 659 · 1116_slot0_1 --upper slot0 86 / 86 비트 같음). 노드가 close_lidar 로 돌았으면 녹화 머리 hc 의 low_explore 2 를 그대로 이어받는다.
 //   --pgm: 결정마다(--pgm-every N 째마다) 로봇 지도 그림 PPM (모름 회색 · 막힘 검정 · 닫힘 쪽 번진 칸 연두 · 깊이 층 주황 · 번진 곳 프론티어 빨강 · 밖 파랑 · 목표 초록)
 //   --depth-stat: 깊이 카메라 층이 표시하는 점의 (거리, 높이) 표 — 바닥이 장애물로 찍히는지
 //   녹화에 없는 것: 꺼짐·리모컨 멈춤 동안 노드는 녹화를 안 쓰고, 다시 켤 때의 즉시 결정(force_redo)도 안 남는다 — 멈춤이 끼인 녹화는 그 뒤 결정 차례가 조금 다를 수 있다.
@@ -182,14 +183,14 @@ int main(int argc, char** argv) {
         const sim::LowCmd cm = ctl.cmd();
         if (rl.stall && !sig_prev) cause = 4;
         sig_prev = rl.stall;
-        if (cm.follow == 2) {
+        if (cm.follow == 1) {   // fuel 목표 칸을 따라가는 중 (Ctl::after_step 과 같은 조건)
           const bool reached = L.reach_step == s.step && L.reached > 0;
           const bool off = !reached && L.hold != 0;
           const bool nopath = !reached && !off && s.step > last_dec && (s.goal_cell != cm.target || s.p_n <= 0);
           if (reached) cause = 1; else if (off) cause = 2; else if (nopath) cause = 3;
         }
         ctl.after_step(s, rl, L);
-        nog_steps += ctl.cmd().follow != 2;
+        nog_steps += ctl.cmd().follow == 0 && ctl.slot() < 0;
       } else if (ch == 'D') {
         rd.depth(dep.data());
         robot.set_depth(dep.data());
@@ -236,6 +237,7 @@ int main(int argc, char** argv) {
         cause = 0;
       } else if (ch == 'O') {
         rd.obs(ei.data(), e1.data());
+        robot.set_slot(ctl.slot());   // 규칙 추종기: 경로 계획 후보 (노드와 같은 차례)
         robot.low_obs();
         ++n_obs;
         long di = 0;

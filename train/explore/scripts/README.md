@@ -2,51 +2,15 @@
 
 | 파일 | 내용 |
 |---|---|
-| `train.cpp` | 학습 러너: 장면 목록으로 환경 N 개 → 24 걸음 롤아웃 → PPO update 반복, 뷰어 실행 폴더(`run.json kind: explore_ppo`)·체크포인트·시험 맵 평가. 빌드·옵션은 아래 |
-| `play.cpp` | 학습한 정책 돌려 보기 |
 | `frontier_run.cpp` | 프론티어 탐사 기준선을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) · `--modes slot0`(·`slot0_nosafe`) 는 계층형 규칙 정책(늘 0 번 후보)을 같은 판으로 |
 | `oracle_run.cpp` | **측정 도구 — 정답을 씀.** 학습 맵 단계마다 정답 격자 경로·참 자세·정답 사람 위치로 모는 oracle(`--policy oracle`, 목표는 로봇 지도 굵은 프론티어, 성공 정의 그대로)과 slot0 규칙 정책을 같은 판으로 돌려 성공 상한을 잰다(`--stage 0..3 --people on\|off --out 판.tsv`). 시뮬은 env_api 로만 몰고 정답은 러너 안에서만 — 학습 환경·관측과 무관. 빌드는 baselines/frontier, 결과는 [mdp/README](../mdp/README.md) "커리큘럼" |
-| `low_run.cpp` | 아래층 기준선(mdp/README "아래층 계측·단독 과제") — 빌드는 baselines/frontier 의 `low_run`. 여기 `CMakeLists.txt` 의 `low_policy_run` 은 같은 파일에 정책 걸음 루프를 넣은 것: `low_policy_run --mode follow --policy <체크포인트> --scenes …` 가 `train --low` 정책을 기준선과 같은 단독 과제(예열 탐사 → 경로 3~15 m 목표, 사람 0·2 차례로)로 재고 ROADMAP "2 단계 통과 조건" 줄마다 통과·불통과를 낸다. `--policy` 대신 `--step` 이면 같은 걸음 루프에서 규칙 추종기(대조) |
-| `combine_run.cpp` | 두 층을 한 판에서 합쳐 탐사를 끝까지: 위층 0 번 후보 규칙(1 Hz) + 아래층 RL 정책(10 Hz, `--policy <체크포인트>`) 또는 규칙 추종기(`--policy` 없음 — 같은 걸음 루프의 대조). 막힘 신호(`LowRl::stall`)를 받아 그 칸을 한동안 피한다. `combine_run --scenes a.scene b.scene [--policy …] --episodes 256 --seed 1 --people 0 [--rule-near 2]` — 결과·원인 분석은 mdp/README "아래층 RL — 위층 규칙과 합친 탐사". 위층을 바깥 판단 모델에 맡기는 실험(`--upper decider`)과 한 판 녹화(`--video`)는 아래 "combine_run — 위층을 판단 모델에 맡기기" |
+| `combine_run.cpp` | 두 층을 한 판에서 합쳐 탐사를 끝까지: 위층(slot0 · fuel · 판단 모델 · cand_tsp · random) + 아래층 규칙 추종기(A* + 경로 추종 — 실물 노드 `low_rl` 과 같은 길). 막힘 신호(`LowRl::stall`)를 받아 그 칸을 한동안 피하고 다시 고른다. 빌드는 이 폴더 `CMakeLists.txt` |
+| `fuel_upper.h` · `low_explore_ctl.h` · `low_decider.h` · `cand_rules.h` | 위층 규칙(fuel · slot0 · 판단 모델 · 후보 규칙)과 목표 넘기기 — 시뮬 도구와 실물 노드가 같이 씀 |
 | `decider.h` · `decider.cpp` | 판단 모델 서버(llama.cpp `/v1/systemone`)에 묻는 쪽: 요청 글·사진 만들기, 여러 요청 한꺼번에 보내기, 점유 격자만으로 남은 프론티어 세기(`grid_open_frontier`). 설정 글은 `config/decider.yaml` |
 
-## train (`train.cpp`, 빌드 `CMakeLists.txt`)
-
-```bash
-cmake -S train/explore/scripts -B <빌드> -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.0/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=86
-cmake --build <빌드> -j8 --target train
-# 저장소 뿌리에서 (기본 경로가 train/explore/… 상대)
-<빌드>/train --name explore_s1 --seed 1 --minutes 120 --eval-every 50 --ckpt-every 50
-<빌드>/train --name explore_s1 --resume --minutes 60      # ckpt/model_latest.bin 에서 이어 (실행 폴더도 그 반복으로 되감음)
-```
-
-| 옵션 | 기본 | 뜻 |
-|---|---|---|
-| `--envs` | 2048 (`--graph` 는 512) | 학습 환경 수 (2048 에서 GPU 5.6 GB) |
-| `--iters` · `--minutes` | 0 · 0 | 반복 수·시간 한계 (둘 다 0 이면 1000 반복). 끝·SIGINT·SIGTERM 이면 체크포인트 저장 후 끝 |
-| `--name` · `--root` | explore · train/explore/runs | 실행 폴더 `<root>/<name>` |
-| `--seed` | 1 | 시뮬·정책 씨앗 |
-| `--lr-max` | 1e-3 (`--graph` 는 1e-4) | KL 적응 학습률 상한 (ppo/README "검증 2": rsl_rl 기본 1e-2 는 장난감에서 critic 이 터짐) |
-| `--eval-every` · `--eval-episodes` | 50 · 32 | 시험 맵(`--test`, 기본 scenes/test 의 bookstore·small-house)마다 별도 Env, 결정적 정책, 환경마다 첫 판 |
-| `--ckpt-every` | 50 | `ckpt/model_<반복>.bin`, 그리고 10 반복마다 `ckpt/model_latest.bin` |
-| `--replay-every` | 25 | 이 반복마다 표본 환경(0~63)에서 새로 시작하는 판 2 개를 재생 파일로 (동시 녹화 최대 8 판 — 끊김 판(12 000 걸음)이 녹화 칸을 오래 잡아도 새 녹화가 계속 붙음) |
-| `--list` · `--env` · `--model` | scenes/train/list.tsv · sim/config/env.yaml · sensor_model.yaml | 학습 맵 목록·시뮬 설정 |
-| `--hier` | 끔 | 계층형(mdp/README "계층형"): 1 s 마다 프론티어 후보 8 개 중 하나(가린 범주 분포, `xnet::explore_spec_hier`) → 시뮬이 경로 계획·추종. 반복 = 결정 24 개(= 시뮬 240 걸음), γ = 0.999¹⁰, 걸음/s 는 시뮬 걸음 단위. 재생 녹화는 아직 없음(`--replay-every` 무시) · 체크포인트는 기본 구조와 안 섞임(층 이름이 다름) |
-| `--graph` | 끔 | 그래프 모드(network/README "그래프 어텐션 정책", HEADER 식): 관측 = 노드 그래프(32×32 격자·특징 5·간선 비트), 행동 = 이웃 노드 하나(최대 24, 가린 범주 분포, `xnet::explore_spec_graph`). 반복 = 환경마다 결정 16 개, 결정 하나의 시뮬 걸음 수는 가변(실측 평균 33 걸음)이라 걸음/s 는 `get_gdec` 의 실제 걸음 합으로 센다. PPO 값은 `xppo::graph_ppo_config()` 한곳(γ 0.95 결정당·환경 512·에포크 3·학습률 1e-5 시작, 범위 1e-6~1e-4 — ppo/README "그래프 모드 학습 속도"). `--graph-<이름> <값>` 은 시뮬 그래프 설정(`sim::graph_arg`), `--graph-share 1` 은 가치 몸통 공유(갱신 약 2 배 빠름, 구조가 바뀌므로 기본 끔). 재생 녹화는 아직 없음. `--hier` 와 같이 못 씀 |
-| `--low` | 끔 | 아래층 RL(mdp/README "아래층 RL", `xnet::explore_spec_low`): 단독 과제를 정책이 10 Hz 로 — 행동 (v, ω), 환경이 목표를 스스로 뽑음. 환경 기본 1024(학습 중 GPU 메모리 약 4.4 GB, 반복 하나 24 걸음 약 2.2 s) · γ 0.99 · 목표 KL 0.01(둘 다 rsl_rl 기본값, 잠정) · `--people 2`(판마다 사람 0 ~ 이 수) · 커리큘럼 없음(모든 맵 고르게). progress.jsonl 은 `low/reach_rate`·`low/speed`(통과한 목표의 계획 길이 ÷ 걸린 시간)·100 m 당 충돌과 `reward/<항>`(걸음당). 평가는 시험 맵마다 60 s(앞 절반 사람 0 · 뒤 절반 0~2, 결정적 + 샘플) — 학습 곡선용이고 기준선과 견주는 값은 `low_policy_run` |
-| `--steps` · `--epochs` · `--minibatches` · `--gamma` · `--lam` | 모드 기본 | 롤아웃 길이(환경마다 결정/걸음 수)·에포크·미니배치·할인율·GAE λ 덮어쓰기 (`--envs × --steps` 가 `--minibatches` 로 나눠져야 함) |
-
-- done 매핑: `mdp::cur::terminal` (1 선언 성공·2 벽 충돌·4 선언 실패·5 사람 충돌) → PPO 1 종료, 3 → 끊김(가치로 메움).
-- progress.jsonl (반복마다): `reward/<항>`(끝난 판의 항별 합 평균), `rollout/success_rate`·`collision_rate`(벽+사람)·`person_collision_rate`·`declare_short_rate`(선언 실패)·`truncation_rate`·`coverage_mean`·`coverage_at_declare_mean`·`t95_mean`·`t95_reached_rate`·`ep_len_mean`(걸음)·`ep_rew_mean`, `curriculum/stage`(끝난 판 단계 평균), `train/*`(learning_rate·approx_kl·value_loss·policy_gradient_loss·entropy_loss·grad_norm·std), `time/*`(fps·iter_ms·rollout_ms·update_ms + sim_ms·act_ms·host_ms), `gpu/mem_used_mb`, 평가 반복에는 `eval/*`(success_rate·collision_rate·t95_mean·coverage_mean … — frontier 실행의 `eval/frontier_t95_mean` 과 나란히).
-- episodes.jsonl: 표본 환경 0~63 의 판마다 한 줄(맵·단계·결과·덮음·t95·항별 보상). evals/test_it<반복>.json: 시험 맵별 성공·충돌·끊김·선언 미달·끝 덮음·t95.
-- 재생 파일은 걸음마다 참 자세·지도 자세·잰 속도, 정책 행동 v·vy·ω(물리 단위, 환경이 자르는 대로)·선언 확률·뽑은 선언, 가치 V(s), 보상 항 7 개(`r_<항>`)와 누적 리턴,
-  덮음, 사건, 움직이는 사람 원기둥(`h<k>_x/_y/_r`), 참 자세에서 다시 쏜 깨끗한 라이다(frontier_run 과 같은 꼴).
-  로봇이 만든 지도(로그 오즈 → 점유 %)와 본 벽 면 칸(덮음 겹)은 10 걸음마다 그 환경 칸만 장치에서 꺼내 넣는다(녹화 중인 판만 — 2048 환경 전체를 안 꺼냄).
-- run.json `robot`: 시작할 때 sim 충돌 몸통·센서 자리(env.yaml body, 깊이 카메라 수평 시야는 sensor_model 의 fx·유효 열)와 URDF(`src/limo_fire/limo_fire_description/urdf` 의 xacro 를 그대로 읽음 — 차체 상자·바퀴 4 개·라이다·카메라 자리)를 적는다.
-  뷰어 재생은 이것으로 위에서 본 로봇을 그린다. 2026-11-04 값: sim 몸통 0.32 × 0.22 m(nav2 footprint) ↔ URDF 차체 상자 0.13 × 0.12 m(단순 충돌 상자) — 다르다, 화면은 sim 몸통 실선 + URDF 상자 점선.
-  바퀴 (±0.10, ±0.065) 지름 0.09·폭 0.045, 라이다 (0.103, 0) 둘이 같음, 카메라 수평 자리 (0.15, −0.005) 둘이 같음(높이·숙임은 sim 이 실측 0.1881 m·6.6°, URDF 0.205 m·0° — 위에서 볼 땐 안 보임).
-- 이어 학습은 PPO 체크포인트(가중치·Adam·정규화·반복)만 잇고 시뮬은 새 판으로 시작한다(커리큘럼 단계도 0 부터).
-
+탐사 강화학습 실행기(학습기 `train.cpp` · 아래층 정책 측정 `low_policy_run`/`low_run.cpp` · `hybrid_eval.cpp` · 판정 `tools/judge_low.py`)는 2026-11-16 에 그만두고
+[archive/rl](../../../archive/rl/README.md) 로 옮겼다. 그때의 이 README(학습기 옵션·아래층 판정 포함)는 `archive/rl/train/explore/scripts/README.md`.
+아래 결과 표에 나오는 "아래층 low_w3 36000"·"아래층 RL" 은 그때 기록이다.
 
 ## combine_run — 위층 fuel (`--upper fuel`, `fuel_upper.h`, 2026-11-15)
 
@@ -193,14 +157,14 @@ llama-server -m ~/models/decision/d1-3b/d1-3B-Q8_0.gguf --mmproj ~/models/decisi
 cmake -S train/explore/scripts -B <빌드> -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.0/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=86
 cmake --build <빌드> -j8 --target combine_run scene_lowobs
 cd train/explore/sim
-T=../scenes/test; CK=../runs/<아래층 실험>/ckpt/model_latest.bin
+T=../scenes/test
 # 기준선 (위층 규칙)
-<빌드>/combine_run --people 0 --policy $CK --scenes $T/bookstore.scene $T/small-house.scene --episodes 24 --seed 1 --out <접두사>
+<빌드>/combine_run --people 0 --scenes $T/bookstore.scene $T/small-house.scene --episodes 24 --seed 1 --out <접두사>
 # 판단 모델: 막힌 후보만 건너뛰기 (prune) · 후보 하나 고르기 (choice)
-<빌드>/combine_run --people 0 --policy $CK --scenes $T/bookstore.scene $T/small-house.scene --episodes 24 --seed 1 \
+<빌드>/combine_run --people 0 --scenes $T/bookstore.scene $T/small-house.scene --episodes 24 --seed 1 \
   --decider-url http://127.0.0.1:8171 --decider-input all --decider-mode prune --decider-ask-m 2 --decider-timeout-ms 120000 --out <접두사>
 # 한 판을 영상으로 (환경 0, 위에서 본 지도 + 카메라 그림 + 두 층의 출력 글)
-<빌드>/combine_run --people 0 --policy $CK --scenes $T/small-house.scene --episodes 1 --seed 1 \
+<빌드>/combine_run --people 0 --scenes $T/small-house.scene --episodes 1 --seed 1 \
   --decider-url http://127.0.0.1:8171 --decider-input all --decider-mode prune --decider-ask-m 2 --decider-timeout-ms 120000 --video <접두사>
 ```
 
@@ -215,7 +179,6 @@ T=../scenes/test; CK=../runs/<아래층 실험>/ckpt/model_latest.bin
 | 옵션 | 기본 | 뜻 |
 |---|---|---|
 | `--scenes a.scene …` | (필수) | 장면 파일들. 장면마다 따로 돌리고 따로 적는다 |
-| `--policy <체크포인트>` | 없음 | 아래층 RL 정책. 안 주면 같은 걸음 루프에서 규칙 추종기(대조) |
 | `--episodes` · `--seed` · `--people` | 256 · 1 · 0 | 판 수(= 환경 수, 환경마다 첫 판) · 씨앗 · 사람 수 |
 | `--eval-seed` | 끔 | 장면 씨앗을 학습기 평가와 같은 식으로 |
 | `--out <접두사>` | 없음 | `<접두사>_<장면>.tsv` 에 판마다 한 줄 |
@@ -223,10 +186,8 @@ T=../scenes/test; CK=../runs/<아래층 실험>/ckpt/model_latest.bin
 | `--no-avoid` | 끔 | 막힘 신호가 선 칸을 피하지 않음 |
 | `--no-redecide` | 끔 | 도착·경로 실패 때 바로 다시 고르지 않음 |
 | `--no-stick` | 끔 | 고른 후보 덩어리가 지금 목표를 품어도 목표 칸을 새로 잡음 |
-| `--hold <걸음>` | 0 | 목표를 정한 뒤 이 걸음 수 동안 주기 결정에서 안 바꿈 (실험용) |
 | `--stall-s <초>` | 0 | 막힘 판정 시간을 이 값으로 (0 = env.yaml 값, 실험용) |
-| `--rule-near <m>` | 0 | 목표까지 이 거리 안이면 그 결정은 규칙 추종기에 맡김 (실험용) |
-| `--auto` | 끔 | 위층 규칙을 호스트 대신 환경이 돌림(학습 때와 같은 길). slot0 규칙만 — `--policy` 와 같이, 판단 모델과는 같이 못 씀 |
+| `--auto` | 끔 | 위층 규칙을 호스트 대신 환경이 돌림(그만둔 학습 때와 같은 길). slot0 규칙만, 판단 모델과는 같이 못 씀 |
 | `--gt` · `--gt-base a0.scene …` | 끔 | **셈 전용 — 정답 지도를 씀.** 후보까지 참 길이 바탕 장면(낮은 장애물 없는 원본)보다 3 m · 1.5 배 넘게 길거나 없으면 "막힌 후보"로 센다(문턱 잠정). 고르기·판 결과에는 안 쓴다 |
 | `--video <접두사>` · `--video-env` · `--end-hold <초>` | 없음 · 0 · 3 | 환경 하나의 판을 `<접두사>_<장면>.mp4` 로(시뮬 시계 실시간). 판이 끝나면 리셋 없이 명령 0 으로 `--end-hold` 초 더 찍는다(0 = 끔, 값 잠정) |
 
@@ -241,12 +202,12 @@ T=../scenes/test; CK=../runs/<아래층 실험>/ckpt/model_latest.bin
 | `--fuel-vp-min` · `--fuel-vp-clear` · `--fuel-first` | 0 · 0 · 0 | 시점 자격(로봇에서 최소 거리 m · 모름까지 간격 m — 켜면 시점 없는 덩어리는 쉼, 모두 쉬면 목표 없음) · 순회 대신 덩어리 차례의 첫 것(slot0 를 시점으로). 실물 노드 기본은 0.75 · 0.21 · 끔 (위 "실물 1116") |
 | `--fuel-turn` · `--fuel-wc` · `--fuel-nodes` · `--fuel-merge` · `--fuel-split` · `--fuel-room-pen` · `--fuel-door` | 0 · 0 · 20 · 1.0 · 1.5 · 10 · 0.45 | 첫 회전 항 배수 · FUEL 식 3 속도 어긋남 w_c · 순회 덩어리 상한(넘으면 가까운 순 2/3 = 13 개 + 나머지에서 큰 순 7 개) · 합치는 거리(m) · 나누는 주성분 표준편차(m) · 방을 떠나는 구간 벌점(s) · 좁은 곳 문턱(m) — 모두 잠정 |
 | `--leg-log <접두사>` | 없음 | 도착한 목표 구간마다 처음 계획 길이·첫 회전각·걸린 시간 (`<접두사>_<장면>.tsv`, 기록만 — fuel 시간 비용 맞춤용) |
-| `--branch-dec <d>` · `--branch-k <k>` | 끔 | 갈래 굴리기. `--decider-cand fuel` 이면 fuel 후보 k 째(−1 = fuel 이 고른 것)로 — 위층 판단 모델 결과 기반 학습의 선호 쌍용. `--branch-reseed r` 은 갈래를 딴 결정에서 그 환경 난수만 섞어 같은 결정 상태에서 뒤 우연만 다르게 여러 번 굴림. slot0 이면: 환경마다 d 째 결정에서 유효 후보 k 째로 가서 도착·포기·30 s 까지 붙듦. k 를 바꿔 같은 판을 다시 돌려 "그 결정을 가장 잘 골랐다면" 의 상한을 잼 |
+| `--branch-dec <d>` · `--branch-k <k>` | 끔 | 갈래 굴리기. `--decider-cand fuel` 이면 fuel 후보 k 째(−1 = fuel 이 고른 것)로 — 위층 판단 모델 결과 기반 학습의 선호 쌍용. `--branch-reseed r` 은 갈래를 딴 결정에서 그 환경 난수만 섞어 같은 결정 상태에서 뒤 우연만 다르게 여러 번 굴림. `--decider-cand fuel` 과만 (slot0 갈래는 아래층 RL 과 함께 뺌 — 2026-11-16부터 갈래도 아래층 규칙 추종기가 몲) |
 | `--upper rich` · `--rich-w "opp=1,ab=1,clear=1,people=1,depth=1,room=1,hyst=0.2"` | 모두 0 | fuel 후보(덩어리마다 시점, 예상 관측량 ÷ 시간 큰 순) 가운데 점수 최대 — 가중이 모두 0 이면 예상 관측량 ÷ 시간 최대. 가중은 떠나는 값·포기 수·좁은 틈·사람·틈 너머 트임·같은 방·붙들기 (잠정, `combine_run.cpp RichW`) |
 | `--decider-cand fuel` · `--cand-cap 16` | sim · 16 | 판단 모델에 시뮬 후보 8 개 대신 fuel 후보(수 가변, 상한 16 은 잠정 — 예상 관측량 ÷ 시간 큰 순 12 개 + 나머지에서 틈 큰 순 4 개(`--cand-big`, 잠정), 지금 목표·fuel 이 고른 것은 늘 넣음)와 특징 표(가는 시간·예상 관측량·떠나는 값·틈 너머 트임·같은 방 후보 수·좁은 틈·가구 밀도·사람·시도/포기)를 줌. 지도·카메라 그림에 글자 표시. 입력 all · choice 만 |
 | `--decider-log <폴더>` · `--decider-url none` | 없음 | fuel 후보 결정마다 요청 본문(그림 포함)·후보 특징·라벨(fuel 이 고른 것·예상 관측량 ÷ 시간 최대)·모델 답·로봇 지도 아는 칸 수, 판 끝에 끝 코드·시각 (`<장면>_s<씨앗>.jsonl` + `*.request.json`) — 위층 판단 모델 학습 데이터. `none` 이면 서버 없이 fuel 이 몰며 모음 |
 | `--gt-bound` · `--gt-tile <m>` | 끔 · 1.5 | **시뮬 전용 진단 — 정답 지도를 씀.** 장면마다 정답 지도를 다 아는 순회(`cand_rules.h gt_tour`: 타일 닻 탐욕 덮기 + 최근접 이웃·2-opt, 360°)의 길이·회전·시간(`--fuel-v`·`--fuel-w`)을 찍음. 판에는 안 씀. 엄밀한 하한 아님 |
-| `--rule-cell` | 끔 | 규칙 추종기(`--policy` 없음)에 후보 번호 대신 목표 칸을 줌 — fuel 규칙 추종기 판과 같은 길로 slot0 을 견줄 때 |
+| `--rule-cell` | 끔 | 규칙 추종기에 후보 번호 대신 목표 칸을 줌 — fuel 규칙 추종기 판과 같은 길로 slot0 을 견줄 때 |
 | `--decider-url <주소>` | 없음 | 서버 주소. 주면 `--upper decider` |
 | `--decider-input text\|image\|both\|all` | text | 모델에 주는 것: 후보 표 글 · 지도 사진 · 둘 다 · 카메라 그림까지(all). `prune` · `--decider-finish` 는 all 만 |
 | `--decider-mode choice\|prune\|score` | choice | choice = 후보 하나를 고름 · prune = 규칙 차례는 그대로 두고 "그 길이 막혔나"만 물어 막혔다는 후보를 건너뜀 · score = 후보마다 "가면 지도가 얼마나 더 채워지나"를 5 단계로 물어 기대 점수가 가장 높은 후보로 (아래 "점수 방식") |
@@ -338,13 +299,3 @@ T=../scenes/test; CK=../runs/<아래층 실험>/ckpt/model_latest.bin
 
 판단 모델이 도울 수 있는 경우(지도에는 길이 뚫려 보이는데 실제로는 막힌 곳)를 만들려고, 시험 맵에 높이 0.09 m 턱·상자를 더한 변형 장면을 쓴다.
 라이다 평면(0.111 m) 아래라 로봇 지도에 안 찍히지만 몸통과는 부딪히고 카메라에는 보인다. 만드는 법은 [scenes/README](../scenes/README.md) "낮은 장애물 변형".
-
-## 아래층 판정 (`tools/judge_low.py`, 2026-11-16)
-
-검증 세트 2(장면 10 × p2·p8, 64 판, 씨앗 1)로 체크포인트 하나를 `low_policy_run --trace` 로 돌려 판정 줄을 표에 붙인다 (파이썬 보조 — 학습 코드 아님).
-- 벽·사람 /100 m = **모든 정답 충돌**: 판마다 첫 시뮬 정답 충돌을 하나 센다. 센서 닿음으로 판이 끝난 걸음의 정답 충돌도 센다 (`low_run` 자취 끝 줄 7 칸째 = 그 판의 `EpInfo::gt_touch` 비트, 끝 걸음 포함). 거리는 첫 정답 충돌까지 (없으면 판 전체). 사람/벽은 정답 비트로, 둘 다면 끝 코드로.
-- 닿음 시작만 셈 (2026-11-16): 정답 닿음이 앞 걸음 0 → 1 로 바뀐 걸음만. 구간 첫 걸음에 이미 닿아 있으면 앞 구간에서 이어진 같은 닿음이라 안 셈 (실물형 물리에서 사람에게 밀린 채 구간이 넘어가 한 번 닿음을 두 번 세던 것). `--slip 1` 은 닿음 판정도 학습과 같게 (SIM_CON_MASK=71 · SIM_CON_ACC=15), 옛 물리 줄은 옛 마스크 그대로.
-- 통과: 벽 ≤ 0.20 · 사람 ≤ 0.10 · reach* ≥ 0.90 · 속도 ≥ 0.676 · 장면·조건마다 사람 ≤ 0.30 (고정).
-- 2026-11-16 (6309aec) 전에는 끝 줄에 비트가 없어 센서 닿음으로 끝난 걸음의 정답 충돌이 빠졌다 — 그때 수치는 센서가 놓친 충돌만 (표 줄 safety 칸 `|oldmetric`).
-- 물리: `--slip 1` = 실물처럼 닿은 뒤 바퀴 헛돎·IMU 충격 (SIM_CON_SLIP=1 — 태그 끝 `s`, 표 safety 칸 `slip1`). 2026-11-16 부터 체크포인트마다 옛 물리(`off`)와 둘 다 잼, 고르기 확인·시험 세트 2 는 `--slip 1`.
-- 관측 설정 기본값은 지금 학습(low_w3: 목적지만 · 넓은 지도 · 깊이 층 걸음마다 · 움직이는 것 칸 넷 · 몸 둘레 간격)과 같고, 다른 체크포인트는 `--env K=V,K=-` 로 덮는다.

@@ -1,5 +1,7 @@
 # viewer — 탐사 RL 학습 뷰어 (trainview)
 
+> 탐사 강화학습은 2026-11-16 에 그만뒀다([archive/rl](../../../archive/rl/README.md)). 뷰어는 프론티어 기준선(`frontier_run`)의 실행 폴더와 옛 학습 실행(`runs/`)을 보는 데 그대로 쓴다.
+
 학습이 도는 동안 브라우저로 본다. 탭 셋: **Training**(카드·건강 검사·곡선·표·평가), **Replay**(판 하나를 2D 로), **Compare**(실행 여럿, 같은 group 은 평균 ± 표준편차 띠).
 
 - 서버는 Rust(std `TcpListener` + 연결마다 스레드, `serde_json`·`flate2`). **읽기 전용**: 실행 폴더의 파일만 읽는다. 화면은 순수 JS(빌드 단계 없음, 바이너리에 넣음).

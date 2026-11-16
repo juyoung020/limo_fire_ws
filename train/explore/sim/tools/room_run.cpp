@@ -1,9 +1,10 @@
-// 실물 방 재현: 실물 합친 탐사 노드(limo_fire_rl low_rl — 위층 fuel/slot0 + 아래층 RL)를 학습 시뮬(CPU 참조판, 환경 하나) 안에서 노드와 같은 차례로 돌리고
+// 실물 방 재현: 실물 합친 탐사 노드(limo_fire_rl low_rl — 위층 fuel/slot0 + 아래층 규칙 추종기)를 시뮬(CPU 참조판, 환경 하나) 안에서 노드와 같은 차례로 돌리고
 // 노드와 같은 꼴(lowrec — low_rl record:=)로 녹화한다. 실물 녹화와 같은 도구(node_stats)로 견주려고.
-//   room_run <장면.scene> --ckpt 아래층.bin [--start x y θ (없으면 장면 출발점·방향 0)] [--upper fuel|slot0] [--seed 1] [--max-s 300] [--rec 녹화.bin] [--exact] [--env env.yaml] [--model sensor_model.yaml]
+//   room_run <장면.scene> [--start x y θ (없으면 장면 출발점·방향 0)] [--upper fuel|slot0] [--seed 1] [--max-s 300] [--rec 녹화.bin] [--exact] [--env env.yaml] [--model sensor_model.yaml]
 // 장면 좌표 = 실물 지도 좌표 (map2scene 로 만든 장면이면 --start 는 그 실물 지도에서 로봇이 판을 시작한 자세 — node_stats 의 R 사건 / 노드 로그 "시작 자세").
-// 시뮬 쪽: 센서(라이다 장·바퀴·IMU·깊이)를 RobotEnv 에 넣는 탭은 low_explore_check 와 같다. 위층 결정·판 끝은 RobotEnv(노드 몫)만 — 시뮬 환경은 같은 목표를 받아
-// 정책 행동을 그대로 몬다(env.set_low_cmd). --exact 가 아니면 지도 자세 오차·관측 지연은 학습 설정 그대로(env.yaml) — 노드가 받는 Cartographer 자세 대신 시뮬 오차 모델.
+// 시뮬 쪽: 센서(라이다 장·바퀴·IMU·깊이)를 RobotEnv 에 넣는 탭은 low_explore_check 와 같다. 위층 결정·판 끝은 RobotEnv(노드 몫)만 — 시뮬 환경은 같은 목표·행동 칸을
+// 받아 자기 규칙 추종기로 몬다(env.set_low_cmd · low_prepare). --exact 가 아니면 지도 자세 오차·관측 지연은 env.yaml 그대로 — 노드가 받는 Cartographer 자세 대신 시뮬 오차 모델.
+// 위층 결정은 깊이를 넣기 전에 한다 (노드는 깊이 뒤지만 결정은 앞 걸음 깊이 층만 써서 같은 값 — 시뮬 준비 단계가 이 걸음의 목표·행동 칸을 받게).
 // 끝: 노드 판 끝(닫힘 성공 · 진척 없음 · 시간) 또는 시뮬 판 끝(부딪힘 등 — 노드라면 닿음으로 멈춤) 또는 --max-s.
 #include <cmath>
 #include <cstdio>
@@ -12,12 +13,10 @@
 #include <string>
 #include <vector>
 
-#include "ckpt_cfg.h"
 #include "env_api.h"
 #include "limo_fire_rl/robot_env.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
-#include "policy_cpu.h"
 
 namespace {
 struct Tap : sim::CpuTap {
@@ -56,7 +55,7 @@ struct Tap : sim::CpuTap {
 
 int main(int argc, char** argv) {
   setenv("SIM_EXACT", "1", 0);
-  std::string scene, env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", ckpt, rec_path;
+  std::string scene, env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", rec_path;
   float start[3] = {0.f, 0.f, 0.f};
   bool have_start = false, exact = false, model_set = false;
   double max_s = 300.0;
@@ -72,8 +71,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
       const std::string a = argv[i];
       auto nx = [&]() -> std::string { if (i + 1 >= argc) throw std::runtime_error(a + " 뒤에 값"); return argv[++i]; };
-      if (a == "--ckpt") ckpt = nx();
-      else if (a == "--start") { for (int k = 0; k < 3; ++k) start[k] = std::stof(nx()); have_start = true; }
+      if (a == "--start") { for (int k = 0; k < 3; ++k) start[k] = std::stof(nx()); have_start = true; }
       else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0") throw std::runtime_error("--upper 는 fuel · slot0"); use_fuel = u == "fuel"; }
       else if (a == "--seed") seed = std::stoull(nx());
       else if (a == "--max-s") max_s = std::stod(nx());
@@ -85,11 +83,8 @@ int main(int argc, char** argv) {
       else if (a[0] == '-') throw std::runtime_error("모르는 인자 " + a);
       else scene = a;
     }
-    if (scene.empty() || ckpt.empty())
-      throw std::runtime_error("room_run <장면.scene> --ckpt 아래층.bin [--start x y θ] [--upper fuel|slot0] [--seed 1] [--max-s 300] [--rec 녹화.bin] [--exact]");
-    std::string log;
-    ckcfg::apply(ckpt, &log);
-    std::printf("%s\n", log.c_str());
+    if (scene.empty())
+      throw std::runtime_error("room_run <장면.scene> [--start x y θ] [--upper fuel|slot0] [--seed 1] [--max-s 300] [--rec 녹화.bin] [--exact]");
     sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
     // combine_run.cpp 합친 탐사 설정 (low_explore_check 와 같음)
     hc.cfg.action_mode = sim::kActPath;
@@ -132,9 +127,6 @@ int main(int argc, char** argv) {
       cpu.get_state(st);
     }
     limo_fire_rl::RobotEnv robot(hc, true, true);
-    xnet_cpu::LowPolicy pol;
-    pol.load(ckpt);
-    if (pol.n1d() != robot.low_1d_n()) throw std::runtime_error("체크포인트 1D 칸 수 ≠ 설정");
     std::unique_ptr<lowrec::Writer> rec;
     if (!rec_path.empty()) rec.reset(new lowrec::Writer(rec_path, hc, robot.low_img_n(), robot.low_1d_n()));
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
@@ -164,16 +156,22 @@ int main(int argc, char** argv) {
     }
     sim::set_cpu_tap(&tap);
     const int AW = mdp::act::DIM;
-    std::vector<float> act((size_t)AW, 0.f), a3((size_t)mdp::low::ACT, 0.f), rew;
+    std::vector<float> act((size_t)AW, 0.f), a3((size_t)mdp::low::ACT, 0.f), rew;   // a3: RobotEnv::low_act 행동 칸 (규칙 추종기는 안 씀 — 0)
     std::vector<int32_t> dn;
     const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
     const int max_steps = (int)std::lround(max_s / dt);
     const char* why = "시간 (--max-s)";
     int t = 0, sim_end = 0;
     for (; t < max_steps; ++t) {
-      // 노드 차례: (앞 걸음 step 은 탭에서) → 깊이 → 위층 → low_obs → 정책 → low_act
+      // 노드 차례: (앞 걸음 step 은 탭에서) → 위층 → 깊이 → set_slot · low_obs → low_act
+      if (ctl.due(robot.state())) {
+        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
+        const sim::LowCmd c = ctl.decide(vr, work);
+        robot.set_cmd(c);
+        cpu.set_low_cmd(std::vector<sim::LowCmd>{c});   // 시뮬 환경도 같은 목표
+      }
       act.assign((size_t)AW, 0.f);
-      if (ctl.cmd().follow != 2) act[0] = -1.f;
+      act[0] = (float)ctl.slot();   // combine_run 규칙: 결정 때 정한 행동 칸 (다음 결정까지 그대로)
       cpu.low_prepare(act.data());
       cpu.get_obs(img, o1d);
       const uint8_t* dep_now = img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE;
@@ -183,21 +181,12 @@ int main(int argc, char** argv) {
       const uint8_t* dep = dep_hist.back().data();
       robot.set_depth(dep);
       if (rec) rec->depth(dep);
-      if (ctl.due(robot.state())) {
-        const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
-        const sim::LowCmd c = ctl.decide(vr, work);
-        robot.set_cmd(c);
-        cpu.set_low_cmd(std::vector<sim::LowCmd>{c});   // 시뮬 환경도 같은 목표 (아래층 관측·막힘 신호 셈 — 정책 행동은 RobotEnv 관측으로)
-      }
+      robot.set_slot(ctl.slot());
       robot.low_obs();
       if (rec) rec->obs(robot.low_img(), robot.low_1d());
-      pol.act(robot.low_img(), robot.low_1d(), a3.data());
       float v, w;
       robot.low_act(a3.data(), &v, &w);
       if (rec) rec->act(a3.data(), v, w);
-      act.assign((size_t)AW, 0.f);
-      if (ctl.cmd().follow == 2) { act[0] = a3[0]; act[1] = a3[1]; }
-      else act[0] = -1.f;   // 목표 없음: 두 쪽 다 규칙 추종기 (실물 노드는 명령 0 — README "시뮬과 다른 곳")
       cpu.step(act.data());   // 탭이 라이다 장·감각을 RobotEnv 로 (step)
       cpu.get_reward(rew, dn);
       const int rd = robot.done();
@@ -212,7 +201,7 @@ int main(int argc, char** argv) {
     }
     sim::set_cpu_tap(nullptr);
     std::printf("room_run: %s · 걸음 %d (%.1f s) · 끝 %s%s · 결정 %ld · 통과 %ld · 막힘 %ld · %s\n", scene.c_str(), t, t * dt, why,
-                sim_end ? (" (시뮬 끝 코드 " + std::to_string(sim_end) + ")").c_str() : "", ctl.n_dec(), ctl.n_reach(), ctl.n_stall(), exact ? "자세 오차·지연 끔" : "자세 오차·지연 학습 설정");
+                sim_end ? (" (시뮬 끝 코드 " + std::to_string(sim_end) + ")").c_str() : "", ctl.n_dec(), ctl.n_reach(), ctl.n_stall(), exact ? "자세 오차·지연 끔" : "자세 오차·지연 env.yaml");
     return 0;
   } catch (const std::exception& ex) {
     std::fprintf(stderr, "room_run: %s\n", ex.what());

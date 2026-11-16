@@ -11,7 +11,7 @@
 | 워크스페이스·규칙 | 됨 | 루트, [CLAUDE.md](../CLAUDE.md) |
 | 시뮬레이터 역할 나누기 | 됨 | [README](../README.md#시뮬레이션) |
 | 맵 52,032 개 + 소방 시설 배치 | 됨 | `train/maps` |
-| 탐사 RL 학습 (GPU 시뮬·PPO·학습 뷰어·프론티어 기준선) | 됨 — 두 층 구조(목적지 고르기 + 조작)로 가는 중 | `train/explore`, [계획](../train/explore/ROADMAP.md) |
+| 탐사 (GPU 시뮬·프론티어 기준선·위층 판단 모델 + 아래층 A*) | 됨 — 실물 확정 구성(2026-11-16). 강화학습은 그만둠 | `train/explore`, `limo_fire_rl`, [archive/rl](../archive/rl/README.md) |
 | LIMO Pro 기본 URDF·TF | 됨 — 센서 모듈은 배치 정해지면 | `src/limo_fire/limo_fire_description` |
 | YOLO 데이터 모으기 | 공개 데이터·크롤링 됨, 직접 찍기 남음 | `train/detect/data` |
 | 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 6.8 만 장 라벨, YOLO 데이터셋(8:1:1) 만듦 | `train/detect/teacher`, `tools/yolods` |
@@ -61,12 +61,12 @@ Rust 변환기 `fmap` 이 공개 실내 평면도를 5 cm 점유 격자 `.fmap` 
 
 AWS 병원·창고·서점·집 월드(`sim/maps`)는 메시라 아직 격자로 안 바꿨다 — 시험용으로 나중에.
 
-## 4. 탐사 RL GPU 학습 시뮬 (`train/explore/sim`)
+## 4. 탐사 GPU 시뮬 (`train/explore/sim`)
 
 - 실물 LIMO 녹화로 맞춘 구동·라이다·IMU·깊이, Cartographer 식 확률 지도, 움직이는 사람, 보상, 로봇 중심 관측(가까운·먼 지도, 깊이, 라이다, 숫자 — 크기는 `train/explore/mdp/obs_layout.h`)을 CUDA 커널 한 번에 돌린다. CPU 참조판과 비트까지 같다.
 - 행동은 속도 직접(0.1 s 마다) 또는 목적지 고르기(1 s 마다 프론티어 후보 8 곳 중 하나). 상세는 `train/explore/mdp/README.md`.
 - 실행·검증 방법은 [train/README.md](../train/README.md), 실측 근거는 `train/explore/sim/analysis`.
-- 학습기(PPO)·학습 뷰어·프론티어 기준선도 있다(`train/explore`). 지금 방향과 남은 단계는 [train/explore/ROADMAP.md](../train/explore/ROADMAP.md).
+- 프론티어 기준선·합친 탐사 측정(`combine_run`)·학습 뷰어가 있다(`train/explore`). 강화학습(PPO 학습기·정책·계획)은 2026-11-16 에 그만두고 [archive/rl](../archive/rl/README.md) 로 옮겼다.
 - 첫 초안 환경(목표점 행동·칸 DDA 라이다, 2026-10-23)은 `archive/explore_env` 로 옮겼다.
 
 ## 5. URDF·TF (`limo_fire_description`)

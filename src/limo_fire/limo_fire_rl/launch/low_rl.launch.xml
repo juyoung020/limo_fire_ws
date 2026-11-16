@@ -1,29 +1,24 @@
-<!-- 합친 탐사 실물 노드 (위층 fuel + 아래층 RL — limo_fire_rl/README "합친 탐사 low_rl"). 먼저 robot.launch.xml + Cartographer(지도 TF map → base_link) 를 켜 둔다.
-     dry run (기본, /cmd_vel 안 냄):  ros2 launch limo_fire_rl low_rl.launch.xml checkpoint:=/경로/model.bin
-     실제 주행 (점검표 뒤):           ros2 launch limo_fire_rl low_rl.launch.xml checkpoint:=/경로/model.bin dry_run:=false
-     아래층 규칙 추종기 (RL 없음):    ros2 launch limo_fire_rl low_rl.launch.xml lower:=rule [upper:=fuel|slot0|decider]
+<!-- 합친 탐사 실물 노드 (위층 판단 모델 · fuel · slot0 + 아래층 A* 경로 추종 — limo_fire_rl/README "합친 탐사 low_rl"). 먼저 robot.launch.xml + Cartographer(지도 TF map → base_link) 를 켜 둔다.
+     dry run (기본, /cmd_vel 안 냄):  ros2 launch limo_fire_rl low_rl.launch.xml [upper:=decider|fuel|slot0]
+     실제 주행 (점검표 뒤):           ros2 launch limo_fire_rl low_rl.launch.xml dry_run:=false
      늘 꺼진 채 뜬다 → RViz 탐사 패널 "/low_rl" 또는 ros2 service call /low_rl/enable std_srvs/srv/SetBool "{data: true}" -->
 <launch>
-  <arg name="checkpoint" default="" description="아래층 체크포인트 .bin (lower:=rule 이면 안 씀)"/>
   <arg name="dry_run" default="true" description="false: /cmd_vel 로 실제 주행"/>
   <arg name="map_frame" default="map" description="Cartographer 지도 틀 (녹화에 map 이 없으면 odom)"/>
   <arg name="require_rc" default="true" description="false: /rc_state 없이 (시뮬·리모컨 없는 녹화만)"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="record" default="" description="입력·관측·명령 녹화 파일 (비우면 안 씀)"/>
-  <arg name="upper" default="fuel" description="위층: fuel · slot0 (피하지 않는 가장 가까운 후보 — combine_run --upper slot0) · decider (로봇 안 llama-server 판단 모델 — README) · topic (~/goal, 시험용)"/>
-  <arg name="lower" default="rl" description="아래층: rl (체크포인트 정책) · rule (시뮬 규칙 추종기 — A* + 경로 추종, combine_run 을 --policy 없이. 체크포인트 안 씀)"/>
+  <arg name="upper" default="decider" description="위층: decider (로봇 안 llama-server 판단 모델 — README) · fuel · slot0 (피하지 않는 가장 가까운 후보 — combine_run --upper slot0)"/>
   <arg name="decider_url" default="http://127.0.0.1:8171" description="upper:=decider 의 llama-server 주소"/>
   <arg name="decider_period" default="3.0" description="upper:=decider 요청 주기 (s)"/>
 
   <node pkg="limo_fire_rl" exec="low_rl" name="low_rl" output="screen">
     <param from="$(find-pkg-share limo_fire_rl)/config/low_rl.yaml"/>
-    <param name="checkpoint" value="$(var checkpoint)"/>
     <param name="dry_run" value="$(var dry_run)"/>
     <param name="map_frame" value="$(var map_frame)"/>
     <param name="require_rc" value="$(var require_rc)"/>
     <param name="record" value="$(var record)"/>
     <param name="upper" value="$(var upper)"/>
-    <param name="lower" value="$(var lower)"/>
     <param name="decider_url" value="$(var decider_url)"/>
     <param name="decider_period" value="$(var decider_period)"/>
     <param name="use_sim_time" value="$(var use_sim_time)"/>

@@ -309,6 +309,7 @@ int main(int argc, char** argv) {
         }
       } else if (ch == 'O') {
         rd.obs(ei.data(), e1.data());
+        robot.set_slot(ctl.slot());   // 규칙 추종기: 경로 계획 후보 (노드와 같은 차례)
         robot.low_obs();
         long di = 0, d1 = 0;
         for (int i = 0; i < rd.ni; ++i) di += ei[(size_t)i] != robot.low_img()[i];

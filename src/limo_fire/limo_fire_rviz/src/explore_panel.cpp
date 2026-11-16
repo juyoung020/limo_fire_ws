@@ -9,16 +9,15 @@ namespace limo_fire_rviz {
 
 namespace {
 // 콤보 차례 = 노드 이름 (README 표와 같게)
-const char* const kNodes[] = {"/explore_frontier", "/explore_rl", "/low_rl"};
-const char* const kModeNames[] = {"frontier", "rl", "low"};
-constexpr int kNModes = 3;
+const char* const kNodes[] = {"/explore_frontier", "/low_rl"};
+const char* const kModeNames[] = {"frontier", "low"};
+constexpr int kNModes = 2;
 }  // namespace
 
 ExplorePanel::ExplorePanel(QWidget* parent) : rviz_common::Panel(parent) {
   mode_ = new QComboBox;
   mode_->addItem("프론티어 (/explore_frontier)");
-  mode_->addItem("RL (/explore_rl)");
-  mode_->addItem("fuel + 아래층 RL (/low_rl)");
+  mode_->addItem("합친 탐사 (/low_rl)");
   button_ = new QPushButton("Auto explore OFF");
   button_->setCheckable(true);
   button_->setMinimumHeight(36);

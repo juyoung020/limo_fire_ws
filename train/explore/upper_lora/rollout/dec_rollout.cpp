@@ -155,7 +155,7 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
     }
     g_tm[1] += since(tp);
     std::fill(act.begin(), act.end(), 0.f);
-    act[0] = (float)cs.slot();   // 아래층 규칙 추종기: 결정 때 정한 행동 칸 (low_explore_check --lower rule 과 같음)
+    act[0] = (float)cs.slot();   // 아래층 규칙 추종기: 결정 때 정한 행동 칸 (low_explore_check 와 같음)
     cpu.low_prepare(act.data());
     g_tm[2] += since(tp);
     cpu.step(act.data());
@@ -466,7 +466,7 @@ int main(int argc, char** argv) {
   }
   try {
     C.hc = sim::load_env_cfg(env_path);
-    sim::EnvCfg& c = C.hc.cfg;   // low_explore_check --lower rule 과 같은 설정 (combine_run.cpp 합친 탐사)
+    sim::EnvCfg& c = C.hc.cfg;   // low_explore_check 와 같은 설정 (combine_run.cpp 합친 탐사)
     c.action_mode = sim::kActPath;
     c.curriculum = 0;
     c.low_stat = c.low_task = c.low_rl = 1;
@@ -479,7 +479,6 @@ int main(int argc, char** argv) {
     sim::set_cpu_threads(1);
     C.lp = lxc::Params::from_cfg(c);
     C.lp.use_fuel = false;
-    C.lp.rule = true;
     const double dt = (double)c.substeps * c.dt;
     C.dp.period_steps = std::max(1, (int)std::lround(period / dt));
     C.lat = std::max(0, (int)std::lround(latency / dt));

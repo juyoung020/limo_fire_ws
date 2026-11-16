@@ -1,15 +1,15 @@
-// combine_run — 두 층을 한 판에서 합쳐 탐사를 끝까지 돌린다: 위층 = 가장 가까운 후보 규칙(slot0, 1 Hz), 아래층 = 학습한 RL 정책(10 Hz) 또는 규칙 추종기.
-// 시뮬은 아래층 RL 걸음(EnvCfg::low_rl, step 한 번 = 0.1 s) + 합친 탐사 스위치(EnvCfg::low_explore — 탐사 판 끝 규칙 그대로, 정체는 막힘 신호만)로 돈다.
+// combine_run — 두 층을 한 판에서 합쳐 탐사를 끝까지 돌린다: 위층 = 가장 가까운 후보 규칙(slot0, 1 Hz) · fuel · 판단 모델 …, 아래층 = 규칙 추종기(A* + 경로 추종).
+// (아래층 RL 정책 --policy 는 2026-11-16 에 그만둠 — archive/rl/README.md.) 시뮬은 아래층 걸음(EnvCfg::low_rl, step 한 번 = 0.1 s) + 합친 탐사 스위치(EnvCfg::low_explore — 탐사 판 끝 규칙 그대로, 정체는 막힘 신호만)로 돈다.
 //
-//   combine_run --scenes a.scene [b.scene …] [--policy <아래층 체크포인트>] [--episodes 256] [--seed 1] [--people 0] [--eval-seed] [--out <접두사>]
-//               [--no-avoid] [--no-redecide] [--no-stick] [--hold <걸음>] [--stall-s <초>] [--rule-near <m>] [--env …] [--model …] [--frontier …]
+//   combine_run --scenes a.scene [b.scene …] [--episodes 256] [--seed 1] [--people 0] [--eval-seed] [--out <접두사>]
+//               [--no-avoid] [--no-redecide] [--no-stick] [--stall-s <초>] [--env …] [--model …] [--frontier …]
 //               [--upper slot0|random|decider|cand_tsp] [--rule-stick x] [--rule-turn m] [--decider-url http://127.0.0.1:<포트>] [--decider-input text|image|both|all] [--decider-prompt 1|2|3]
 //               [--decider-mode choice|prune] [--decider-veto-thr 0.5] [--decider-ask-m 4] [--decider-cam-h 480] [--decider-cam-div 2] [--gt] [--gt-base a0.scene …]
 //               [--decider-timeout-ms 10000] [--decider-parallel 16] [--decider-px 384] [--decider-shuffle] [--decider-dump <폴더>] [--decider-dump-n 6]
 //               [--decider-finish] [--decider-config <yaml>] [--decider-mission "<글>"] [--decider-left-hold N] [--decider-score-margin x] [--decider-score-finish x]   끝 선언 · 점수 방식 (아래)
-//               [--video <접두사>] [--video-env 0] [--end-hold 3]   환경 하나의 판을 mp4 로 (위에서 본 지도 + 걸음마다 새로 그린 카메라 그림·모델에 보낸 그림 + 판단 모델·아래층 RL 출력 글 — decider.h Video). 판이 끝나면 리셋 없이 명령 0 으로 --end-hold 초 더 찍음 (0 = 끔)
-//   --policy 를 주면 아래층 RL(LowCmd::follow 2 — 목표 칸 = 고른 후보 칸), 안 주면 같은 걸음 루프에서 규칙 추종기(follow 0 — 후보 번호를 그대로, 대조).
-//   --auto: 위층 규칙을 호스트 대신 환경이 돌린다 (EnvCfg::low_auto 2 — 탐사 판 학습 train --low --low-explore 와 같은 길, --policy 와 같이). 판 결과가 호스트 규칙과
+//               [--video <접두사>] [--video-env 0] [--end-hold 3]   환경 하나의 판을 mp4 로 (위에서 본 지도 + 걸음마다 새로 그린 카메라 그림·모델에 보낸 그림 + 판단 모델·아래층 출력 글 — decider.h Video). 판이 끝나면 리셋 없이 명령 0 으로 --end-hold 초 더 찍음 (0 = 끔)
+//   아래층은 규칙 추종기: 후보 번호를 그대로(follow 0), fuel · --rule-cell · 갈래면 목표 칸을 그대로(follow 1).
+//   --auto: 위층 규칙을 호스트 대신 환경이 돌린다 (EnvCfg::low_auto 2 — 그만둔 탐사 판 학습과 같은 길). 판 결과가 호스트 규칙과
 //           같아야 한다 (학습 때 받는 목표 = 평가 때 받는 목표). 위층 걸음 통계(결정 수 등)는 호스트 규칙 것만 셈
 //   판·씨앗·판 길이 상한은 frontier_run --modes slot0 와 같다 (장면 i 의 씨앗 seed · 1000003 + i · 7919, --eval-seed 면 seed · 7919 + 17 + i).
 //
@@ -19,8 +19,8 @@
 //   · 막힘 신호(sim::LowRl::stall — 10 s 동안 0.3 m 를 못 벗어남, env.yaml follow.stall_*)가 서면 그때 가던 칸(stall_tgt)을 피하는 칸에 넣고 바로 다시 고른다.
 //     피하는 반경·시간은 규칙 추종기 복구와 같은 값(env.yaml recovery.same_goal_radius · blacklist_time — 둘 다 잠정). explore_lite 의 progress_timeout →
 //     frontier_blacklist 와 같은 꼴 (--no-avoid 로 끔)
-//   · 아래층 RL 만: 목표 통과 반경에 들었거나(pass_radius) 경로 끝이 목표 밖이거나 경로를 못 짰으면 다음 걸음에 바로 다시 고른다 (--no-redecide 로 끔).
-//     경로 끝이 목표 밖·경로 없음은 그 칸도 피하는 칸에 넣는다 (정책 환경은 규칙 추종기의 복구가 없어서)
+//   · 목표 칸을 그대로 따라가는 판(fuel · --rule-cell · 갈래)만: 목표 통과 반경에 들었거나(pass_radius) 경로 끝이 목표 밖이거나 경로를 못 짰으면 다음 걸음에 바로 다시 고른다 (--no-redecide 로 끔).
+//     경로 끝이 목표 밖·경로 없음은 그 칸도 피하는 칸에 넣는다
 //
 // 위층 고르기 (--upper, 위 규칙의 첫 줄만 바꿈 — 피하는 칸·목표 이어 가기·바로 다시 고름은 그대로):
 //   slot0   : 유효 후보(빈 슬롯·피하는 칸이 아닌 후보) 가운데 번호가 가장 작은 것 — 기준선
@@ -66,16 +66,12 @@
 #include <thread>
 #include <vector>
 
-#include "actor_critic.h"
-#include "ckpt_meta.h"
-#include "ckpt_cfg.h"   // mdp/ — 체크포인트 관측 설정 꼬리
 #include "cand_rules.h"
 #include "decider.h"
 #include "env_api.h"
 #include "frontier.h"
 #include "frontier_explorer.h"
 #include "fuel_upper.h"
-#include "ppo.h"
 
 namespace {
 
@@ -83,14 +79,12 @@ struct Args {
   std::vector<std::string> scenes;
   int episodes = 256, people = 0;
   uint64_t seed = 1;
-  std::string policy, out;
+  std::string out;
   std::string env = SIM_CONFIG_DIR "/env.yaml", model = SIM_CONFIG_DIR "/sensor_model.yaml", frontier = FRONTIER_CONFIG;
   bool eval_seed = false, avoid = true, redecide = true, stick = true;
   bool close_lidar = false;   // --close-lidar: 합친 탐사 닫힘·후보 번지기를 라이다 지도만으로 (깊이 카메라 층 뺌, EnvCfg::low_explore 2)
-  double rule_near = 0.0;   // > 0 이면 아래층 RL 판에서도 목표까지 직선 거리가 이 값 아래인 결정은 규칙 추종기에 맡김 (실험용)
   double stall_s = 0.0;   // > 0 이면 정체 판정 시간(env.yaml follow.stall_time)을 이 값으로 (실험용)
   bool autox = false;   // --auto: 위층 규칙을 환경이 돌림 (EnvCfg::low_auto 2 — 탐사 판 학습과 같은 길). 호스트 규칙과 결과가 같은지 재는 용
-  int hold = 0;   // 아래층 RL: 목표 칸을 정한 뒤 이 걸음 수 동안은 주기 결정에서 안 바꿈 (0 = 끔 — 실험용)
   std::string upper = "slot0";   // 위층 고르기: slot0 · random · decider · cand_tsp
   cr::Opt rule;                  // cand_tsp: --rule-stick · --rule-turn (scripts/cand_rules.h, frontier_run 과 같은 뜻)
   fu::Opt fuel;                  // fuel: --fuel-* (scripts/fuel_upper.h)
@@ -102,9 +96,9 @@ struct Args {
   int cand_big = 4;              // --cand-big: 후보 상한 안에서 틈 큰 순으로 채우는 자리 수 (잠정 4, fuel 후보에만 — 옛 방식 무관)
   int cand_cap = 16;             // --cand-cap: fuel 후보 상한 (판단 모델 글자 A … 는 26 개까지)
   bool gt_bound = false;         // --gt-bound: 장면마다 정답 격자를 다 아는 순회의 시간 (시뮬 전용 진단 — 정답 지도를 씀, 판에는 안 씀)
-  bool rule_cell = false;        // --rule-cell: 규칙 추종기(--policy 없음)에 후보 번호 대신 목표 칸을 줌 (follow 1 — fuel 과 같은 길, slot0 견줌용)
-  int br_dec = -1, br_k = 0;
-  uint64_t br_reseed = 0;        // --branch-reseed r (> 0): 갈래를 딴 결정에서 그 환경의 난수 상태를 r 로 섞음 — 같은 결정 상태에서 뒤만 다른 우연(센서 잡음·바닥·사람)으로 여러 번 굴리기     // --branch-dec d --branch-k k: 환경마다 d 째 결정에서 유효 후보 k 째를 골라 도착·포기까지 붙듦 (나머지는 위층 규칙 그대로) — 갈래 굴리기 (상한 측정, slot0 만)
+  bool rule_cell = false;        // --rule-cell: 규칙 추종기에 후보 번호 대신 목표 칸을 줌 (follow 1 — fuel 과 같은 길, slot0 견줌용)
+  int br_dec = -1, br_k = 0;     // --branch-dec d --branch-k k: 환경마다 d 째 결정에서 fuel 후보 k 째(−1 = fuel 이 고른 것)를 골라 도착·포기·30 s 까지 붙듦 — 갈래 굴리기 (upper_lora 선호 쌍)
+  uint64_t br_reseed = 0;        // --branch-reseed r (> 0): 갈래를 딴 결정에서 그 환경의 난수 상태를 r 로 섞음 — 같은 결정 상태에서 뒤만 다른 우연(센서 잡음·바닥·사람)으로 여러 번 굴리기
   std::string dec_url, dec_input = "text", dec_dump;
   int dec_prompt = 1, dec_timeout_ms = 10000, dec_parallel = 16, dec_px = 384, dec_dump_n = 6;
   bool dec_shuffle = false;
@@ -235,24 +229,22 @@ int run(const Args& a) {
   if (a.autox) hc.cfg.low_auto = 2;   // 위층 규칙을 환경이 (low_rl.h lowrl_goal_explore) — 준비 단계는 step·reset 이 끝에서 부름
   const sim::LidarModel lidar = sim::load_lidar_model(a.model);
   const sim::EnvCfg& c = hc.cfg;
-  const int N = a.episodes, AW = mdp::act::DIM, PW = mdp::low::ACT, K = mdp::hier::K, DS = c.decide_steps;
+  const int N = a.episodes, AW = mdp::act::DIM, K = mdp::hier::K, DS = c.decide_steps;
   const double dt = (double)c.substeps * c.dt;
-  const bool use_pol = !a.policy.empty();
   const int upper = a.upper == "slot0" ? kSlot0 : a.upper == "random" ? kRandom : a.upper == "decider" ? kDecider : a.upper == "cand_tsp" ? kTsp : a.upper == "fuel" ? kFuel : a.upper == "rich" ? kRich : -1;
   const int dec_in = dec::input_of(a.dec_input);
   const int dec_mode = a.dec_mode == "choice" ? dec::kChoice : a.dec_mode == "prune" ? dec::kPrune : a.dec_mode == "score" ? dec::kScore : -1;
   const bool all = dec_in == dec::kAll, prune = dec_mode == dec::kPrune, score = dec_mode == dec::kScore;
   const int n_thr = std::max(1u, std::min(12u, std::thread::hardware_concurrency()));
   if (upper < 0) throw std::runtime_error("--upper 는 slot0 · random · decider · cand_tsp · fuel");
-  if (a.br_dec >= 0 && !(use_pol && ((upper == kSlot0 && a.br_k >= 0 && a.br_k < K) || (upper == kDecider && a.dec_cand_fuel && a.br_k >= -1))))
-    throw std::runtime_error("--branch-dec 는 --policy 와 같이: slot0 (--branch-k 0 … K − 1) 또는 --decider-cand fuel (--branch-k −1 = fuel 이 고른 것, 0 … = 예상 관측량 ÷ 시간 차례)");
+  if (a.br_dec >= 0 && !(upper == kDecider && a.dec_cand_fuel && a.br_k >= -1))   // slot0 갈래(후보 번호)는 아래층 RL 과만 뜻이 있어 RL 과 함께 뺌
+    throw std::runtime_error("--branch-dec 는 --decider-cand fuel 과 같이 (--branch-k −1 = fuel 이 고른 것, 0 … = 예상 관측량 ÷ 시간 차례)");
   const bool fcand = upper == kRich || (upper == kDecider && a.dec_cand_fuel);   // fuel 후보 + 특징을 씀
   const RichW rw = parse_rich(a.rich_w);
   if (a.dec_cand_fuel && (upper != kDecider || dec_in != dec::kAll || prune || score || a.dec_finish || !a.video.empty())) throw std::runtime_error("--decider-cand fuel 은 --decider-input all · --decider-mode choice 만 (끝 선언·녹화 없이)");
   if (a.dec_orders != 1 && (a.dec_orders != 2 || !a.dec_cand_fuel)) throw std::runtime_error("--decider-orders 는 1 · 2 (2 는 --decider-cand fuel 과 같이)");
   if (a.cand_cap < 2 || a.cand_cap > 26) throw std::runtime_error("--cand-cap 은 2 … 26");
   if ((upper == kFuel || fcand) && (!(a.fuel.v_eff > 0.f) || !(a.fuel.w_eff > 0.f) || a.fuel.max_nodes < 1)) throw std::runtime_error("--fuel-v · --fuel-w > 0, --fuel-nodes ≥ 1");
-  if (a.rule_cell && use_pol) throw std::runtime_error("--rule-cell 은 --policy 없이 (규칙 추종기)");
   if (upper != kSlot0 && a.autox) throw std::runtime_error("--auto 는 slot0 규칙만");
   if (a.dec_compact < 0 || a.dec_compact > 4) throw std::runtime_error("--decider-compact 0~4");
   dec::set_compact(a.dec_compact);
@@ -276,32 +268,19 @@ int run(const Args& a) {
   if (upper == kDecider && !dec_none) client.reset(new dec::Client(a.dec_url, a.dec_timeout_ms, a.dec_parallel));
   const float bl_r = c.rec_bl_r > 0.f ? c.rec_bl_r : 0.5f;
   const int bl_steps = c.rec_bl_steps > 0 ? c.rec_bl_steps : (int)std::lround(10.0 / dt);
-  std::unique_ptr<xppo::PPO> ppo;
-  if (use_pol) {
-    xppo::PPOConfig pc;
-    pc.num_envs = N;
-    const LowCkptMeta km = read_low_ckpt_meta(a.policy);   // 넓은 지도·순환 핵은 체크포인트 구조를 따른다 (넓은 지도는 관측도 켜져 있어야)
-    if (km.d1d != mdp::low::n1d_of(c.lo_mov4 != 0, c.lo_body != 0)) throw std::runtime_error("체크포인트 1D 칸 수와 SIM_LOW_MOV4 가 안 맞음");
-    if (km.wide != (c.lo_wide != 0)) throw std::runtime_error(km.wide ? "넓은 지도 정책인데 SIM_LOW_WIDE=1 이 아님" : "넓은 지도 없는 정책인데 SIM_LOW_WIDE=1");
-    ppo.reset(new xppo::PPO(pc, [&] { auto sp = xnet::explore_spec_low(km.wide, km.gru_h, km.d1d); sp.aux_out = km.aux; sp.aux_hidden = km.aux_hidden; return sp; }(), 1));
-    ppo->load(a.policy);
-    std::printf("아래층: RL 정책 %s (반복 %d) — 결정적(평균 행동)\n", a.policy.c_str(), ppo->iteration());
-  } else {
-    std::printf("아래층: 규칙 추종기 (같은 걸음 루프 — 대조)\n");
-  }
+  std::printf("아래층: 규칙 추종기 (A* + 경로 추종)\n");
   if (upper == kDecider)
     std::printf("위층 고르기: 판단 모델 서버 %s · 입력 %s · 프롬프트 %d · 글자 섞기 %s · 시간 끝 %d ms · 동시 %d 개 · 사진 %d px — 판단 시간은 시뮬 시계에 안 들어감\n", a.dec_url.c_str(), a.dec_input.c_str(),
                 a.dec_prompt, a.dec_shuffle ? "켬" : "끔", a.dec_timeout_ms, a.dec_parallel, a.dec_px);
   else std::printf("위층 고르기: %s\n", upper == kRandom ? "유효 후보 가운데 아무거나 (random)" : upper == kTsp ? "후보를 모두 도는 가장 짧은 차례의 첫 후보 (cand_tsp, 로봇 지도만)" : upper == kFuel ? "프론티어 덩어리 순회의 첫 시점 (fuel, 로봇 지도만)" : upper == kRich ? "fuel 후보 가운데 점수 최대 (rich, 로봇 지도만)" : "유효 후보 가운데 번호가 가장 작은 것 (slot0)");
-  std::printf("위층: 0 번 후보 규칙 · 결정 %d 걸음마다 · 막힘 신호 피하기 %s (반경 %.2f m · %.0f s) · 바로 다시 고름 %s · 목표 이어 가기 %s · 목표 붙들기 %d 걸음 | 정체 = %.0f s 동안 %.2f m · 통과 반경 %.2f m · 판 상한 %.0f s · 사람 %d\n",
-              DS, a.avoid ? "켬" : "끔", bl_r, bl_steps * dt, a.redecide ? "켬" : "끔", a.stick ? "켬" : "끔", a.hold, c.low_idle_steps * dt, c.low_idle_d, c.low_pass_r, c.max_steps * dt, a.people);
+  std::printf("위층: 0 번 후보 규칙 · 결정 %d 걸음마다 · 막힘 신호 피하기 %s (반경 %.2f m · %.0f s) · 바로 다시 고름 %s · 목표 이어 가기 %s | 정체 = %.0f s 동안 %.2f m · 통과 반경 %.2f m · 판 상한 %.0f s · 사람 %d\n",
+              DS, a.avoid ? "켬" : "끔", bl_r, bl_steps * dt, a.redecide ? "켬" : "끔", a.stick ? "켬" : "끔", c.low_idle_steps * dt, c.low_idle_d, c.low_pass_r, c.max_steps * dt, a.people);
   if (upper == kFuel)
     std::printf("fuel: 시간 비용 %s (v_eff %.2f m/s · ω_eff %.2f rad/s · 첫 회전 배 %.2f · w_c %.2f) · 전역 순회 %s (덩어리 상한 %d · 합침 %.2f m · 나눔 %.2f m) · 시점 고르기 %s (t0 %.2f s) · 붙들기 여유 %.2f · 방 마무리 %s (떠남 벌점 %.1f s · 문 %.2f m)\n",
                 a.fuel.time ? "켬" : "끔", a.fuel.v_eff, a.fuel.w_eff, a.fuel.turn_w, a.fuel.wc, a.fuel.global ? "켬" : "끔", a.fuel.max_nodes, a.fuel.merge_m, a.fuel.split_m, a.fuel.vp ? "켬" : "끔", a.fuel.t0, a.fuel.hyst,
                 a.fuel.room ? "켬" : "끔", a.fuel.room_pen, a.fuel.door_m);
-  float *d_act, *d_pol;
+  float* d_act;
   cudaMalloc(&d_act, sizeof(float) * AW * N);
-  cudaMalloc(&d_pol, sizeof(float) * PW * N);
   for (size_t wi = 0; wi < a.scenes.size(); ++wi) {
     std::vector<sim::World> one{sim::build_world(stem(a.scenes[wi]), sim::load_scene(a.scenes[wi]), hc)};
     const sim::World& W = one[0];
@@ -321,7 +300,7 @@ int run(const Args& a) {
       env.reset();
       env.sync();
     }
-    std::vector<float> act((size_t)AW * N, 0.f), pol((size_t)PW * N, 0.f), rew;
+    std::vector<float> act((size_t)AW * N, 0.f), rew;
     std::vector<sim::LowCmd> cmd(N, sim::LowCmd{-1, 0});
     std::vector<int32_t> cand, cur, done;
     std::vector<sim::EnvState> st;
@@ -337,9 +316,8 @@ int run(const Args& a) {
     std::vector<double> dist(N, 0.0), chord(N, 0.0), px(N), py(N), cx(N), cy(N);
     // 판마다 걸음 통계 (원인 분석)
     std::vector<int> fc_step(N, -1), t_n(N, 0), t_sum(N, 0), t_cell(N, -1), t_start(N, 0), t_prev(N, -1);   // 처음 닫힌 걸음 · 60° 이상 전환 (수 · 걸음 합 · 재는 중인 목표 칸 · 시작 걸음 · 직전 목표 칸)
-    std::vector<int> n_dec(N, 0), n_sw(N, 0), n_stall(N, 0), n_reach(N, 0), n_off(N, 0), n_nopath(N, 0), n_back(N, 0), n_slow(N, 0), n_nogoal(N, 0), n_avoided(N, 0), n_early(N, 0), n_pathless(N, 0);
+    std::vector<int> n_dec(N, 0), n_sw(N, 0), n_stall(N, 0), n_reach(N, 0), n_off(N, 0), n_nopath(N, 0), n_back(N, 0), n_slow(N, 0), n_nogoal(N, 0), n_avoided(N, 0), n_early(N, 0);
     std::vector<double> tgt_d(N, 0.0), w_abs(N, 0.0);
-    std::vector<int> n_rule(N, 0);
     long dbin[4] = {0, 0, 0, 0};   // 결정 때 목표까지 직선 거리: < 1 · 1 ~ 3 · 3 ~ 15 · ≥ 15 m
     env.get_state(st);
     for (int i = 0; i < N; ++i) { px[i] = cx[i] = st[i].x; py[i] = cy[i] = st[i].y; }
@@ -1084,7 +1062,6 @@ int run(const Args& a) {
         const sim::EnvState& s = st[i];
         if (!need[i]) continue;
         if (s.step % DS != 0) n_early[i] += 1;
-        const bool forced = redo[i] != 0 && n_dec[i] > 0;
         redo[i] = 0;
         last_dec[i] = s.step;
         if (a.br_dec >= 0 && n_dec[i] == a.br_dec && a.dec_cand_fuel) {   // 갈래 (fuel 후보): 이 결정에서 fc 의 br_k 째 (−1 = fuel 이 고른 것), 도착·포기·30 s 까지 붙듦
@@ -1104,11 +1081,6 @@ int run(const Args& a) {
             }
             for (size_t k = 0; k < fc[i].size(); ++k) if (fc[i][k].fuel) br_fuelk[i] = (int)k;
           }
-        } else if (a.br_dec >= 0 && n_dec[i] == a.br_dec && nv[i] > a.br_k) {   // 갈래: 이 결정에서 유효 후보 br_k 째, 도착·포기·30 s 까지 붙듦
-          pick[i] = vslot[(size_t)i * K + a.br_k];
-          br_cell[i] = cand[(size_t)i * K + pick[i]];
-          br_until[i] = s.step + (int)std::lround(30.0 / dt);
-          br_app[i] = 1;
         }
         if (br_cell[i] >= 0 && s.step >= br_until[i]) br_cell[i] = -1;
         const int k = pick[i];
@@ -1121,34 +1093,9 @@ int run(const Args& a) {
         if (fz) tgt = tcell[i];
         if (fnone) tgt = -1;
         if (br_cell[i] >= 0) tgt = br_cell[i];
-        if (use_pol && (fz || br_cell[i] >= 0)) {   // fuel · 갈래: 목표 칸 그대로 (붙들기는 fuel 이 · 갈래는 위에서)
-          if (tgt != cmd[i].target || cmd[i].follow != 2) { sw_step[i] = s.step; h_try[i].push_back(tgt); }
-          cmd[i] = sim::LowCmd{tgt, 2};
-        } else if (!use_pol && (fz || (a.rule_cell && tgt >= 0))) {   // 규칙 추종기 + fuel (또는 --rule-cell): 단독 과제 꼴(follow 1 — 목표 칸을 그대로 따라감)
+        if (fz || br_cell[i] >= 0 || (a.rule_cell && tgt >= 0)) {   // 규칙 추종기 + fuel · 갈래 (또는 --rule-cell): 단독 과제 꼴(follow 1 — 목표 칸을 그대로 따라감)
           cmd[i] = sim::LowCmd{tgt, 1};
           act[(size_t)AW * i] = 0.f;
-        } else if (use_pol) {
-          const bool live = cmd[i].follow == 2 && cmd[i].target >= 0 && cmd[i].target == s.goal_cell && s.p_n > 0 && !avoided(i, cmd[i].target, s.step);
-          if (a.hold > 0 && !fnone && !forced && live && s.step - sw_step[i] < a.hold) tgt = cmd[i].target;
-          else if (a.stick && !fnone && k >= 0 && ((cur[i] >> k) & 1) && cmd[i].follow == 2 && cmd[i].target >= 0 && cmd[i].target == s.goal_cell && s.p_n > 0 && !avoided(i, cmd[i].target, s.step)) tgt = cmd[i].target;
-          const double dn = tgt >= 0 ? std::hypot(W.ox + ((double)(tgt % W.gw) + 0.5) * c.res - (s.x + s.ex), W.oy + ((double)(tgt / W.gw) + 0.5) * c.res - (s.y + s.ey)) : 0.0;
-          if (tgt >= 0 && dn < a.rule_near) {   // 가까운 목표: 규칙 추종기 (후보 번호 그대로)
-            cmd[i] = sim::LowCmd{-1, 0};
-            act[(size_t)AW * i] = (float)k;
-            n_rule[i] += 1;
-          } else if (tgt >= 0) {
-            if (tgt != cmd[i].target || cmd[i].follow != 2) { sw_step[i] = s.step; h_try[i].push_back(tgt); }
-            if (score && (tgt != cmd[i].target || cmd[i].follow != 2 || !seg[i].on)) {   // 목표 칸이 바뀜: 앞 구간을 닫고(실제로 는 칸 수) 새 구간을 엶
-              const long kn_now = known(i, s.step);
-              seg_close(i, s.step, kn_now, seg_why[i] == 1 ? "arrived" : seg_why[i] == 2 ? "abandoned" : "switched");
-              seg_why[i] = 0;
-              if (sel[i].on && sel[i].slot == k) { seg[i] = sel[i]; seg[i].cell = tgt; seg[i].known0 = kn_now; }
-            }
-            cmd[i] = sim::LowCmd{tgt, 2};
-          } else {   // 후보 없음: 규칙 추종기의 "목표 없음"(제자리 회전)
-            cmd[i] = sim::LowCmd{-1, 0};
-            act[(size_t)AW * i] = -1.f;
-          }
         } else {
           cmd[i] = sim::LowCmd{-1, 0};
           act[(size_t)AW * i] = fnone ? -1.f : (float)k;   // fuel 시점 자격 없음: 규칙 추종기도 목표 없음 (low_explore_ctl.h slot_ −1)
@@ -1165,34 +1112,21 @@ int run(const Args& a) {
         }
       }
       if (a.autox) {
-        cmd = ecmd;   // 환경이 고른 목표 (아래 걸음 통계·정책 행동 넣기가 같은 값을 보게)
+        cmd = ecmd;   // 환경이 고른 목표 (아래 걸음 통계가 같은 값을 보게)
       } else {
         cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
         env.set_low_cmd(cmd);
         env.low_prepare(d_act);
         env.sync();
       }
-      if (use_pol && left > 0) {   // 모든 판이 끝났으면 (녹화의 판 끝 뒤 멈춤) 정책을 돌리지 않음
-        const sim::StepOut o = env.outputs();
-        ppo->act_inference(o.low_img, o.low_1d, d_pol, N, -1);
-        cudaDeviceSynchronize();
-        cudaMemcpy(pol.data(), d_pol, sizeof(float) * pol.size(), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < N; ++i) {
-          if (cmd[i].follow != 2) continue;
-          act[(size_t)AW * i] = pol[(size_t)PW * i];
-          act[(size_t)AW * i + 1] = pol[(size_t)PW * i + 1];
-        }
-        cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
-      }
       env.step(d_act);
       env.sync();
-      if (use_pol) ppo->inference_reset(env.outputs().done, N);   // 순환 핵(GRU): 판이 끝난 환경의 h = 0 (학습 store 와 같은 규칙). 순환 핵 없으면 아무것도 안 함
       env.get_reward(rew, done);
       env.get_ep(ep);
       env.get_state(st);
       env.get_low(low);
       env.get_low_rl(rl);
-      if (vrec) {   // 녹화: 이 걸음 한 장. 판이 끝나면 (--end-hold > 0) 리셋 없이 멈춘 로봇을 그 시간만큼 더 찍고 닫음 — 위층 결정 없음 · 정책 안 돌림 · 명령 0 (EnvCfg::end_hold)
+      if (vrec) {   // 녹화: 이 걸음 한 장. 판이 끝나면 (--end-hold > 0) 리셋 없이 멈춘 로봇을 그 시간만큼 더 찍고 닫음 — 위층 결정 없음 · 명령 0 (EnvCfg::end_hold)
         static const char* const kEnd[] = {"running", "SUCCESS (map closed, declared)", "WALL COLLISION", "TIME LIMIT", "declared too early", "person collision", "NO PROGRESS"};
         if (!fin[ve] && done[ve]) {
           const int dn = done[ve];
@@ -1244,16 +1178,15 @@ int run(const Args& a) {
           if (vhold >= 0) {   // 끝난 뒤: 상태에 적힌 명령·속도를 그대로 (명령은 환경이 0 으로 — physics_step)
             vf.text += vend;
             vf.text += "upper: finished (no more decisions)\n";
-            if (vhold == (int)std::lround(a.end_hold / dt)) std::snprintf(b, sizeof b, "%s: switching OFF (last cmd v=%+.2f m/s w=%+.2f rad/s)\n", use_pol ? "RL lower" : "lower", s.cmd_v, s.cmd_w);   // 끝난 바로 그 걸음: 명령은 아직 그 걸음 것
-            else std::snprintf(b, sizeof b, "%s: OFF, cmd v=%+.2f m/s w=%+.2f rad/s\n", use_pol ? "RL lower" : "lower", s.cmd_v, s.cmd_w);
+            if (vhold == (int)std::lround(a.end_hold / dt)) std::snprintf(b, sizeof b, "lower: switching OFF (last cmd v=%+.2f m/s w=%+.2f rad/s)\n", s.cmd_v, s.cmd_w);   // 끝난 바로 그 걸음: 명령은 아직 그 걸음 것
+            else std::snprintf(b, sizeof b, "lower: OFF, cmd v=%+.2f m/s w=%+.2f rad/s\n", s.cmd_v, s.cmd_w);
             vf.text += b;
             std::snprintf(b, sizeof b, "robot: v=%+.2f m/s w=%+.2f rad/s   GT wall cov %.2f (sim only)\n", s.v, s.w, s.coverage);
             vf.text += b;
             if (vend_coll) vf.text += "(sim does not integrate motion after a collision)\n";
             vf.text += "last " + vdec;
           } else {
-            if (use_pol && cmd[ve].follow == 2) std::snprintf(b, sizeof b, "RL lower: a=(%+.2f,%+.2f) -> cmd v=%+.2f m/s w=%+.2f rad/s\n", pol[(size_t)PW * ve], pol[(size_t)PW * ve + 1], s.cmd_v, s.cmd_w);
-            else std::snprintf(b, sizeof b, "lower: rule follower -> cmd v=%+.2f m/s w=%+.2f rad/s\n", s.cmd_v, s.cmd_w);
+            std::snprintf(b, sizeof b, "lower: rule follower -> cmd v=%+.2f m/s w=%+.2f rad/s\n", s.cmd_v, s.cmd_w);
             vf.text += b;
             std::snprintf(b, sizeof b, "robot: v=%+.2f m/s w=%+.2f rad/s   GT wall cov %.2f (sim only)%s\n", s.v, s.w, s.coverage, s.map_closed ? "  map closed" : "");
             vf.text += b;
@@ -1298,7 +1231,7 @@ int run(const Args& a) {
         }
         if (s.goal_cell != goal_prev[i]) {
           if (goal_prev[i] >= 0 && s.goal_cell >= 0) n_sw[i] += 1;
-          if (!use_pol) sw_step[i] = s.step;
+          sw_step[i] = s.step;
           goal_prev[i] = s.goal_cell;
         }
         if (s.map_closed && fc_step[i] < 0) fc_step[i] = s.step;
@@ -1326,7 +1259,6 @@ int run(const Args& a) {
         n_back[i] += s.cmd_v < 0.f;
         n_slow[i] += std::fabs(s.v) < 0.1f;
         w_abs[i] += std::fabs(s.w);
-        if (use_pol && cmd[i].follow == 2 && (s.goal_cell != cmd[i].target || s.p_n <= 0)) n_pathless[i] += 1;
         // 막힘 신호 → 그 칸을 피하고 바로 다시 고름
         if (rl[i].stall && !sig_prev[i]) {
           n_stall[i] += 1;
@@ -1354,7 +1286,7 @@ int run(const Args& a) {
           lg_tgt[i] = cmd[i].target; lg_step[i] = s.step; lg_dth[i] = -1.f;
           lg_d0[i] = (float)std::hypot(W.ox + ((double)(cmd[i].target % W.gw) + 0.5) * c.res - (s.x + s.ex), W.oy + ((double)(cmd[i].target / W.gw) + 0.5) * c.res - (s.y + s.ey));
         }
-        if ((use_pol && cmd[i].follow == 2) || cmd[i].follow == 1) {
+        if (cmd[i].follow == 1) {
           const sim::LowEp& L = low[i];
           const bool reached = L.reach_step == s.step && L.reached > 0;
           const bool off = !reached && L.hold != 0;
@@ -1376,7 +1308,7 @@ int run(const Args& a) {
     }
     // 장면 요약
     double n = N, succ = 0, cw = 0, cp = 0, idle = 0, trunc = 0, ts = 0, t_all = 0, d_all = 0, ch_all = 0, d_succ = 0, cov_s = 0;
-    double s_dec = 0, s_sw = 0, s_stall = 0, s_reach = 0, s_off = 0, s_nopath = 0, s_back = 0, s_slow = 0, s_nogoal = 0, s_avoided = 0, s_early = 0, s_steps = 0, s_tgt = 0, s_w = 0, s_pathless = 0, ep_stall = 0, s_rule = 0;
+    double s_dec = 0, s_sw = 0, s_stall = 0, s_reach = 0, s_off = 0, s_nopath = 0, s_back = 0, s_slow = 0, s_nogoal = 0, s_avoided = 0, s_early = 0, s_steps = 0, s_tgt = 0, s_w = 0, ep_stall = 0;
     double fc_s = 0, s_tn = 0, s_tsum = 0;
     std::FILE* f = nullptr;
     if (!a.out.empty()) {
@@ -1400,8 +1332,6 @@ int run(const Args& a) {
       if (dd == mdp::cur::kDeclareOk) { ts += first[i].t; d_succ += dist[i]; cov_s += first[i].coverage; }
       s_dec += n_dec[i]; s_sw += n_sw[i]; s_stall += n_stall[i]; s_reach += n_reach[i]; s_off += n_off[i]; s_nopath += n_nopath[i];
       s_back += n_back[i]; s_slow += n_slow[i]; s_nogoal += n_nogoal[i]; s_avoided += n_avoided[i]; s_early += n_early[i]; s_steps += nsteps[i]; s_tgt += tgt_d[i]; s_w += w_abs[i];
-      s_pathless += n_pathless[i];
-      s_rule += n_rule[i];
       ep_stall += n_stall[i] > 0;
       float span = 0.f;
       int nb = 0;
@@ -1422,17 +1352,17 @@ int run(const Args& a) {
       s_tn += t_n[i]; s_tsum += t_sum[i];
     }
     if (f) std::fclose(f);
-    const char* tag = use_pol ? "rl" : "rule";
+    const char* tag = "rule";
     std::printf("[%s %s] 판 %d: 성공 %.3f · 벽 충돌 %.3f · 사람 충돌 %.3f · 진행 없음 %.3f · 끊김 %.3f | 닫힘까지 %.1f s (성공 판 평균, 정답 덮음 %.3f) · 판 평균 길이 %.1f s\n", tag, W.name.c_str(), N, succ / n,
                 cw / n, cp / n, idle / n, trunc / n, succ > 0 ? ts / succ : 0.0, succ > 0 ? cov_s / succ : 0.0, t_all / n);
     std::printf("[%s %s] 평균 속도 %.3f m/s (걸음 거리 합 / 시간) · %.3f m/s (1 s 사이 직선 거리 합 / 시간 — frontier_run 과 같은 셈) · 이동 거리 모든 판 %.1f m · 성공 판 %.1f m\n", tag, W.name.c_str(),
                 t_all > 0 ? d_all / t_all : 0.0, t_all > 0 ? ch_all / t_all : 0.0, d_all / n, succ > 0 ? d_succ / succ : 0.0);
     const double nd = std::max(1.0, s_dec), ng = std::max(1.0, s_dec - s_nogoal), nst = std::max(1.0, s_steps);
-    std::printf("[%s %s] 위층: 판당 결정 %.1f 개 (그중 10 걸음 주기 밖 %.3f) · 목표 없는 결정 %.3f · 규칙 추종기에 맡긴 결정 %.3f · 목표 칸 바뀜 판당 %.1f 번 (%.1f s 에 한 번) · 피하는 칸이라 건너뛴 후보 %.0f 개 | 결정 때 목표까지 직선 거리 평균 %.2f m — "
-                "1 m 안 %.3f · 1~3 m %.3f · 3~15 m %.3f · 15 m 밖 %.3f\n", tag, W.name.c_str(), s_dec / n, s_early / nd, s_nogoal / nd, s_rule / nd, s_sw / n, s_sw > 0 ? t_all / s_sw : 0.0, s_avoided, s_tgt / ng,
+    std::printf("[%s %s] 위층: 판당 결정 %.1f 개 (그중 10 걸음 주기 밖 %.3f) · 목표 없는 결정 %.3f · 목표 칸 바뀜 판당 %.1f 번 (%.1f s 에 한 번) · 피하는 칸이라 건너뛴 후보 %.0f 개 | 결정 때 목표까지 직선 거리 평균 %.2f m — "
+                "1 m 안 %.3f · 1~3 m %.3f · 3~15 m %.3f · 15 m 밖 %.3f\n", tag, W.name.c_str(), s_dec / n, s_early / nd, s_nogoal / nd, s_sw / n, s_sw > 0 ? t_all / s_sw : 0.0, s_avoided, s_tgt / ng,
                 dbin[0] / ng, dbin[1] / ng, dbin[2] / ng, dbin[3] / ng);
-    std::printf("[%s %s] 아래층: 막힘 신호 %.0f 번 (선 판 비율 %.3f) · 통과 %.0f · 경로 끝이 목표 밖 %.0f · 경로 없음 %.0f | 걸음 비율 — 뒤로 %.3f · 0.1 m/s 아래 %.3f · 경로 없이 몬 걸음 %.3f · 평균 |ω| %.2f rad/s\n",
-                tag, W.name.c_str(), s_stall, ep_stall / n, s_reach, s_off, s_nopath, s_back / nst, s_slow / nst, s_pathless / nst, s_w / nst);
+    std::printf("[%s %s] 아래층: 막힘 신호 %.0f 번 (선 판 비율 %.3f) · 통과 %.0f · 경로 끝이 목표 밖 %.0f · 경로 없음 %.0f | 걸음 비율 — 뒤로 %.3f · 0.1 m/s 아래 %.3f · 평균 |ω| %.2f rad/s\n",
+                tag, W.name.c_str(), s_stall, ep_stall / n, s_reach, s_off, s_nopath, s_back / nst, s_slow / nst, s_w / nst);
     std::printf("[%s %s] 더: 지도가 처음 닫힌 시각 %.1f s (성공 판 평균) · 뒤로 걸음 비율 %.4f · 60° 이상 전환 판당 %.1f 번 · 평균 %.2f s (목표 쪽 방위 30° 안까지; 그 전에 목표가 바뀐 것은 뺌)\n",
                 tag, W.name.c_str(), succ > 0 ? fc_s / succ : 0.0, s_back / nst, s_tn / n, s_tn > 0 ? s_tsum * dt / s_tn : 0.0);
     std::printf("[%s %s] 벽 충돌 %.2f 건 / 100 m (벽 충돌 판 %.0f · 모든 판 이동 거리 합 %.0f m)\n", tag, W.name.c_str(), d_all > 0 ? cw / d_all * 100.0 : 0.0, cw, d_all);
@@ -1500,9 +1430,9 @@ int run(const Args& a) {
       std::printf("[%s %s] 끝 선언 판 평균: 끝 시각 %.1f s · 선언 때 지도 안 늘어난 시간 %.1f s · 규칙 대기 대비 아낀 시간 추정 %.1f s (맞은 선언 판 평균 = %.0f s − 선언 때 시계, 0 아래는 0 — 추정) · [시뮬 전용 진단, 판정에 안 씀] 정답 벽 덮음 %.3f\n",
                   tag, W.name.c_str(), nm > 0 ? t_m / nm : 0.0, nm > 0 ? idle_m / nm : 0.0, m_ok > 0 ? saved / m_ok : 0.0, c.close_idle_s, nm > 0 ? cov_m / nm : 0.0);
     }
-    if (fcand) std::printf("[%s %s] fuel 후보: 결정 %ld 개 · 후보 평균 %.1f 개 (상한 %d) · 고른 것이 지금 목표 %.3f · fuel 과 같음 %.3f%s\n", use_pol ? "rl" : "rule", W.name.c_str(), fc_dec, fc_dec ? (double)fc_n / fc_dec : 0.0,
+    if (fcand) std::printf("[%s %s] fuel 후보: 결정 %ld 개 · 후보 평균 %.1f 개 (상한 %d) · 고른 것이 지금 목표 %.3f · fuel 과 같음 %.3f%s\n", "rule", W.name.c_str(), fc_dec, fc_dec ? (double)fc_n / fc_dec : 0.0,
                            a.cand_cap, fc_dec ? (double)fc_cur / fc_dec : 0.0, fc_dec ? (double)fc_fuel / fc_dec : 0.0, upper == kDecider ? " (판단 모델 답 전 — fuel 기본값)" : "");
-    if (upper == kDecider && a.dec_cand_fuel) std::printf("[%s %s] 판단 모델 (fuel 후보): 답한 결정 %ld · fuel 과 같은 후보 %.3f · 지금 목표 %.3f\n", use_pol ? "rl" : "rule", W.name.c_str(), u_fq,
+    if (upper == kDecider && a.dec_cand_fuel) std::printf("[%s %s] 판단 모델 (fuel 후보): 답한 결정 %ld · fuel 과 같은 후보 %.3f · 지금 목표 %.3f\n", "rule", W.name.c_str(), u_fq,
                                                           u_fq > 0 ? (double)u_pickfuel / u_fq : 0.0, u_fq > 0 ? (double)u_pickcur / u_fq : 0.0);
     if (upper == kFuel || fcand) {
       fu::Stat F;
@@ -1538,7 +1468,6 @@ int run(const Args& a) {
     std::fflush(stdout);
   }
   cudaFree(d_act);
-  cudaFree(d_pol);
   return 0;
 }
 
@@ -1555,7 +1484,6 @@ int main(int argc, char** argv) {
     };
     try {
       if (k == "--scenes") { while (i + 1 < argc && argv[i + 1][0] != '-') a.scenes.push_back(argv[++i]); }
-      else if (k == "--policy") a.policy = nx();
       else if (k == "--episodes") a.episodes = std::stoi(nx());
       else if (k == "--seed") a.seed = std::stoull(nx());
       else if (k == "--people") a.people = std::stoi(nx());
@@ -1567,9 +1495,7 @@ int main(int argc, char** argv) {
       else if (k == "--no-avoid") a.avoid = false;
       else if (k == "--no-redecide") a.redecide = false;
       else if (k == "--no-stick") a.stick = false;
-      else if (k == "--hold") a.hold = std::stoi(nx());
       else if (k == "--stall-s") a.stall_s = std::stod(nx());
-      else if (k == "--rule-near") a.rule_near = std::stod(nx());
       else if (k == "--auto") a.autox = true;
       else if (k == "--upper") a.upper = nx();
       else if (k == "--rule-stick") a.rule.stick = std::stof(nx());
@@ -1639,17 +1565,10 @@ int main(int argc, char** argv) {
     }
   }
   if (a.scenes.empty()) {
-    std::fprintf(stderr, "combine_run --scenes a.scene [b.scene …] [--policy <아래층 체크포인트>] [--episodes 256] [--seed 1] [--people 0] [--eval-seed] [--out <접두사>] [--no-avoid] [--no-redecide] [--no-stick]\n");
+    std::fprintf(stderr, "combine_run --scenes a.scene [b.scene …] [--episodes 256] [--seed 1] [--people 0] [--eval-seed] [--out <접두사>] [--no-avoid] [--no-redecide] [--no-stick]\n");
     return 2;
   }
   try {
-    if (!a.policy.empty()) {   // 아래층 관측 설정(SIM_LOW_*)은 체크포인트 꼬리를 기본으로 — 환경변수가 명시적으로 다르면 멈춤 (sim/include/low_ckpt_cfg.h)
-      std::string log;
-      const ckcfg::Kv ck = ckcfg::apply(a.policy, &log);
-      std::printf("%s\n", log.c_str());
-      const std::string w = ckcfg::hash_warning(ck, "env_yaml_fnv", a.env, "설정 파일 env.yaml");
-      if (!w.empty()) std::fprintf(stderr, "\n*** %s ***\n\n", w.c_str());
-    }
     return run(a);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "combine_run: %s\n", e.what());

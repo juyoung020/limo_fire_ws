@@ -3,7 +3,7 @@
 <package format="3">
   <name>limo_fire_rl</name>
   <version>0.1.0</version>
-  <description>탐사 노드: RL 정책(학습 시뮬과 같은 관측 코드로 1 s 마다 프론티어 후보 하나를 Nav2 목표로)과 프론티어 탐사(탐사 기준선과 같은 찾기·고르기)</description>
+  <description>탐사 노드: 합친 탐사 low_rl(위층 판단 모델·fuel·slot0 + 아래층 A* 경로 추종, 시뮬과 같은 코드)과 프론티어 탐사(탐사 기준선과 같은 찾기·고르기)</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">김주영</maintainer>
   <license>MIT</license>
 
