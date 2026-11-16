@@ -416,7 +416,7 @@ int main(int argc, char** argv) {
           ++c_dec;
           c_ms += b.ms; c_ms_max = std::max(c_ms_max, b.ms);
           for (int q = 0; q < 6; ++q) c_part[q] += b.ms_part[q];
-          bool same = a.c.size() == b.c.size() && a.rotate == b.rotate && a.n_clu == b.n_clu && a.n_dormant == b.n_dormant;
+          bool same = a.c.size() == b.c.size() && a.rotate == b.rotate && a.n_clu == b.n_clu && a.n_dormant == b.n_dormant && a.n_gaveup == b.n_gaveup;
           for (size_t i = 0; same && i < a.c.size(); ++i) same = std::memcmp(&a.c[i], &b.c[i], sizeof(cand::Cand)) == 0;
           if (!same) { ++c_diff; if (first_bad < 0) first_bad = t; }
           c_n += (long)b.c.size(); c_rot += b.rotate; c_none += b.c.empty(); c_dorm += b.n_dormant; c_near += b.n_near; c_pocket += b.n_pocket;
@@ -717,8 +717,8 @@ int main(int argc, char** argv) {
     if (use_dec)
       std::printf("판단 모델: 주기 %d 걸음 · 지연 %d 걸음 · 보냄 %ld · 답 적용 %ld · 후보 안 맞음 %ld · slot0 대신 %ld · 본문 다름 %ld | ", dp.period_steps, ms.lat, n_sent_all + us.n_sent(), n_ans,
                   n_nomatch_all + us.n_nomatch(), n_fb_all + us.n_fallback(), d_body);
-    std::printf(use_dec ? "관측 %ld 번 · 판 %ld · 위층 결정 %ld (판단 모델 후보 %ld · slot0 차례 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n" : "관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
-                why_n[2], n_sw, cs.n_reach(), cs.n_stall());
+    std::printf(use_dec ? "관측 %ld 번 · 판 %ld · 위층 결정 %ld (판단 모델 후보 %ld · slot0 차례 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld · 다가가지 못함 %ld\n" : "관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld · 다가가지 못함 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
+                why_n[2], n_sw, cs.n_reach(), cs.n_stall(), cs.n_far());
     if (cand_on && c_dec) {
       std::printf("후보 생성 (scripts/cand_view.h): 결정 %ld · 두 쪽 다름 %ld · 평균 후보 %.2f 개 · 후보 0 %ld (제자리 회전 %ld) · 쉬는 덩어리 평균 %.2f (로봇 곁 %.2f · 구멍 %.2f) · 지난 칸 그대로 %.2f · 시간 평균 %.2f ms 최대 %.2f ms\n",
                   c_dec, c_diff, (double)c_n / c_dec, c_none, c_rot, (double)c_dorm / c_dec, (double)c_near / c_dec, (double)c_pocket / c_dec, c_n ? (double)c_kept / c_n : 0.0, c_ms / c_dec, c_ms_max);

@@ -30,6 +30,11 @@ struct Params {
   bool use_fuel = true;     // false = combine_run --upper slot0 (fuel 을 안 부르고 늘 아래 slot0 차례 — 피하지 않는 첫 후보)
   fu::Opt fuel;             // --fuel-* (부르는 쪽이 채움)
   int rough_steps = 100;    // 후보 모드 "대충 다 앎" 끝: 후보 0 개이고 남은 덩어리가 모두 구멍인 상태가 이 걸음 수 이어지면 (EnvCfg::close_idle_s — 닫힘 끝과 같은 10 s)
+  // 목표에 다가가지 못함: 같은 목표(fail_m 안)를 따라가는 동안 남은 경로 길이가 approach_m 넘게 줄지 않고 approach_steps 걸음이 지나면 실패(시간 넘김)로 보고
+  // 그 칸 피함 · 다시 결정. 막힘 신호(정체 — 0.3 m 안에 10 s)와 달리 움직이는데 목표에 못 닿는 것: 촘촘한 깊이 층(layer_grid)에서 두 갈래 길이 번갈아 막혀
+  // 복도를 오가던 것 (hssd_103997718 씨앗 4 — sim/analysis/real_limo.md "층 전용 격자"). Nav2 progress_checker(움직임만 봄)에 목표 쪽 진척을 더한 것. 0 = 끔.
+  int approach_steps = 200;   // 20 s (잠정)
+  float approach_m = 0.5f;    // m (Nav2 progress_checker required_movement_radius 와 같은 값)
   int cand_commit = 0;      // 후보 0 번 규칙의 붙들기: 0 = 고른 차례 점수(겹침 뺀 값)로 keep 배 · 1 = 겹침 안 뺀 점수(넓이/시간)로 keep 배 (FUEL 처럼 새 것이 margin 넘게 좋을 때만 바꿈)
   bool use_cand = false;    // 위층 후보 = scripts/cand_view.h (서는 자리 ≤ 8 개, 안정 번호). decide 는 후보 고르기(cand_pick)로, 판단 모델은 build_cands → go_cand
   cand::Opt cand;
@@ -40,6 +45,7 @@ struct Params {
     p.bl_r = c.rec_bl_r > 0.f ? c.rec_bl_r : 0.5f;
     p.bl_steps = c.rec_bl_steps > 0 ? c.rec_bl_steps : (int)std::lround(10.0 / dt);
     p.rough_steps = std::max(1, (int)std::lround(c.close_idle_s / dt));
+    p.approach_steps = (int)std::lround(20.0 / dt);
     return p;
   }
 };
@@ -124,8 +130,8 @@ class Ctl {
     in.reach = v.reach;
     in.avoid_s = (float)(p_.bl_steps * (double)v.c->substeps * v.c->dt);   // 실패 뒤 피하는 시간과 같게
     cout_ = cand::build(in, p_.cand, cmem_, cwork_);
-    // 대충 다 앎 판정: 후보 0 · 남은 덩어리 모두 구멍(대충 아는 굵은 칸 안) — 덩어리 0 개도
-    if (cout_.c.empty() && cout_.start_free && cout_.n_pocket == cout_.n_dormant) { if (rough_since_ < 0) rough_since_ = s.step; }
+    // 대충 다 앎 판정: 후보 0 · 남은 덩어리 모두 구멍(대충 아는 굵은 칸 안)이거나 버림(같은 자리 실패 give_up 번) — 덩어리 0 개도
+    if (cout_.c.empty() && cout_.start_free && cout_.n_pocket + cout_.n_gaveup == cout_.n_dormant) { if (rough_since_ < 0) rough_since_ = s.step; }
     else rough_since_ = -1;
     return cout_;
   }
@@ -197,7 +203,15 @@ class Ctl {
       if (p_.avoid) redo_ = true;
     }
     sig_prev_ = rl.stall;
-    if (cmd_.follow != 0) {   // fuel follow 1
+    const bool far_ = approach_check(s);   // 목표에 다가가지 못함 (approach_steps)
+    if (far_) {
+      if (p_.use_cand) cmem_.note_end(cur_id_, s.step, cand::kTimeout);
+      ++n_far_;
+      avoid_add(cmd_.target, s.step);
+      fmem_ = fu::Mem();
+      redo_ = true;
+    }
+    if (cmd_.follow != 0 && !far_) {   // fuel follow 1
       const bool reached = L.reach_step == s.step && L.reached > 0;
       const bool off = !reached && L.hold != 0;
       const bool nopath = !reached && !off && s.step > last_dec_ && (s.goal_cell != cmd_.target || s.p_n <= 0);
@@ -225,6 +239,7 @@ class Ctl {
   long n_dec() const { return n_dec_; }
   long n_reach() const { return n_reach_; }
   long n_stall() const { return n_stall_; }
+  long n_far() const { return n_far_; }   // 목표에 다가가지 못해 버린 수 (approach_steps)
   const fu::Mem& mem() const { return fmem_; }
   bool avoided(int cell, int step) const {
     if (!p_.avoid || cell < 0) return false;
@@ -259,6 +274,28 @@ class Ctl {
   long n_refail_ = 0;
   int cand_step_ = -1;   // build_cands 를 마지막으로 부른 걸음
   int rough_since_ = -1;   // 후보 0 · 모두 구멍인 결정이 이어진 첫 걸음 (아니면 −1)
+  int ap_tgt_ = -1, ap_step_ = 0;   // 다가감 재기: 기준 목표 칸 · 남은 길이가 마지막으로 줄어든 걸음
+  float ap_best_ = 0.f;             // 그때 남은 경로 길이 (m)
+  long n_far_ = 0;
+  // 목표에 다가가지 못함: 목표가 fail_m(1 m) 넘게 옮기면 새로 잼. 남은 길이 = 지금 구간 다음 경로 점들 사이 길이 합 (칸 × 칸 크기) — 경로가 있을 때만 줄었나 봄
+  bool approach_check(const sim::EnvState& s) {
+    if (p_.approach_steps <= 0 || cmd_.follow == 0 || cmd_.target < 0) { ap_tgt_ = -1; return false; }
+    if (ap_tgt_ < 0 || std::hypot((float)(cmd_.target % gw_ - ap_tgt_ % gw_), (float)(cmd_.target / gw_ - ap_tgt_ / gw_)) * res_ > 1.0f) {
+      ap_tgt_ = cmd_.target;
+      ap_step_ = s.step;
+      ap_best_ = 3e38f;
+    }
+    if (s.goal_cell == cmd_.target && s.p_n > 0) {
+      float rem = 0.f;
+      for (int j = std::max(0, s.p_i); j + 1 < s.p_n; ++j)
+        rem += std::hypot((float)(s.wp[2 * j + 2] - s.wp[2 * j]), (float)(s.wp[2 * j + 3] - s.wp[2 * j + 1]));
+      rem *= res_;
+      if (rem < ap_best_ - p_.approach_m || ap_best_ == 3e38f) { ap_best_ = rem; ap_step_ = s.step; }
+    }
+    if (s.step - ap_step_ < p_.approach_steps) return false;
+    ap_tgt_ = -1;   // 버린 뒤 새 목표에서 새로
+    return true;
+  }
   void avoid_add(int cell, int step) {
     if (!p_.avoid || cell < 0) return;
     av_cell_[av_n_ % kBl] = cell;

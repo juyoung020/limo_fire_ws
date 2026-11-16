@@ -37,6 +37,9 @@ struct Opt {
   float margin = 0.25f;       // m — 시점의 막힘 간격 = 몸통 반경(close_radius) + 이것. 라이다 면(0.11 m) 아래 가구 다리·받침·낮은 물체는 로봇 지도에 없어
                               //   막힘 곁 시점은 실제로 못 서는 일이 많음 — 정답 격자로 갈 수 있는 후보 0.72~0.79 → 0.88~0.91 (잰 값: 0.05 → 0.25, 시험·실물 방 장면)
   float margin_min = 0.05f;   // m — margin 으로 시점이 없는 덩어리는 이 간격으로 한 번 더 (좁은 문·복도, 잠정)
+  int give_up = 2;            // 고른 시점에서 fail_m 안 실패 자리(경로 없음·막힘·정체·경로 끝 밖)가 이만큼이면 그 덩어리를 버림(쉼 — '대충 다 앎' 판정에선 구멍과 같이 봄).
+                              //   0 = 끔. 깊이 층이 촘촘하면(layer_grid) 끝 무렵 남은 시점이 층 가구에 막혀 실패 → 10 s 피함 → 다시 고름을 되풀이해 진행 없음으로 끝남
+                              //   (sim/analysis/real_limo.md "층 전용 격자"). FUEL 처럼 못 가는 프론티어를 포기. 2 = 잰 값 아님 — 같은 자리 두 번 실패
   // 2. 덩어리
   float merge_m = 1.0f;       // m — 덩어리 합침 (fuel_upper.h Opt::merge_m 과 같은 값)
   float split_m = 1.5f;       // m — 덩어리 나눔 (fuel_upper.h Opt::split_m)
@@ -100,6 +103,7 @@ struct Out {
   int n_dormant = 0;      // 시점이 없어 쉬는 덩어리
   int n_near = 0;         // 그중 로봇 곁(대표 칸이 vp_min 안) — 로봇 몸·뒤 사각지대 몫
   int n_pocket = 0;       // 그중 구멍: 덩어리 둘레 굵은 칸이 모두 이미 대충 앎 (coarse_m) — 값 0 으로 쉼
+  int n_gaveup = 0;       // 그중 버림: 시점 곁 실패가 Opt::give_up 번 이상 (구멍과 따로 셈)
   int rotate = 0;         // 후보 0 개인데 쉬는 덩어리가 모두 로봇 곁 → 제자리 회전으로 봄
   int reused = 0;         // 프론티어 찾기를 같은 걸음 관측 것으로 (In::reach)
   double ms = 0;          // 이 결정에 걸린 시간 (ms)
@@ -536,6 +540,15 @@ struct Run {
     }
     return L.vp >= 0;
   }
+  // 버림: 시점 L.vp 에서 fail_m 안 실패 자리가 give_up 개 이상 (describe 의 fail_near 와 같은 셈)
+  bool gave_up(int vp) const {
+    if (o.give_up <= 0) return false;
+    const double wx = W.ox + (vp % gw + 0.5) * res, wy = W.oy + (vp / gw + 0.5) * res;
+    int k = 0;
+    for (const Mem::Fail& f : mem.fails)
+      if (std::hypot(f.x - wx, f.y - wy) < in.fail_m && ++k >= o.give_up) return true;
+    return false;
+  }
   // 쉬는 덩어리 (그림 · 회전 판정용 수)
   void rest(const fu::Node& nd, bool is_pocket) {
     out.n_dormant += 1;
@@ -672,6 +685,7 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
     detail::Run::Live L;
     const bool is_pocket = R.pocket(nodes[k]);
     if (is_pocket || !R.best_view(k, nodes[k], L)) { R.rest(nodes[k], is_pocket); continue; }
+    if (R.gave_up(L.vp)) { R.rest(nodes[k], false); out.n_gaveup += 1; continue; }   // 같은 자리 실패 give_up 번 — 버림
     R.match(nodes[k], L, used_prev);
     live.push_back(L);
   }
