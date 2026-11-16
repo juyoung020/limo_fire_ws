@@ -10,6 +10,8 @@
 //   멈추고 꺼짐, contact_resume_s > 0 이면 그만큼 뒤 저절로 켬) · 끝(지도 닫힘 + 진척 없음 10 s · 진척 없음 · 시간 — 시뮬 판 끝 규칙).
 // 위층 목표가 없는 걸음(판 시작·프론티어 없음)은 시뮬과 같게 규칙 추종기의 제자리 회전 (env.h apply_action 계층형 가지 — RobotEnv::low_act).
 // dry_run:=true (기본): /cmd_vel 발행자를 아예 안 만들고 같은 명령을 ~/cmd_debug 에만. 위층 목표는 upper:=topic 이면 ~/goal (시험용).
+// lower:=rule: 아래층을 RL 대신 시뮬 규칙 추종기로 (combine_run 을 --policy 없이 — 로봇 지도 A* plan_ref + path_step_* 추종기, RobotEnv::low_act 계층형 가지).
+//   체크포인트 없이 돈다 (관측 설정은 env.yaml 그대로 — combine_run 규칙과 같음). 목표 넘기기는 low_explore_ctl.h 규칙 가지. 멈춤 조건은 그대로
 // upper:=decider: 위층을 로봇 안 llama-server 판단 모델에 (scripts/low_decider.h — decider_period 마다 비동기 요청, 기다리는 동안 지금 목표로 몰고, 답이 오면 바꿈).
 #include <chrono>
 #include <cmath>
@@ -54,6 +56,7 @@ class LowRlNode : public rclcpp::Node {
     dry_run_ = declare_parameter<bool>("dry_run", true);
     enabled_ = declare_parameter<bool>("enabled", false);
     upper_ = declare_parameter<std::string>("upper", "fuel");
+    lower_ = declare_parameter<std::string>("lower", "rl");
     map_frame_ = declare_parameter<std::string>("map_frame", "map");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
     tf_timeout_ = declare_parameter<double>("tf_timeout", 0.2);
@@ -99,8 +102,11 @@ class LowRlNode : public rclcpp::Node {
     dp.input = dec::input_of(dec_input);
     if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "topic" && upper_ != "decider") throw std::runtime_error("upper 는 fuel · slot0 · topic · decider");
     if (upper_ == "decider" && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("decider_input 은 text · image · both (all 은 시뮬 장면 그림이라 실물에 없음)");
-    if (ckpt_.empty()) throw std::runtime_error("checkpoint 파라미터 (아래층 체크포인트 .bin) 가 비었음");
-    {
+    if (lower_ != "rl" && lower_ != "rule") throw std::runtime_error("lower 는 rl · rule");
+    rule_ = lower_ == "rule";
+    if (rule_ && upper_ == "topic") throw std::runtime_error("lower:=rule 은 upper fuel · slot0 · decider 만");
+    if (!rule_ && ckpt_.empty()) throw std::runtime_error("checkpoint 파라미터 (아래층 체크포인트 .bin) 가 비었음");
+    if (!rule_) {
       std::string log;
       const ckcfg::Kv ck = ckcfg::apply(ckpt_, &log);   // load_env_cfg 앞에 — 체크포인트 관측 설정을 환경변수로 (다르게 명시한 환경변수면 멈춤)
       RCLCPP_INFO(get_logger(), "%s", log.c_str());
@@ -117,14 +123,17 @@ class LowRlNode : public rclcpp::Node {
       RCLCPP_WARN(get_logger(), "dry run: 닿음 신호에서 멈춤(명령 대비 바퀴 정지)을 뺌 — 명령이 실제로 안 나가서");
     }
     env_ = std::make_unique<RobotEnv>(hc_, true, ctl_upper() || upper_ == "decider");
-    pol_.load(ckpt_);
-    if (pol_.n1d() != env_->low_1d_n())
-      throw std::runtime_error("체크포인트 1D " + std::to_string(pol_.n1d()) + " 칸 ≠ 관측 설정 " + std::to_string(env_->low_1d_n()) + " 칸");
-    if (env_->low_img_n() != mdp::low::IMG_WIDE) throw std::runtime_error("넓은 지도 정책만 (SIM_LOW_WIDE=1)");
+    if (!rule_) {
+      pol_.load(ckpt_);
+      if (pol_.n1d() != env_->low_1d_n())
+        throw std::runtime_error("체크포인트 1D " + std::to_string(pol_.n1d()) + " 칸 ≠ 관측 설정 " + std::to_string(env_->low_1d_n()) + " 칸");
+      if (env_->low_img_n() != mdp::low::IMG_WIDE) throw std::runtime_error("넓은 지도 정책만 (SIM_LOW_WIDE=1)");
+    }
     const sim::EnvCfg& c = env_->cfg();
     if (!(max_speed_ > 0.0)) max_speed_ = c.act_v_fwd;   // 기본 = 학습 한도 (자르지 않음)
     lp_ = lxc::Params::from_cfg(c);
     lp_.fuel = fo;
+    lp_.rule = rule_;   // 아래층 규칙: 목표 넘기기 규칙 가지 (combine_run --policy 없음)
     lp_.use_fuel = upper_ == "fuel";   // slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick)
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
     if (upper_ == "decider") {
@@ -135,10 +144,12 @@ class LowRlNode : public rclcpp::Node {
       RCLCPP_INFO(get_logger(), "위층 판단 모델 %s · 입력 %s · 프롬프트 %d · 주기 %.1f s (%d 걸음) · 한도 %.1f s — 기다리는 동안 지금 목표로, 목표가 죽으면 slot0 차례로 바로",
                   dec_url.c_str(), dec_input.c_str(), dp.prompt, dp.period_steps * dt(), dp.period_steps, dp.timeout_steps * dt());
     }
+    const std::string lower_desc = rule_ ? std::string("규칙 추종기 (A* + path_step — combine_run --policy 없음)") : "RL 정책 " + ckpt_;
     RCLCPP_INFO(get_logger(),
-                "아래층 정책 %s (반복 %d, GRU %d, 1D %d) · 위층 %s (fuel 시간 %d 전역 %d 시점 %d v %.3f ω %.3f t0 %.2f) · 결정 %d 걸음 · 피하기 %.2f m %.0f s · 닿음 마스크 %d "
+                "아래층 %s (반복 %d, GRU %d, 1D %d) · 위층 %s (fuel 시간 %d 전역 %d 시점 %d v %.3f ω %.3f t0 %.2f) · 결정 %d 걸음 · 피하기 %.2f m %.0f s · 닿음 마스크 %d "
                 "멈춤 %d 걸음 가속 %.1f m/s² · 최고 속도 %.2f m/s%s — %s",
-                ckpt_.c_str(), pol_.iteration(), pol_.hidden(), pol_.n1d(), upper_.c_str(), fo.time, fo.global, fo.vp, fo.v_eff, fo.w_eff, fo.t0, lp_.decide_steps,
+                lower_desc.c_str(), rule_ ? 0 : pol_.iteration(), rule_ ? 0 : pol_.hidden(),
+                rule_ ? 0 : pol_.n1d(), upper_.c_str(), fo.time, fo.global, fo.vp, fo.v_eff, fo.w_eff, fo.t0, lp_.decide_steps,
                 lp_.bl_r, lp_.bl_steps * dt(), c.con_mask, c.con_stall, c.con_acc, max_speed_, max_speed_ < c.act_v_fwd ? " (학습 한도보다 낮춤)" : "",
                 dry_run_ ? "dry run: /cmd_vel 안 냄, ~/cmd_debug 에만" : "실제 주행: /cmd_vel 냄");
     if (!record_.empty()) rec_ = std::make_unique<lowrec::Writer>(record_, hc_, env_->low_img_n(), env_->low_1d_n());
@@ -402,11 +413,12 @@ class LowRlNode : public rclcpp::Node {
       publish_goal(topic_goal_);
     }
     const auto t2 = clk::now();
+    if (rule_) env_->set_slot(ctl_->slot());   // 규칙 추종기: 경로 계획 후보 (combine_run 의 act[0] — 다음 결정까지 그대로)
     env_->low_obs();
     if (rec_) rec_->obs(env_->low_img(), env_->low_1d());
     const auto t3 = clk::now();
     float a[mdp::low::ACT] = {0.f, 0.f, 0.f}, v = 0.f, w = 0.f;
-    if (running()) pol_.act(env_->low_img(), env_->low_1d(), a);   // 꺼짐·멈춤이면 정책을 안 돌리고 행동 0 (명령 0)
+    if (running() && !rule_) pol_.act(env_->low_img(), env_->low_1d(), a);   // 꺼짐·멈춤이면 정책을 안 돌리고 행동 0 (명령 0)
     const auto t4 = clk::now();
     if (running()) env_->low_act(a, &v, &w);
     else env_->hold();   // 멈춤: 명령 0
@@ -471,7 +483,8 @@ class LowRlNode : public rclcpp::Node {
     pub_goal_->publish(ma);
   }
 
-  std::string env_yaml_, ckpt_, upper_, map_frame_, base_frame_, record_, state_, why_;
+  bool rule_ = false;   // lower:=rule
+  std::string env_yaml_, ckpt_, upper_, lower_, map_frame_, base_frame_, record_, state_, why_;
   bool dry_run_ = true, enabled_ = false, started_ = false, finished_ = false, stale_ = false, require_rc_ = true, rc_auto_ok_ = false, topic_new_ = false;
   double tf_timeout_ = 0.2, depth_timeout_ = 0.5, input_timeout_ = 0.3, rc_timeout_ = 0.5, contact_resume_s_ = 0.0, max_speed_ = -1.0, contact_t_ = -1.0;
   double sum_step_ = 0, sum_obs_ = 0, sum_pol_ = 0, sum_dec_ = 0, max_dec_ = 0;

@@ -18,7 +18,8 @@ void RobotEnv::init(const sim::EnvHostCfg& hc, bool low, bool explore) {
   c.curriculum = 0;                // 단계·오차 배율 없음 (평가와 같음)
   low_on_ = low;
   if (low) {   // 아래층 정책: train --low 와 같은 설정 (scripts/train.cpp run_low — 목표는 위층이 주지만 관측 길은 학습 판 low_auto 1 그대로)
-    if (!c.lo_goalonly) throw std::runtime_error("RobotEnv 아래층 모드: 목적지만(SIM_LOW_GOALONLY=1) 정책만 — 경로 판은 실물 경로 계획이 없음");
+    // 경로 판(목적지만 아님)은 합친 탐사 모드만 — low_obs 가 plan_ref 로 경로를 짬 (아래층 규칙 lower:=rule · combine_run --policy 없음은 env.yaml 그대로라 경로 판)
+    if (!c.lo_goalonly && !explore) throw std::runtime_error("RobotEnv 아래층 학습 판 모드: 목적지만(SIM_LOW_GOALONLY=1) 정책만 — 경로 판은 합친 탐사 모드에서만");
     c.low_stat = c.low_task = c.low_rl = c.low_auto = 1;
     c.low_explore = 0;
     c.low_solo = 0;
@@ -325,8 +326,9 @@ void RobotEnv::low_obs() {
   if (sim::lowrl_due(b_, e_, 0)) {
     sim::camlayer_ref(b_, e_, 0);
     if (sim::lowrl_replan(b_, e_, 0) && explore_) {
-      // 합친 탐사: env_ref.cpp low_prepare_env 의 plan_cpu 와 같은 부름 — 정책 환경(follow 2)은 0 번 칸(LowCmd 목표), 아니면 행동 칸 −1(목표 없음)
-      sim::plan_ref(b_, e_, 0, sim::lowrl_policy(b_, 0) ? 0 : -1);
+      // 합친 탐사: env_ref.cpp low_prepare_env 의 plan_cpu 와 같은 부름 — 정책 환경(follow 2)은 0 번 칸(LowCmd 목표), 아니면 행동 칸(set_slot — slot_of 그대로.
+      // RL 은 −1 = 목표 없음, 아래층 규칙은 고른 후보 번호 · fuel 이면 0)
+      sim::plan_ref(b_, e_, 0, sim::lowrl_policy(b_, 0) ? 0 : sim::slot_of(b_, slot_));
     } else if (sim::lowrl_replan(b_, e_, 0)) {
       if (lowcmd_[0].target >= 0) throw std::runtime_error("RobotEnv::low_obs: 경로 계획이 필요한 길 (목적지만 정책 환경이 아님)");
       sim::goal_only_issue(b_, e_, 0);   // 목표 없음: 시뮬 plan_cpu 의 tgt < 0 가지와 같은 관측 (goal_cell −1 · 경로 없음)

@@ -10,6 +10,7 @@
 
 ### Added
 
+- 로봇 탐사 아래층을 RL 대신 시뮬 규칙 추종기(A* 경로 + 따라가기)로 돌릴 수 있음 (`lower:=rule`)
 - 로봇 탐사 위층을 로봇 안 판단 모델(llama-server)에 맡겨 몇 초마다 고르게 할 수 있음 (`upper:=decider`)
 - 로봇 탐사 위층을 가장 가까운 후보로 고르는 방식으로 바꿔 돌릴 수 있음 (`upper:=slot0`)
 - 로봇 탐사를 한 줄로 띄우는 launch(`explore_fuel_rl.launch.xml`) — 목표가 없을 때 시뮬처럼 제자리에서 돎

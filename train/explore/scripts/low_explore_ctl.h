@@ -8,7 +8,10 @@
 //   걸음 뒤: 막힘 신호(LowRl::stall 올라감) → 그 칸 피함 · fuel 기억 비움 · 다시 결정 combine_run.cpp:1326-1335
 //            통과(reach_step) · 경로 끝 밖(hold) · 경로 없음 → fuel 기억 비움 · (경로 끝 밖·경로 없음은 그 칸 피함) · 다시 결정  combine_run.cpp:1351-1371
 // 판 끝(닫힘 + 진척 없음 10 s 성공 · 진척 없음 · 시간 · 닿음)은 환경(finish_step — low_explore 합친 탐사 규칙)이 정하고 부르는 쪽이 읽는다 (combine_run.cpp:1270-1272).
-// 다른 점은 없다. 단 combine_run 은 LowCmd{−1, 0} 인 걸음을 시뮬 규칙 추종기(목표 없음 = 제자리 회전)에 맡기는데, 실물 노드는 규칙 층이 없어 그 걸음 명령이 0 (README).
+// LowCmd{−1, 0} 인 걸음은 두 쪽 다 시뮬 규칙 추종기(env.h apply_action 계층형 가지 — 행동 칸이 −1 이면 제자리 회전).
+// 아래층 규칙(rule — combine_run 을 --policy 없이): 아래층이 RL 대신 규칙 추종기(A* plan_ref + path_step_*). 목표 넘기기만 다름 (combine_run.cpp:1124-1126 · 1143-1146):
+//   fuel 칸 → LowCmd{칸, 1} · 행동 칸 0. 그 밖(slot0 · 판단 모델 · fuel 이 못 냄) → LowCmd{−1, 0} · 행동 칸 = 고른 후보 번호(없으면 −1), stick 없음.
+//   행동 칸은 다음 결정까지 그대로 (combine_run 의 act 배열) — slot() 으로 꺼내 준비 단계(경로 계획 후보)에 넘김. 걸음 뒤 통과·경로 끝 밖·경로 없음은 follow 1 에서도 셈
 #pragma once
 #include <cmath>
 #include <cstdint>
@@ -24,6 +27,7 @@ struct Params {
   float bl_r = 0.5f;        // 피하는 칸 반경 (m) — EnvCfg::rec_bl_r (0 이면 0.5)
   int bl_steps = 100;       // 피하는 시간 (걸음) — EnvCfg::rec_bl_steps (0 이면 10 s)
   bool avoid = true, redecide = true, stick = true;   // combine_run 기본 (--no-avoid · --no-redecide · --no-stick 로 끔)
+  bool rule = false;        // 아래층 규칙 추종기 (combine_run 을 --policy 없이 — 위 머리말)
   bool use_fuel = true;     // false = combine_run --upper slot0 (fuel 을 안 부르고 늘 아래 slot0 차례 — 피하지 않는 첫 후보 · stick)
   fu::Opt fuel;             // --fuel-* (부르는 쪽이 채움)
   static Params from_cfg(const sim::EnvCfg& c) {
@@ -71,7 +75,16 @@ class Ctl {
     ++n_dec_;
     int tgt = pick >= 0 ? v.cand[pick] : -1;
     int w = 1;
-    if (tcell >= 0) {   // fuel 칸 그대로 (combine_run.cpp:1118-1123)
+    if (tcell >= 0 && p_.rule) {   // 규칙 추종기 + fuel: 목표 칸을 그대로 따라감 (combine_run.cpp:1124-1126)
+      tgt = tcell;
+      w = 0;
+      cmd_ = sim::LowCmd{tgt, 1};
+      slot_ = 0;
+    } else if (p_.rule) {          // 규칙 추종기: 후보 번호 그대로 (combine_run.cpp:1149-1151)
+      cmd_ = sim::LowCmd{-1, 0};
+      slot_ = pick;
+      w = pick >= 0 ? 1 : 2;
+    } else if (tcell >= 0) {   // fuel 칸 그대로 (combine_run.cpp:1118-1123)
       tgt = tcell;
       w = 0;
       if (tgt != cmd_.target || cmd_.follow != 2) sw_step_ = s.step;
@@ -103,6 +116,12 @@ class Ctl {
     redo_ = false;
     last_dec_ = s.step;
     ++n_dec_;
+    if (p_.rule) {   // 규칙 추종기: 후보 번호 그대로 · stick 없음 (combine_run.cpp:1149-1151)
+      cmd_ = sim::LowCmd{-1, 0};
+      slot_ = pick;
+      if (why) *why = pick >= 0 ? 1 : 2;
+      return cmd_;
+    }
     int tgt = pick >= 0 ? v.cand[pick] : -1;
     if (p_.stick && pick >= 0 && ((v.cand_cur >> pick) & 1u) && live(s)) tgt = cmd_.target;
     int w = 1;
@@ -118,6 +137,7 @@ class Ctl {
   }
   // 지금 목표가 살아 있나 (아래층이 그 칸으로 가는 경로가 있고 피하는 칸이 아님)
   bool live(const sim::EnvState& s) const {
+    if (p_.rule) return slot_ >= 0 && s.goal_cell >= 0 && s.p_n > 0 && !avoided(s.goal_cell, s.step);   // 규칙: 고른 후보로 가는 경로가 있음
     return cmd_.follow == 2 && cmd_.target >= 0 && cmd_.target == s.goal_cell && s.p_n > 0 && !avoided(cmd_.target, s.step);
   }
   bool redo_pending() const { return redo_; }   // 막힘 · 통과 · 경로 끝 밖 · 경로 없음 뒤 바로 다시 결정해야 함
@@ -130,7 +150,7 @@ class Ctl {
       if (p_.avoid) redo_ = true;
     }
     sig_prev_ = rl.stall;
-    if (cmd_.follow == 2) {
+    if (cmd_.follow != 0) {   // RL follow 2 · 규칙 + fuel follow 1 (combine_run.cpp:1354)
       const bool reached = L.reach_step == s.step && L.reached > 0;
       const bool off = !reached && L.hold != 0;
       const bool nopath = !reached && !off && s.step > last_dec_ && (s.goal_cell != cmd_.target || s.p_n <= 0);
@@ -147,6 +167,7 @@ class Ctl {
   void restart() { *this = Ctl(p_); }
   void force_redo() { redo_ = true; }   // 실물: 다시 켤 때 바로 결정 (시뮬에는 없음 — 판 중간에 멈추지 않으므로)
   const sim::LowCmd& cmd() const { return cmd_; }
+  int slot() const { return slot_; }   // 준비 단계 행동 칸 (규칙: 고른 후보 번호 · fuel 이면 0 · 없으면 −1. RL 은 늘 −1 — 정책 환경은 계획 칸 0)
   long n_dec() const { return n_dec_; }
   long n_reach() const { return n_reach_; }
   long n_stall() const { return n_stall_; }
@@ -173,6 +194,7 @@ class Ctl {
   int sig_prev_ = 0, last_dec_ = 0, sw_step_ = 0;
   long n_dec_ = 0, n_reach_ = 0, n_stall_ = 0;
   sim::LowCmd cmd_{-1, 0};
+  int slot_ = -1;
   fu::Mem fmem_;
   void avoid_add(int cell, int step) {
     if (!p_.avoid || cell < 0) return;

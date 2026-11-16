@@ -4,6 +4,8 @@
 // 아래층 행동은 실물 CPU 정책(network/policy_cpu.h LowPolicy)이 RobotEnv 관측으로 낸 것을 두 쪽에 같이 준다. 목표 없는 걸음은 두 쪽 다 규칙 추종기(제자리 회전).
 //   low_explore_check <장면.scene> … --ckpt 아래층.bin [--steps 1500] [--seed 1] [--people 0] [--upper fuel|slot0] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
 //   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 실물 노드 upper:=slot0)
+//   --lower rule: 아래층 규칙 추종기 (combine_run 을 --policy 없이 — 실물 노드 lower:=rule). --ckpt 없이, 관측 설정은 env.yaml 그대로.
+//                 준비 단계 행동 칸 = 위층 Ctl::slot() (combine_run 의 act[0] — 규칙: 후보 번호 · fuel 이면 0), 두 쪽 다 RobotEnv::low_act 계층형 가지
 // 지도 자세 오차·관측 지연은 끈다 (rl_node_check 와 같은 까닭). 판이 끝나면 둘 다 새 판 (위층 기억도 비움). 관측 설정은 체크포인트 꼬리(mdp/ckpt_cfg.h)
 #include <cmath>
 #include <cstdio>
@@ -56,7 +58,7 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", ckpt;
   int steps = 1500, people = 0;
   uint64_t seed = 1;
-  bool use_fuel = true;
+  bool use_fuel = true, rule = false;
   fu::Opt fo;
   fo.time = fo.global = fo.vp = true;   // 고른 조합 (scripts/README "combine_run — 위층 fuel": 시간 + 전역 + 시점)
   fo.v_eff = 0.981f;
@@ -71,6 +73,7 @@ int main(int argc, char** argv) {
     else if (a == "--ckpt") ckpt = nx();
     else if (a == "--env") env_path = nx();
     else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0") throw std::runtime_error("--upper 는 fuel · slot0"); use_fuel = u == "fuel"; }
+    else if (a == "--lower") { const std::string l = nx(); if (l != "rl" && l != "rule") throw std::runtime_error("--lower 는 rl · rule"); rule = l == "rule"; }
     else if (a == "--fuel-v") fo.v_eff = std::stof(nx());
     else if (a == "--fuel-w") fo.w_eff = std::stof(nx());
     else if (a == "--fuel-t0") fo.t0 = std::stof(nx());
@@ -79,14 +82,16 @@ int main(int argc, char** argv) {
     else if (a == "--fuel-vp") fo.vp = std::stoi(nx()) != 0;
     else scenes.push_back(a);
   }
-  if (scenes.empty() || ckpt.empty()) {
-    std::fprintf(stderr, "low_explore_check <장면.scene> … --ckpt 아래층.bin [--steps 1500] [--seed 1] [--people 0] [--fuel-*]\n");
+  if (scenes.empty() || (ckpt.empty() && !rule)) {
+    std::fprintf(stderr, "low_explore_check <장면.scene> … (--ckpt 아래층.bin | --lower rule) [--upper fuel|slot0] [--steps 1500] [--seed 1] [--people 0] [--fuel-*]\n");
     return 2;
   }
   try {
-    std::string log;
-    ckcfg::apply(ckpt, &log);
-    std::printf("%s\n", log.c_str());
+    if (!rule) {
+      std::string log;
+      ckcfg::apply(ckpt, &log);
+      std::printf("%s\n", log.c_str());
+    }
     sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
     // combine_run.cpp:224-231 와 같은 설정 (max_steps 는 판 길이라 관측과 무관 — 여기서는 env.yaml 그대로)
     hc.cfg.action_mode = sim::kActPath;
@@ -109,12 +114,15 @@ int main(int argc, char** argv) {
     no_delay();
     limo_fire_rl::RobotEnv robot(hc, true, true);
     xnet_cpu::LowPolicy pol;
-    pol.load(ckpt);
-    if (pol.n1d() != robot.low_1d_n()) throw std::runtime_error("체크포인트 1D 칸 수 ≠ 설정");
+    if (!rule) {
+      pol.load(ckpt);
+      if (pol.n1d() != robot.low_1d_n()) throw std::runtime_error("체크포인트 1D 칸 수 ≠ 설정");
+    }
     const int NI = robot.low_img_n(), N1 = robot.low_1d_n(), AW = mdp::act::DIM, K = mdp::hier::K;
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
+    lp.rule = rule;
     lxc::Ctl cs(lp), cr(lp);
     fu::Work ws, wr;
     Tap tap;
@@ -169,10 +177,12 @@ int main(int argc, char** argv) {
         const sim::LowCmd c2 = cr.decide(vr, wr);
         robot.set_cmd(c2);
       }
-      if (cs.cmd().target != cr.cmd().target || cs.cmd().follow != cr.cmd().follow) { ++d_dec; if (first_bad < 0) first_bad = t; }
+      if (cs.cmd().target != cr.cmd().target || cs.cmd().follow != cr.cmd().follow || cs.slot() != cr.slot()) { ++d_dec; if (first_bad < 0) first_bad = t; }
       // 준비 단계 (시뮬 Env::low_prepare · 실물 low_obs) — 목표 없음이면 행동 칸 −1 (combine_run.cpp:1144-1146)
       std::fill(act.begin(), act.end(), 0.f);
-      if (cs.cmd().follow != 2) act[0] = -1.f;
+      if (rule) act[0] = (float)cs.slot();   // combine_run 규칙: 결정 때 정한 행동 칸 (다음 결정까지 그대로)
+      else if (cs.cmd().follow != 2) act[0] = -1.f;
+      robot.set_slot(rule ? cr.slot() : -1);
       cpu.low_prepare(act.data());
       cpu.get_obs(img, o1d);
       robot.set_depth(img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE);
@@ -186,8 +196,8 @@ int main(int argc, char** argv) {
       d_img += di; d_1d += d1;
       if ((di || d1) && first_bad < 0) first_bad = t;
       // 아래층 정책 (RobotEnv 관측) → 두 쪽에 같은 행동
-      pol.act(robot.low_img(), robot.low_1d(), a3.data());
-      if (cs.cmd().follow == 2) { act[0] = a3[0]; act[1] = a3[1]; }
+      if (!rule) pol.act(robot.low_img(), robot.low_1d(), a3.data());
+      if (!rule && cs.cmd().follow == 2) { act[0] = a3[0]; act[1] = a3[1]; }
       float v, w;
       robot.low_act(a3.data(), &v, &w);
       cpu.step(act.data());
@@ -195,7 +205,7 @@ int main(int argc, char** argv) {
       cpu.get_reward(rew, dn);
       if (dn[0] != 0) {   // 판 끝 (시뮬은 리셋됨) — 실물 쪽 판 끝 코드가 같은지
         if (robot.done() != dn[0]) { ++d_cmd; if (first_bad < 0) first_bad = t; }
-        pol.reset();
+        if (!rule) pol.reset();
         no_delay();
         start();
         continue;
@@ -206,10 +216,10 @@ int main(int argc, char** argv) {
       cr.after_step(robot.state(), robot.low_rl(), robot.low_ep());
     }
     sim::set_cpu_tap(nullptr);
-    std::printf("위층 %s · ", use_fuel ? "fuel" : "slot0");
+    std::printf("위층 %s · 아래층 %s · ", use_fuel ? "fuel" : "slot0", rule ? "규칙 추종기" : "RL");
     std::printf("관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
                 why_n[2], n_sw, cs.n_reach(), cs.n_stall());
-    std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld (목표 없음 걸음 %ld — 두 쪽 다 규칙 추종기)\n", d_dec, d_img,
+    std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld (정책 아닌 걸음 %ld — 두 쪽 다 규칙 추종기)\n", d_dec, d_img,
                 d_1d, d_cmd, ng_steps);
     const bool ok = d_dec == 0 && d_img == 0 && d_1d == 0 && d_cmd == 0;
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");

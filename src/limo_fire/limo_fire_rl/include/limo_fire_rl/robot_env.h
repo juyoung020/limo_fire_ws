@@ -88,6 +88,8 @@ class RobotEnv {
   bool low() const { return low_on_; }
   bool explore() const { return explore_; }
   void set_cmd(const sim::LowCmd& cmd);   // 합친 탐사 모드: 위층 명령 (combine_run 의 env.set_low_cmd)
+  // 합친 탐사 모드: 준비 단계 행동 칸 (combine_run 의 act[0] — 정책 환경이 아닐 때 경로 계획 후보 번호). 기본 −1 (목표 없음). 아래층 규칙이 lxc::Ctl::slot() 을 넘김
+  void set_slot(int k) { slot_ = (float)k; }
   const sim::LowEp& low_ep() const { return lowep_[0]; }
   // 목표 칸 (cell = cy · gw + cx, −1 = 없음) — 시뮬 lowrl_goal_set 과 같은 칸을 고침 (난수 빼고). 위층이 새 목적지를 줄 때만 부른다
   void set_goal(int cell);
@@ -137,6 +139,7 @@ class RobotEnv {
   sim::Shared sh_{};
   int done_ = 0;
   bool mov_on_ = false, low_on_ = false, explore_ = false;
+  float slot_ = -1.f;
   LowMov mov_;
   // 메모리 (EnvBatch 포인터가 가리킴)
   std::vector<uint8_t> grid_;
