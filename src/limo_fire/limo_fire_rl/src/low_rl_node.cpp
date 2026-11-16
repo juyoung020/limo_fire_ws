@@ -185,8 +185,14 @@ class LowRlNode : public rclcpp::Node {
 
   void on_enable(bool on, std_srvs::srv::SetBool::Response* r) {
     if (on) {
-      if (finished_) { r->success = false; r->message = "탐사가 끝남 (노드를 다시 띄울 것)"; return; }
       if (require_rc_ && !rc_auto_now()) { r->success = false; r->message = "리모컨이 오토(SWB 위)가 아니거나 /rc_state 가 안 옴 — 켜지 않음"; return; }
+      if (finished_) {   // 끝난 뒤 다시 켜면 새 판: 다음 장에서 지금 자리로 판 시작
+        finished_ = false;
+        started_ = false;
+        std_msgs::msg::Bool d;
+        d.data = false;
+        pub_done_->publish(d);
+      }
       enabled_ = true;
       contact_t_ = -1.0;
       ctl_->force_redo();   // 다시 켜면 바로 위층 결정 (지도·피하는 칸은 그대로)
@@ -278,6 +284,8 @@ class LowRlNode : public rclcpp::Node {
       return;
     }
     last_tf_t_ = now();
+    // 꺼짐·멈춤 동안은 판을 세움: 판 시계(진척 없음·시간·닫힘)는 켠 동안만 감. 판은 처음 켤 때 시작
+    if (!running()) return;
     Scan s;
     s.ranges.assign(m->ranges.begin(), m->ranges.end());
     s.intensities.assign(m->intensities.begin(), m->intensities.end());
@@ -295,6 +303,7 @@ class LowRlNode : public rclcpp::Node {
       env_->reset(s.x, s.y, s.th, p, -2.f * s.angle_min);
       const sim::MapDev& md = env_->map();
       world_.gw = md.gw; world_.gh = md.gh; world_.ox = md.ox; world_.oy = md.oy;
+      ctl_->restart();   // 새 판: 위층 피하는 칸·목표도 처음부터
       ctl_->set_geom(md.gw, env_->cfg().res);
       if (rec_) rec_->reset(s.x, s.y, s.th, p, -2.f * s.angle_min, RobotEnv::Window{md.ox, md.oy, md.gw, md.gh});
       started_ = true;
