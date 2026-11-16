@@ -67,3 +67,22 @@ llama.cpp 는 서버를 돌리는 것과 같은 소스·빌드(`LLAMA_DIR/build`
 
 **추천: (a)**, 압축 프롬프트와 함께. 차례: ① `decider` 압축 표 형식(기본 꺼짐) + 기본 모델 맞춤 확인 → ② `d1_cache --full-from <층>` (전체 시퀀스 fp16) → ③ `lora_train` 에 attention 층 순·역전파(qk-norm · RoPE · GQA) + `--gradcheck` · `head_check` 로 llama.cpp 로짓과 맞춤 확인 →
 ④ BC A 로 "새는 열을 읽는가"(1.0 근처면 병목이 풀린 것) → BC B. 모자라면 (a′).
+
+## 결과 라벨 갈래 굴리기 (`rollout/dec_rollout`, 판단 모델 위층 + 아래층 rule)
+
+실물 노드와 같은 위층 코드(`scripts/low_explore_ctl.h` · `scripts/low_decider.h`)로 시뮬 판을 돌리며, 판단 모델 자리에 기준 응답기(slot0 — 늘 글자 A)를 두고 요청을 주기·지연대로 보낸다.
+고른 요청마다 그 답을 글자 k 로 바꾼 갈래를 반복(갈래 뒤 우연만 다르게) 굴려 후보마다 (끝 코드 · 끝 시각 · 아는 칸 수)를 남긴다. 원시 상태(자세 · 아는 칸 범위 지도 · 후보 칸 · 특징 · 후보 판 `cand_ver`)를
+같이 남겨, 후보 글 꼴이 바뀌면 요청만 다시 그린다 (후보 집합이 바뀌면 다시 굴림).
+
+```bash
+cmake -S train/explore/upper_lora/rollout -B <빌드> -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.0/bin/nvcc && cmake --build <빌드> --target dec_rollout
+dec_rollout <장면.scene> --seed 1 --out <앞머리> --gpu 256 [--every 3] [--reps 4] [--horizon 600] [--period 3.0] [--latency 2.6] [--people 0]
+dec_rollout <장면.scene> --seed 1 --out x --snap-test 600   # 상태 저장·복원 확인 (복원 뒤 400 걸음 상태·지도 해시가 같은가)
+```
+
+갈래는 처음부터 다시 돌리지 않고 상태를 복원한다: 시뮬 `Env::env_blob` · `set_env_blob` · `copy_env` (환경 하나 몫 버퍼 전부 — 상태·사람·지도·지나간 길·관측·후보·아래층·작업 판, 환경 하나 약 1.2 MB).
+`--gpu N` 이면 기준 판을 GPU 환경 하나로 돌려 고른 요청마다 상태를 뜨고, 갈래를 GPU 환경 N 칸에 넣어 한꺼번에 굴린다 (갈래의 위층은 칸마다 호스트, 요청은 글만).
+
+잰 것 (2026-11-17, procthor_00016 · 씨앗 1 · 사람 0): CPU 환경 하나 걸음 8.4 ms (시뮬 걸음 7.8 — 센서 광선·지도, 경로 계획 0.35, 위층 0.11).
+GPU 길: 기준 판 106 s 를 2.7 s, 갈래 600 판(요청 28 개 × 후보 × 4 반복, 지평 600 s)을 칸 256 개로 31 s — 환경 걸음 약 13,000 / s (CPU 한 코어의 약 110 배).
+확인: 글자 A · 반복 0 갈래(바꾼 것 없음)의 결과가 기준 판과 같음 (106.0 s, 요청 3 개 모두), `--snap-test` 복원 뒤 400 걸음 해시 같음 (사람 0 · 2).

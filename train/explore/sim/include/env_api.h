@@ -128,6 +128,11 @@ class Env {
   // 할당 때 0 이던 장치 버퍼를 다시 0 으로 (정적 업로드 — 맵·장면·장치 사본 — 는 그대로, OptiX 컨텍스트·모듈도 그대로). 그 뒤 set_people_max · reset 은 부르는 쪽이.
   // 학습 중 평가가 Env 를 매번 새로 만들고 부수던 것(OptiX 컨텍스트·모듈 파괴 포함)을 없애려고 — scripts/train.cpp evaluate
   void restart();
+  // 환경 하나의 실행 상태 저장·복원 (2026-11-17, 판단 모델 결과 라벨의 갈래 굴리기 — upper_lora/rollout): 상태(사람 포함)·지도·지나간 길·관측·후보·아래층·작업 판.
+  // 같은 설정(EnvHostCfg · 장면 · n_env 무관)의 Env 끼리 주고받을 수 있음. CPU · GPU 같은 꼴 (GPU 는 장치 ↔ 호스트 복사). 맵·장면 같은 정적 업로드는 안 담음
+  std::vector<uint8_t> env_blob(int env) const;
+  void set_env_blob(int env, const std::vector<uint8_t>& blob);
+  void copy_env(int src, const std::vector<int>& dst);   // 한 환경 상태를 다른 환경 칸들로 (장치 안 복사)
 
   const EnvBatch& batch() const { return b_; }
   int n_env() const { return b_.n_env; }
@@ -144,6 +149,7 @@ class Env {
   std::vector<EnvState> init_st_;       // 처음 상태 (restart)
   std::vector<LowRl> init_lowrl_;
   std::vector<std::vector<uint8_t>> host_;   // CPU 판 메모리
+  std::vector<std::pair<void*, size_t>> per_env_;   // 환경마다 따로인 버퍼 (시작 · 환경 하나 몫 바이트) — env_blob · copy_env
   void* rt_ = nullptr;                  // OptixRt (SIM_OPTIX 빌드·GPU 판, RT 코어가 있으면)
   template <class T>
   T* alloc(size_t n);

@@ -179,6 +179,7 @@ class Upper {
   double last_ms() const { return last_ms_; }
   const std::string& last_err() const { return last_err_; }
   const Params& params() const { return p_; }
+  void set_input(int input) { p_.input = input; }   // 요청 꼴만 바꿈 (갈래 굴리기: 기준 응답기는 그림을 안 봄 — 지도 없이 글만)
 
  private:
   Params p_;

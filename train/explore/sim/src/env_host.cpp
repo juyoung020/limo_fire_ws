@@ -432,6 +432,107 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     b_.dev_self = d;
     cudaMemcpy(d, &b_, sizeof(EnvBatch), cudaMemcpyHostToDevice);
   }
+  // 환경 하나 몫 버퍼 목록 (env_blob · set_env_blob · copy_env — 갈래 굴리기의 상태 저장·복원). 환경마다 따로인 실행 상태 전부:
+  // 상태(사람 포함) · 아래층 · 지도·지나간 길·깊이 층 · 관측 · 후보 · 계획·도달 작업 판 · 그래프 · 장 준비. 맵·장면(정적)·통계(map_eps · map_hit · counters)는 빠짐
+  {
+    const size_t cells = (size_t)hc.cfg.size * hc.cfg.size, nf = (size_t)hc.cfg.size * ((hc.cfg.size + 31) / 32);
+    const auto reg = [&](const void* p, size_t per) { if (p && per) per_env_.push_back({(void*)p, per}); };
+    reg(b_.st, sizeof(EnvState));
+    reg(b_.lmap, cells * sizeof(int16_t));
+    reg(b_.marks, cells / 4 * sizeof(uint32_t));
+    reg(b_.obs_img, (size_t)mdp::obs::IMG_SIZE);
+    reg(b_.obs_1d, (size_t)b_.o1d * sizeof(float));
+    reg(b_.cand, (size_t)mdp::hier::K * sizeof(int32_t));
+    reg(b_.cand_cur, sizeof(int32_t));
+    reg(b_.racc, sizeof(float));
+    reg(b_.tacc, (size_t)mdp::rew::kTerms * sizeof(float));
+    reg(b_.pplanes, (size_t)b_.pp_n * nf * sizeof(uint32_t));
+    reg(b_.cvox, cells);
+    reg(b_.cpts, (size_t)mdp::obs::DEPTH_W * 2 * sizeof(float));
+    reg(b_.gfeat, (size_t)mdp::graph::N * mdp::graph::FEAT);
+    reg(b_.gedge, (size_t)mdp::graph::N * sizeof(uint32_t));
+    reg(b_.gcur, sizeof(int32_t));
+    reg(b_.gglob, (size_t)mdp::graph::GLOB * sizeof(float));
+    reg(b_.gcand, (size_t)mdp::graph::NB * sizeof(int32_t));
+    reg(b_.gvis, (size_t)(mdp::graph::N / 32) * sizeof(uint32_t));
+    reg(b_.gfront, (size_t)hc.cfg.size * fmap_row(hc.cfg) * sizeof(uint32_t));
+    reg(b_.gwork, (size_t)mdp::graphgen::kVoxMax * sizeof(int32_t));
+    reg(b_.gdec, sizeof(GraphDec));
+    reg(b_.gprev, (size_t)mdp::graphgen::kVoxMax * sizeof(int32_t));
+    reg(b_.low, sizeof(LowEp));
+    reg(b_.lowcmd, sizeof(LowCmd));
+    reg(b_.lowrl, sizeof(LowRl));
+    reg(b_.lowstat, sizeof(LowRlStat));
+    reg(b_.low_img, (size_t)(b_.cfg.lo_wide ? kLowImgWide : kLowImg));
+    reg(b_.low_1d, (size_t)mdp::low::n1d_of(b_.cfg.lo_mov4 != 0, b_.cfg.lo_body != 0) * sizeof(float));
+    reg(b_.low_vdone, sizeof(int32_t));
+    reg(b_.low_aux, (size_t)kLowAuxSrc * sizeof(float));
+    reg(b_.low_hit, sizeof(float));
+    reg(b_.low_wred, (size_t)(b_.cfg.size / 4) * (b_.cfg.size / 4) * sizeof(uint32_t));
+    reg(b_.lidar_ring, (size_t)kLidarRing * mdp::obs::LIDAR_BINS * sizeof(float));
+    reg(b_.vec_prev, (size_t)mdp::obs::VEC * sizeof(float));
+    reg(b_.lidar_int, (size_t)mdp::obs::LIDAR_BINS * sizeof(float));
+    reg(b_.reward, sizeof(float));
+    reg(b_.reward_terms, (size_t)mdp::rew::kTerms * sizeof(float));
+    reg(b_.done, sizeof(int32_t));
+    reg(b_.ep, sizeof(EpInfo));
+    reg(b_.scratch, sizeof(Shared));
+    reg(b_.trail, 2 * nf * sizeof(uint32_t));
+    reg(b_.dep_z, (size_t)mdp::obs::DEPTH_SIZE * sizeof(float));
+    reg(b_.dep_tri, (size_t)mdp::obs::DEPTH_SIZE * sizeof(int32_t));
+    reg(b_.dep_side, (size_t)mdp::obs::DEPTH_SIZE * 2 * sizeof(float));
+    reg(b_.dep_jobs, (size_t)mdp::obs::DEPTH_SIZE * 2 * sizeof(int32_t));
+    reg(b_.fmap, nf * sizeof(uint32_t));
+    reg(b_.fchg, (size_t)kClassLog * sizeof(int32_t));
+    reg(b_.rbits, (size_t)kReachBits * nf * sizeof(uint32_t));
+    reg(b_.rlist, (size_t)mdp::kReachCap * b_.rl_n * sizeof(int32_t));
+    reg(b_.rpre, nf * sizeof(int32_t));
+    reg(b_.rkey, (size_t)mdp::kReachCap * sizeof(unsigned long long));
+    reg(b_.rkey2, (size_t)mdp::kReachCap * sizeof(unsigned long long));
+    reg(b_.beam_t, (size_t)kMaxBeams * sizeof(float));
+    reg(b_.beam_tri, (size_t)kMaxBeams * sizeof(int32_t));
+    reg(b_.beam_side, (size_t)kMaxBeams * 4 * sizeof(float));
+    reg(b_.beam_jobs, (size_t)kMaxBeams * 4 * sizeof(int32_t));
+  }
+}
+
+std::vector<uint8_t> Env::env_blob(int env) const {
+  if (env < 0 || env >= b_.n_env) throw std::runtime_error("env_blob: 환경 번호");
+  size_t n = 0;
+  for (const auto& [p, per] : per_env_) n += per;
+  std::vector<uint8_t> out(n);
+  size_t o = 0;
+  for (const auto& [p, per] : per_env_) {
+    const uint8_t* src = (const uint8_t*)p + (size_t)env * per;
+    if (gpu_) cudaMemcpy(out.data() + o, src, per, cudaMemcpyDeviceToHost);
+    else std::memcpy(out.data() + o, src, per);
+    o += per;
+  }
+  return out;
+}
+
+void Env::set_env_blob(int env, const std::vector<uint8_t>& blob) {
+  if (env < 0 || env >= b_.n_env) throw std::runtime_error("set_env_blob: 환경 번호");
+  size_t o = 0;
+  for (const auto& [p, per] : per_env_) {
+    if (o + per > blob.size()) throw std::runtime_error("set_env_blob: 크기가 다름 (같은 설정의 Env 에서 뜬 것이어야 함)");
+    uint8_t* dst = (uint8_t*)p + (size_t)env * per;
+    if (gpu_) cudaMemcpy(dst, blob.data() + o, per, cudaMemcpyHostToDevice);
+    else std::memcpy(dst, blob.data() + o, per);
+    o += per;
+  }
+  if (o != blob.size()) throw std::runtime_error("set_env_blob: 크기가 다름");
+}
+
+void Env::copy_env(int src, const std::vector<int>& dst) {
+  for (const auto& [p, per] : per_env_)
+    for (int d : dst) {
+      if (d == src) continue;
+      if (d < 0 || d >= b_.n_env) throw std::runtime_error("copy_env: 환경 번호");
+      uint8_t* q = (uint8_t*)p;
+      if (gpu_) cudaMemcpy(q + (size_t)d * per, q + (size_t)src * per, per, cudaMemcpyDeviceToDevice);
+      else std::memcpy(q + (size_t)d * per, q + (size_t)src * per, per);
+    }
 }
 
 Env::~Env() {
