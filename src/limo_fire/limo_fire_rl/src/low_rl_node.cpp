@@ -96,7 +96,7 @@ class LowRlNode : public rclcpp::Node {
     // 위층 판단 모델 (upper:=decider — scripts/low_decider.h). 주기 = 로봇에서 잰 답 시간(약 2.6 s) + 여유
     const std::string dec_url = declare_parameter<std::string>("decider_url", "http://127.0.0.1:8171");
     const double dec_period = declare_parameter<double>("decider_period", 3.0);
-    const std::string dec_mode_s = declare_parameter<std::string>("decider_mode", "periodic");
+    const std::string dec_mode_s = declare_parameter<std::string>("decider_mode", "event");
     const double dec_timeout = declare_parameter<double>("decider_timeout", 8.0);
     const std::string dec_input = declare_parameter<std::string>("decider_input", "both");
     lxd::Params dp;
@@ -109,6 +109,7 @@ class LowRlNode : public rclcpp::Node {
     dp.mem_image = declare_parameter<bool>("decider_mem_image", true);   // 지도 사진에 지나온 길 · 지난 목표
     dp.image = declare_parameter<std::string>("decider_image", "A") == "B" ? 1 : 0;
     dp.cam = (int)declare_parameter<int>("decider_cam", 4);
+    dp.max_cands = (int)declare_parameter<int>("decider_max_cands", dp.max_cands);   // 요청에 넣는 후보 수 상한 (0 = 다)
     dp.log_k = (int)declare_parameter<int>("decider_log_k", 8);   // 결정 기록 최근 K 개 (글 + 지도 번호), 0 = 끔   // 둘째 사진: 앞 n 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 (0 = 끔)
     cam_base_h_ = declare_parameter<double>("cam_base_h", 0.147);   // base_link 의 바닥 위 높이 (m) — 카메라 높이 = 이것 + tf base_link→camera_link z   // A = 지금 지도 한 장 · B = 2 × 2 (지금 · 5 · 15 · 30 s 전)
     if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "decider" && upper_ != "cand") throw std::runtime_error("upper 는 fuel · slot0 · decider · cand");

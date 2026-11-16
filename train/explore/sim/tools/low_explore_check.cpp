@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
   bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true, node_obs = false;
   int dec_img = 0, dec_logk = 8;
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
-  int dec_mode = 0, dec_max = 0, dec_order = 0;
+  int dec_mode = 1, dec_max = 6, dec_order = 0;   // 실물 노드 기본과 같게 (decider_mode event · decider_max_cands 6)
   bool dec_compact = false, dec_memf = true;
   std::string dec_input = "both", dec_url;
   std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)

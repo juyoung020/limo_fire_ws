@@ -46,7 +46,7 @@ struct Params {
   int log_k = 8;
   bool compact = false;     // 후보 모드 글: 짧은 키 10 개 (t · len · bear · new · w · room · cur · fail · fail_s · seen) — 미세조정용 대조
   bool mem_fields = true;   // 후보 모드 글: 기억 필드(고른·실패 수 · 까닭 · 실패 뒤 초 · 실패 자리 · 피하는 곳 · 가 본 곳)
-  int max_cands = 0;        // 후보 모드: 요청에 넣는 후보 수 상한 (0 = 다)
+  int max_cands = 6;        // 후보 모드: 요청에 넣는 후보 수 상한 (0 = 다). 기본 6 — 위층 비교(upper_lora/README, 빌드 1f275bf)에서 AUC180 이 후보 다 보다 +0.026, 토큰도 적음
   int order = 0;            // 후보 모드 글자 차례: 0 = 후보 점수 순 (cand::build) · 1 = 길 거리 순            // 후보 모드 결정 기록: 최근 K 개 결정(언제 · 고른 번호의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 가장 최근)로 — 0 = 끔
   int image = 0;            // 후보 모드 사진 꼴: 0 = A (지금 지도 한 장) · 1 = B (2 × 2 칸: 지금 · 5 · 15 · 30 s 전, 같은 범위 — 토큰 수 같음, 칸마다 해상도 반)
   float match_r = 1.5f;     // 답의 후보 칸 → 지금 후보 (m). hier 후보 칸은 덩어리에서 로봇에 가장 가까운 칸이라 답을 기다리는 동안 옮겨감 — 0.5 m 면 답의 40 ~ 55 % 를 버림 (low_explore_check, 지연 2.6 s)

@@ -7,7 +7,8 @@ low_rl:
     upper: decider            # decider: 로봇 안 llama-server 판단 모델 (README) · fuel: 로봇 지도에서 fuel 이 목표 (combine_run --upper fuel) · slot0: 피하지 않는 첫 후보 + stick (combine_run --upper slot0, slot_vp 면 그 덩어리 시점)
     decider_url: http://127.0.0.1:8171   # upper:=decider — llama-server (POST /v1/systemone)
     decider_period: 3.0       # s, 요청 주기 — 로봇에서 잰 답 시간(후보 8 개 약 2.6 s) + 여유. 기다리는 동안 지금 목표로 몰고, 목표가 죽으면 slot0 차례로 바로
-    decider_mode: periodic    # periodic = decider_period 마다 · event = 목표에 다가감(1 m)·목표 실패·후보 크게 바뀜·10 s 최대 간격일 때만 물음 (평가 뒤 기본을 정함)
+    decider_mode: event       # event = 목표에 다가감(1 m)·목표 실패·후보 크게 바뀜·10 s 최대 간격일 때만 물음 (기본 — 시뮬 비교에서 periodic 과 같은 덮음, 요청 적음) · periodic = decider_period 마다
+    decider_max_cands: 6      # 요청에 넣는 후보 수 상한 (0 = 다) — 시뮬 위층 비교에서 6 이 가장 빠름 (upper_lora/README), 라벨 굴리기(dec_rollout)와 같은 값
     decider_timeout: 8.0      # s, 이보다 늦은 답은 버림 (지금 목표 그대로)
     decider_input: both       # 지도 사진 + 후보 글 (combine_run --decider-input both). all(카메라 그림)은 시뮬 장면을 광선으로 칠한 그림이라 실물에 없음
     decider_px: 384

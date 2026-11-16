@@ -162,5 +162,6 @@ cd ~/decider_test && nohup ./llama.cpp/build/bin/llama-server -m models/d1-3B-Q8
 ros2 launch limo_fire_rl explore_fuel_rl.launch.xml upper:=decider [decider_period:=3.0] [dry_run:=false] [rviz:=true]
 ```
 
+기본은 사건 때만 묻고(`decider_mode: event`) 요청에 후보를 6 개까지 넣는다(`decider_max_cands: 6`) — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 가장 빨랐고, 라벨 굴리기(`dec_rollout`)·`low_explore_check --upper decider` 기본도 같은 값.
 상태는 `~/status` 끝에 "판단 모델: 보냄 · 답 (마지막 ms) · 시간 끝 · 실패 · 후보 안 맞음 · slot0 대신". 서버가 없거나 답이 늦으면 slot0 차례로 계속 돈다 (멈추지 않음).
 카메라 그림(시뮬 `--decider-input all`)은 시뮬 장면에 광선을 쏴 칠한 그림이라 실물에는 같은 것이 없어 쓰지 않는다 (`decider_input` text · image · both).
