@@ -432,7 +432,7 @@ class LowRlNode : public rclcpp::Node {
         env_->set_cmd(sim::LowCmd{-1, 0});   // 꺼짐·멈춤: 목표 없음 (다시 켜면 바로 결정)
       }
     } else if (upper_ == "decider") {
-      if (running()) {   // 기다리지 않음: 요청은 일꾼 스레드가, 답은 다음 걸음들에서 꺼냄
+      if (running()) {   // 기다리지 않음: 요청은 비차단 소켓으로 걸음마다 조금씩, 답은 다음 걸음들에서 꺼냄
         const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur()};
         sim::LowCmd cmd;
         int why = 0;

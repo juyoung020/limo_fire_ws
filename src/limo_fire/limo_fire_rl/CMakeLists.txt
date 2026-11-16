@@ -38,7 +38,7 @@ target_link_libraries(limo_fire_rl_core PUBLIC yaml-cpp)
 set_target_properties(limo_fire_rl_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # 합친 탐사 노드 low_rl: 위층(fuel · slot0 · 판단 모델) + 아래층 규칙 추종기(A* + 경로 추종) — 시뮬 combine_run 과 같은 코드 (README "합친 탐사 low_rl")
-# 위층 판단 모델 (upper:=decider): 지도 사진·요청 본문은 시뮬과 같은 scripts/decider.cpp (PNG 는 zlib, JSON 은 nlohmann_json). HTTP 는 노드의 소켓 일꾼 (DEC_NO_CURL — 로봇에 libcurl 개발 헤더 없음)
+# 위층 판단 모델 (upper:=decider): 지도 사진·요청 본문은 시뮬과 같은 scripts/decider.cpp (PNG 는 zlib, JSON 은 nlohmann_json). HTTP 는 노드의 비차단 소켓 (decider_client.h, DEC_NO_CURL — 로봇에 libcurl 개발 헤더 없음)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 add_executable(low_rl src/low_rl_node.cpp ${EXPLORE_DIR}/scripts/decider.cpp)

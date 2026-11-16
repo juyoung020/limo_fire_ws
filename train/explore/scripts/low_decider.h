@@ -10,7 +10,7 @@
 //   3. 위층 결정 차례(Ctl::due)인데 다시 고를 일(막힘 · 통과 · 경로 끝 밖 · 경로 없음)이 있거나 지금 목표가 죽었으면: 바로 slot0 차례로 목표를 잡고(기다리지 않음) 곧 새 요청
 //      — 그 밖의 1 s 결정 차례에는 목표를 바꾸지 않는다 (판단 모델 답이 올 때만 바꿈 — fuel 의 매초 목표 바뀜을 피함)
 //   4. 기다리는 요청이 없고 마지막으로 보낸 지 period_steps 지났으면(또는 3 에서 급하면) 새 요청 (유효 후보 2 개 이상일 때만)
-// 보내기·받기는 Transport 가 맡는다: 실물 = 소켓 HTTP 일꾼 스레드 (limo_fire_rl/decider_client.h), 시뮬 = 정해진 걸음 뒤에 답을 내놓는 줄 (combine_run).
+// 보내기·받기는 Transport 가 맡는다: 실물 = 비차단 소켓 HTTP — poll 이 한 단계씩 (limo_fire_rl/decider_client.h, 스레드 없음), 시뮬 = 정해진 걸음 뒤에 답을 내놓는 줄 (combine_run).
 #pragma once
 #include <algorithm>
 #include <cmath>
