@@ -87,9 +87,6 @@ struct EnvCfg {
   int finish_declare;
   int sweep_guard;          // 규칙 추종기 몸통 쓸림 정지 (실험, 기본 끔 — path_step_c sweep_scale): 로봇 지도 막힘 칸을 다음 sweep_h 초 몸통이 쓸면 추종기 명령을 줄임
   float sweep_h, sweep_margin;   // 내다보는 시간 (s), 몸통 둘레 여유 (m)
-  // 그만둔 아래층 RL 칸 자리 (2026-11-16 — 보상 계수·실험 스위치·사람 추적). 실물 녹화 머리(sim/tools/low_node_rec.h)가 EnvHostCfg 를 바이트 그대로
-  // 담으므로 옛 녹화를 읽으려고 크기·자리만 남긴다. 아무도 안 읽는다 (아래 gone_rl_* 모두)
-  int32_t gone_rl_a[31];
 
   // 닿음 (2026-11-14, contact.h — 센서로 정한 부딪힘이 충돌 보상·판 끝. 시뮬 정답 충돌은 물리·기록만). 값의 근거는 env_cfg.cpp
   float con_lid, con_cam, con_map;   //   라이다 점 · 깊이 층 칸 · 지도 막힘 칸이 몸통에서 이 간격 (m) 안이면 닿음
@@ -105,11 +102,6 @@ struct EnvCfg {
   int con_yaw_k;                     //   이 걸음 이어지면 (kConYaw)
   float con_acc;                     //   닿음 신호: IMU 수평 가속 크기 > con_acc (m/s², kConAcc)
   int con_end;                       //   1: 닿음이 판을 끝냄 (기본). 0: 진단 전용 — 끝내지 않고 정답 충돌·센서 값을 기록만 (일치도 재기)
-  int32_t gone_rl_b[4];   // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
-  int curriculum;           // 안 씀 (그만둔 커리큘럼 칸 — 녹화 머리 꼴 때문에 남음, 녹화 꼴을 바꿀 때 지움). 도구가 0 을 넣기도 함
-  int cur_top_random;       // 안 씀 (위와 같음)
-  int cur_window;           // 안 씀
-  float cur_up, cur_down;   // 안 씀
   int max_delay;            // 관측 지연 최대 (행동 걸음)
   int n_dir, n_dist;
   float dist[4];
@@ -156,32 +148,15 @@ struct EnvCfg {
   // 다시 계획 → 물러나기(rec_backup_steps 걸음, BackUp 0.30 m @ 0.05 m/s) → 그 목표 포기(rec_bl_steps 걸음 동안 그 둘레 rec_bl_r m 안 후보를 고르면 제자리 회전)
   int rec_on, rec_backup_steps, rec_bl_steps;
   float rec_bl_r;
-  // 그래프 모드 (kActPath 위에 얹음 — mdp/graph.h, env.yaml action.graph). graph_on = 0 이면 모두 끔 (계층형과 비트 같음).
-  // graph_stand: 노드·간선이 지나는 칸 1 = 로봇이 설 수 있는 칸 · 0 = 빈 칸(전작). graph_util_r: 유틸리티 범위(칸), graph_min_util: 이 수 이하는 0,
-  // graph_fvox: 프론티어 복셀 변(칸), graph_util_norm: 유틸리티 정규화 분모 (호스트가 셈)
-  // graph_open: 1 = 유틸리티가 닫힘을 막는 프론티어 칸만 셈 (EnvBatch::gfront — 설 수 있는 칸으로 닿고, close_min 칸 이상 덩어리이고, 본 칸이 아님), 0 = 모든 프론티어 칸
-  int graph_on, graph_stand, graph_util_r, graph_min_util, graph_fvox, graph_util_norm, graph_open;
-  // 2026-11-11 전작 방식 (mdp/README "그래프 모드 — 전작 방식"). graph_step: 노드 간격(칸, action.graph.node_resolution).
-  // graph_term 1 = 판 끝·보상을 전작(ARiADNE worker.py·env.py) 식으로: 끝 = 유틸리티 합 0(성공) · 충돌 · 최대 길이, 닫힘 성공·진행 없음 규칙은 끔,
-  //   보상 = −이동 거리 · graph_rew_dist + 사라진 프론티어 복셀 / graph_util_norm + 끝 graph_rew_done. 0 = 계층형 규칙·보상 그대로 (규칙 정책을 slot0 과 같은 성공 정의로 잴 때)
-  // graph_max_steps: 결정 하나(= 노드 하나 이동)의 걸음 상한 (decision_timeout), graph_max_dec: 판의 결정 수 상한 (0 = 안전 시간만),
-  // graph_pass 1 = 추종기가 경로 끝 감속(RPP approach scaling)을 안 함 — 노드를 지나쳐 감, graph_arrive: 도착 반경 (m),
-  // graph_view: 방문 노드 유틸리티 0 = 전작 · 1 = 현재 노드만 0 · 2 = 다 0 이면 방문 표시 지움 (1·2 는 우리 수정, 기본 0 — 220° 시야, mdp/README)
-  // graph_cover: 남은 프론티어 맡기기 (mdp/graph.h 6b — 우리 수정, 기본 1): 유틸리티 노드가 없는데 막는 프론티어가 남았으면 복셀마다 노드 하나에 유틸리티 → 유틸리티 합 0 ⇔ 지도 닫힘
-  int graph_step, graph_term, graph_max_steps, graph_max_dec, graph_pass, graph_view, graph_cover;
-  float graph_rew_dist, graph_rew_done, graph_arrive;
-  int graph_fixed;   // 결정 길이: 0 = 한 결정 한 노드(닿을 때까지 — 논문 학습 방식) · 1 = 고정 주기 decide_steps(1 Hz 재계획 — 논문 실물 방식 V-C)
   // 아래층 계측·목표 넣기 (include/low_task.h · env.yaml action.path.follow — 스위치 둘은 도구가 켠다, 기본 0)
   int low_stat, low_task;          // 1 = 걸음 분류 누적(EnvBatch::low) · 1 = 호스트가 목표 칸을 넣음(합친 탐사 low_explore 와 같이만 — EnvBatch::lowcmd, low_stat 도 켜짐)
-  int low_goals, low_idle_steps, low_time_steps;   // 판 끝: 목표 수 · 정체 걸음 수 · 과제 시간 걸음 수
-  float low_pass_r, low_idle_d, low_front;         // 통과 반경 (m) · 정체 거리 (m) · 사람 충돌 방위의 앞 반각 (rad)
+  int low_idle_steps;              // 정체 걸음 수 (막힘 신호)
+  float low_pass_r, low_idle_d;    // 통과 반경 (m) · 정체 거리 (m)
   // 아래층 걸음 길 (include/low_task.h · low_rl.h — 도구가 켠다, 기본 0. low_task 도 켜야 함)
   int low_rl;                      // 1 = env.step 한 번이 걸음 하나 (0.1 s), 목표는 호스트가 LowCmd 로 넣고 Env::low_prepare (EnvBatch::lowrl)
-  int32_t gone_rl_c[2];            // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
   int low_period;                  // 경로를 다시 살피는 주기 (걸음 — 목표가 바뀌면 바로). 0 이면 decide_steps
   int low_explore;                 // 2 = 1 + 닫힘·후보 번지기를 라이다 지도만으로 (깊이 카메라 층 뺌 — mdp/frontier.h "합친 탐사의 닫힘", 켜야 씀). 1 = 두 층을 합친 탐사 (low_rl 위 스위치 — low_task.h "합친 탐사"): 탐사 판 끝 규칙(닫힘 성공·진행 없음)을 그대로 두고,
                                    //     정체·통과는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
-  int32_t gone_rl_d;               // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -369,10 +344,8 @@ struct EnvBatch {
   // 아래층 계측·목표 넣기 (low_stat·low_task 일 때만, 아니면 nullptr — include/low_task.h): 판 누적 [env] · 호스트가 넣는 목표 [env]
   LowEp* low;
   LowCmd* lowcmd;
-  // 아래층 걸음 길 (low_rl 일 때만, 아니면 nullptr — include/low_task.h): 걸음 사이 값 [env] · 아래층 관측 그림 [env · kLowImg] · 숫자 [env · kLow1d]
+  // 아래층 걸음 길 (low_rl 일 때만, 아니면 nullptr — include/low_task.h): 걸음 사이 값 [env]
   LowRl* lowrl;
-  uint8_t* low_img;
-  float* low_1d;
 };
 
 #include "people_sim.h"   // 사람 동작 (EnvState·MapDev 뒤)

@@ -191,7 +191,6 @@ int main(int argc, char** argv) {
   }
   if (scenes.empty()) { std::fprintf(stderr, "people_check <장면.scene> [장면 …] [--envs 256] [--steps 3000]\n"); return 2; }
   sim::EnvHostCfg hc = sim::load_env_cfg(SIM_CONFIG_DIR "/env.yaml");
-  hc.cfg.curriculum = 0;   // 사람 수를 set_people_max 로 정함 (커리큘럼이 켜져 있으면 단계가 정함)
   const sim::LidarModel lidar = sim::load_lidar_model(SIM_CONFIG_DIR "/sensor_model.yaml");
   std::vector<sim::World> worlds;
   for (const auto& p : scenes) worlds.push_back(sim::build_world(p, sim::load_scene(p), hc));

@@ -1,8 +1,8 @@
 // 실물 쪽 탐사 환경 (ROS 없음) — 실물 합친 탐사 노드(low_rl_node.cpp)가 쓰는 시뮬 한 환경 몫.
-// 실물 센서 값(라이다 장·지도 자세·바퀴·IMU·깊이)을 시뮬과 같은 함수로 쌓아 지도·위층 관측·후보·닫힘·아래층 관측을 만들고, 아래층 규칙 추종기(A* 경로 + 추종)로 명령을 낸다.
+// 실물 센서 값(라이다 장·지도 자세·바퀴·IMU·깊이)을 시뮬과 같은 함수로 쌓아 지도·위층 관측·후보·닫힘을 만들고, 아래층 규칙 추종기(A* 경로 + 추종)로 명령을 낸다.
 // 시뮬 한 걸음(0.1 s, env_ref.cpp step_env + low_prepare_env)의 차례를 그대로 따르고, 센서를 흉내 내는 부분(물리·광선)만 실물 값으로 바꾼다:
 //   low_act(규칙 추종기 → 명령) → step(감각, 라이다 장: scan_begin_map → 빔마다 scan_beam_map → scan_apply → known_box → map_progress → sense_step
-//   → finish_step(닫힘 성공·진행 없음 판정) → ring_advance → push_bins → write_obs(깊이 빼고)) → set_depth(깊이) → [set_cmd(위층 목표)] → low_obs(계획·아래층 관측)
+//   → finish_step(닫힘 성공·진행 없음 판정) → ring_advance → push_bins → write_obs(깊이 빼고)) → set_depth(깊이) → [set_cmd(위층 목표)] → low_prepare(계획)
 // 지도·관측·후보·닫힘·경로는 모두 sim/include(env.h · obs_ref.h · plan_ref.h)·mdp/ 의 함수 그대로라 같은 입력이면 시뮬과 비트까지 같다
 // (train/explore/sim/tools/low_explore_check 가 CPU 시뮬 걸음과 비교). 정답 격자는 없다(MapDev::grid 는 0 — 덮음·벽 칸은 실물에서 0).
 // 빌드할 때 -ffp-contract=off (시뮬 CPU 참조판과 같은 부동소수점 — aarch64 g++ 기본은 곱셈·덧셈을 합쳐 값이 달라짐).
@@ -62,22 +62,17 @@ class RobotEnv {
   void depth_from_image(const uint16_t* mm, int w, int h, int step_px, float fx, float fy, float cx, float cy, uint8_t* out) const;
 
   // ---- 아래층 (규칙 추종기) — 한 걸음 차례 (시뮬 env_ref.cpp step_env + low_prepare_env 와 같게):
-  //   low_act(명령) → (명령을 내보냄) → step(감각, 라이다 장) → set_depth(깊이) → [set_cmd(위층 목표, 바뀔 때만)] → set_slot · low_obs()
-  //   low_act  = 시뮬 apply_action 의 계층형 가지 (lowrl_begin · path_step_a·b·c — 목표 없으면 제자리 회전, 속도 다듬기·충돌 감시까지 같은 함수)
-  //   low_obs  = 시뮬 준비 단계: 계획 차례면 깊이 카메라 층 · 경로 계획(plan_ref) → lowrl_pack · lowrl_img
+  //   step(감각, 라이다 장) → set_depth(깊이) → [set_cmd(위층 목표, 바뀔 때만)] → set_slot · low_prepare() → low_act(명령) → (명령을 내보냄)
+  //   low_prepare = 시뮬 준비 단계 (Env::low_prepare): 계획 차례면 깊이 카메라 층 · 경로 계획(plan_ref)
+  //   low_act     = 시뮬 apply_action 의 계층형 가지 (lowrl_begin · path_step_a·b·c — 목표 없으면 제자리 회전, 속도 다듬기·충돌 감시까지 같은 함수)
   void set_cmd(const sim::LowCmd& cmd);   // 합친 탐사 모드: 위층 명령 (combine_run 의 env.set_low_cmd)
   // 합친 탐사 모드: 준비 단계 행동 칸 (combine_run 의 act[0] — 정책 환경이 아닐 때 경로 계획 후보 번호). 기본 −1 (목표 없음). 아래층 규칙이 lxc::Ctl::slot() 을 넘김
   void set_slot(int k) { slot_ = (float)k; }
   const sim::LowEp& low_ep() const { return lowep_[0]; }
-  // 규칙 추종기 명령 → 내보낼 v (m/s) · ω (rad/s). a 는 녹화 꼴(lowrec 'A' 사건)을 지키려고 받기만 하고 안 읽는다
-  void low_act(const float* a, float* v, float* w);
-  void low_obs();
+  void low_prepare();
+  void low_act(float* v, float* w);   // 규칙 추종기 명령 → 내보낼 v (m/s) · ω (rad/s)
   // 실물 멈춤(꺼짐·리모컨·닿음) 걸음: 명령 0 (low_act 대신 — 시뮬에는 없는 걸음. 직전 행동 칸도 0)
   void hold();
-  const uint8_t* low_img() const { return b_.low_img; }   // [kLowImg]
-  const float* low_1d() const { return b_.low_1d; }       // [kLow1d]
-  int low_img_n() const { return sim::low_img_n(b_.cfg); }
-  int low_1d_n() const { return sim::low_1d_n(b_.cfg); }
   const sim::LowRl& low_rl() const { return lowrl_[0]; }
   const sim::LowCmd& low_cmd() const { return lowcmd_[0]; }
 
@@ -117,8 +112,6 @@ class RobotEnv {
   std::vector<sim::LowRl> lowrl_;
   std::vector<sim::LowCmd> lowcmd_;
   std::vector<sim::LowEp> lowep_;
-  std::vector<uint8_t> limg_;
-  std::vector<float> l1d_;
 };
 
 }  // namespace limo_fire_rl

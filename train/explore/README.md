@@ -43,7 +43,7 @@ explore/
 ```
 
 확인 도구 (sim/tools):
-- `low_explore_check` — 같은 판을 CPU 시뮬과 RobotEnv 로 나란히 돌려 위층 결정·아래층 관측·명령·판 끝이 비트까지 같은지 (위층 fuel · slot0 · cand · decider 가짜 응답기).
+- `low_explore_check` — 같은 판을 CPU 시뮬과 RobotEnv 로 나란히 돌려 위층 결정·준비 뒤 경로·명령·판 끝이 비트까지 같은지 (위층 fuel · slot0 · cand · decider 가짜 응답기).
 - `low_explore_replay` · `node_stats` — 실물 노드 녹화(`record:=`, 꼴은 `sim/tools/low_node_rec.h`)를 RobotEnv + 위층으로 다시 돌려 결정 까닭·통계.
 - `room_run` — 실물 방 장면에서 노드와 같은 차례로 돌려 노드 꼴로 녹화 (실물 녹화와 같은 잣대로 견줌).
 - `env_verify` — GPU == CPU 비트 비교 (`--low --low-explore` 가 합친 탐사 길).

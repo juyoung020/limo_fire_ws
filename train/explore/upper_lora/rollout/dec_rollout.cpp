@@ -534,7 +534,6 @@ int main(int argc, char** argv) {
     C.hc = sim::load_env_cfg(env_path);
     sim::EnvCfg& c = C.hc.cfg;   // low_explore_check 와 같은 설정 (combine_run.cpp 합친 탐사)
     c.action_mode = sim::kActPath;
-    c.curriculum = 0;
     c.low_stat = c.low_task = c.low_rl = 1;
     c.low_explore = 1;
     C.lidar = sim::load_lidar_model(model_path);

@@ -12,7 +12,7 @@
 //   비교하는 GPU 광선 길을 끝줄에 적는다. 정확한 길(SIM_EXACT=1, 여기 기본)·소프트 순회만 비트 비교 대상이다 — RT 코어 빠른 길(SIM_EXACT=0, 학습 기본)은
 //   설계상 통계로만 같아(include/optix_rt.h, tools/rt_fastcheck) "다름" 이 나와도 통과·실패로 세지 않고 종료 코드 2
 //   --low: 아래층 걸음 길(include/low_rl.h — 걸음 하나 = 행동 하나, 목표는 호스트가 LowCmd 로 — 규칙 추종기 목표 칸 · 후보 번호 행동 환경을 섞음).
-//          상태·관측에 더해 아래층 관측(그림·숫자)·걸음 사이 값·목표가 걸음마다 GPU == CPU 인지
+//          상태·관측에 더해 준비 뒤 상태(경로)·걸음 사이 값·목표가 걸음마다 GPU == CPU 인지
 //          합친 탐사(EnvCfg::low_explore — 탐사 판 끝 규칙 그대로, 정체는 막힘 신호만. scripts/combine_run.cpp · 실물 노드가 쓰는 길). --low-explore 는 옛 이름
 //   --hier: 계층형 행동 모드(kActPath — 결정 하나 = 속도 행동 10 걸음 묶음, 후보 번호 무작위). 덧붙여 정답 격자를 쓰지 않는지:
 //           CPU 묶음의 정답 격자(MapDev::grid)를 모두 막힘·모두 빈 칸으로 바꾼 사본에서 경로 계획·추종기 명령이 같은지 (--negative 는 후보 번호 하나를 바꿈)
@@ -63,7 +63,6 @@ void range_1d(int i, float* lo, float* hi) {
 int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const sim::LidarModel& lidar, int n_env, int n_steps, int people, bool negative) {
   using sim::LowRl; using sim::LowCmd; using sim::LowEp;
   hc.cfg.action_mode = sim::kActPath;
-  hc.cfg.curriculum = 0;
   hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
   hc.cfg.low_explore = 1;   // 합친 탐사: 탐사 판 끝 규칙 그대로 · 정체는 신호만
   const sim::EnvCfg& c = hc.cfg;
@@ -80,59 +79,36 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   size_t bad_state = 0, bad_reward = 0, bad_obs = 0, bad_low = 0, bad_rl = 0, bad_cmd = 0, bad_ep = 0, n_nan = 0, bad_range = 0;
   int first_bad = -1, ends[mdp::cur::kNumDone] = {};
   std::vector<sim::EnvState> sg, sc;
-  std::vector<float> og1, oc1, lg1, lc1;
+  std::vector<float> og1, oc1;
   std::vector<int32_t> dg, dc;
   std::vector<sim::EpInfo> eg, ec;
-  std::vector<uint8_t> ig, ic, lgi, lci;
+  std::vector<uint8_t> ig, ic;
   std::vector<LowRl> Rg, Rc;
   std::vector<LowCmd> Cg, Cc, cmd(n_env, LowCmd{-1, 0});
   std::vector<LowEp> Lg, Lc;
   std::vector<int16_t> lm;
   std::vector<int> since(n_env, 1 << 20);
-  size_t nz_cam = 0, nz_lidar = 0, nz_depth = 0, n_path = 0, n_goal = 0, n_obs = 0;
+  size_t n_path = 0, n_goal = 0, n_obs = 0;
   const auto mark = [&](size_t n, size_t& acc, int t) { acc += n; if (n && first_bad < 0) first_bad = t; };
-  const auto cmp_low = [&](int t) {   // 아래층 관측·걸음 사이 값·목표
-    gpu.get_low_obs(lgi, lg1);
-    cpu.get_low_obs(lci, lc1);
+  const auto cmp_low = [&](int t) {   // 준비 뒤 상태(경로)·걸음 사이 값·목표
+    gpu.get_state(sg);
+    cpu.get_state(sc);
     gpu.get_low_rl(Rg);
     cpu.get_low_rl(Rc);
     gpu.get_low_cmd(Cg);
     cpu.get_low_cmd(Cc);
-    size_t bo = 0;
-    for (size_t i = 0; i < lci.size(); ++i) bo += lgi[i] != lci[i];
-    for (size_t i = 0; i < lc1.size(); ++i) bo += std::memcmp(&lg1[i], &lc1[i], 4) != 0;
-    mark(bo, bad_low, t);
-    size_t br = 0, bc = 0;
+    size_t bs = 0, br = 0, bc = 0;
     for (int i = 0; i < n_env; ++i) {
+      bs += std::memcmp(&sg[i], &sc[i], sizeof(sim::EnvState)) != 0;
       br += std::memcmp(&Rg[i], &Rc[i], sizeof(LowRl)) != 0;
       bc += std::memcmp(&Cg[i], &Cc[i], sizeof(LowCmd)) != 0;
+      ++n_obs;
+      n_path += sc[i].p_n > 0;
+      n_goal += sc[i].goal_cell >= 0;
     }
+    mark(bs, bad_low, t);
     mark(br, bad_rl, t);
     mark(bc, bad_cmd, t);
-    for (int i = 0; i < n_env; ++i) {
-      const float* O = &lc1[(size_t)i * sim::kLow1d];
-      for (int k = 0; k < sim::kLow1d; ++k) {
-        const float v = O[k];
-        if (!std::isfinite(v)) { ++n_nan; continue; }
-        float lo = -1.f, hi = 1.f;   // sin·cos·직전 행동
-        if (k < sim::kLoSub) { lo = -4.f; hi = 4.f; }   // 자기 상태 (obs_1d 칸 그대로)
-        else if (k < sim::kLoAct) { if ((k - sim::kLoSub) % 3 == 0) lo = 0.f; }
-        else if (k >= sim::kLoHasPath && k <= sim::kLoHasGoal) lo = 0.f;
-        else if (k > sim::kLoHasGoal) lo = hi = 0.f;   // 예약
-        if (v < lo || v > hi) {
-          if (!bad_range) std::printf("범위 밖: 걸음 %d 환경 %d 숫자 칸 %d 값 %g (허용 %g~%g)\n", t, i, k, v, lo, hi);
-          ++bad_range;
-        }
-      }
-      ++n_obs;
-      n_path += O[sim::kLoHasPath] > 0.5f;
-      n_goal += O[sim::kLoHasGoal] > 0.5f;
-      const uint8_t* I = &lci[(size_t)i * sim::kLowImg];
-      const int hw = mdp::obs::NEAR_H * mdp::obs::NEAR_W;
-      for (int k = 0; k < hw; ++k) nz_cam += I[sim::kLowCamCh * hw + k] != 0;
-      for (int k = sim::kLowLidarOff; k < sim::kLowDepthOff; ++k) nz_lidar += I[k] != 0;
-      for (int k = sim::kLowDepthOff; k < sim::kLowImg; ++k) nz_depth += I[k] != 0;
-    }
   };
   cmp_low(-1);
   std::vector<float> act((size_t)A * n_env);
@@ -174,7 +150,7 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
     gpu.low_prepare(d_act);
     cpu.low_prepare(act.data());
     gpu.sync();
-    cmp_low(t);   // 준비 뒤 관측
+    cmp_low(t);   // 준비 뒤 (경로 계획)
     gpu.step(d_act);
     cpu.step(act.data());
     gpu.sync();
@@ -223,10 +199,9 @@ int verify_low(sim::EnvHostCfg hc, const std::vector<sim::World>& worlds, const 
   std::printf("아래층 걸음 길 (호스트가 목표, 계획 주기 %d 걸음, 사람 상한 %d): 환경 %d × 걸음 %d%s\n", sim::lowrl_period(c), people, n_env, n_steps, negative ? " (일부러 어긋나게)" : "");
   std::printf("판 끝: 닿음 %d · 끊김(시간·정체·목표 수) %d · 닫힘 성공 %d · 진행 없음 %d\n", ends[mdp::cur::kCollision], ends[mdp::cur::kTruncated], ends[mdp::cur::kDeclareOk], ends[mdp::cur::kNoProgress]);
   std::printf("합친 탐사(low_explore): 막힘 신호 %zu 번 · 닫힘 성공 %zu 판 · 진행 없음 %zu 판 (정체·시간·목표 수는 판을 안 끝냄)\n", n_sig, n_ok, n_idle);
-  std::printf("아래층 관측 %zu 개: 경로 있음 %.3f · 목적지 있음 %.3f · 0 아닌 칸 평균 — 깊이 카메라 층 채널 %.1f · 라이다 그림 %.1f / 992 · 깊이 %.1f / %d\n", n_obs,
-              (double)n_path / n_obs, (double)n_goal / n_obs, (double)nz_cam / n_obs, (double)nz_lidar / n_obs, (double)nz_depth / n_obs, mdp::obs::DEPTH_SIZE);
+  std::printf("준비 뒤 상태 %zu 개: 경로 있음 %.3f · 목적지 있음 %.3f\n", n_obs, (double)n_path / n_obs, (double)n_goal / n_obs);
   std::printf("관측 범위: NaN·inf %zu, 범위 밖 %zu\n", n_nan, bad_range);
-  std::printf("상태 다름 %zu, 끝·판 정보 다름 %zu, 위층 관측 다름 %zu, 아래층 관측 다름 %zu, 걸음 사이 값 다름 %zu, 목표 다름 %zu, 계측 누적 다름 %zu, "
+  std::printf("상태 다름 %zu, 끝·판 정보 다름 %zu, 위층 관측 다름 %zu, 준비 뒤 상태 다름 %zu, 걸음 사이 값 다름 %zu, 목표 다름 %zu, 계측 누적 다름 %zu, "
               "지도 칸 다름 %zu, 카메라 층 다름 %zu (처음 걸음 %d)\n", bad_state, bad_reward, bad_obs, bad_low, bad_rl, bad_cmd, bad_ep, bad_map, bad_cam, first_bad);
   const bool same = !(bad_state || bad_reward || bad_obs || bad_low || bad_rl || bad_cmd || bad_ep || bad_map || bad_cam);
   const bool range_ok = n_nan == 0 && bad_range == 0;

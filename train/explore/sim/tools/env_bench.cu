@@ -16,14 +16,13 @@ int main(int argc, char** argv) {
   std::vector<std::string> scenes;
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml", list;
   int n_env = 1024, n_steps = 50;
-  int people = 0, curriculum = -1, threads = 1;
+  int people = 0, threads = 1;
   bool cpu = false, hier = false;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--envs" && i + 1 < argc) n_env = std::stoi(argv[++i]);
     else if (a == "--steps" && i + 1 < argc) n_steps = std::stoi(argv[++i]);
     else if (a == "--env" && i + 1 < argc) env_path = argv[++i];
-    else if (a == "--curriculum" && i + 1 < argc) curriculum = std::stoi(argv[++i]);
     else if (a == "--people" && i + 1 < argc) people = std::stoi(argv[++i]);
     else if (a == "--model" && i + 1 < argc) model_path = argv[++i];
     else if (a == "--list" && i + 1 < argc) list = argv[++i];
@@ -34,7 +33,6 @@ int main(int argc, char** argv) {
   }
   if (scenes.empty() && list.empty()) { std::fprintf(stderr, "env_bench <장면.scene> [장면 …] [--envs 1024] [--steps 50]\n"); return 2; }
   sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
-  if (curriculum >= 0) hc.cfg.curriculum = curriculum;   // 0: 모든 맵 고르게 (사람 수도 --people 그대로)
   if (hier) hc.cfg.action_mode = sim::kActPath;
   const int AW = mdp::act::DIM;
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);

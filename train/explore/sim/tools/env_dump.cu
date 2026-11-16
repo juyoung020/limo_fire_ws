@@ -42,7 +42,6 @@ int main(int argc, char** argv) {
   }
   sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
   if (hier) hc.cfg.action_mode = sim::kActPath;
-  if (people > 0) hc.cfg.curriculum = 0;
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   std::vector<sim::World> worlds;
   if (!list.empty()) worlds = sim::load_scene_list(list, hc, nullptr);

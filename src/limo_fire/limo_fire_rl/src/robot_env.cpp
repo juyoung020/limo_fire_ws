@@ -12,7 +12,6 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore) {
   b_.cfg = hc.cfg;
   sim::EnvCfg& c = b_.cfg;
   c.action_mode = sim::kActPath;   // 계층형 (후보·경로 계획)
-  c.curriculum = 0;                // 단계·오차 배율 없음 (평가와 같음)
   // 합친 탐사 (scripts/combine_run.cpp 와 같게): 아래층 걸음 길 · 목표는 호스트(위층) · 탐사 판 끝 규칙 · 정체는 막힘 신호만.
   // 닫힘을 라이다 지도만으로 하려면 부르는 쪽이 low_explore 2 로 줌 (env.h EnvCfg::low_explore)
   const int close_lidar = hc.cfg.low_explore == 2 ? 2 : 1;
@@ -69,13 +68,9 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore) {
   lowrl_[0].stall_tgt = -1;
   lowcmd_.assign(1, sim::LowCmd{-1, 0});
   lowep_.assign(1, sim::LowEp{});
-  limg_.assign((size_t)sim::kLowImg, 0);
-  l1d_.assign((size_t)sim::kLow1d, 0.f);
   b_.lowrl = lowrl_.data();
   b_.lowcmd = lowcmd_.data();
   b_.low = lowep_.data();
-  b_.low_img = limg_.data();
-  b_.low_1d = l1d_.data();
   // GPU 전용 칸은 없음 (CPU 참조판과 같음)
   b_.fmap = nullptr;
   b_.rbits = nullptr;
@@ -213,7 +208,7 @@ void RobotEnv::set_cmd(const sim::LowCmd& cmd) {
   lowcmd_[0] = cmd;   // 시뮬 Env::set_low_cmd 와 같음 (LowRl 은 안 건드림 — 새 목표면 lowrl_due 가 tgt_seen 으로 계획 차례를 앞당김)
 }
 
-void RobotEnv::low_act(const float*, float* v, float* w) {
+void RobotEnv::low_act(float* v, float* w) {
   // 시뮬 step_env 첫머리 + apply_action 계층형 가지 (env.h): collided 0 → lowrl_begin → 추종기 (목표 없으면 제자리 회전, 속도 다듬기·충돌 감시까지 같은 함수)
   e_.collided = 0;
   sim::lowrl_begin(b_, e_, 0);
@@ -233,15 +228,13 @@ void RobotEnv::hold() {
   sim::path_last_act(b_.cfg, e_, 0.f, 0.f);
 }
 
-void RobotEnv::low_obs() {
+void RobotEnv::low_prepare() {
   // 시뮬 env_ref.cpp low_prepare_env 와 같은 차례: 계획 차례면 깊이 카메라 층 · 경로 계획(행동 칸 = set_slot — 위층이 고른 후보 번호, fuel 이면 0, −1 목표 없음)
   if (sim::lowrl_due(b_, e_, 0)) {
     sim::camlayer_ref(b_, e_, 0);
     sim::plan_ref(b_, e_, 0, sim::slot_of(b_, slot_));
     sim::lowrl_planned(b_, e_, 0);
   }
-  sim::lowrl_pack(b_, e_, 0);
-  for (int i = 0; i < sim::kLowImg; ++i) b_.low_img[i] = sim::lowrl_img(b_, e_, 0, i);
 }
 
 }  // namespace limo_fire_rl

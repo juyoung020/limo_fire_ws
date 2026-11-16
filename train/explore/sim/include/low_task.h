@@ -39,7 +39,7 @@ enum : int32_t {
 // 추종기 가지 (path_follow → PathWhy::kind)
 enum : int32_t { kWhyNoGoal = 0, kWhyNoPath, kWhyArrive, kWhyArriveStop, kWhyRot, kWhyGo };
 // 판 끝 까닭 (LowEp::end). 충돌 둘은 계측만 켜도 적는다
-enum : int32_t { kLowEndNone = 0, kLowEndGoals, kLowEndTime, kLowEndStall, kLowEndWall, kLowEndPerson };
+enum : int32_t { kLowEndNone = 0, kLowEndGoals, kLowEndTime, kLowEndStall, kLowEndWall, kLowEndPerson };   // 1·2·5 는 옛 단독 과제·사람 닿음 코드 (안 나옴 — 번호는 그대로)
 
 constexpr int kLowAng = 6;   // 방향 변화 구간: 0–30 · 30–60 · 60–90 · 90–135 · 135–180° · 미정(새 경로가 생기기 전에 또 바뀜)
 constexpr int kLowDst = 3;   // 목적지가 옮겨간 거리 구간: < 0.5 · 0.5–2 · ≥ 2 m
@@ -77,7 +77,6 @@ struct LowEp {
   float left_sum;                  // 도착 전에 바뀔 때 옛 경로 끝까지 남았던 직선 거리의 합 (m)
   int32_t n_goal;                  // 목적지를 받은 수 (없음 → 칸 포함)
   int32_t end;                     // kLowEnd*
-  int32_t hit_dir;                 // 사람 충돌: 1 = 그 사람이 로봇 앞 ±low_front 안 · 2 = 밖 (충돌 걸음의 로봇 자세 기준 방위)
   // 목표 따라가기 (follow ≠ 0)
   int32_t following;               // 이 판이 목표 따라가기 구간에 들어감 (들어갈 때 위 누적을 0 으로)
   int32_t f_start;                 // 그때 걸음 번호
@@ -117,25 +116,5 @@ struct LowRl {
   int32_t stall_tgt;
 };
 
-// 아래층 관측 (위층과 같은 원본 버퍼(obs_img·obs_1d·지도·깊이 카메라 층·경로)에서 잘라 만든다, low_rl.h lowrl_img·lowrl_pack).
-// 그만둔 아래층 정책의 입력 꼴 그대로 — 실물 노드 녹화(sim/tools/low_node_rec.h)에 남고 sim == 실물 비트 비교(low_explore_check · low_explore_replay)에 쓴다:
-//  그림 u8 [kLowImg]: 가까운 지도 6 × 64 × 64 (obs_img 그대로, 예약 물체 채널 kLowCamCh 에 깊이 카메라 장애물 층) | 라이다 1 × 32 × 32 | 깊이 1 × 40 × 64 (obs_img 그대로)
-//  숫자 float [kLow1d]
-constexpr int kLowLidarHW = mdp::low::LIDAR_HW;                       // 라이다 그림 한 변: 각도 칸 248 × 프레임 4 를 Z 차례로 (픽셀 Morton 번호 4·j + f = 칸 j·프레임 f)
-constexpr int kLowLidarOff = mdp::obs::NEAR_SIZE;
-constexpr int kLowDepthOff = kLowLidarOff + kLowLidarHW * kLowLidarHW;
-constexpr int kLowImg = kLowDepthOff + mdp::obs::DEPTH_SIZE;
-static_assert(kLowImg == mdp::low::IMG && kLowLidarOff == mdp::low::LIDAR_OFF && kLowDepthOff == mdp::low::DEPTH_OFF, "아래층 그림 배치 = mdp/obs_layout.h");
-constexpr int kLowCamCh = 2;                          // 가까운 지도의 예약 물체 채널 (위층 관측에서는 늘 0)
-enum : int32_t {
-  kLoWheelV = 0, kLoGyro, kLoSlip, kLoEkfV, kLoEkfW,   // 자기 상태 (obs_1d 의 같은 칸 그대로)
-  kLoSub = 5,          // 부목표 2 개 × (거리 / kLrSubNorm, sin, cos) — 경로 위 kLrLook[0]·[1] m 앞
-  kLoGoal = 11,        // 목적지 (거리 / kLrGoalNorm, sin, cos)
-  kLoAct = 14,         // 직전 행동 4 개 × (v, ω) — obs_1d 직전 행동 칸의 v·ω
-  kLoHasPath = 22,     // 경로 있음 0·1
-  kLoRem = 23,         // 남은 경로 길이 / kLrGoalNorm
-  kLoHasGoal = 24,     // 목적지 있음 0·1
-  kLow1d = mdp::low::N1D   // 뒤는 예약 (0 — 옛 "움직이는 것" 칸 자리)
-};
 
 }  // namespace sim

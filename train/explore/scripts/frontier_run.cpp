@@ -101,7 +101,6 @@ int run_mode(const Args& a, const std::string& mode) {
   // 행동은 물리 단위(기준선 v, ω), 안전층·커리큘럼 끔 (기준선은 Nav2 감속을 스스로 함, 맵은 고르게·오차 배율 1)
   hc.cfg.act_raw = 1;
   hc.cfg.safety = 0;
-  hc.cfg.curriculum = 0;
   hc.cfg.max_steps = (int)std::ceil(P.t_safe / P.ctrl_dt) + 100;
   const sim::LidarModel lidar = sim::load_lidar_model(a.model);
   const sim::EnvCfg& c = hc.cfg;

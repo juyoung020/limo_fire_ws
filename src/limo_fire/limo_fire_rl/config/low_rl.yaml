@@ -59,4 +59,4 @@ low_rl:
     fuel_vp_clear: 0.21       # 시점 둘레 이 거리(m) 안에 모름 칸이 없어야 (없으면 거리 문턱만으로 다시, 그래도 없으면 그 덩어리는 쉼)
     close_lidar: false        # true: 지도 닫힘(성공 끝)을 라이다 지도만으로 — 깊이 카메라 층에만 막힌 곳이 남으면 안 닫힘. 시뮬에서 아래층 규칙 + slot0 성공이 크게 떨어져 기본 끔 (scripts/README)
     slot_vp: false            # upper:=slot0 에서 후보 칸 대신 그 덩어리의 시점 (fu::slot_view) — 시뮬 시험 장면에서 slot0 보다 나빠 기본 끔 (scripts/README)
-    record: ""                # 비우지 않으면 입력·관측·명령 녹화 (sim/tools/low_explore_replay · node_stats 로 다시 돌림)
+    record: ""                # 비우지 않으면 입력·명령 녹화 (꼴은 train/explore/sim/tools/low_node_rec.h — low_explore_replay · node_stats 로 다시 돌림)

@@ -1,6 +1,6 @@
 // 탐사 시뮬 호스트 쪽 (Env): 설정 읽기, 맵(장면 → 정답 격자) 만들기, 환경 묶음 메모리와 한 걸음 부르기, 상태 꺼내기·저장·복원.
 // 같은 Env 를 GPU(많은 환경 — combine_run · dec_rollout)와 CPU(참조 — low_explore_check · room_run, 비트 비교)로 돌릴 수 있다 (tools/env_verify).
-// 합친 탐사 한 걸음: set_low_cmd(위층 목표) → low_prepare(계획·아래층 관측) → step → get_state·get_low_rl(막힘 신호)·get_ep (scripts/combine_run.cpp)
+// 합친 탐사 한 걸음: set_low_cmd(위층 목표) → low_prepare(계획) → step → get_state·get_low_rl(막힘 신호)·get_ep (scripts/combine_run.cpp)
 #pragma once
 #include <cuda_runtime.h>
 
@@ -34,8 +34,6 @@ struct StepOut {
   const int32_t* done;          // [N] mdp::cur::Done — 종료 여부는 mdp::cur::terminal(done), 끊김 = 3
   const EpInfo* ep;             // [N] done ≠ 0 인 환경의 끝난 판 정보 (덮음·t95·길이·충돌·단계·맵)
   int o1d;                      // 관측 1D 한 환경 칸 수
-  const uint8_t* low_img = nullptr;   // 아래층 관측 그림 [N][kLowImg] (cfg.low_rl 일 때만 — include/low_task.h)
-  const float* low_1d = nullptr;      // [N][kLow1d]
 };
 
 // GPU 광선 길 (include/optix_rt.h). CPU 참조판과 비트까지 같은 것은 kRayRtFast 만 빼고 모두 — 빠른 길은 하드웨어 삼각형 교차라
@@ -81,11 +79,10 @@ class Env {
   void set_low_cmd(const std::vector<LowCmd>& cmd);
   void get_map_env(int env, std::vector<int16_t>& out) const;
   // 아래층 걸음 길 (cfg.low_rl — include/low_task.h, low_rl.h): step 한 번 = 걸음 하나(0.1 s). 호스트가 걸음마다
-  // set_low_cmd → low_prepare(다음 step 에 줄 행동 줄 — 규칙 추종 환경의 후보 번호, 없으면 nullptr) → outputs().low_img·low_1d → step
+  // set_low_cmd → low_prepare(다음 step 에 줄 행동 줄 — 규칙 추종 환경의 후보 번호, 없으면 nullptr) → step
   void low_prepare(const float* actions = nullptr, cudaStream_t st = 0);
   void get_low_cmd(std::vector<LowCmd>& out) const;
   void get_low_rl(std::vector<LowRl>& out) const;
-  void get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
   void get_ep(std::vector<EpInfo>& ep) const;
   void get_done(std::vector<int32_t>& done) const;   // 판 끝 코드 [N] (mdp::cur::Done — 끝난 판은 리셋됨)
   // 움직이는 사람 (src/people_host.cpp): 환경마다 다음 판 사람 수 상한 (판 시작 인자, 0 ~ kMaxPeople) · 이 판 사람들 (뷰어 재생)

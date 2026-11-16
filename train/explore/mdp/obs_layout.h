@@ -89,19 +89,6 @@ constexpr float kUtilNorm = 160.f;   // 칸 — 잠정 (±2 m 창 한 변 80 칸
 constexpr int kPathMax = 64;         // 웨이포인트 상한 (EnvState)
 }  // namespace mdp::hier
 
-// 아래층 관측 (sim/include/low_rl.h · low_task.h): 위층과 같은 관측 원본에서 잘라 만든 아래층 전용 관측 — 그만둔 아래층 정책(2026-11-16, archive/rl)의 입력 꼴 그대로.
-// 실물 노드 녹화(sim/tools/low_node_rec.h)에 남고 sim == 실물 비트 비교에 쓴다.
-// 그림 u8 [IMG]: 가까운 지도 6 × 64 × 64 (예약 물체 채널에 깊이 카메라 장애물 층) | 라이다 1 × 32 × 32 (각도 칸 248 × 프레임 4, Z 차례) | 깊이 1 × 40 × 64
-// 숫자 float [N1D] (칸 뜻은 sim/include/low_task.h kLo*). ACT = 녹화의 'A' 사건 폭 (v, ω, 선언 자리)
-namespace mdp::low {
-constexpr int LIDAR_HW = 32;
-constexpr int LIDAR_OFF = mdp::obs::NEAR_SIZE;
-constexpr int DEPTH_OFF = LIDAR_OFF + LIDAR_HW * LIDAR_HW;
-constexpr int IMG = DEPTH_OFF + mdp::obs::DEPTH_SIZE;   // 28160
-constexpr int N1D = 32;
-constexpr int ACT = 3;
-}  // namespace mdp::low
-
 namespace mdp::act {
 constexpr int CONT = 3;    // v, vy, ω — [−1, 1] 정규 단위, 환경이 한도를 곱하고 자름
 constexpr int DECLARE = 1; // 끝 선언 (베르누이 로짓)

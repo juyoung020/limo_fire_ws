@@ -1,6 +1,6 @@
 // 실물 합친 탐사 노드(위층 + 아래층 규칙 추종기 — limo_fire_rl low_rl) == CPU 시뮬 합친 탐사 (combine_run --upper fuel|slot0|decider 와 같은 설정).
 // 시뮬(환경 하나, CPU 참조판)과 RobotEnv(합친 탐사 모드)가 각자 자기 상태로 위층 결정(scripts/low_explore_ctl.h — combine_run 의 환경 하나 몫)을 하고,
-// 걸음마다 시뮬 라이다 장·감각·깊이를 RobotEnv 에 넣어 두 쪽의 위층 명령(목표 칸·follow)·아래층 관측(그림·1D)·명령(v, ω)·판 끝을 비트 비교한다.
+// 걸음마다 시뮬 라이다 장·감각·깊이를 RobotEnv 에 넣어 두 쪽의 위층 명령(목표 칸·follow)·준비 뒤 경로(목표 칸·경로 점)·명령(v, ω)·판 끝을 비트 비교한다.
 // 아래층은 두 쪽 다 규칙 추종기 (준비 단계 행동 칸 = 위층 Ctl::slot() — combine_run 의 act[0], RobotEnv::low_act 계층형 가지). 관측 설정은 env.yaml 그대로.
 //   low_explore_check <장면.scene> … [--steps 1500] [--seed 1] [--people 0] [--upper fuel|slot0|decider] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
 //   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 실물 노드 upper:=slot0)
@@ -48,7 +48,7 @@ double rough_cover(const int16_t* L, int stride, const uint8_t* grid, int gw, in
   for (size_t q = 0; q < fl.size(); ++q) if (fl[q] > 0) { ++nb; nk += kn[q] * 5 >= fl[q]; }
   return nb ? (double)nk / nb : 0.0;
 }
-// 실물 쪽 걸음 시간 (이 기기 한 코어) — RobotEnv::step(라이다 장 → 지도·관측·닫힘) · low_obs · 위층 결정(Ctl::decide)
+// 실물 쪽 걸음 시간 (이 기기 한 코어) — RobotEnv::step(라이다 장 → 지도·관측·닫힘) · low_prepare · 위층 결정(Ctl::decide)
 double t_step = 0, t_obs = 0, t_dec = 0, t_dec_max = 0;
 long n_step = 0, n_tdec = 0;
 // 가짜 판단 모델: 본문 해시로 글자, lat 걸음 뒤 답 (now 는 부르는 쪽이 걸음마다 맞춤)
@@ -219,7 +219,6 @@ int main(int argc, char** argv) {
     sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
     // combine_run.cpp:224-231 와 같은 설정 (max_steps 는 판 길이라 관측과 무관 — 여기서는 env.yaml 그대로)
     hc.cfg.action_mode = sim::kActPath;
-    hc.cfg.curriculum = 0;
     hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
     hc.cfg.low_explore = close_lidar ? 2 : 1;
     hc.cfg.pe_xy = hc.cfg.pe_yaw = 0.f;
@@ -252,7 +251,7 @@ int main(int argc, char** argv) {
     const auto no_delay = [&]() { cpu.get_state(st); st[0].delay = 0; cpu.set_state(0, st[0]); };
     no_delay();
     limo_fire_rl::RobotEnv robot(hc, true, true);
-    const int NI = robot.low_img_n(), N1 = robot.low_1d_n(), AW = mdp::act::DIM, K = mdp::hier::K;
+    const int AW = mdp::act::DIM, K = mdp::hier::K;
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
@@ -296,8 +295,9 @@ int main(int argc, char** argv) {
     tap.robot = &robot;
     std::vector<int16_t> lm;
     std::vector<uint32_t> tr;
-    std::vector<uint8_t> vox, img, li;
-    std::vector<float> pts, o1d, l1;
+    std::vector<uint8_t> vox, img;
+    std::vector<float> pts, o1d;
+    std::vector<sim::EnvState> st_prep;
     std::vector<int32_t> cand, ccur;
     std::vector<sim::LowRl> R;
     std::vector<sim::LowEp> L;
@@ -319,7 +319,7 @@ int main(int argc, char** argv) {
     double ep_path = 0, ep_px = 0, ep_py = 0;   // --ep-log: 이 판 지나온 길 (m, 참 자세)
     long ep_gsw = 0;                            // --ep-log: 이 판 경로 목표 칸(EnvState::goal_cell)이 다른 칸으로 바뀐 수 (위층 방식과 무관한 같은 잣대)
     int ep_goal = -1;   // --ep-log: 이 판 시작 때 셈
-    long n_obs = 0, d_img = 0, d_1d = 0, d_cmd = 0, d_dec = 0, n_dec = 0, n_ep = 0, why_n[3] = {0, 0, 0}, n_sw = 0;
+    long n_obs = 0, d_path = 0, d_cmd = 0, d_dec = 0, n_dec = 0, n_ep = 0, why_n[3] = {0, 0, 0}, n_sw = 0;
     int first_bad = -1, prev_tgt = -2;
     int st_ep_map = 0;   // 이 판의 장면 번호 (판 끝 대충 앎 넓이)
     const auto start = [&]() {
@@ -351,7 +351,7 @@ int main(int argc, char** argv) {
     };
     start();
     sim::set_cpu_tap(&tap);
-    std::vector<float> act((size_t)AW, 0.f), a3((size_t)mdp::low::ACT, 0.f);   // a3: RobotEnv::low_act 의 행동 칸 (규칙 추종기는 안 씀 — 0)
+    std::vector<float> act((size_t)AW, 0.f);
     std::vector<int32_t> dn;
     for (int t = 0; t < steps; ++t) {
       cpu.get_state(st);
@@ -474,31 +474,32 @@ int main(int argc, char** argv) {
         robot.set_cmd(c2);
       }
       if (cs.cmd().target != cr.cmd().target || cs.cmd().follow != cr.cmd().follow || cs.slot() != cr.slot()) { ++d_dec; if (first_bad < 0) first_bad = t; }
-      // 준비 단계 (시뮬 Env::low_prepare · 실물 low_obs) — 목표 없음이면 행동 칸 −1 (combine_run.cpp:1144-1146)
+      // 준비 단계 (시뮬 Env::low_prepare · 실물 low_prepare) — 목표 없음이면 행동 칸 −1 (combine_run.cpp:1144-1146)
       std::fill(act.begin(), act.end(), 0.f);
       act[0] = (float)cs.slot();   // combine_run 규칙: 결정 때 정한 행동 칸 (다음 결정까지 그대로)
       robot.set_slot(cr.slot());
       cpu.low_prepare(act.data());
       cpu.get_obs(img, o1d);
       robot.set_depth(img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE);
-      { const auto t0 = std::chrono::steady_clock::now(); robot.low_obs(); t_obs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
-      cpu.get_low_obs(li, l1);
+      { const auto t0 = std::chrono::steady_clock::now(); robot.low_prepare(); t_obs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+      cpu.get_state(st_prep);
       ++n_obs;
-      long di = 0, d1 = 0;
-      for (int i = 0; i < NI; ++i) di += li[(size_t)i] != robot.low_img()[i];
-      for (int i = 0; i < N1; ++i) d1 += std::memcmp(&l1[(size_t)i], &robot.low_1d()[i], 4) != 0;
-      if (d1 && std::getenv("LOW_CHECK_VERBOSE"))
-        for (int i = 0; i < N1; ++i)
-          if (std::memcmp(&l1[(size_t)i], &robot.low_1d()[i], 4) != 0) std::printf("  걸음 %d 1D 칸 %d 시뮬 %g 실물 %g\n", t, i, l1[(size_t)i], robot.low_1d()[i]);
-      d_img += di; d_1d += d1;
-      if ((di || d1) && first_bad < 0) first_bad = t;
+      {   // 준비 뒤 경로 (목표 칸 · 경로 점 · 지금 구간 · 고른 후보) — 두 쪽 같아야
+        const sim::EnvState& es = st_prep[0];
+        const sim::EnvState& er = robot.state();
+        const bool dp = es.goal_cell != er.goal_cell || es.p_n != er.p_n || es.p_i != er.p_i || es.p_slot != er.p_slot ||
+                        std::memcmp(es.wp, er.wp, sizeof(es.wp[0]) * 2 * (size_t)std::max(0, es.p_n)) != 0;
+        if (dp && std::getenv("LOW_CHECK_VERBOSE")) std::printf("  걸음 %d 경로 다름: 목표 %d/%d 점 %d/%d\n", t, es.goal_cell, er.goal_cell, es.p_n, er.p_n);
+        d_path += dp;
+        if (dp && first_bad < 0) first_bad = t;
+      }
       if (std::getenv("LOW_CHECK_VERBOSE")) {
         cpu.get_state(st);
         if (std::memcmp(&st[0].ws, &robot.state().ws, 4) != 0 || std::memcmp(&st[0].vs, &robot.state().vs, 4) != 0)
           std::printf("  걸음 %d 속도 다듬기 상태 시뮬 (%g, %g) 실물 (%g, %g) · 시뮬 몸통 닿음 %d\n", t, st[0].vs, st[0].ws, robot.state().vs, robot.state().ws, st[0].collided);
       }
       float v, w;
-      robot.low_act(a3.data(), &v, &w);
+      robot.low_act(&v, &w);
       std::vector<sim::EnvState> st_pre;
       if (!contact_log.empty()) cpu.get_state(st_pre);
       cpu.step(act.data());
@@ -733,10 +734,10 @@ int main(int argc, char** argv) {
                   g_end[cand::kStall], g_end[cand::kOffPath]);
       std::printf("최근 실패 후보로 다시 감 %ld 번%s\n", g_refail, use_cand && g_refail > 0 ? " — 규칙(upper cand)은 0 이어야: 틀림" : "");
     }
-    std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_obs %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번)\n", n_step ? t_step / n_step : 0.0,
+    std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_prepare %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번)\n", n_step ? t_step / n_step : 0.0,
                 n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec);
-    std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld\n", d_dec, d_img, d_1d, d_cmd);
-    const bool ok = d_dec == 0 && d_img == 0 && d_1d == 0 && d_cmd == 0 && d_body == 0 && !(use_cand && g_refail > 0);   // 후보 규칙이 최근 실패 후보를 다시 고르면 틀림
+    std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 경로 다름 %ld · 아래층 명령·판 끝 다름 %ld\n", d_dec, d_path, d_cmd);
+    const bool ok = d_dec == 0 && d_path == 0 && d_cmd == 0 && d_body == 0 && !(use_cand && g_refail > 0);   // 후보 규칙이 최근 실패 후보를 다시 고르면 틀림
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");
     return ok ? 0 : 1;
   } catch (const std::exception& ex) {

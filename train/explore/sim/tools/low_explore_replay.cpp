@@ -1,8 +1,8 @@
 // 실물 합친 탐사 노드(limo_fire_rl low_rl) 녹화를 RobotEnv 합친 탐사 모드 + 위층(scripts/low_explore_ctl.h)으로 다시 돌린다 (GPU·ROS 없이).
-// 노드가 부르는 차례 그대로 (low_rl_node.cpp on_scan): 'R' reset → ['S' step → 판 끝 → 위층 걸음 뒤] → 'D' 깊이 → [결정 차례면 위층 결정 → set_cmd] → 'O' set_slot · low_obs → 'A' low_act.
-// 아래층은 규칙 추종기 (2026-11-16 RL 을 뺀 뒤의 노드 — 행동 칸 = 위층 Ctl::slot()). 아래층 RL 노드 녹화(1116_fuel_rl_1 등)는 RL 을 뺀 판(archive/rl/README.md)보다 앞 판으로 돌린다.
-// 행동은 녹화 값을 쓰므로 궤적·지도는 녹화 그대로이고, 위층만 다시 결정한다. 녹화와 같은 위층 설정이면 'O' 관측이 비트까지 같아야 한다(위층 결정이 녹화 때와 같음).
-// 다른 위층 설정(--upper · --fuel-*)이면 관측은 다르지만(목표가 다름) 지도·궤적은 녹화 그대로 — "그 자리에서 이 위층이면 무엇을 골랐나" 를 본다.
+// 노드가 부르는 차례 그대로 (low_rl_node.cpp on_scan): 'R' reset → ['S' step → 판 끝 → 위층 걸음 뒤] → 'D' 깊이 → [결정 차례면 위층 결정 → set_cmd] → 'A' set_slot · low_prepare · low_act.
+// 아래층은 규칙 추종기 (2026-11-16 RL 을 뺀 뒤의 노드 — 행동 칸 = 위층 Ctl::slot()). 녹화 꼴은 sim/tools/low_node_rec.h (판 1 · 2 모두 읽음).
+// 행동은 녹화 값을 쓰므로 궤적·지도는 녹화 그대로이고, 위층만 다시 결정한다. 녹화와 같은 위층 설정이면 다시 낸 아래층 명령이 녹화 명령과 비트까지 같아야 한다.
+// 다른 위층 설정(--upper · --fuel-*)이면 명령은 다르지만(목표가 다름) 지도·궤적은 녹화 그대로 — "그 자리에서 이 위층이면 무엇을 골랐나" 를 본다.
 //   low_explore_replay 녹화.bin [--upper fuel|slot0] [--fuel-* …] [--log 결정.tsv] [--pgm 접두사 --pgm-every N] [--depth-stat]
 //   fuel 기본 = 지금 실물 노드 기본(config/low_rl.yaml). 옛 설정으로 녹화한 것을 비트로 다시 내려면 그때 값을 준다 (2026-11-16 앞: --fuel-hyst 0 --fuel-vp-min 0 --fuel-vp-clear 0)
 //   (RL 을 빼기 전 판으로 1116_fuel_rl_1 659 / 659 · 1116_slot0_1 --upper slot0 86 / 86 비트 같음). 노드가 close_lidar 로 돌았으면 녹화 머리 hc 의 low_explore 2 를 그대로 이어받는다.
@@ -140,7 +140,6 @@ int main(int argc, char** argv) {
     }
     lowrec::Reader rd(argv[1]);
     limo_fire_rl::RobotEnv robot(rd.hc, true, true);
-    if (robot.low_img_n() != rd.ni || robot.low_1d_n() != rd.n1) throw std::runtime_error("녹화 관측 크기가 설정과 다름");
     const sim::EnvCfg& c = robot.cfg();
     lxc::Params lp = lxc::Params::from_cfg(c);
     lp.fuel = fo;
@@ -158,11 +157,10 @@ int main(int argc, char** argv) {
     sim::World wd;
     FILE* lf = logp.empty() ? nullptr : std::fopen(logp.c_str(), "w");
     if (lf) std::fprintf(lf, "t_s\tstep\tx\ty\tth\tcause\tcmd_why\ttgt\ttx\tty\tchanged\tjump_m\trobot_tgt_m\tn_clu\tn_node\tcur\tpick\tbest_first\tbest\tcur_cost\tno_goal_why\tn_block\tn_front_reach\tn_front_all\tn_block_nocam\tclosed\n");
-    std::vector<uint8_t> ei((size_t)rd.ni), dep((size_t)mdp::obs::DEPTH_SIZE);
-    std::vector<float> e1((size_t)rd.n1), a((size_t)mdp::low::ACT);
+    std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE);
     limo_fire_rl::Proprio p;
     limo_fire_rl::Scan sc;
-    long n_obs = 0, d_obs = 0, d_cmd = 0, n_dec = 0, n_chg = 0, n_nogoal = 0, n_slot = 0, nog_why[6] = {0, 0, 0, 0, 0, 0}, nog_steps = 0, n_steps = 0;
+    long n_act = 0, d_cmd = 0, n_dec = 0, n_chg = 0, n_nogoal = 0, n_slot = 0, nog_why[6] = {0, 0, 0, 0, 0, 0}, nog_steps = 0, n_steps = 0;
     long cause_n[6] = {0, 0, 0, 0, 0, 0};
     double jump_sum = 0;
     int prev_tgt = -2, done = 0, last_dec = 0, cause = 5;   // cause: 0 주기 · 1 통과 · 2 경로 끝 밖 · 3 경로 없음 · 4 막힘 · 5 판 시작
@@ -263,22 +261,15 @@ int main(int argc, char** argv) {
         if (has) { px = tx; py = ty; }
         prev_tgt = cmd.target;
         cause = 0;
-      } else if (ch == 'O') {
-        rd.obs(ei.data(), e1.data());
-        robot.set_slot(ctl.slot());   // 규칙 추종기: 경로 계획 후보 (노드와 같은 차례)
-        robot.low_obs();
-        ++n_obs;
-        long di = 0;
-        for (int i = 0; i < rd.ni; ++i) di += ei[(size_t)i] != robot.low_img()[i];
-        for (int i = 0; i < rd.n1; ++i) di += std::memcmp(&e1[(size_t)i], &robot.low_1d()[i], 4) != 0;
-        d_obs += di != 0;
-      } else if (ch == 'A') {
+      } else if (ch == 'A') {   // 노드 차례: set_slot · low_prepare → low_act (명령)
         float v0, w0, v, w;
-        rd.act(a.data(), &v0, &w0);
-        robot.low_act(a.data(), &v, &w);
+        lowrec::Goal rg;
+        rd.act(&v0, &w0, &rg);
+        robot.set_slot(ctl.slot());   // 규칙 추종기: 경로 계획 후보 (노드와 같은 차례)
+        robot.low_prepare();
+        robot.low_act(&v, &w);
+        ++n_act;
         d_cmd += std::memcmp(&v, &v0, 4) != 0 || std::memcmp(&w, &w0, 4) != 0;
-      } else if (ch == 'G') {
-        rd.goal();
       } else {
         throw std::runtime_error(std::string("녹화 사건 종류를 모름: ") + ch);
       }
@@ -288,7 +279,7 @@ int main(int argc, char** argv) {
       break;
      }
     }
-    if (cut) std::printf("녹화 끝 사건이 잘림 (노드를 끌 때) — 거기까지만\n");
+    if (cut || rd.truncated) std::printf("녹화 끝 사건이 잘림 (노드를 끌 때) — 거기까지만\n");
     if (lf) std::fclose(lf);
     const double T = n_steps * dt;
     std::printf("위층 %s (fuel 시간 %d 전역 %d 시점 %d hyst %.2f) · 걸음 %ld (%.1f s) · 판 끝 %d\n", use_fuel ? "fuel" : "slot0", fo.time, fo.global, fo.vp, fo.hyst, n_steps, T, done);
@@ -304,7 +295,7 @@ int main(int argc, char** argv) {
       for (int r = 0; r < 6; ++r) { std::printf("  %.1f-%.1f m:", r * 0.5, r * 0.5 + 0.5); for (int k = 0; k < 8; ++k) std::printf(" %7ld", dh[r][k]); std::printf("\n"); }
     }
     if (use_fuel) std::printf("목표 없음 까닭: 시작 칸 없음 %ld · 덩어리 없음 %ld · 자격 칸 없음 %ld · 모두 피함 %ld · 시점 자격 없음 %ld\n", nog_why[1], nog_why[2], nog_why[3], nog_why[4], nog_why[5]);
-    std::printf("녹화 관측과 다른 관측 %ld / %ld · 명령 다름 %ld (같은 위층 설정이면 0 이어야 함)\n", d_obs, n_obs, d_cmd);
+    std::printf("녹화 명령과 다른 명령 %ld / %ld (녹화 판 %d — 같은 위층 설정이면 0 이어야 함)\n", d_cmd, n_act, rd.version);
     return 0;
   } catch (const std::exception& ex) {
     std::fprintf(stderr, "low_explore_replay: %s\n", ex.what());

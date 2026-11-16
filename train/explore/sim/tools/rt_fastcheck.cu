@@ -116,7 +116,6 @@ int main(int argc, char** argv) {
     else if (a == "--people") people = std::stoi(argv[i + 1]);
   }
   sim::EnvHostCfg hc = sim::load_env_cfg(SIM_CONFIG_DIR "/env.yaml");
-  hc.cfg.curriculum = 0;   // 사람 수를 --people 로 (모든 맵 고르게)
   const sim::LidarModel lidar = sim::load_lidar_model(SIM_CONFIG_DIR "/sensor_model.yaml");
   std::vector<sim::World> worlds = sim::load_scene_list(list, hc, nullptr);
   bool pass = true;

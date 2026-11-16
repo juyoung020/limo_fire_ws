@@ -1,9 +1,9 @@
 // 합친 탐사 노드 녹화(lowrec — 실물 low_rl record:= 또는 시뮬 room_run --rec)를 RobotEnv + 위층(scripts/low_explore_ctl.h)으로 노드와 같은 차례로 다시 돌려
 // 실물·시뮬이 같은 잣대로 견줄 값을 낸다: 지도 자란 넓이 · 프론티어 칸(로봇 발밑 포함) · 후보 · 목표 차례 · 정책 명령 분포(v≈0 몫·ω 부호 바뀜) · 명령 대 바퀴·자이로 ·
-// 라이다 빔(유효 몫 · 앞/옆/뒤) · 끝 시각. 행동은 녹화 값 그대로(정책을 다시 안 돌림) — 다시 돌린 관측이 녹화 기대 관측과 비트 같으면 위층 결정도 노드와 같다는 뜻.
+// 라이다 빔(유효 몫 · 앞/옆/뒤) · 끝 시각. 궤적은 녹화 그대로 — 다시 낸 아래층 명령이 녹화 명령과 비트 같으면 위층 결정도 노드와 같다는 뜻.
 //   node_stats <녹화.bin> [--upper fuel|slot0] [--csv 걸음.csv] [--label 이름]
-// 노드 차례 (src/limo_fire/limo_fire_rl/src/low_rl_node.cpp on_scan): R 또는 S(step · 판 끝 · after_step) → D(set_depth → 위층 결정) → O(low_obs) → A(low_act)
-// 다른 점: 노드는 다시 켤 때(paused → running) 위층을 바로 다시 결정(force_redo)하는데 녹화에는 켠 때가 없다 — 멈췄던 녹화는 그 결정 때만 다를 수 있음(관측 비교로 드러남).
+// 노드 차례 (src/limo_fire/limo_fire_rl/src/low_rl_node.cpp on_scan): R 또는 S(step · 판 끝 · after_step) → D(set_depth → 위층 결정) → A(set_slot · low_prepare · low_act)
+// 다른 점: 노드는 다시 켤 때(paused → running) 위층을 바로 다시 결정(force_redo)하는데 녹화에는 켠 때가 없다 — 멈췄던 녹화는 그 결정 때만 다를 수 있음(명령 비교로 드러남).
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -22,7 +22,7 @@ struct Row {
   float x, y, th, wv, ww, gyro, cmd_v, cmd_w;
   int goal, follow, dec, why;
   float gdist, gx, gy;
-  float rgx = NAN, rgy = NAN;   // 녹화 관측(아래층 1D 목적지 칸)에서 되살린 노드의 목적지 (세계) — 판단 모델 위층처럼 다시 못 내는 위층의 목표
+  float rgx = NAN, rgy = NAN;   // 녹화에 남은 노드의 아래층 목적지 (세계) — 판단 모델 위층처럼 다시 못 내는 위층의 목표
   int known, freec, occ, front, front_near, cand_n, ep;
   int scan_n, scan_ok, ok_front, n_front, ok_side, n_side;
   float rmin;
@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "node_stats <녹화.bin> [--upper fuel|slot0] [--csv 걸음.csv] [--label 이름] [--map 지도.ppm 초]\n");
     return 2;
   }
-  std::string csv, label = argv[1], upper = "fuel", map_out, obs_csv, floor_csv, vox_path;
+  std::string csv, label = argv[1], upper = "fuel", map_out, floor_csv, vox_path;
   float vox_tau = 0.075f;
   float map_at = -1.f;
   for (int i = 2; i < argc; ++i) {
@@ -44,7 +44,6 @@ int main(int argc, char** argv) {
     if (a == "--csv" && i + 1 < argc) csv = argv[++i];
     else if (a == "--label" && i + 1 < argc) label = argv[++i];
     else if (a == "--upper" && i + 1 < argc) upper = argv[++i];
-    else if (a == "--obs" && i + 1 < argc) obs_csv = argv[++i];
     else if (a == "--floor" && i + 1 < argc) floor_csv = argv[++i];
     else if (a == "--vox" && i + 1 < argc) vox_path = argv[++i];
     else if (a == "--vox-tau" && i + 1 < argc) vox_tau = std::stof(argv[++i]);
@@ -55,7 +54,6 @@ int main(int argc, char** argv) {
   try {
     lowrec::Reader rd(argv[1]);
     limo_fire_rl::RobotEnv robot(rd.hc, true, true);
-    if (robot.low_img_n() != rd.ni || robot.low_1d_n() != rd.n1) throw std::runtime_error("녹화 관측 크기가 설정과 다름");
     const sim::EnvCfg& c = robot.cfg();
     // 위층 값: 노드 기본 (config/low_rl.yaml — fuel 시간·전역·시점, v 0.981 · ω 3.232 · t0 0.10)
     lxc::Params lp = lxc::Params::from_cfg(c);
@@ -67,13 +65,12 @@ int main(int argc, char** argv) {
     lxc::Ctl ctl(lp);
     fu::Work work;
     sim::World w;
-    std::vector<uint8_t> ei((size_t)rd.ni), dep((size_t)mdp::obs::DEPTH_SIZE);
-    std::vector<float> e1((size_t)rd.n1), a((size_t)mdp::low::ACT);
+    std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE);
     limo_fire_rl::Proprio p{};
     limo_fire_rl::Scan s;
     std::vector<Row> rows;
     Row cur{};
-    long d_img = 0, d_1d = 0, d_cmd = 0, n_obs = 0;
+    long d_cmd = 0, n_act = 0;
     constexpr int kAB = 11;   // 라이다 각 구간 20° (−110° … +110°)
     double ab_n[kAB] = {}, ab_ok[kAB] = {};
     double rh[13] = {};       // 유효 빔 거리 구간 1 m (0…12 m+)
@@ -99,10 +96,6 @@ int main(int argc, char** argv) {
     // --floor: 걸음마다 IMU roll·pitch 와 바닥 같은 깊이 점(센서 수평 0.5~1.5 m, |높이| < 0.10 m)의 높이 = a + b·거리 (바닥 기울어 보임 ↔ 몸 기울기) 와 띠 안 바닥 점 수
     FILE* ff = floor_csv.empty() ? nullptr : std::fopen(floor_csv.c_str(), "w");
     if (ff) std::fprintf(ff, "k,roll,pitch,ax,wv,gyro,n,a,b,n_band\n");
-    // 아래층 관측 분포 (--obs): 1D 칸마다 평균·제곱 평균·0 아닌 몫, 그림 구역(가까운 지도 채널 · 라이다 그림 · 깊이) 평균
-    std::vector<double> o_s((size_t)rd.n1, 0.0), o_q((size_t)rd.n1, 0.0), o_nz((size_t)rd.n1, 0.0);
-    const int n_sec = mdp::obs::NEAR_C + 2;
-    std::vector<double> g_s((size_t)n_sec, 0.0), g_nz((size_t)n_sec, 0.0), g_n((size_t)n_sec, 0.0);
     double zh[4][30] = {};   // 거리 0.5 m 구간 넷(0.5~2.5)마다 높이 1 cm 칸(−10~+20 cm) 개수 — 최빈값 = 바닥 높이
     int first_bad = -1, ep_i = -1;
     const float dt = (float)c.substeps * c.dt;
@@ -344,40 +337,18 @@ int main(int argc, char** argv) {
           cur.dec = 1;
           cur.why = why;
         }
-      } else if (ch == 'O') {
-        rd.obs(ei.data(), e1.data());
-        if (rd.n1 > sim::kLoHasGoal && e1[(size_t)sim::kLoHasGoal] > 0.5f) {   // low_rl.h rel(): 거리 / kLrGoalNorm · 지도 자세 기준 sin · cos
-          const float d = e1[(size_t)sim::kLoGoal] * sim::kLrGoalNorm, a = std::atan2(e1[(size_t)sim::kLoGoal + 1], e1[(size_t)sim::kLoGoal + 2]);
-          cur.rgx = cur.x + d * std::cos(cur.th + a);
-          cur.rgy = cur.y + d * std::sin(cur.th + a);
-        } else {
-          cur.rgx = cur.rgy = NAN;
-        }
-        robot.set_slot(ctl.slot());   // 규칙 추종기: 경로 계획 후보 (노드와 같은 차례)
-        robot.low_obs();
-        long di = 0, d1 = 0;
-        for (int i = 0; i < rd.ni; ++i) di += ei[(size_t)i] != robot.low_img()[i];
-        for (int i = 0; i < rd.n1; ++i) d1 += std::memcmp(&e1[(size_t)i], &robot.low_1d()[i], 4) != 0;
-        d_img += di; d_1d += d1;
-        for (int i = 0; i < rd.n1; ++i) {
-          const double v = robot.low_1d()[i];
-          o_s[(size_t)i] += v; o_q[(size_t)i] += v * v; o_nz[(size_t)i] += v != 0.0;
-        }
-        {
-          const uint8_t* im = robot.low_img();
-          const int ns = mdp::obs::NEAR_H * mdp::obs::NEAR_W;
-          const auto sec = [&](int k, int off, int n) { for (int i = 0; i < n; ++i) { const int v = im[off + i]; g_s[(size_t)k] += v; g_nz[(size_t)k] += v != 0; } g_n[(size_t)k] += n; };
-          for (int ch = 0; ch < mdp::obs::NEAR_C; ++ch) sec(ch, ch * ns, ns);
-          sec(mdp::obs::NEAR_C, mdp::low::LIDAR_OFF, mdp::low::LIDAR_HW * mdp::low::LIDAR_HW);
-          sec(mdp::obs::NEAR_C + 1, mdp::low::DEPTH_OFF, mdp::obs::DEPTH_SIZE);
-        }
-        if ((di || d1) && first_bad < 0) first_bad = (int)n_obs;
-        ++n_obs;
-      } else if (ch == 'A') {
+      } else if (ch == 'A') {   // 노드 차례: set_slot · low_prepare → low_act (명령)
         float v0, w0, v, wv;
-        rd.act(a.data(), &v0, &w0);
-        robot.low_act(a.data(), &v, &wv);
-        if (std::memcmp(&v, &v0, 4) != 0 || std::memcmp(&wv, &w0, 4) != 0) ++d_cmd;
+        lowrec::Goal rg;
+        rd.act(&v0, &w0, &rg);
+        if (rg.kind == 1) { cur.rgx = rg.x; cur.rgy = rg.y; }   // 녹화의 노드 목적지 (세계)
+        else if (rg.kind == 2) { cur.rgx = cur.x + rg.x * std::cos(cur.th + rg.y); cur.rgy = cur.y + rg.x * std::sin(cur.th + rg.y); }   // 판 1: 지도 자세 기준
+        else cur.rgx = cur.rgy = NAN;
+        robot.set_slot(ctl.slot());   // 규칙 추종기: 경로 계획 후보 (노드와 같은 차례)
+        robot.low_prepare();
+        robot.low_act(&v, &wv);
+        ++n_act;
+        if (std::memcmp(&v, &v0, 4) != 0 || std::memcmp(&wv, &w0, 4) != 0) { if (first_bad < 0) first_bad = (int)n_act - 1; ++d_cmd; }
         cur.cmd_v = v0; cur.cmd_w = w0;
         const sim::LowCmd& lc = robot.low_cmd();
         cur.goal = lc.target; cur.follow = lc.follow;
@@ -397,7 +368,7 @@ int main(int argc, char** argv) {
         break;
       }
     }
-    if (cut) std::fprintf(stderr, "node_stats: 녹화 끝이 잘림 — 온전한 걸음까지만\n");
+    if (cut || rd.truncated) std::fprintf(stderr, "node_stats: 녹화 끝이 잘림 — 온전한 걸음까지만\n");
     if (rows.empty()) throw std::runtime_error("걸음이 없음");
     if (!csv.empty()) {
       FILE* f = std::fopen(csv.c_str(), "w");
@@ -465,9 +436,9 @@ int main(int argc, char** argv) {
       std::sort(js.begin(), js.end());
       const float jm = js.empty() ? 0.f : js[js.size() / 2];
       const float T = std::max(rows[e - 1].k * dt, 1e-3f);
-      std::printf("[%s 판 %d] 걸음 %zu (%.1f s) · 끝 %s · 다시 돌린 관측 다름(녹화 전체): 그림 %ld 바이트 · 1D %ld 칸 · 명령 %ld%s\n", label.c_str(), ep, n, T,
+      std::printf("[%s 판 %d] 걸음 %zu (%.1f s) · 끝 %s · 다시 돌린 명령 다름(녹화 전체) %ld%s\n", label.c_str(), ep, n, T,
                   done_k >= 0 ? (std::to_string(done_k * dt).substr(0, 5) + (done_code == mdp::cur::kDeclareOk ? " s (닫힘 성공)" : done_code == mdp::cur::kNoProgress ? " s (진척 없음)" : " s (시간)")).c_str() : "없음",
-                  d_img, d_1d, d_cmd, first_bad >= 0 ? (" (처음 " + std::to_string(first_bad) + ")").c_str() : "");
+                  d_cmd, first_bad >= 0 ? (" (처음 " + std::to_string(first_bad) + ")").c_str() : "");
       std::printf("  지도 아는 넓이 m²: 5 s %.1f · 10 s %.1f · 20 s %.1f · 30 s %.1f · 끝 %.1f (빈 %.1f · 막힘 %.1f)\n", known_at(5), known_at(10), known_at(20), known_at(30), rows[e - 1].known * a2,
                   rows[e - 1].freec * a2, rows[e - 1].occ * a2);
       std::printf("  프론티어 칸 평균 %.0f · 발밑(%.1f m 안) 평균 %.1f · 결정 %ld 중 발밑 프론티어 있는 결정 %.2f · 후보 평균 %.2f\n", fr / n, near_r, fn / n, ndec, ndec ? (double)dec_with_front_near / ndec : 0.0,
@@ -543,18 +514,6 @@ int main(int argc, char** argv) {
       std::printf("[%s] 깊이 시각 어긋남 (빨리 돌 때 띠 안 깊이 점 %.0f 개가 로봇 지도 막힘 둘레에 드는 몫, τ = 0 … 0.375 s):", label.c_str(), lat_n);
       for (int k = 0; k < kTau; ++k) std::printf(" %.3f", lat_hit[k] / lat_n);
       std::printf(" → 가장 잘 맞는 τ %.3f s\n", 0.025 * kb);
-    }
-    if (!obs_csv.empty() && n_obs > 0) {
-      FILE* f = std::fopen(obs_csv.c_str(), "w");
-      if (!f) throw std::runtime_error("관측 표를 못 엶: " + obs_csv);
-      std::fprintf(f, "kind,i,mean,std,nonzero\n");
-      for (int i = 0; i < rd.n1; ++i) {
-        const double m = o_s[(size_t)i] / n_obs, q = o_q[(size_t)i] / n_obs;
-        std::fprintf(f, "1d,%d,%.5f,%.5f,%.4f\n", i, m, std::sqrt(std::max(0.0, q - m * m)), o_nz[(size_t)i] / n_obs);
-      }
-      for (int k = 0; k < n_sec; ++k)
-        if (g_n[(size_t)k] > 0) std::fprintf(f, "img,%d,%.4f,0,%.4f\n", k, g_s[(size_t)k] / g_n[(size_t)k], g_nz[(size_t)k] / g_n[(size_t)k]);
-      std::fclose(f);
     }
     return 0;
   } catch (const std::exception& ex) {

@@ -214,7 +214,6 @@ int run(const Args& a) {
   sim::EnvHostCfg hc = sim::load_env_cfg(a.env);
   const fb::Params P = fb::load_params(a.frontier, a.env, "fast");   // frontier_run run_hier 와 같은 판 길이 상한
   hc.cfg.action_mode = sim::kActPath;
-  hc.cfg.curriculum = 0;
   hc.cfg.max_steps = (int)std::ceil(P.t_safe / (hc.cfg.substeps * hc.cfg.dt)) + 100;
   hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
   if (a.stall_s > 0.0) hc.cfg.low_idle_steps = std::max(1, (int)std::lround(a.stall_s / (hc.cfg.substeps * hc.cfg.dt)));

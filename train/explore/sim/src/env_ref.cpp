@@ -108,8 +108,7 @@ void hier_plan_cpu(const EnvBatch& b, EnvState& e, int env, int slot) { plan_cpu
 // 깊이 카메라 장애물 층 갱신 — include/obs_ref.h camlayer_ref (실물 노드 limo_fire_rl 도 같은 함수)
 void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env) { camlayer_ref(b, e, env); }
 
-static_assert(kLrNearCell == mdp::obsgen::kNearCell, "low_rl.h 가까운 지도 픽셀 크기");
-// 아래층 준비 단계 (include/low_rl.h 머리말 — GPU env_low_prepare_gpu 와 같은 차례): 깊이 카메라 층·경로 계획(차례일 때만) → 아래층 관측
+// 아래층 준비 단계 (include/low_rl.h 머리말 — GPU env_low_prepare_gpu 와 같은 차례): 깊이 카메라 층·경로 계획(차례일 때만)
 static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
   EnvState e = b.st[env];
   if (lowrl_due(b, e, env)) {
@@ -117,8 +116,6 @@ static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {
     plan_cpu(b, e, env, actions ? slot_of(b, actions[(size_t)mdp::act::DIM * env]) : -1);
     lowrl_planned(b, e, env);
   }
-  lowrl_pack(b, e, env);
-  for (int i = 0; i < kLowImg; ++i) b.low_img[(size_t)env * kLowImg + i] = lowrl_img(b, e, env, i);
   b.st[env] = e;
 }
 void env_low_prepare_cpu(const EnvBatch& b, const float* actions) {

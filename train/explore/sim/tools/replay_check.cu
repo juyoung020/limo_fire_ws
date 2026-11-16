@@ -400,7 +400,6 @@ int main(int argc, char** argv) {
   // 실물 /cmd_vel 을 그대로: 물리 단위 행동, 안전층·커리큘럼 끔 (녹화 재현이 목적)
   hc.cfg.act_raw = 1;
   hc.cfg.safety = 0;
-  hc.cfg.curriculum = 0;
   const sim::LidarModel lidar = sim::load_lidar_model(model_path);
   const YAML::Node floors = YAML::LoadFile(env_path)["floors"];
   std::vector<Feat> feats;

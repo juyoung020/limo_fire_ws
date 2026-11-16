@@ -1435,15 +1435,6 @@ __global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
 }
 
 // ---------- 아래층 걸음 길 (include/low_rl.h — CPU 참조판 env_ref.cpp low_prepare_env 와 같은 차례·같은 함수) ----------
-// 아래층 관측: 숫자는 스레드 0, 그림은 스레드가 나눠
-constexpr int kLowPackT = 256;
-__global__ void __launch_bounds__(kLowPackT) env_low_pack_kernel(EnvBatch b) {
-  const int env = blockIdx.x, tid = threadIdx.x;
-  const EnvState& e = b.st[env];
-  if (tid == 0) lowrl_pack(b, e, env);
-  uint8_t* O = b.low_img + (size_t)env * kLowImg;
-  for (int i = tid; i < kLowImg; i += kLowPackT) O[i] = lowrl_img(b, e, env, i);
-}
 __global__ void env_low_clear_kernel(EnvBatch b) {
   const int env = blockIdx.x * blockDim.x + threadIdx.x;
   if (env < b.n_env) lowrl_clear(b.lowrl[env]);
@@ -1750,12 +1741,11 @@ void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub
 }
 }  // namespace
 
-// 아래층 준비 단계 (low_rl.h 머리말): 깊이 카메라 층·경로 계획(차례인 환경만) → 아래층 관측. actions: 규칙 추종 환경(follow 0)의 후보 번호 (없으면 nullptr)
+// 아래층 준비 단계 (low_rl.h 머리말): 깊이 카메라 층·경로 계획(차례인 환경만). actions: 규칙 추종 환경(follow 0)의 후보 번호 (없으면 nullptr)
 void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
   if (!b.lowrl) return;
   if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b); ksync("env_camlayer_kernel");
   env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions); ksync("env_plan_kernel");
-  env_low_pack_kernel<<<b.n_env, kLowPackT, 0, st>>>(b); ksync("env_low_pack_kernel");
 }
 
 void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {

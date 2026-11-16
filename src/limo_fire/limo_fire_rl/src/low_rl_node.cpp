@@ -3,7 +3,7 @@
 // /scan 한 장 = 시뮬 걸음 하나(0.1 s). 시뮬 combine_run --upper fuel|slot0|decider 와 같은 코드·같은 값:
 //   관측·지도·판 끝      RobotEnv 합친 탐사 모드 (sim 헤더 그대로 — env_ref.cpp step_env + low_prepare_env, combine_run 설정)
 //   위층 결정·목표 넘기기  scripts/low_explore_ctl.h (combine_run 의 환경 하나 몫을 옮긴 것, 규칙 가지)
-// 걸음 차례 (장 k): step(감각, 장 k) → 판 끝·닿음 → 위층 걸음 뒤 → 깊이 → [결정 차례면 위층 결정 → set_cmd] → set_slot · low_obs → low_act → 명령
+// 걸음 차례 (장 k): step(감각, 장 k) → 판 끝·닿음 → 위층 걸음 뒤 → 깊이 → [결정 차례면 위층 결정 → set_cmd] → set_slot · low_prepare → low_act → 명령
 // 명령을 0 으로 만드는 멈춤 조건:
 //   꺼짐(~/enable false · 처음) · 리모컨이 오토가 아님(/rc_state buttons[rc_button] ≠ rc_auto_value, 또는 rc_timeout 넘게 안 옴 — 꺼짐으로 바뀜, 다시 오토가 돼도
 //   ~/enable true 를 따로 불러야 감) · 입력 끊김(라이다·TF·오도메트리 input_timeout 넘게 — 0, 돌아오면 이어 감) · 닿음(시뮬 contact.h sense_step 정의 —
@@ -148,7 +148,7 @@ class LowRlNode : public rclcpp::Node {
                 upper_.c_str(), fo.time, fo.global, fo.vp, fo.v_eff, fo.w_eff, fo.t0, lp_.decide_steps,
                 lp_.bl_r, lp_.bl_steps * dt(), c.con_mask, c.con_stall, c.con_acc, max_speed_, max_speed_ < c.act_v_fwd ? " (시뮬 한도보다 낮춤)" : "",
                 dry_run_ ? "dry run: /cmd_vel 안 냄, ~/cmd_debug 에만" : "실제 주행: /cmd_vel 냄");
-    if (!record_.empty()) rec_ = std::make_unique<lowrec::Writer>(record_, hc_, env_->low_img_n(), env_->low_1d_n());
+    if (!record_.empty()) rec_ = std::make_unique<lowrec::Writer>(record_, hc_);
 
     tf_buf_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_lis_ = std::make_shared<tf2_ros::TransformListener>(*tf_buf_);
@@ -420,14 +420,17 @@ class LowRlNode : public rclcpp::Node {
     }
     const auto t2 = clk::now();
     env_->set_slot(ctl_->slot());   // 규칙 추종기: 경로 계획 후보 (combine_run 의 act[0] — 다음 결정까지 그대로)
-    env_->low_obs();
-    if (rec_) rec_->obs(env_->low_img(), env_->low_1d());
+    env_->low_prepare();
     const auto t3 = clk::now();
-    const float a[mdp::low::ACT] = {0.f, 0.f, 0.f};   // 행동 칸은 안 씀 (규칙 추종기 — 녹화 꼴은 그대로)
     float v = 0.f, w = 0.f;
-    if (running()) env_->low_act(a, &v, &w);
+    if (running()) env_->low_act(&v, &w);
     else env_->hold();   // 멈춤: 명령 0
-    if (rec_) rec_->act(a, v, w);
+    if (rec_) {   // 그때 아래층 목적지도 (다시 못 내는 판단 모델 위층의 목표 — node_stats)
+      float gx = NAN, gy = NAN;
+      const sim::LowCmd& lc = env_->low_cmd();
+      if (lc.follow != 0) env_->cell_xy(lc.target, &gx, &gy);
+      rec_->act(v, w, gx, gy);
+    }
     if (!running() || stale_) { v = 0.f; w = 0.f; }
     if (std::fabs(v) > max_speed_) v = v > 0.f ? (float)max_speed_ : -(float)max_speed_;   // max_speed (기본 = 시뮬 한도라 안 자름)
     geometry_msgs::msg::TwistStamped cmd;

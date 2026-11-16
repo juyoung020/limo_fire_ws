@@ -315,8 +315,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
         r[i].stall_tgt = -1;
       }
       b_.lowrl = upload(r);
-      b_.low_img = alloc<uint8_t>((size_t)kLowImg * n_env);
-      b_.low_1d = alloc<float>((size_t)kLow1d * n_env);
     }
   }
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
@@ -391,8 +389,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.low, sizeof(LowEp));
     reg(b_.lowcmd, sizeof(LowCmd));
     reg(b_.lowrl, sizeof(LowRl));
-    reg(b_.low_img, (size_t)kLowImg);
-    reg(b_.low_1d, (size_t)kLow1d * sizeof(float));
     reg(b_.lidar_ring, (size_t)kLidarRing * mdp::obs::LIDAR_BINS * sizeof(float));
     reg(b_.vec_prev, (size_t)mdp::obs::VEC * sizeof(float));
     reg(b_.lidar_int, (size_t)mdp::obs::LIDAR_BINS * sizeof(float));
@@ -475,7 +471,7 @@ void Env::step(const float* actions, cudaStream_t st) {
 }
 
 StepOut Env::outputs() const {
-  return StepOut{b_.obs_img, b_.obs_1d, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d};
+  return StepOut{b_.obs_img, b_.obs_1d, b_.done, b_.ep, b_.o1d};
 }
 
 void Env::low_prepare(const float* actions, cudaStream_t st) {
@@ -536,11 +532,6 @@ void Env::get_low_cmd(std::vector<LowCmd>& out) const {
 void Env::get_low_rl(std::vector<LowRl>& out) const {
   if (!b_.lowrl) { out.clear(); return; }
   fetch(gpu_, b_.lowrl, (size_t)b_.n_env, out);
-}
-void Env::get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const {
-  if (!b_.lowrl) { img.clear(); o1d.clear(); return; }
-  fetch(gpu_, b_.low_img, (size_t)kLowImg * b_.n_env, img);
-  fetch(gpu_, b_.low_1d, (size_t)kLow1d * b_.n_env, o1d);
 }
 void Env::get_map_env(int env, std::vector<int16_t>& out) const {
   const size_t cells = (size_t)b_.cfg.size * b_.cfg.size;

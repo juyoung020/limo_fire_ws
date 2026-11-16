@@ -117,7 +117,6 @@ int main(int argc, char** argv) {
     sim::EnvHostCfg hc = sim::load_env_cfg(env_path);
     // combine_run.cpp 합친 탐사 설정 (low_explore_check 와 같음)
     hc.cfg.action_mode = sim::kActPath;
-    hc.cfg.curriculum = 0;
     hc.cfg.low_stat = hc.cfg.low_task = hc.cfg.low_rl = 1;
     hc.cfg.low_explore = 1;
     if (exact) hc.cfg.pe_xy = hc.cfg.pe_yaw = 0.f;
@@ -154,7 +153,7 @@ int main(int argc, char** argv) {
     }
     limo_fire_rl::RobotEnv robot(hc, true, true);
     std::unique_ptr<lowrec::Writer> rec;
-    if (!rec_path.empty()) rec.reset(new lowrec::Writer(rec_path, hc, robot.low_img_n(), robot.low_1d_n()));
+    if (!rec_path.empty()) rec.reset(new lowrec::Writer(rec_path, hc));
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
@@ -182,14 +181,14 @@ int main(int argc, char** argv) {
     }
     sim::set_cpu_tap(&tap);
     const int AW = mdp::act::DIM;
-    std::vector<float> act((size_t)AW, 0.f), a3((size_t)mdp::low::ACT, 0.f);   // a3: RobotEnv::low_act 행동 칸 (규칙 추종기는 안 씀 — 0)
+    std::vector<float> act((size_t)AW, 0.f);
     std::vector<int32_t> dn;
     const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
     const int max_steps = (int)std::lround(max_s / dt);
     const char* why = "시간 (--max-s)";
     int t = 0, sim_end = 0;
     for (; t < max_steps; ++t) {
-      // 노드 차례: (앞 걸음 step 은 탭에서) → 위층 → 깊이 → set_slot · low_obs → low_act
+      // 노드 차례: (앞 걸음 step 은 탭에서) → 위층 → 깊이 → set_slot · low_prepare → low_act
       if (ctl.due(robot.state())) {
         const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur()};
         sim::LowCmd c = ctl.decide(vr, work);   // 위층 기록(결정 수 등)은 그대로 — --follow 면 목표만 실물 궤적으로 바꿈
@@ -216,11 +215,14 @@ int main(int argc, char** argv) {
       robot.set_depth(dep);
       if (rec) rec->depth(dep);
       robot.set_slot(ctl.slot());
-      robot.low_obs();
-      if (rec) rec->obs(robot.low_img(), robot.low_1d());
+      robot.low_prepare();
       float v, w;
-      robot.low_act(a3.data(), &v, &w);
-      if (rec) rec->act(a3.data(), v, w);
+      robot.low_act(&v, &w);
+      if (rec) {
+        float gx = NAN, gy = NAN;
+        if (robot.low_cmd().follow != 0) robot.cell_xy(robot.low_cmd().target, &gx, &gy);
+        rec->act(v, w, gx, gy);
+      }
       cpu.step(act.data());   // 탭이 라이다 장·감각을 RobotEnv 로 (step)
       cpu.get_done(dn);
       const int rd = robot.done();
