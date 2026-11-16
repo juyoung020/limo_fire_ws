@@ -800,6 +800,10 @@ int run_low(Args a) {
       r.last("train/aux_contact_pos", us.aux_pos);
       r.last("train/aux_contact_p_pos", us.aux_p_pos);   // 1 s 안 닿은 행의 예측 확률 평균
       r.last("train/aux_contact_p_neg", us.aux_p_neg);   // 안 닿은 행의 예측 확률 평균
+      r.last("train/aux_mover_near_pred", us.aux_bn_pred);   // 1 s 뒤 사람이 가까운 구역(정답 > 0.5)의 예측
+      r.last("train/aux_mover_near_label", us.aux_bn_label);
+      r.last("train/aux_mover_near_frac", us.aux_bn_frac);
+      r.last("train/aux_mover_rest_pred", us.aux_b0_pred);
     }
     r.last("low/contact_per_goal", s.goals > 0 ? (s.hit_wall + s.hit_person) / s.goals : 0.0);   // 닿음(센서)으로 끝난 판 / 받은 목표
     r.last(rf::key::GPU_MEM_MB, (tot - fr) / 1048576.0);

@@ -116,7 +116,8 @@ struct UpdateStats {
   float value0 = 0;
   float aux_a = 0, aux_b = 0, aux_c = 0;   // 보조 손실 (가림 아닌 행 평균: 닿음 BCE · 움직이는 것 칸 평균 제곱 오차 · 라이다 구역 칸 평균 제곱 오차) — 모든 미니배치 평균
   float aux_va = 0, aux_vb = 0, aux_vc = 0, aux_pos = 0;
-  float aux_p_pos = 0, aux_p_neg = 0;   // (a) 닿음 예측 확률 평균: 1 s 안 닿은 행 · 안 닿은 행 (차이가 클수록 미리 앎)   // 정답 있는 행 비율 (a · b · c), (a) 정답 1 비율   // 첫 미니배치(걸음 전) 가치 손실 — 롤아웃을 만든 가치가 그 수익에서 얼마나 틀렸나 (가치만 맞추기 전후 비교용)
+  float aux_p_pos = 0, aux_p_neg = 0;
+  float aux_bn_pred = 0, aux_bn_label = 0, aux_bn_frac = 0, aux_b0_pred = 0;   // (b) 다가오는 사람 행의 예측·정답 (ppo.cu aux_read)   // (a) 닿음 예측 확률 평균: 1 s 안 닿은 행 · 안 닿은 행 (차이가 클수록 미리 앎)   // 정답 있는 행 비율 (a · b · c), (a) 정답 1 비율   // 첫 미니배치(걸음 전) 가치 손실 — 롤아웃을 만든 가치가 그 수익에서 얼마나 틀렸나 (가치만 맞추기 전후 비교용)
 };
 
 // 그래프 어텐션 정책(ACSpec::graph)의 관측 한 묶음 (모두 GPU, 환경 n 개 — mdp/obs_layout.h mdp::graph):
@@ -247,9 +248,9 @@ class PPO {
   bool aux_break_ = false;
   int AUXK_ = 0;                                // 보조 머리 출력 칸 (0 = 끔)
   real *s_auxsrc_ = nullptr, *s_auxhit_ = nullptr, *s_auxlm_ = nullptr;   // 롤아웃 재료 [S][AUX_SRC] · 닿음 [S] · 정답|가림 [S][AUXK + 3]
-  real *c_auxlm_ = nullptr, *c_auxdy_ = nullptr, *c_auxst_ = nullptr, *c_auxpart_ = nullptr;   // 미니배치 [C][AUXK+3] · dy [C][AUXK] · 통계 [C][8] · dW 부분합
+  real *c_auxlm_ = nullptr, *c_auxdy_ = nullptr, *c_auxst_ = nullptr, *c_auxpart_ = nullptr, *c_auxred_ = nullptr;   // 미니배치 [C][AUXK+3] · dy [C][AUXK] · 통계 [C][8] · dW 부분합
   double* d_auxacc_ = nullptr;                  // 보조 통계 합 [9] (장치 갱신)
-  double aux_host_[9] = {0};
+  double aux_host_[16] = {0};
   double* aux_loss_out_ = nullptr;              // loss_and_grad 동안: 보조 손실 (호스트 길) 을 여기에                    // 보조 통계 합 (호스트 갱신 길)
   void aux_labels();                            // 롤아웃 → s_auxlm_ (update · loss_and_grad 앞)
   void aux_minibatch(int n, const int* ix, int mb, bool backward);   // 모으기 · 머리 정방향 · (역방향) · 통계

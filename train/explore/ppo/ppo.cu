@@ -111,7 +111,7 @@ __global__ void k_gather_seq(const int* idx, int n, int B, int H, const real* s_
 // ---- 보조 예측 머리 (ppo/README "보조 예측 머리", mdp/obs_layout.h AUX_*) ----
 // 정답·가림: 행 r = t·N + i. 재료는 그 걸음 관측과 같은 때(s_auxsrc), 닿음은 그 걸음 행동 뒤(s_auxhit), 판 경계는 s_reset (그 걸음에 새 판).
 // 정답이 롤아웃 밖이거나 판이 바뀌면 가림 — (a) 는 창 끝이 롤아웃 안일 때만 (창 안에서 판이 끝나면 그때까지로 정함), 결과로 고르는 치우침 없음
-constexpr int kAuxK = mdp::low::AUX_OUT, kAuxW = kAuxK + 3, kAuxRB = 64;
+constexpr int kAuxK = mdp::low::AUX_OUT, kAuxW = kAuxK + 3, kAuxRB = 64, kAuxNS = 13;   // kAuxNS: 행마다 보조 통계 칸
 __global__ void k_aux_labels(int N, int T, const real* src, const real* hit, const real* reset, int ka, int kb, int kc, real* lm) {
   const long r = blockIdx.x * (long)blockDim.x + threadIdx.x;
   if (r >= (long)N * T) return;
@@ -198,9 +198,18 @@ __global__ void k_aux_fwd(int n, int H, const real* h, long ldh, const real* W, 
   }
   if (lane == 0) {
     for (int k = 0; k < kAuxK; ++k) dy[r * kAuxK + k] = g[k];
-    real* s = st + r * 9;
+    real* s = st + r * kAuxNS;
     s[0] = ma * bce; s[1] = ma; s[2] = mb * eb / (real)mdp::low::AUX_MOV_SEC; s[3] = mb; s[4] = mc * ec / (real)mdp::low::AUX_LID_SEC; s[5] = mc;
     s[6] = ma * l[0]; s[7] = ma * l[0] * sg; s[8] = ma * ((real)1 - l[0]) * sg;   // 닿음 예측 확률 합: 정답 1 행 · 0 행 (예측이 닿음을 미리 아는지)
+    // (b) 다가오는 사람 행 (정답 구역 가까움 최댓값 > 0.5 — 1 s 뒤 사람이 ~2 m 안): 그 구역 예측 · 정답 합, 행 수 / 사람 없는 행: 예측 평균 합, 행 수
+    int kb = B0;
+    for (int k = B0 + 1; k < C0; ++k) if (l[k] > l[kb]) kb = k;
+    const real near = l[kb] > (real)0.5 ? mb : (real)0;
+    s[9] = near * (acc[kb] + bias[kb]); s[10] = near * l[kb]; s[11] = near;
+    real ym = 0;
+    for (int k = B0; k < C0; ++k) ym += acc[k] + bias[k];
+    const real none = l[kb] <= (real)0 ? mb : (real)0;
+    s[12] = none * ym / (real)mdp::low::AUX_MOV_SEC;
   }
   if (dh)
     for (int j = lane; j < H; j += 32) {
@@ -229,7 +238,7 @@ __global__ void k_aux_dw_sum(int H, const real* part, real* grad) {   // grad = 
 }
 __global__ void k_aux_acc(const real* red, double* acc) {
   const int k = threadIdx.x;
-  if (k < 9) acc[k] += (double)red[k];
+  if (k < kAuxNS) acc[k] += (double)red[k];
 }
 
 // 롤아웃 그림 줄여 담기 (PPOConfig::pack_img): 구간마다 [꼴, 원래 자리, 담는 자리, 바이트, 작업 칸 시작].
@@ -941,10 +950,11 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
     CK(cudaMemset(s_auxhit_, 0, sizeof(real) * S_));
     c_auxlm_ = dmalloc<real>((long)C * kAuxW, b);
     c_auxdy_ = dmalloc<real>((long)C * kAuxK, b);
-    c_auxst_ = dmalloc<real>((long)C * 9, b);
+    c_auxst_ = dmalloc<real>((long)C * kAuxNS, b);
+    c_auxred_ = dmalloc<real>(16, b);
     c_auxpart_ = dmalloc<real>((long)kAuxRB * kAuxK * (H_ + 1), b);
-    d_auxacc_ = dmalloc<double>(9, b);
-    CK(cudaMemset(d_auxacc_, 0, sizeof(double) * 9));
+    d_auxacc_ = dmalloc<double>(16, b);
+    CK(cudaMemset(d_auxacc_, 0, sizeof(double) * 16));
   }
   // 장치 갱신 상태 (DevState · 부분합 · 미니배치 기록 · 편향 보정) 와 pinned 사본 — 반복 동안 새로 잡지 않음
   d_st_ = dmalloc<DevState>(1, b);
@@ -967,7 +977,7 @@ PPO::~PPO() {
                                               c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_,
                                               s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_, c_gred_,
                                               d_st_, d_part_, d_mbrec_, d_bc_, d_seg_, d_pack_bad_, h_a_, h_c_, s_h0a_, s_h0c_, h_tmp_, h_ia_, s_reset_, c_reset_, c_h0a_, c_h0c_,
-                                              s_auxsrc_, s_auxhit_, s_auxlm_, c_auxlm_, c_auxdy_, c_auxst_, c_auxpart_, d_auxacc_})
+                                              s_auxsrc_, s_auxhit_, s_auxlm_, c_auxlm_, c_auxdy_, c_auxst_, c_auxpart_, d_auxacc_, c_auxred_})
     cudaFree(p);
   cudaFree(d_ev_);
   for (void* p : std::initializer_list<void*>{h_mbrec_, h_bc_, h_perm_, h_pack_bad_}) cudaFreeHost(p);
@@ -1093,8 +1103,8 @@ void PPO::store_aux_hit(const real* hit) {
 void PPO::aux_labels() {
   if (!AUXK_) return;
   k_aux_labels<<<nblk(S_), 256, 0, ac_->stream>>>(N_, T_, s_auxsrc_, s_auxhit_, s_reset_, cfg_.aux_ka, cfg_.aux_kb, cfg_.aux_kc, s_auxlm_);
-  CK(cudaMemsetAsync(d_auxacc_, 0, sizeof(double) * 9, ac_->stream));
-  std::fill(aux_host_, aux_host_ + 9, 0.0);
+  CK(cudaMemsetAsync(d_auxacc_, 0, sizeof(double) * 16, ac_->stream));
+  std::fill(aux_host_, aux_host_ + 16, 0.0);
 }
 // 미니배치 덩이 하나 (행 n, 색인 ix, 평균 분모 mb): actor 순환 핵 h (c_x_ 의 NFE_ 열) → 머리 → 손실 기울기. backward 면 actor MLP 역방향 뒤에 불러
 // h 기울기(dx0 의 h 열)에 더하고 머리 변수 기울기를 더한다 — gru_a.backward_seq 가 그 합을 받는다
@@ -1110,21 +1120,21 @@ void PPO::aux_minibatch(int n, const int* ix, int mb, bool backward) {
     k_aux_dw_part<<<dim3((nq + 255) / 256, kAuxRB), 256, 0, st>>>(n, H_, c_x_ + NFE_, NF_ + D_, c_auxdy_, c_auxpart_);
     k_aux_dw_sum<<<(nq + 255) / 256, 256, 0, st>>>(H_, c_auxpart_, ac.d_grads + ac.aux_w_off);
   }
-  col_sum(c_auxst_, n, 9, 9, c_red_ + 6, false, st);   // c_red_[6..14] (NS ≤ 5 칸 뒤)
+  col_sum(c_auxst_, n, kAuxNS, kAuxNS, c_auxred_, false, st);
   if (dev_mb_) {
-    k_aux_acc<<<1, 32, 0, st>>>(c_red_ + 6, d_auxacc_);
+    k_aux_acc<<<1, 32, 0, st>>>(c_auxred_, d_auxacc_);
   } else {
-    real hs[9];
-    CK(cudaMemcpyAsync(hs, c_red_ + 6, sizeof(hs), cudaMemcpyDeviceToHost, st));
+    real hs[kAuxNS];
+    CK(cudaMemcpyAsync(hs, c_auxred_, sizeof(hs), cudaMemcpyDeviceToHost, st));
     CK(cudaStreamSynchronize(st));
-    for (int k = 0; k < 9; ++k) aux_host_[k] += (double)hs[k];
+    for (int k = 0; k < kAuxNS; ++k) aux_host_[k] += (double)hs[k];
   }
 }
 void PPO::aux_read(UpdateStats& o) {
   if (!AUXK_) return;
-  double a[9];
+  double a[16];
   CK(cudaMemcpy(a, d_auxacc_, sizeof(a), cudaMemcpyDeviceToHost));
-  for (int k = 0; k < 9; ++k) a[k] += aux_host_[k];
+  for (int k = 0; k < kAuxNS; ++k) a[k] += aux_host_[k];
   const double rows = (double)S_ * cfg_.epochs;   // 갱신 동안 본 행 수 (에포크마다 롤아웃 전체)
   o.aux_a = (float)(a[0] / std::max(a[1], 1.0));
   o.aux_b = (float)(a[2] / std::max(a[3], 1.0));
@@ -1135,6 +1145,10 @@ void PPO::aux_read(UpdateStats& o) {
   o.aux_pos = (float)(a[6] / std::max(a[1], 1.0));
   o.aux_p_pos = (float)(a[7] / std::max(a[6], 1.0));            // 1 s 안 닿는 행에서 예측 확률 평균
   o.aux_p_neg = (float)(a[8] / std::max(a[1] - a[6], 1.0));     // 안 닿는 행에서 예측 확률 평균
+  o.aux_bn_pred = (float)(a[9] / std::max(a[11], 1.0));           // (b) 다가오는 사람 행: 그 구역 예측 평균
+  o.aux_bn_label = (float)(a[10] / std::max(a[11], 1.0));         //   그 구역 정답 평균
+  o.aux_bn_frac = (float)(a[11] / std::max(a[3], 1.0));           //   그런 행 비율 (정답 있는 행 중)
+  o.aux_b0_pred = (float)(a[12] / std::max(a[3] - a[11], 1.0));   //   (근사) 나머지 행 구역 예측 평균
 }
 
 void PPO::act_inference(const uint8_t* img, const real* obs1d, real* actions, int n_all, int64_t sample_call) {
