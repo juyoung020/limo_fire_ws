@@ -174,7 +174,7 @@ void RobotEnv::step(const Proprio& p, const Scan& s) {
   const sim::ApplyCount a = sim::scan_apply(b_, e_, 0, sh_, 0, 1, nullptr);
   sim::known_box(b_, e_, sh_);
   // 3. 판 끝·진행 (시뮬 step_env 끝과 같은 차례)
-  sim::map_progress(e_, a.occ);
+  sim::map_progress(e_, a.occ, a.fresh);
   sim::sense_step(b_, e_, 0, sh_);   // 간격·닿음 (센서 — 시뮬 contact.h 와 같은 함수)
   sim::finish_step(b_, e_, 0, a.wall, a.floor, a.known, a.fresh);
   done_ = e_.done;

@@ -33,6 +33,13 @@ DEV bool terminal(int32_t d) { return d != kRunning && d != kTruncated; }   // �
 constexpr float kSafeTime = 1200.f;   // 안전 시간 (s): 이만큼 지나면 끊김(3, 가치로 메움). 맵과 무관. frontier_nav2 가장 긴 판 1040 s 보다 넉넉히
 constexpr float kIdleTime = 60.f;     // 진행 없음 (s): 지도 진척(아래 kIdleOccMin)이 이만큼 없으면 종료(6) + rewards.h kIdlePenalty
 constexpr int kIdleOccMin = 10;       // 진척 = 한 행동(0.1 s) 동안 판 처음 막힘(p > 0.65, frontier.h kOccL)이 된 지도 칸 ≥ 이것 (env.h map_progress)
+// 진행 없음 판 끝(6)은 위 막힘 진척 또는 새로 안 칸(모름 → 앎, 빈 칸 포함)이 한 행동에 kIdleNewMin 개 이상이면 시계를 되돌린다 (env.h since_prog, 2026-11-17).
+// 까닭: 큰 집(HSSD 480~600 m²)에서 먼 프론티어로 가며 빈 바닥만 새로 보는 동안 벽(막힘)이 60 s 넘게 안 늘어 멀쩡히 탐사 중인 판이 끝났다(hssd_105515175 씨앗 5 —
+// 끝나기 전 60 s 에 42 m 를 감). kIdleNewMin 근거: bookstore 씨앗 6 한 판(1,349 걸음) 새로 안 칸 수 — 거의 서 있는 걸음(|v| < 0.05) 중앙 1, 달리는 걸음 중앙 13 (잠정).
+// 닫힘 성공(close_idle_s)은 막힘 시계(since_occ) 그대로.
+// 확인 (low_explore_check --upper cand, HSSD 학습 큰 집 5 곳 × 씨앗 4·5, c5d64c7 대비): 끝 닫힘 성공 0 → 3 / 10 · 진행 없음 7 → 4 · 닿음 3 → 3.
+// 대가: 닫힘을 막는 안 풀리는 프론티어가 남은 판은 더 오래 돎 (hssd_105515175 씨앗 5: 굵은 덮음 0.98~1.0 인 채 228 → 409 s) — 닫힘 규칙 쪽 몫
+constexpr int kIdleNewMin = 10;
 constexpr float kSuccessCov = 0.95f;  // 성공 기준: 끝 선언 때 벽 덮음 ≥ 이것이면 선언 성공(1), 아래면 선언 실패(4) (mdp/README)
 //   진행 없음 끝을 둔 까닭: 끊김(안전 시간)은 time-out 이라 V 로 메워, 버티는 판의 값은 걸음당 시간 감점 할인 합
 //   (작은 맵 ≈ 0.0004/(1−γ) ≈ 0.14)뿐 — 충돌(−10)·미달 선언(−3)보다 훨씬 싸서 '판을 안 끝내는' 붕괴가 남(cur-fix (ii) 씨앗 2, B·C 실험 씨앗 1 모두).

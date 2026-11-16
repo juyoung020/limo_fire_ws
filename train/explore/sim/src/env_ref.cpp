@@ -79,7 +79,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
     n_occ += no;
     known_box(b, e, sh);
   }
-  map_progress(e, n_occ);   // 진행 없음 시계 — finish_step 판 끝이 씀
+  map_progress(e, n_occ, n_new);   // 진행 없음 시계 — finish_step 판 끝이 씀
   sense_step(b, e, env, sh);   // 로봇이 재는 간격·닿음 (contact.h) — 보상·판 끝이 씀
   finish_step(b, e, env, new_wall, new_floor, d_known, n_new);
   mdp::obsgen::far_dirty_robot(b, e, g);

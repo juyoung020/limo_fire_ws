@@ -1056,7 +1056,7 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int su
       e.tick += 1;
       g.k_next += 1;
     }
-    map_progress(e, g.n_occ);   // 진행 없음 시계 — finish_step 판 끝이 씀
+    map_progress(e, g.n_occ, g.n_new);   // 진행 없음 시계 — finish_step 판 끝이 씀
     sense_step(b, e, env, g);   // 로봇이 재는 간격·닿음 (contact.h) — 보상·판 끝이 씀
     finish_step(b, e, env, g.new_wall, g.new_floor, g.d_known, g.n_new);
     mdp::obsgen::far_dirty_robot(b, e, g);   // 지나간 곳 표시도 먼 지도 다시 그릴 곳에

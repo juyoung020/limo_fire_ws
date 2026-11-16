@@ -244,6 +244,7 @@ struct EnvState {
   // occ 링·합 = 걸음마다 새 막힘 칸 수 최근 kProgRing 걸음 (map_progress). since_new 자리를 써서 구조체 크기는 8 의 배수 그대로
   // map_closed: 지난 관측 때 지도 닫힘(mdp/frontier.h 닫힘 규칙, 관측 CLOSED 와 같은 값) — finish_step 성공 판정이 씀 (옛 pad_occ 자리)
   int32_t since_occ, occ[kProgRing], occ_sum, map_closed;
+  int32_t since_prog, prog_pad;   // 진행 없음 판 끝 시계: 새 막힘 ≥ kIdleOccMin 또는 새로 안 칸 ≥ kIdleNewMin 인 마지막 행동 뒤 걸음 (map_progress). pad = 8 의 배수
   // 지난 관측의 프론티어 요약 두 값 — approach·front_cells 보상(rewards.h, shape_obs)이 다음 관측 값과의 차이를 씀:
   // 가장 가까운 덩어리까지 BFS 길 거리 (칸, −1 없음 = 관측 FRONTIER 첫 칸), 번진 곳 안 프론티어 칸 수 (= 관측 FRONT_CELLS)
   int32_t fr_dist, fr_cells;
@@ -554,6 +555,8 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   for (int i = 0; i < kProgRing; ++i) e.prog[i] = 0;
   e.prog_sum = 0;
   e.since_occ = 0;
+  e.since_prog = 0;
+  e.prog_pad = 0;
   for (int i = 0; i < kProgRing; ++i) e.occ[i] = 0;
   e.occ_sum = 0;
   e.map_closed = 0;
@@ -912,9 +915,8 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   cam_hist_push(e);
   if (hit) {
     e.v = e.w = e.vy = 0.f;
-    // 명령 smoother(vs·ws — 규칙 추종기·목표점 행동의 velocity_smoother)는 로봇 쪽 소프트웨어라 닿음을 모른다: 실물처럼(con_slip) 모델에서는 그대로 둔다.
-    // 옛 모델은 예전대로 비움 (지문 그대로)
-    if (!c.con_slip) e.vs = e.ws = 0.f;
+    // 명령 smoother(vs·ws — 규칙 추종기·목표점 행동의 velocity_smoother)는 로봇 쪽 소프트웨어라 닿음을 센서로 알기 전에는 모른다 → 비우지 않음
+    // (2026-11-17 전에는 옛 닿음 모델에서 비워, 닿기 1~2 걸음 전부터 low_explore_check 시뮬 == RobotEnv 가 어긋났다)
     if (c.con_slip) {   // 실물처럼: 몸통만 멈춤, 바퀴는 줄며 명령을 계속 따름 (오도메트리가 돎 — 자이로와 어긋남), 밀린 명령도 그대로
       DriveState& d = e.drive;
       const float k = c.con_slip_k;
@@ -1269,8 +1271,9 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
 // 스레드 0, finish_step 바로 앞: 지도 기준 진척 — 이번 행동에 판 처음 막힘이 된 칸 수 n_occ.
 // since_occ = 판 끝 진행 없음 시계(finish_step in.idle, curriculums.h kIdleTime·kIdleOccMin) == 관측 PROGRESS+1 시계.
 // 정답 벽을 모르는 실물도 자기 지도(막힘 p > 0.65)로 똑같이 센다. 연기 속에서는 지도가 안 쌓여 멈춰 둔다
-DEV void map_progress(EnvState& e, int n_occ) {
+DEV void map_progress(EnvState& e, int n_occ, int n_new) {
   e.since_occ = n_occ >= mdp::cur::kIdleOccMin ? 0 : e.since_occ + 1;
+  e.since_prog = n_occ >= mdp::cur::kIdleOccMin || n_new >= mdp::cur::kIdleNewMin ? 0 : e.since_prog + 1;
   const int slot = e.step % kProgRing;
   e.occ_sum += n_occ - e.occ[slot];
   e.occ[slot] = n_occ;
@@ -1417,9 +1420,9 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
       in.act_d2 = s2;
     }
   }
-  // 진행 없음 (curriculums.h kIdleTime·kIdleOccMin): 지도 시계 since_occ(map_progress, 이 함수 앞에서 갱신) — 충돌·선언이 먼저.
+  // 진행 없음 (curriculums.h kIdleTime·kIdleOccMin·kIdleNewMin): 지도 시계 since_prog(map_progress, 이 함수 앞에서 갱신) — 충돌·선언이 먼저.
   // 막힘 칸 아무 하나가 아니라 한 행동에 kIdleOccMin 개 이상일 때만 되돌림: 멈춰 있어도 자세 오차·빔 잡음으로 막힘 칸이 드문드문 생기므로.
-  in.idle = !e.contact && !in.closed && !decl && (float)e.since_occ * dt_act >= mdp::cur::kIdleTime;
+  in.idle = !e.contact && !in.closed && !decl && (float)e.since_prog * dt_act >= mdp::cur::kIdleTime;
   float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
   e.reward = mdp::rew::terms(in, T);
   e.slip_acc = 0.f;

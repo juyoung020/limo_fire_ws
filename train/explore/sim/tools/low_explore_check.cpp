@@ -5,6 +5,8 @@
 //   low_explore_check <장면.scene> … [--steps 1500] [--seed 1] [--people 0] [--upper fuel|slot0|decider] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
 //   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 실물 노드 upper:=slot0)
 //   fuel 기본 = 실물 노드 config/low_rl.yaml (시간 + 전역 + 시점, 붙들기 0.2, 시점 자격 0.75 m · 0.21 m). --fuel-hyst · --fuel-vp-min · --fuel-vp-clear · --fuel-first 로 바꿈
+//   --contact-log 파일: 판이 닿음(2)으로 끝나면 몸통 8 cm 안 막힌 칸(정답 격자)이 라이다 높이 형상인지 · 로봇 지도·깊이 층이 알았는지 · 그 형상 물체·높이 · 마지막 2 s 자취,
+//     진행 없음(6)으로 끝나면 마지막 65 s 를 1 s 마다 (자세·목표·경로·시계·닫힘·지나온 거리). LOW_CHECK_NNEW=파일: 걸음마다 새로 안 칸·새 막힘·속도·경로·계획 단계·검사 멈춤
 //   --log 파일: 시뮬 쪽 결정마다 한 줄 (판·시각·목표·바뀜·뜀·목표 없음 까닭·닫힘) — 실물 녹화 low_explore_replay --log 와 같은 꼴로 견줌
 //   --upper decider [--dec-period 3.0] [--dec-latency 2.6] [--dec-input both] [--dec-cand 1] [--dec-hint 1] [--dec-mem-image 1] [--dec-image A|B] [--dec-log-k 8]: 실물 노드 upper:=decider (scripts/low_decider.h) — 판단 모델 대신 정해진 가짜 응답기
 //     (요청 본문의 FNV 해시로 글자를 고르고 --dec-latency 초 뒤 걸음에 답을 냄). 두 쪽 요청 본문도 비트 비교. 시뮬이 판단 모델 답을 몇 걸음 뒤에 받는 것과 같은 길
@@ -137,7 +139,7 @@ int main(int argc, char** argv) {
   int dec_mode = 0, dec_max = 0, dec_order = 0;
   bool dec_compact = false, dec_memf = true;
   std::string dec_input = "both", dec_url;
-  std::string ep_log, lat_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
+  std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
   bool dec_fake_a = false;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
   int max_ep = 0;
   bool close_lidar = false;
@@ -194,6 +196,7 @@ int main(int argc, char** argv) {
     else if (a == "--dec-match") dec_match = std::stod(nx());
     else if (a == "--dec-url") dec_url = nx();
     else if (a == "--ep-log") ep_log = nx();
+    else if (a == "--contact-log") contact_log = nx();
     else if (a == "--lat-log") lat_log = nx();
     else if (a == "--dec-fake") dec_fake_a = nx() == "A";
     else if (a == "--max-ep") max_ep = std::stoi(nx());
@@ -224,6 +227,24 @@ int main(int argc, char** argv) {
     const sim::LidarModel lidar = sim::load_lidar_model(model_path);
     std::vector<sim::World> worlds;
     for (const auto& p : scenes) worlds.push_back(sim::build_world(p, sim::load_scene(p), hc, !open_scene));
+    // --contact-log: 판이 닿음(끝 코드 2)으로 끝나면 무엇에 닿았는지 — 몸통 둘레 막힌 칸(정답 격자)마다 라이다 높이 형상이 있는지 · 로봇 지도·깊이 층이 알았는지, 마지막 2 s 자취
+    std::vector<std::vector<uint8_t>> lid_geo;   // 세계마다 라이다 높이(lidar_z ± 1 cm) 형상이 지나는 칸
+    if (!contact_log.empty())
+      for (const auto& W : worlds) {
+        std::vector<uint8_t> g((size_t)W.gw * W.gh, 0);
+        for (const sim::Tri& t : W.scene.tris) {
+          const float lo = std::min(t.a.z, std::min(t.b.z, t.c.z)), hi = std::max(t.a.z, std::max(t.b.z, t.c.z));
+          if (lo > hc.cfg.lidar_z + 0.01f || hi < hc.cfg.lidar_z - 0.01f) continue;
+          const float x0 = std::min(t.a.x, std::min(t.b.x, t.c.x)), x1 = std::max(t.a.x, std::max(t.b.x, t.c.x));
+          const float y0 = std::min(t.a.y, std::min(t.b.y, t.c.y)), y1 = std::max(t.a.y, std::max(t.b.y, t.c.y));
+          for (int y = (int)std::floor((y0 - W.oy) / hc.cfg.res); y <= (int)std::floor((y1 - W.oy) / hc.cfg.res); ++y)
+            for (int x = (int)std::floor((x0 - W.ox) / hc.cfg.res); x <= (int)std::floor((x1 - W.ox) / hc.cfg.res); ++x)
+              if (x >= 0 && y >= 0 && x < W.gw && y < W.gh) g[(size_t)y * W.gw + x] = 1;   // 삼각형 상자 (넉넉히)
+        }
+        lid_geo.push_back(std::move(g));
+      }
+    struct Trace { int step; float x, y, th, v, w, cv, cw; int goal, p_n, p_i, since_occ, closed, why; };
+    std::vector<Trace> trace;
     sim::set_cpu_threads(1);
     sim::Env cpu(hc, worlds, lidar, 1, seed, false);
     if (people > 0) cpu.set_people_max(std::vector<int>(1, people));
@@ -474,9 +495,106 @@ int main(int argc, char** argv) {
       }
       float v, w;
       robot.low_act(a3.data(), &v, &w);
+      std::vector<sim::EnvState> st_pre;
+      if (!contact_log.empty()) cpu.get_state(st_pre);
       cpu.step(act.data());
       cpu.get_state(st);
       cpu.get_reward(rew, dn);
+      if (const char* nn = std::getenv("LOW_CHECK_NNEW")) {   // 걸음마다 새로 안 칸 수(prog 링) · 새 막힘(occ 링) · 몸통 v ω — 진행 없음 문턱 재기
+        static FILE* nf = std::fopen(nn, "w");
+        const sim::EnvState& e = st[0];
+        if (nf && e.step > 0) {   // 걸음 · 새로 안 칸 · 새 막힘 · 몸통 v ω · x y · 목표 칸 · 경로 점 i/n · 계획 단계(p_mode) · 검사 멈춤 누계(p_stops) · 명령 v ω
+          const int k = (e.step - 1) % sim::kProgRing;
+          std::fprintf(nf, "%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.3f\n", e.step, e.prog[k], e.occ[k], e.v, e.w, e.x, e.y, e.goal_cell, e.p_i, e.p_n, e.p_mode, e.p_stops,
+                       e.cmd_v, e.cmd_w);
+        }
+      }
+      if (!contact_log.empty()) {
+        const sim::EnvState& e = st_pre[0];
+        trace.push_back(Trace{e.step, e.x, e.y, e.th, e.v, e.w, e.cmd_v, e.cmd_w, e.goal_cell, e.p_n, e.p_i, e.since_occ, (int)e.map_closed, cs.cmd().target});
+        if (trace.size() > 650) trace.erase(trace.begin());
+        if (dn[0] == 6) {   // 진행 없음: 마지막 65 s 를 1 s 마다 (자세 · 몸통 v · 위층 목표 · 경로 · 진척 시계 · 닫힘)
+          if (FILE* cf = std::fopen(contact_log.c_str(), "a")) {
+            const sim::World& W = worlds[(size_t)e.map];
+            std::fprintf(cf, "판 %ld 진행 없음 %.1f s 장면 %s\n", n_ep, e.step * dt, W.name.c_str());
+            float px = trace.front().x, py = trace.front().y, path = 0.f;
+            for (size_t qi = 0; qi < trace.size(); ++qi) {
+              const Trace& q = trace[qi];
+              path += std::hypot(q.x - px, q.y - py); px = q.x; py = q.y;
+              if (qi % 10) continue;
+              const float gx = q.goal >= 0 ? W.ox + (q.goal % W.gw + 0.5f) * hc.cfg.res : NAN, gy = q.goal >= 0 ? W.oy + (q.goal / W.gw + 0.5f) * hc.cfg.res : NAN;
+              std::fprintf(cf, "  %5.1f s (%.2f, %.2f) v %5.2f ω %5.2f 목표 %d (%.2f, %.2f) 거리 %.2f 경로 %d/%d 진척시계 %.1f s 닫힘 %d 지나온 %.1f m\n", q.step * dt, q.x, q.y, q.v, q.w, q.goal, gx, gy,
+                           q.goal >= 0 ? std::hypot(gx - q.x, gy - q.y) : -1.f, q.p_i, q.p_n, q.since_occ * dt, q.closed, path);
+            }
+            std::fclose(cf);
+          }
+        }
+        if (dn[0] == 2) {   // 닿음: 리셋 전 마지막 자세(st_pre)에서
+          FILE* cf = std::fopen(contact_log.c_str(), "a");
+          if (cf) {
+            const sim::World& W = worlds[(size_t)e.map];
+            const float res = hc.cfg.res, c0 = std::cos(e.th), s0 = std::sin(e.th);
+            int nb = 0, n_lid = 0, n_map = 0, n_cam = 0, n_unk = 0;
+            float dmin = 9.f;
+            const int R = (int)std::ceil(0.45f / res);
+            const int cx = (int)std::floor((e.x - W.ox) / res), cy = (int)std::floor((e.y - W.oy) / res);
+            for (int dy = -R; dy <= R; ++dy)
+              for (int dx = -R; dx <= R; ++dx) {
+                const int x = cx + dx, y = cy + dy;
+                if (x < 0 || y < 0 || x >= W.gw || y >= W.gh || !(W.grid[(size_t)y * W.gw + x] & sim::kCellBlocked)) continue;
+                const float wx = W.ox + (x + 0.5f) * res - e.x, wy = W.oy + (y + 0.5f) * res - e.y;
+                const float lx = c0 * wx + s0 * wy, ly = -s0 * wx + c0 * wy;
+                const float gx = std::max(0.f, std::fabs(lx) - hc.cfg.half_len), gy = std::max(0.f, std::fabs(ly) - hc.cfg.half_wid);
+                const float gap = std::hypot(gx, gy);
+                if (gap > 0.08f) continue;   // 몸통에서 8 cm 안 막힌 칸만
+                ++nb;
+                dmin = std::min(dmin, gap);
+                n_lid += lid_geo[(size_t)e.map][(size_t)y * W.gw + x];
+                const int16_t l = robot.lmap()[(size_t)y * hc.cfg.size + x];
+                n_map += l != mdp::kUnknownL && l >= mdp::kOccL;
+                n_unk += l == mdp::kUnknownL;
+                n_cam += robot.cam_layer() && robot.cam_layer()[(size_t)y * hc.cfg.size + x];
+              }
+            {   // 닿은 칸에 걸친 형상: 물체 이름 · 높이 범위 (몸통 띠 안 삼각형만)
+              std::vector<std::pair<int, std::pair<float, float>>> objs;
+              float zin_lo = 9.f, zin_hi = -9.f;
+              for (size_t ti = 0; ti < W.scene.tris.size(); ++ti) {
+                const sim::Tri& t = W.scene.tris[ti];
+                const float lo = std::min(t.a.z, std::min(t.b.z, t.c.z)), hi = std::max(t.a.z, std::max(t.b.z, t.c.z));
+                if (hi < hc.band_lo || lo > hc.band_hi) continue;
+                const float mx = (t.a.x + t.b.x + t.c.x) / 3.f - e.x, my = (t.a.y + t.b.y + t.c.y) / 3.f - e.y;
+                const float x0 = std::min(t.a.x, std::min(t.b.x, t.c.x)) - e.x, x1 = std::max(t.a.x, std::max(t.b.x, t.c.x)) - e.x;
+                const float y0 = std::min(t.a.y, std::min(t.b.y, t.c.y)) - e.y, y1 = std::max(t.a.y, std::max(t.b.y, t.c.y)) - e.y;
+                (void)mx; (void)my;
+                if (x1 < -0.3f || x0 > 0.3f || y1 < -0.3f || y0 > 0.3f) continue;   // 몸통 둘레 0.3 m 상자
+                {   // 몸통(지금 자세) 8 cm 안에 든 삼각형 높이만: 몸통 좌표로 세 꼭짓점 중 하나라도 몸통 + 8 cm 상자 안
+                  bool in = false;
+                  for (const sim::V3* q : {&t.a, &t.b, &t.c}) {
+                    const float qx = q->x - e.x, qy = q->y - e.y, lx = c0 * qx + s0 * qy, ly = -s0 * qx + c0 * qy;
+                    in = in || (std::fabs(lx) < hc.cfg.half_len + 0.08f && std::fabs(ly) < hc.cfg.half_wid + 0.08f);
+                  }
+                  if (in) { zin_lo = std::min(zin_lo, lo); zin_hi = std::max(zin_hi, hi); }
+                }
+                const int id = W.scene.obj.empty() ? -1 : (int)W.scene.obj[ti];
+                bool f = false;
+                for (auto& o : objs) if (o.first == id) { o.second.first = std::min(o.second.first, lo); o.second.second = std::max(o.second.second, hi); f = true; }
+                if (!f) objs.push_back({id, {lo, hi}});
+              }
+              std::fprintf(cf, "  둘레 0.3 m 몸통 띠 형상:");
+              for (const auto& o : objs)
+                std::fprintf(cf, " [%s z %.2f~%.2f]", o.first >= 0 && o.first < (int)W.scene.obj_names.size() ? W.scene.obj_names[(size_t)o.first].c_str() : "?", o.second.first, o.second.second);
+              std::fprintf(cf, " | 몸통 8 cm 안 꼭짓점이 있는 몸통 띠 삼각형 높이 %.2f~%.2f\n", zin_lo, zin_hi);
+            }
+            std::fprintf(cf, "판 %ld 닿음 %.1f s 장면 %s 자세 (%.2f, %.2f, %.0f°) 몸통 v %.2f ω %.2f | 몸통 8 cm 안 막힌 칸 %d (가장 가까움 %.2f m): 라이다 높이 형상 %d · 로봇 지도 막힘 %d · 모름 %d · 깊이 층 %d\n",
+                         n_ep, e.step * dt, W.name.c_str(), e.x, e.y, e.th * 57.2958f, e.v, e.w, nb, dmin, n_lid, n_map, n_unk, n_cam);
+            for (size_t qi = trace.size() > 20 ? trace.size() - 20 : 0; qi < trace.size(); ++qi) {
+              const Trace& q = trace[qi];
+              std::fprintf(cf, "  %5.1f s (%.2f, %.2f, %4.0f°) 몸통 v %5.2f ω %5.2f 명령 v %5.2f ω %5.2f 목표 %d 경로 %d/%d\n", q.step * dt, q.x, q.y, q.th * 57.2958f, q.v, q.w, q.cv, q.cw, q.goal, q.p_i, q.p_n);
+            }
+            std::fclose(cf);
+          }
+        }
+      }
       int end_code = dn[0];
       if (!end_code && cs.rough_done(st[0].step)) {   // 후보 모드 "대충 다 앎" 끝 (Ctl::rough_done — 실물 노드와 같은 판정) — 두 쪽이 같은 걸음에 끝나야
         end_code = kRoughDone;
