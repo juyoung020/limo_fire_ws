@@ -217,8 +217,7 @@ int main(int argc, char** argv) {
   // ---- 2. 롤아웃 (Env 둘, 같은 씨앗·행동열)
   {
     struct Run {
-      Stat rew, cov;
-      std::vector<Stat> term;
+      Stat cov;
       long done[mdp::cur::kNumDone] = {};
       long n_ep = 0;
     };
@@ -232,30 +231,21 @@ int main(int argc, char** argv) {
       cudaMalloc(&d_act, sizeof(float) * mdp::act::DIM * n_env);
       uint64_t rng = 7;
       Run& R = runs[fast];
-      R.term.resize(mdp::rew::kTerms);
-      std::vector<float> r, tm;
       std::vector<int32_t> d;
-      std::vector<double> env_rew(n_env, 0.0);
-      std::vector<std::vector<double>> env_term(n_env, std::vector<double>(mdp::rew::kTerms, 0.0));
       for (int s = 0; s < roll_steps; ++s) {
         std::vector<float> act((size_t)mdp::act::DIM * n_env);
         for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)mdp::act::DIM * i], 0.003f);
         cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
         env.step(d_act);
         env.sync();
-        env.get_reward(r, d);
-        env.get_terms(tm);
+        env.get_done(d);
         for (int i = 0; i < n_env; ++i) {
-          env_rew[i] += r[i];
-          for (int k = 0; k < mdp::rew::kTerms; ++k) env_term[i][k] += tm[(size_t)i * mdp::rew::kTerms + k];
           if (d[i]) { R.done[d[i]]++; R.n_ep++; }
         }
       }
       std::vector<sim::EnvState> st;
       env.get_state(st);
-      for (int i = 0; i < n_env; ++i) {   // 환경마다 걸음당 평균 = 표본 하나 (환경끼리 독립)
-        R.rew.add(env_rew[i] / roll_steps);
-        for (int k = 0; k < mdp::rew::kTerms; ++k) R.term[k].add(env_term[i][k] / roll_steps);
+      for (int i = 0; i < n_env; ++i) {   // 환경마다 끝 덮음 = 표본 하나 (환경끼리 독립)
         R.cov.add(st[i].coverage);
       }
       cudaFree(d_act);
@@ -269,8 +259,6 @@ int main(int argc, char** argv) {
                   good ? "" : "← 넘음");
     };
     std::printf("롤아웃 (환경 %d × %d 걸음, 사람 0~%d, 같은 씨앗·행동열, 기준 |차| ≤ %.0f × 표준오차):\n", n_env, roll_steps, people, kZ);
-    cmp("걸음당 보상", runs[0].rew, runs[1].rew);
-    for (int k = 0; k < mdp::rew::kTerms; ++k) cmp(mdp::rew::term_name(k), runs[0].term[k], runs[1].term[k]);
     cmp("끝 덮음", runs[0].cov, runs[1].cov);
     for (int k = 1; k < mdp::cur::kNumDone; ++k) {   // 판 끝 종류 비율 (끝난 판 중)
       const double n0 = std::max<long>(1, runs[0].n_ep), n1 = std::max<long>(1, runs[1].n_ep);

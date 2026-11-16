@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
   cudaMalloc(&d_act, sizeof(float) * A * n_env);
   uint64_t rng = 99 + seed;
   std::vector<sim::EnvState> st;
-  std::vector<float> r, t, o1;
+  std::vector<float> o1;
   std::vector<int32_t> d;
   std::vector<sim::EpInfo> ep;
   std::vector<uint8_t> img;
@@ -67,8 +67,7 @@ int main(int argc, char** argv) {
     gpu.step(d_act);
     gpu.sync();
     gpu.get_state(st);
-    gpu.get_reward(r, d);
-    gpu.get_terms(t);
+    gpu.get_done(d);
     gpu.get_ep(ep);
     gpu.get_obs(img, o1);
     if (s == img_step) { FILE* f = std::fopen(img_file.c_str(), "wb"); std::fwrite(img.data(), 1, img.size(), f); std::fclose(f); }
@@ -76,10 +75,9 @@ int main(int argc, char** argv) {
     uint64_t he = 1469598103934665603ull;
     for (int i = 0; i < n_env; ++i)
       if (d[i] != 0) he = fnv(&ep[i], sizeof(sim::EpInfo), he);
-    const uint64_t h[7] = {fnv_v(st), fnv_v(r), fnv_v(d), fnv_v(t), he, fnv_v(img), fnv_v(o1)};
-    std::printf("%d st %016llx r %016llx d %016llx t %016llx ep %016llx img %016llx 1d %016llx\n", s, (unsigned long long)h[0],
-                (unsigned long long)h[1], (unsigned long long)h[2], (unsigned long long)h[3], (unsigned long long)h[4],
-                (unsigned long long)h[5], (unsigned long long)h[6]);
+    const uint64_t h[5] = {fnv_v(st), fnv_v(d), he, fnv_v(img), fnv_v(o1)};
+    std::printf("%d st %016llx d %016llx ep %016llx img %016llx 1d %016llx\n", s, (unsigned long long)h[0],
+                (unsigned long long)h[1], (unsigned long long)h[2], (unsigned long long)h[3], (unsigned long long)h[4]);
     all = fnv(h, sizeof(h), all);
   }
   std::vector<int16_t> map;

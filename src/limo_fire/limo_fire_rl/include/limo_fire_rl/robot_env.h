@@ -2,7 +2,7 @@
 // 실물 센서 값(라이다 장·지도 자세·바퀴·IMU·깊이)을 시뮬과 같은 함수로 쌓아 지도·위층 관측·후보·닫힘·아래층 관측을 만들고, 아래층 규칙 추종기(A* 경로 + 추종)로 명령을 낸다.
 // 시뮬 한 걸음(0.1 s, env_ref.cpp step_env + low_prepare_env)의 차례를 그대로 따르고, 센서를 흉내 내는 부분(물리·광선)만 실물 값으로 바꾼다:
 //   low_act(규칙 추종기 → 명령) → step(감각, 라이다 장: scan_begin_map → 빔마다 scan_beam_map → scan_apply → known_box → map_progress → sense_step
-//   → finish_step(보상은 버림, 닫힘 성공·진행 없음 판정은 그대로) → ring_advance → push_bins → write_obs(깊이 빼고)) → set_depth(깊이) → [set_cmd(위층 목표)] → low_obs(계획·아래층 관측)
+//   → finish_step(닫힘 성공·진행 없음 판정) → ring_advance → push_bins → write_obs(깊이 빼고)) → set_depth(깊이) → [set_cmd(위층 목표)] → low_obs(계획·아래층 관측)
 // 지도·관측·후보·닫힘·경로는 모두 sim/include(env.h · obs_ref.h · plan_ref.h)·mdp/ 의 함수 그대로라 같은 입력이면 시뮬과 비트까지 같다
 // (train/explore/sim/tools/low_explore_check 가 CPU 시뮬 걸음과 비교). 정답 격자는 없다(MapDev::grid 는 0 — 덮음·벽 칸은 실물에서 0).
 // 빌드할 때 -ffp-contract=off (시뮬 CPU 참조판과 같은 부동소수점 — aarch64 g++ 기본은 곱셈·덧셈을 합쳐 값이 달라짐).
@@ -110,7 +110,7 @@ class RobotEnv {
   std::vector<int16_t> lmap_;
   std::vector<uint32_t> marks_, trail_;
   std::vector<uint8_t> img_, cvox_;
-  std::vector<float> o1d_, ring_, vprev_, lint_, rew_, terms_, cpts_;
+  std::vector<float> o1d_, ring_, vprev_, lint_, cpts_;
   std::vector<int32_t> done_buf_, cand_, cand_cur_;
   std::vector<sim::EpInfo> ep_;
   // 아래층 걸음 길 (env_host.cpp 가 low_rl 일 때 잡는 칸과 같은 것)

@@ -278,29 +278,9 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     m.n_floor = w.n_floor;
     m.ox = w.ox;
     m.oy = w.oy;
-    m.stage = w.stage >= 0 ? w.stage : mdp::cur::stage_of_area(w.n_floor * hc.cfg.res * hc.cfg.res);
     maps.push_back(m);
   }
   b_.maps = upload(maps);
-  // 단계별 맵 묶음: 그 단계 맵이 없으면 가장 가까운 아래 단계(없으면 위 단계) 맵을 쓴다. 맵이 있는 가장 높은 단계 = max_stage
-  {
-    std::vector<int32_t> list;
-    b_.max_stage = 0;
-    for (const MapDev& m : maps) b_.max_stage = std::max(b_.max_stage, m.stage);
-    for (int s = 0; s < mdp::cur::kNumStages; ++s) {
-      b_.stage_off[s] = (int)list.size();
-      int pick = -1;
-      for (int d = 0; d < mdp::cur::kNumStages && pick < 0; ++d)
-        for (int t : {s - d, s + d})
-          if (pick < 0 && t >= 0 && t < mdp::cur::kNumStages)
-            for (const MapDev& m : maps)
-              if (m.stage == t) { pick = t; break; }
-      for (int i = 0; i < (int)maps.size(); ++i)
-        if (maps[i].stage == pick) list.push_back(i);
-    }
-    b_.stage_off[mdp::cur::kNumStages] = (int)list.size();
-    b_.stage_maps = upload(list);
-  }
   std::vector<EnvState> st(n_env);
   uint64_t r = seed;
   for (auto& e : st) {
@@ -318,8 +298,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   if (hier) {   // 계층형 (env.h EnvBatch 아래 칸, include/hier_path.h)
     b_.cand = alloc<int32_t>((size_t)mdp::hier::K * n_env);
     b_.cand_cur = alloc<int32_t>(n_env);
-    b_.racc = alloc<float>(n_env);
-    b_.tacc = alloc<float>((size_t)mdp::rew::kTerms * n_env);
     if (gpu) b_.pplanes = alloc<uint32_t>((size_t)n_env * kPathPlanes * hc.cfg.size * ((hc.cfg.size + 31) / 32));
     if (hc.cfg.cam_on) {   // 깊이 카메라 장애물 층 (hier_path.h) — 리셋(reset_map)이 비움
       b_.cvox = alloc<uint8_t>(cells * n_env);
@@ -344,8 +322,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
   b_.vec_prev = alloc<float>((size_t)mdp::obs::VEC * n_env);
   b_.lidar_int = alloc<float>((size_t)mdp::obs::LIDAR_BINS * n_env);
-  b_.reward = alloc<float>(n_env);
-  b_.reward_terms = alloc<float>((size_t)mdp::rew::kTerms * n_env);
   b_.done = alloc<int32_t>(n_env);
   b_.ep = alloc<EpInfo>(n_env);
   b_.scratch = alloc<Shared>(n_env);
@@ -409,8 +385,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.obs_1d, (size_t)b_.o1d * sizeof(float));
     reg(b_.cand, (size_t)mdp::hier::K * sizeof(int32_t));
     reg(b_.cand_cur, sizeof(int32_t));
-    reg(b_.racc, sizeof(float));
-    reg(b_.tacc, (size_t)mdp::rew::kTerms * sizeof(float));
     reg(b_.pplanes, (size_t)kPathPlanes * nf * sizeof(uint32_t));
     reg(b_.cvox, cells);
     reg(b_.cpts, (size_t)mdp::obs::DEPTH_W * 2 * sizeof(float));
@@ -422,8 +396,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.lidar_ring, (size_t)kLidarRing * mdp::obs::LIDAR_BINS * sizeof(float));
     reg(b_.vec_prev, (size_t)mdp::obs::VEC * sizeof(float));
     reg(b_.lidar_int, (size_t)mdp::obs::LIDAR_BINS * sizeof(float));
-    reg(b_.reward, sizeof(float));
-    reg(b_.reward_terms, (size_t)mdp::rew::kTerms * sizeof(float));
     reg(b_.done, sizeof(int32_t));
     reg(b_.ep, sizeof(EpInfo));
     reg(b_.scratch, sizeof(Shared));
@@ -503,7 +475,7 @@ void Env::step(const float* actions, cudaStream_t st) {
 }
 
 StepOut Env::outputs() const {
-  return StepOut{b_.obs_img, b_.obs_1d, b_.reward, b_.reward_terms, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d};
+  return StepOut{b_.obs_img, b_.obs_1d, b_.done, b_.ep, b_.o1d, b_.low_img, b_.low_1d};
 }
 
 void Env::low_prepare(const float* actions, cudaStream_t st) {
@@ -588,7 +560,6 @@ void Env::get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const {
   fetch(gpu_, b_.obs_img, (size_t)mdp::obs::IMG_SIZE * b_.n_env, img);
   fetch(gpu_, b_.obs_1d, (size_t)b_.o1d * b_.n_env, o1d);
 }
-void Env::get_terms(std::vector<float>& terms) const { fetch(gpu_, b_.reward_terms, (size_t)mdp::rew::kTerms * b_.n_env, terms); }
 void Env::get_ep(std::vector<EpInfo>& ep) const { fetch(gpu_, b_.ep, (size_t)b_.n_env, ep); }
 
 // 장면 묶음 목록 (env_api.h 위 설명). 등급(4 번째 열)이 있으면 커리큘럼 단계로.
@@ -643,7 +614,6 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
   const std::string dir = list_file.find('/') == std::string::npos ? std::string() : list_file.substr(0, list_file.find_last_of('/') + 1);
   struct Item {
     std::string path;
-    int stage = -1;
   };
   std::vector<Item> items;
   std::string line;
@@ -671,7 +641,7 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
       if (!q.empty() && q[0] != '/') q = dir + q;
       p = p.substr(0, plus + 6) + "+" + q;
     }
-    items.push_back({p, (col.size() > 3 && !col[3].empty()) ? std::stoi(col[3]) : -1});
+    items.push_back({p});   // 뒤 열(넓이 · 벽 칸 · 등급)은 안 씀 — 옛 커리큘럼 단계
   }
   // 장면마다 읽기·BVH·격자 만들기는 서로 독립 → 호스트 스레드로 나눠 만든다 (맵 520 개에 한 줄로 ~25 s 걸리던 시작 시간).
   // 결과·건너뜀 목록은 목록 순서 그대로 모은다 (스레드 수와 무관하게 같은 결과).
@@ -683,7 +653,6 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
       for (size_t k; (k = next.fetch_add(1)) < items.size();) {
         try {
           built[k].reset(new World(load_world(items[k].path, hc)));
-          if (items[k].stage >= 0) built[k]->stage = std::max(0, std::min(mdp::cur::kNumStages - 1, items[k].stage));
         } catch (const std::exception& ex) {
           errs[k] = ex.what();
           if (errs[k].empty()) errs[k] = "장면 오류";
@@ -708,8 +677,7 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
   if (out.empty()) throw std::runtime_error(list_file + ": 쓸 수 있는 장면이 없음");
   return out;
 }
-void Env::get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const {
-  fetch(gpu_, b_.reward, b_.n_env, reward);
+void Env::get_done(std::vector<int32_t>& done) const {
   fetch(gpu_, b_.done, b_.n_env, done);
 }
 

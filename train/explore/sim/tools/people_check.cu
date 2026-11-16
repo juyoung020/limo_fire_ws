@@ -122,9 +122,8 @@ int test_walls(const sim::EnvHostCfg& hc, const std::vector<sim::World>& worlds,
     cudaMemcpy(d_act, act.data(), sizeof(float) * mdp::act::DIM * n_env, cudaMemcpyHostToDevice);
     env.step(d_act);
     env.get_state(st);
-    std::vector<float> rw;
     std::vector<int32_t> dn;
-    env.get_reward(rw, dn);
+    env.get_done(dn);
     for (int i = 0; i < n_env; ++i) {
       const sim::EnvState& e = st[i];
       const sim::World& w = worlds[e.map];

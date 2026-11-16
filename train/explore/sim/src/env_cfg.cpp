@@ -223,7 +223,6 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   c.act_vy_max = mdp::act::VY_MAX;
   c.wheel_k = mdp::obsgen::kWheelK;
   c.wheel_max = drv.v_max;   // 바퀴 하나 최고 선속도 = 실측 1.11 m/s
-  c.curriculum = 1;
   c.max_delay = 1;
   const YAML::Node fl = need(y, "floors", path);
   c.n_floors = (int)fl.size();
@@ -249,7 +248,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   const YAML::Node imu = need(y, "imu", path);
   c.gyro_sigma = imu["gyro_sigma"].as<float>();
   c.gyro_bias = imu["gyro_bias"].as<float>();
-  // 판 끝·보상·관측 크기는 mdp/ 코드 안 (rewards.h·curriculums.h·obs_layout.h)
+  // 판 끝 조건·관측 크기는 mdp/ 코드 안 (episode.h·obs_layout.h)
   c.max_steps = (int)std::lround(mdp::cur::kSafeTime / (c.substeps * c.dt));
   c.depth_w = mdp::obs::DEPTH_W;
   c.depth_h = mdp::obs::DEPTH_H;
@@ -345,25 +344,6 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       if (const char* v = std::getenv("SIM_CLOSE_LOOK")) c.close_look = (float)std::atof(v);
       if (const char* v = std::getenv("SIM_CLOSE_RADIUS")) c.close_radius = (float)std::atof(v);
       if (mdp::robot_cells(c.close_radius, c.res).r > 12) throw std::runtime_error("닫힘 반경 close_radius 는 0.6 m 이하");   // GPU stand_word 낱말 밀기 < 32
-    }
-    {
-      const char* g = std::getenv("SIM_CUR_TOPRAND");   // 커리큘럼 맨 위 단계 무작위 (curriculums.h on_episode_end) — 기본 켬, SIM_CUR_TOPRAND=0 으로 끔
-      c.cur_top_random = (g && g[0] == '0') ? 0 : 1;      // explore_v8_cur A/B: 맨 위 단계에 고여 중간 크기 맵을 잊던 것
-    }
-    {
-      // 오르내림 규칙 (env.yaml curriculum, curriculums.h): 성공 규칙만 (옛 덮음 규칙은 정답 덮음이라 2026-11-14 에 없앰)
-      const YAML::Node cu = need(y, "curriculum", path);
-      {
-        const std::string rule = need(cu, "rule", path).as<std::string>();
-        if (rule != "success") throw std::runtime_error(path + ": curriculum.rule 은 success (정답 덮음 규칙 coverage 는 없앰)");
-        const YAML::Node r = need(cu, rule.c_str(), path);
-        c.cur_window = need(r, "window", path).as<int>();
-        c.cur_up = need(r, "up", path).as<float>();
-        c.cur_down = need(r, "down", path).as<float>();
-        if (c.cur_window < 1 || c.cur_window > mdp::cur::kCurWindowMax)
-          throw std::runtime_error(path + ": curriculum." + rule + ".window 는 1 ~ " + std::to_string(mdp::cur::kCurWindowMax));
-        if (!(c.cur_down <= c.cur_up)) throw std::runtime_error(path + ": curriculum." + rule + " down ≤ up 이어야 함");
-      }
     }
   }
   c.people = load_people_cfg(path);

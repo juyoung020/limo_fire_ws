@@ -22,7 +22,6 @@ struct World {
   bool closed = true;                   // 갈 수 있는 바닥이 맵 테두리에 안 닿음 (집이 닫힘)
   std::string leak;                     // 닫히지 않았으면 어디서 새는지 (좌표)
   float ox = 0, oy = 0;
-  int stage = -1;                       // 커리큘럼 단계 (장면 목록의 등급 열). −1 이면 넓이로 (mdp::cur::stage_of_area)
 };
 
 }  // namespace sim

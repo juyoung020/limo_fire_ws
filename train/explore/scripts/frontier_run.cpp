@@ -176,7 +176,7 @@ int run_mode(const Args& a, const std::string& mode) {
     std::vector<sim::EnvState> st;
     std::vector<int16_t> L;
     std::vector<uint8_t> seen;
-    std::vector<float> reward, act((size_t)mdp::act::DIM * N);
+    std::vector<float> act((size_t)mdp::act::DIM * N);
     std::vector<int32_t> done;
     std::vector<int8_t> obs((size_t)W.gw * W.gh);
     std::vector<uint8_t> cov((size_t)W.gw * W.gh);
@@ -290,7 +290,7 @@ int run_mode(const Args& a, const std::string& mode) {
         env.step(d_act);
       }
       env.sync();
-      env.get_reward(reward, done);
+      env.get_done(done);
       total_steps += N;
       ++step;
       for (int i = 0; i < N; ++i) {

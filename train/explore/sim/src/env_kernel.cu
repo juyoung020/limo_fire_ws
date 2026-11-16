@@ -795,7 +795,6 @@ __global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate,
   if (tid == 0) {
     mdp::obsgen::obs_reach(b, e, env, rs);
     b.st[env].map_closed = rs.closed;   // 다음 걸음 finish_step 성공 판정 (CPU env_ref.cpp write_obs 와 같음)
-    shape_obs(b, b.st[env], env, rs);     // approach·front_cells 보상 (env.h — CPU env_ref.cpp 도 write_obs 바로 뒤)
   }
   if (!b.cand) return;
   // 계층형 후보: 주변 프론티어 칸 수 = 프론티어 칸 비트 지도(fmap)의 ±R 네모 안 비트 수 (mdp::cand_util 과 같은 값) — (후보, 줄)마다 스레드
@@ -1057,23 +1056,11 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int su
       g.k_next += 1;
     }
     map_progress(e, g.n_occ, g.n_new);   // 진행 없음 시계 — finish_step 판 끝이 씀
-    sense_step(b, e, env, g);   // 로봇이 재는 간격·닿음 (contact.h) — 보상·판 끝이 씀
+    sense_step(b, e, env, g);   // 로봇이 재는 간격·닿음 (contact.h) — 판 끝이 씀
     finish_step(b, e, env, g.new_wall, g.new_floor, g.d_known, g.n_new);
     mdp::obsgen::far_dirty_robot(b, e, g);   // 지나간 곳 표시도 먼 지도 다시 그릴 곳에
-    b.reward[env] = e.reward;
     b.done[env] = e.done;
     if (g.scanned) ring_advance(e);
-    if (sub >= 0) {   // 계층형: 결정 동안 합 (걸음 차례대로 더함 — CPU 참조판과 같은 차례)
-      const float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
-      float* A = b.tacc + (size_t)env * mdp::rew::kTerms;
-      if (sub == 0) {
-        b.racc[env] = e.reward;
-        for (int k = 0; k < mdp::rew::kTerms; ++k) A[k] = T[k];
-      } else {
-        b.racc[env] += e.reward;
-        for (int k = 0; k < mdp::rew::kTerms; ++k) A[k] += T[k];
-      }
-    }
   }
   __syncthreads();
   if (g.scanned) push_bins(b, e, env, g, tid);
@@ -1110,9 +1097,7 @@ __global__ void env_reset_kernel(EnvBatch b) {
   }
   copy_state(b.st[env], e, tid);
   if (tid == 0) {
-    b.reward[env] = 0.f;
     b.done[env] = 0;
-    for (int k = 0; k < mdp::rew::kTerms; ++k) b.reward_terms[(size_t)env * mdp::rew::kTerms + k] = 0.f;
   }
 }
 
@@ -1430,8 +1415,6 @@ __global__ void __launch_bounds__(kRT) env_camlayer_kernel(EnvBatch b) {
 // 묶음 끝 (환경 하나 = 블록 하나): 보상·항 = 묶음 합, 판이 끝난 환경은 리셋 + 새 판 관측 (끝난 걸음 env_finish_kernel 이 미룬 것 — 그 커널의 was_done 길과 같은 차례)
 __global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
-  if (tid == 0) b.reward[env] = b.racc[env];
-  if (tid < mdp::rew::kTerms) b.reward_terms[(size_t)env * mdp::rew::kTerms + tid] = b.tacc[(size_t)env * mdp::rew::kTerms + tid];
   if (b.done[env] == 0) return;   // 블록 전체 같은 값
   __shared__ EnvState e;
   __shared__ Shared sh;

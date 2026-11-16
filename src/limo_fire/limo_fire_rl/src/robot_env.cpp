@@ -28,7 +28,6 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore) {
   m_.spawn = nullptr;
   m_.clear = nullptr;
   m_.n_spawn = 0;
-  m_.stage = 0;
   b_.maps = &m_;
   b_.n_maps = 1;
   b_.n_env = 1;
@@ -40,8 +39,6 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore) {
   ring_.assign((size_t)sim::kLidarRing * mdp::obs::LIDAR_BINS, 0.f);
   vprev_.assign((size_t)mdp::obs::VEC, 0.f);
   lint_.assign((size_t)mdp::obs::LIDAR_BINS, 0.f);
-  rew_.assign(1, 0.f);
-  terms_.assign((size_t)mdp::rew::kTerms, 0.f);
   done_buf_.assign(1, 0);
   ep_.assign(1, sim::EpInfo{});
   cand_.assign((size_t)mdp::hier::K, -1);
@@ -55,8 +52,6 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore) {
   b_.lidar_ring = ring_.data();
   b_.vec_prev = vprev_.data();
   b_.lidar_int = lint_.data();
-  b_.reward = rew_.data();
-  b_.reward_terms = terms_.data();
   b_.done = done_buf_.data();
   b_.ep = ep_.data();
   b_.cand = cand_.data();
@@ -108,7 +103,6 @@ void RobotEnv::reset(float x0, float y0, float th0, const Proprio& p0, float fov
   e_.x = e_.x0 = x0;
   e_.y = e_.y0 = y0;
   e_.th = e_.th0 = th0;
-  e_.err_scale = 1.f;
   e_.kb_x0 = e_.kb_y0 = 1 << 30;
   e_.kb_x1 = e_.kb_y1 = -1;
   e_.delay = 0;              // 실물 지연은 센서 값 자체에 들어 있음 (시뮬은 0 또는 1 걸음을 판마다 뽑음)

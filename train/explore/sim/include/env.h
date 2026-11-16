@@ -2,7 +2,7 @@
 // 커널 한 번 = 행동 하나(substeps × dt, 속도 행동 0.1 s · 목표점 행동 0.5 s). GPU 커널(src/env_kernel.cu)과 CPU 참조판(src/env_ref.cpp)이 이 단계 함수들을 같이 불러
 // 비트까지 같은 값을 낸다(tools/env_verify). 블록 안 합치기는 정수만(순서와 무관) — 결정적. 실물 노드(limo_fire_rl RobotEnv)도 센서 몫만 실물 값으로 바꿔 같은 함수를 부른다.
 // 지금 탐사 구성이 쓰는 길: 계층형(kActPath) + 아래층 걸음 길(EnvCfg::low_rl — 걸음 하나 0.1 s, 목표는 호스트 위층이 LowCmd 로, low_rl.h) + 합친 탐사(low_explore).
-// 보상(mdp/rewards.h)·커리큘럼(mdp/curriculums.h)은 그만둔 강화학습 때 것인데 판 끝 코드·관측과 한 몸이라 그대로 계산한다 (지금 도구는 보상을 안 읽고 커리큘럼은 끔 — curriculum 0).
+// 판 끝 코드·끝 조건은 mdp/episode.h. 그만둔 강화학습의 보상·커리큘럼은 2026-11-17 에 걷어냄 (archive/rl/train/explore/mdp).
 //
 // 한 행동 (env_step):
 //   0. 끝난 판이면 리셋: 맵·시작 칸·방향·라이다 오차 무작위화·지도 비움
@@ -16,7 +16,7 @@
 //      lidar_every 걸음마다: 실물 오차 라이다(lidar_real.h, 스캔 중 움직임 포함) → Cartographer 와 같은 확률 지도 갱신
 //        (지도 자세로, 빔 시각만큼 돌려 펴기(unwarp), max_range 넘으면 missing_ray 만큼만 빈 칸, 한 장에 칸마다 한 번, 맞음 우선)
 //        + 덮음 표시: 빔 끝점(참 광선 · 잡음 섞인 거리, max_range 안)이 떨어진 벽 면 칸(아래 wall_credit), 빔이 지나간 바닥 칸
-//   3. 보상 항(mdp/rewards.h)·끝 판정(mdp/curriculums.h: 선언·충돌 = 종료, 안전 시간 = 끊김)·단계 오르내림,
+//   3. 판 끝 판정(mdp/episode.h: 닿음·닫힘 성공·진행 없음·안전 시간),
 //      관측(mdp/observations.h — mdp/obs_layout.h 배치 그대로)
 //
 // 덮음(coverage) = 본 벽 면 칸 / 벽 면 칸 (env_host.cpp build_world: 출발점에서 갈 수 있는 바닥에 4 이웃으로 맞닿은 막힌 칸).
@@ -24,13 +24,12 @@
 #pragma once
 #include <cstdint>
 
-#include "curriculums.h"   // mdp/ — 판 끝 코드·단계
+#include "episode.h"       // mdp/ — 판 끝 코드·끝 조건
 #include "drive.h"
 #include "imu.h"
 #include "frontier.h"      // mdp/ — 칸 종류 (안 넓이·프론티어 요약)
 #include "lidar_real.h"
 #include "obs_layout.h"    // mdp/ — 관측·행동 크기
-#include "rewards.h"       // mdp/ — 보상 항
 #include "people.h"
 #include "sensor_model.h"
 #include "sensors.h"
@@ -107,12 +106,10 @@ struct EnvCfg {
   float con_acc;                     //   닿음 신호: IMU 수평 가속 크기 > con_acc (m/s², kConAcc)
   int con_end;                       //   1: 닿음이 판을 끝냄 (기본). 0: 진단 전용 — 끝내지 않고 정답 충돌·센서 값을 기록만 (일치도 재기)
   int32_t gone_rl_b[4];   // 그만둔 아래층 RL 칸 자리 (위 gone_rl_a 와 같은 까닭)
-  int curriculum;           // 1: 환경마다 단계(맵 묶음·오차 배율), 0: 모든 맵 고르게·오차 배율 1 (기준선·도구)
-  int cur_top_random;       // 1: 맨 위 단계에서 또 올림 조건이면 무작위 단계로 (curriculums.h on_episode_end — 기본 켬, SIM_CUR_TOPRAND=0 이면 끔)
-  // 오르내림 규칙 (env.yaml curriculum, curriculums.h): 최근 cur_window 판 성공 비율 ≥ cur_up 올림 · < cur_down 내림 (미끄러지는 창).
-  // 옛 덮음 규칙(판 끝 정답 덮음 평균)은 2026-11-14 에 없앰 — 실물이 못 재는 값
-  int cur_window;
-  float cur_up, cur_down;
+  int curriculum;           // 안 씀 (그만둔 커리큘럼 칸 — 녹화 머리 꼴 때문에 남음, 녹화 꼴을 바꿀 때 지움). 도구가 0 을 넣기도 함
+  int cur_top_random;       // 안 씀 (위와 같음)
+  int cur_window;           // 안 씀
+  float cur_up, cur_down;   // 안 씀
   int max_delay;            // 관측 지연 최대 (행동 걸음)
   int n_dir, n_dist;
   float dist[4];
@@ -200,7 +197,6 @@ struct MapDev {
   const uint8_t* clear;    // 칸마다 가장 가까운 막힌 칸까지 (cm) — 사람이 설 수 있나 (people_sim.h person_free)
   int gw, gh, n_spawn, n_wall, n_floor;
   float ox, oy;
-  int stage;               // 이 맵의 커리큘럼 단계 (넓이로)
 };
 
 constexpr int kRecBl = 4;   // 계층형 복구가 기억하는 포기한 목표 수 (hier_path.h "복구")
@@ -217,7 +213,7 @@ constexpr int kClassLog = 16384;                          // 한 장에 칸 종�
 // 판 끝 정보 (러너·평가용, done ≠ 0 인 걸음에만 새로 씀)
 struct EpInfo {
   float coverage, t95, t;  // 끝날 때 정답 벽 덮음·95 % 처음 닿은 시각 (s, 못 닿으면 −1 — 둘 다 기록 전용 시뮬 정답), 판 길이 (s)
-  int32_t done, collided, stage, map;   // collided: 닿음(센서, contact.h)으로 끝남
+  int32_t done, collided, map;   // collided: 닿음(센서, contact.h)으로 끝남
   int32_t coll_kind;       // 닿음이면 그때 명령: 1 앞으로 · 2 제자리 회전 · 3 뒤로 · 4 멈춤 (기록 — frontier_run 이 나눠 셈), 아니면 0
   int32_t gt_touch;        // 판 동안 정답 충돌 (비트 1 벽 · 2 사람 — EnvState::gt_touch, 기록 전용)
 };
@@ -245,20 +241,13 @@ struct EnvState {
   // map_closed: 지난 관측 때 지도 닫힘(mdp/frontier.h 닫힘 규칙, 관측 CLOSED 와 같은 값) — finish_step 성공 판정이 씀 (옛 pad_occ 자리)
   int32_t since_occ, occ[kProgRing], occ_sum, map_closed;
   int32_t since_prog, prog_pad;   // 진행 없음 판 끝 시계: 새 막힘 ≥ kIdleOccMin 또는 새로 안 칸 ≥ kIdleNewMin 인 마지막 행동 뒤 걸음 (map_progress). pad = 8 의 배수
-  // 지난 관측의 프론티어 요약 두 값 — approach·front_cells 보상(rewards.h, shape_obs)이 다음 관측 값과의 차이를 씀:
-  // 가장 가까운 덩어리까지 BFS 길 거리 (칸, −1 없음 = 관측 FRONTIER 첫 칸), 번진 곳 안 프론티어 칸 수 (= 관측 FRONT_CELLS)
-  int32_t fr_dist, fr_cells;
   int32_t kb_x0, kb_y0, kb_x1, kb_y1;   // 지도에서 건드린 칸 범위 (프론티어 요약을 이 안에서만)
   int32_t lid_head, delay;     // 라이다 링 최신 칸, 이 판 관측 지연 (걸음)
   float lid_pose[3 * kLidarRing];   // 링 칸마다 그 장을 넣을 때 지도 자세 (x, y, θ) — 계층형 제자리 회전 검사가 지난 장 점을 지금 로봇 기준으로 옮김 (hier_path.h (c))
-  int32_t stage, cur_n;        // 커리큘럼 단계, 최근 판 기록 수
-  uint32_t cur_hist;           // 최근 판 성공 비트 (curriculums.h on_episode_end_success)
   int32_t t95_step;            // 덮음 95 % 처음 닿은 걸음 (−1 아직)
-  float err_scale;             // 이 판 자세 오차·자이로 잡음 배율 (단계)
-  float reward, coverage, floor_cov;   // coverage = seen_wall / n_wall, floor_cov = seen_floor / n_floor
+  float coverage, floor_cov;   // coverage = seen_wall / n_wall, floor_cov = seen_floor / n_floor
   float gyro, gyro_bias;       // 자이로 측정 (몸통 ω + 이 판 바이어스 + 잡음)
   ImuState imu;                // IMU 나머지 측정 (imu.out: ax, ay, az, gx, gy, roll, pitch — REP-103, 물리 걸음마다)
-  float slip_acc;              // 이번 행동 동안 |바퀴 오도메트리 ω − 자이로| · dt 합 (헛돎 감점 — 둘 다 로봇이 재는 값)
   LidarNoise noise;            // 이 판 라이다 오차 (무작위화)
   float depth_floor;           // 이 판 깊이 바닥 구멍 표 위치 [0, 1] (sensor_model.h DepthModel floor_hole ~ floor_hole_hi)
   int32_t cam_lag;             // 이 판 깊이 영상이 자세보다 늦은 물리 걸음 수 (0 = 같은 때, sensor_model.yaml depth.latency) — depth_camera 가 cam_h* 에서 그 자세로 그린다
@@ -335,14 +324,8 @@ struct EnvBatch {
   float* lidar_ring;           // [env · kLidarRing · LIDAR_BINS]  각도 칸 거리 (m, 없음 = map_max_range)
   float* vec_prev;             // [env · VEC]  직전 걸음 숫자 관측 (지연용)
   float* lidar_int;            // [env · LIDAR_BINS]  지금 장 칸 세기 (가장 가까운 빔, 점 없음 = 0)
-  float* reward;               // [env] 이번 행동 보상 (= reward_terms 합)
-  float* reward_terms;         // [env · mdp::rew::kTerms]
   int32_t* done;               // [env] mdp::cur::Done. 끝난 판은 바로 리셋돼 관측은 새 판 것
   EpInfo* ep;                  // [env] 끝난 판 정보 (done ≠ 0 인 걸음에 씀)
-  // 커리큘럼: 단계 s 에서 고를 맵 = stage_maps[stage_off[s] .. stage_off[s + 1])
-  const int32_t* stage_maps;
-  int stage_off[mdp::cur::kNumStages + 1];
-  int max_stage;
   int n_env;
   Shared* scratch;             // [env] GPU 판: 커널 사이에 넘기는 장 준비·한 행동 합 (CPU 판은 안 씀)
   // GPU 판 깊이 광선 (env_kernel.cu·optix_rays.cu): 픽셀마다 가운데 광선 거리·삼각형, 옆 광선 큐(소프트웨어: 픽셀 · 2 + 왼0/오른1, RT 코어: 픽셀)·그 거리(소프트웨어), 원자 셈 칸
@@ -375,11 +358,9 @@ struct EnvBatch {
   // 관측 1D 한 환경 칸 수: mdp::obs::POLICY_1D (기본) · mdp::hier::POLICY_1D (계층형 — 뒤에 후보 칸)
   int o1d;
   // 계층형 (kActPath 일 때만, 아니면 nullptr): 관측 때 고른 후보 칸 [env · hier::K] (−1 빈 칸)·지금 목표를 품은 후보 비트 [env],
-  // 결정 동안 보상·항 합 [env]·[env · kTerms], GPU 계획 비트 판 [env · kPathPlanes · size · fmap_row]
+  // GPU 계획 비트 판 [env · kPathPlanes · size · fmap_row]
   int32_t* cand;
   int32_t* cand_cur;
-  float* racc;
-  float* tacc;
   uint32_t* pplanes;
   // 깊이 카메라 장애물 층 (cam_on 일 때만, 아니면 nullptr): 칸마다 높이 칸 비트 [env · size²] (uint8, GPU 는 4 칸 낱말로 원자 연산),
   // 마지막 깊이 장 열마다 가장 가까운 높이 띠 안 점 (지도 좌표 x, y — 앞으로 모음, 끝 x = kCamNone) [env · DEPTH_W · 2] — collision_monitor 점 출처
@@ -485,17 +466,7 @@ DEV void cam_hist_push(EnvState& e) {   // 물리 걸음마다 자세를 바꾸�
 
 DEV void reset_state(const EnvBatch& b, EnvState& e) {
   const EnvCfg& c = b.cfg;
-  if (c.curriculum) {
-    // 단계에 맞는 맵 묶음에서 (판 끝에 on_episode_end 가 단계를 고침 — finish_step)
-    const int s = e.stage < 0 ? 0 : (e.stage > b.max_stage ? b.max_stage : e.stage);
-    e.stage = s;
-    const int n = b.stage_off[s + 1] - b.stage_off[s];
-    e.map = b.stage_maps[b.stage_off[s] + (int)(dm::splitmix64(e.rng) % (uint64_t)n)];
-    e.err_scale = mdp::cur::err_scale_of(s);
-  } else {
-    e.map = (int)(dm::splitmix64(e.rng) % (uint64_t)b.n_maps);
-    e.err_scale = 1.f;
-  }
+  e.map = (int)(dm::splitmix64(e.rng) % (uint64_t)b.n_maps);
   const MapDev& m = b.maps[e.map];
   const int k = m.spawn[dm::splitmix64(e.rng) % (uint64_t)m.n_spawn];
   e.x = m.ox + ((float)(k % m.gw) + 0.5f) * c.res;
@@ -518,7 +489,6 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.gyro = 0.f;
   e.gyro_bias = dm::rand_range(e.rng, -c.gyro_bias, c.gyro_bias);
   imu_reset(c.imu, e.imu, e.rng);
-  e.slip_acc = 0.f;
   e.ex = e.ey = e.eth = 0.f;
   e.gx = e.x;
   e.gy = e.y;
@@ -542,7 +512,6 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.s_stall = e.s_kind = e.contact = e.gt_touch = 0;
   e.a_h = 0.f;
   e.s_yaw = 0;
-  e.reward = 0.f;
   e.coverage = 0.f;
   e.floor_cov = 0.f;
   e.cmd_vy = e.vy = 0.f;
@@ -560,8 +529,6 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   for (int i = 0; i < kProgRing; ++i) e.occ[i] = 0;
   e.occ_sum = 0;
   e.map_closed = 0;
-  e.fr_dist = -1;
-  e.fr_cells = 0;
   e.kb_x0 = e.kb_y0 = 1 << 30;
   e.kb_x1 = e.kb_y1 = -1;
   e.lid_head = 0;
@@ -576,7 +543,6 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.p_mode = e.p_fb = e.p_plans = e.p_mon = 0;
   e.p_blk_now = e.p_blk = e.p_rec = e.p_gaveup = 0;
   for (int i = 0; i < kRecBl; ++i) { e.p_bl_cell[i] = -1; e.p_bl_until[i] = 0; }
-  if (c.curriculum) e.people.k_max = mdp::cur::people_of(e.stage);   // 단계별 사람 수 (curriculums.h)
   people_reset(b, e);   // 사람 놓기 (로봇 자세·world_seed 뒤)
 }
 
@@ -934,7 +900,7 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   }
   e.people.near_d = people_gap(c, e.people, e.x, e.y, e.th);
   // 자이로 측정·헛돎 (실물 정책도 바퀴 오도메트리 ω 와 IMU 자이로를 본다)
-  e.gyro = (e.w + e.gyro_bias) + (c.gyro_sigma * e.err_scale) * gauss(e.rng);
+  e.gyro = (e.w + e.gyro_bias) + c.gyro_sigma * gauss(e.rng);
   // IMU 나머지: 몸통 v·ω·직진 가속 + 옆 이동(vy·옆 가속, 정상 메카넘 가정 — 배율은 앞뒤 값 그대로 잠정 📏, imu.h)
   imu_step(c.imu, e.imu, e.v, e.w, acc, e.rng, e.vy, acc_y);   // 부딪혀 멈춘 걸음은 v·ω 0
   if (hit && c.con_slip) {   // 충돌 충격: 수평 가속 튐 = con_imp_k × 다가가던 속도 (직진 |v| · 꼭짓점 회전 |ω|·r 중 큰 것 — 실물 1.0 m/s 정면 91.9, 0.3 m/s 26.4 m/s²)
@@ -948,10 +914,9 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
       e.imu.out[1] += (w_prev >= 0.f ? -1.f : 1.f) * a;
     }
   }
-  e.slip_acc = e.slip_acc + dm::absf(e.drive.ww - e.gyro) * c.dt;   // 바퀴 오도메트리 ω vs 자이로 (둘 다 로봇이 재는 값)
   // 지도 자세 오차: OU (평균 0, 표준편차 pe_*, 상관 시간 pe_tau)
   const float a = c.dt / c.pe_tau, q = sqrtf(2.f * a);
-  const float sxy = c.pe_xy * e.err_scale, syaw = c.pe_yaw * e.err_scale;   // 단계 오차 배율 (curriculums.h)
+  const float sxy = c.pe_xy, syaw = c.pe_yaw;
   e.ex = e.ex - e.ex * a + sxy * q * gauss(e.rng);
   e.ey = e.ey - e.ey * a + sxy * q * gauss(e.rng);
   e.eth = e.eth - e.eth * a + syaw * q * gauss(e.rng);
@@ -1269,7 +1234,7 @@ DEV ApplyCount scan_apply(const EnvBatch& b, const EnvState& e, int env, const S
 }
 
 // 스레드 0, finish_step 바로 앞: 지도 기준 진척 — 이번 행동에 판 처음 막힘이 된 칸 수 n_occ.
-// since_occ = 판 끝 진행 없음 시계(finish_step in.idle, curriculums.h kIdleTime·kIdleOccMin) == 관측 PROGRESS+1 시계.
+// since_occ = 판 끝 진행 없음 시계(finish_step idle, episode.h kIdleTime·kIdleOccMin) == 관측 PROGRESS+1 시계.
 // 정답 벽을 모르는 실물도 자기 지도(막힘 p > 0.65)로 똑같이 센다. 연기 속에서는 지도가 안 쌓여 멈춰 둔다
 DEV void map_progress(EnvState& e, int n_occ, int n_new) {
   e.since_occ = n_occ >= mdp::cur::kIdleOccMin ? 0 : e.since_occ + 1;
@@ -1351,29 +1316,21 @@ DEV void trail_mark(const EnvBatch& b, const EnvState& e, int env, int tid, int 
 
 // ---------- 3. 보상·끝·관측 ----------
 
-// 스레드 0. 판 끝 기록(EpInfo)·커리큘럼 — e.done 을 정한 바로 뒤 (finish_step)
+// 스레드 0. 판 끝 기록(EpInfo) — e.done 을 정한 바로 뒤 (finish_step)
 DEV void episode_end(const EnvBatch& b, EnvState& e, int env, float cov, float dt_act) {
-  const EnvCfg& c = b.cfg;
   EpInfo& I = b.ep[env];
   I.coverage = cov;
   I.t95 = e.t95_step < 0 ? -1.f : (float)e.t95_step * dt_act;
   I.t = (float)e.step * dt_act;
   I.done = e.done;
   I.collided = e.contact;
-  I.stage = e.stage;
   I.map = e.map;
   I.coll_kind = !e.contact ? 0
                 : (e.cmd_v > 0.01f ? 1 : (e.cmd_v < -0.01f ? 3 : (dm::absf(e.cmd_w) > 0.01f ? 2 : 4)));
   I.gt_touch = e.gt_touch;
-  if (c.curriculum) {
-    // 맨 위 단계 무작위 (실험, 켤 때만 난수를 뽑아 끈 쪽은 난수 흐름이 그대로)
-    const uint32_t rnd = c.cur_top_random ? (uint32_t)(dm::splitmix64(e.rng) >> 32) : 0u;
-    mdp::cur::on_episode_end_success(&e.stage, &e.cur_hist, &e.cur_n, e.done == mdp::cur::kDeclareOk, b.max_stage, c.cur_top_random != 0, rnd,
-                                       c.cur_window, c.cur_up, c.cur_down);
-  }
 }
 
-// 스레드 0. 이번 행동 동안 새로 본 벽 면 칸·새로 지나간 바닥 칸·갈 수 있음 칸 변화·새로 안 칸. 보상 항 → terms[kTerms]
+// 스레드 0. 이번 행동 동안 새로 본 벽 면 칸·새로 지나간 바닥 칸·갈 수 있음 칸 변화·새로 안 칸 → 판 끝 판정·기록
 DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int new_floor, int d_known, int n_new) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
@@ -1381,51 +1338,15 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   e.seen_wall += new_wall;
   e.seen_floor += new_floor;
   const float cov = (float)e.seen_wall / (float)m.n_wall;
-  mdp::rew::StepIn in;
-  in.dt = dt_act;
-  in.t = (float)(e.step + 1) * dt_act;   // 이번 걸음 끝 시각 (s) — 성공 빠르기 보너스 (rewards.h kFast)
-  // 닿음 (contact.h — 센서로 정함, sense_step 이 이 함수 앞에서 잼). 로봇은 닿은 것이 사람인지 모르므로 늘 벽으로 셈
-  in.collided_wall = e.contact != 0;
-  in.collided_person = false;
-  in.near_person = 0.f;
   // 닫힘 성공 (2026-11-08): 지도 진행 없음 시계 ≥ close_idle_s 이고 close_every 걸음마다 굵은 격자 닫힘 — 이번 걸음 지도(갱신 뒤)·지도 자세로.
   // 시계 조건을 먼저 보므로 탐사 중(시계가 자주 0 으로 돌아감)에는 격자를 만들지 않는다
   // 닫힘 값(map_closed)은 지난 관측의 프론티어 요약(GPU env_reach_kernel · CPU env_ref.cpp write_obs)이 이번 걸음 앞 지도로 낸 것 — 관측 CLOSED 와 같음
-  in.closed = !e.contact && (float)e.since_occ * dt_act >= c.close_idle_s && (e.step + 1) % c.close_every == 0 && e.map_closed ? 1 : 0;
-  const bool decl = e.declared && !e.contact && !in.closed;   // 판단 모델의 끝 선언 (finish_declare — lowrl_begin 이 LowCmd 로만 켬)
-  if (decl && e.map_closed) in.closed = 1;   // 닫힌 지도에서 선언 = 성공 (보상도 닫힘 성공과 같게). 안 닫혔으면 이른 선언(끝 코드 4) — 감점 없음 (옛 감점은 정답 덮음이라 뺌)
-  // 덮음 보상 자리: 로봇 지도에서 이번 행동 동안 판 처음 막힘이 된 칸 수 (map_progress 가 이 걸음 칸에 막 넣은 값 — 진행 없음 시계와 같은 셈)
-  // 진행 없음 시계와 같은 문턱: 한 행동에 kIdleOccMin 개 미만이면 0 — 멈춰 있어도 자세 오차·빔 잡음으로 드문드문 생기는 막힘 칸을 보상하지 않는다
-  {
-    // 판 처음 1 s(10 걸음)는 0: 출발 자리에서 처음 본 벽이 4 번 맞아 막힘이 되는 데 몇 장 걸려, 안 움직여도 받는 몫이라 (옛 정답 덮음의 "첫 걸음 0" 과 같은 뜻)
-    const int k = e.step < 10 ? 0 : e.occ[e.step % kProgRing];
-    in.new_occ = k >= mdp::cur::kIdleOccMin ? k : 0;
-  }
-  in.slip = e.slip_acc;
-  in.turn = dm::absf(e.gyro) * dt_act;   // 행동 끝 자이로로 (rewards.h kTurn)
-  in.hier = c.action_mode == kActPath ? 1 : 0;   // 계층형: 헛돎·회전 항 0 (rewards.h 근거 "계층형")
-  // 직접 제어 촘촘한 항 (rewards.h proximity·smooth — 계층형이면 0 이라 안 잼). 간격 = 센서 간격 (contact.h s_clear — 라이다 점·지도 막힘·깊이 층)
-  in.move = 0.f;
-  in.clearance = mdp::rew::kProxDist;
-  in.act_d2 = 0.f;
-  if (!in.hier) {
-    in.move = dm::absf(e.drive.wv) * dt_act;   // 바퀴 오도메트리 속도로 (near_person 과 같은 셈 — 메카넘 옆 이동은 빠짐)
-    in.clearance = e.s_clear;
-    if (e.step > 0) {   // last_act: 이번 행동이 [0 … DIM), 직전 행동이 [DIM … 2·DIM) (apply_action 이 이 걸음 처음에 밀어 넣음)
-      float s2 = 0.f;
-      for (int k = 0; k < mdp::act::CONT; ++k) {
-        const float d = e.last_act[k] - e.last_act[mdp::act::DIM + k];
-        s2 += d * d;
-      }
-      in.act_d2 = s2;
-    }
-  }
-  // 진행 없음 (curriculums.h kIdleTime·kIdleOccMin·kIdleNewMin): 지도 시계 since_prog(map_progress, 이 함수 앞에서 갱신) — 충돌·선언이 먼저.
+  bool closed = !e.contact && (float)e.since_occ * dt_act >= c.close_idle_s && (e.step + 1) % c.close_every == 0 && e.map_closed;
+  const bool decl = e.declared && !e.contact && !closed;   // 판단 모델의 끝 선언 (finish_declare — lowrl_begin 이 LowCmd 로만 켬)
+  if (decl && e.map_closed) closed = true;   // 닫힌 지도에서 선언 = 성공. 안 닫혔으면 이른 선언(끝 코드 4)
+  // 진행 없음 (episode.h kIdleTime·kIdleOccMin·kIdleNewMin): 지도 시계 since_prog(map_progress, 이 함수 앞에서 갱신) — 충돌·선언이 먼저.
   // 막힘 칸 아무 하나가 아니라 한 행동에 kIdleOccMin 개 이상일 때만 되돌림: 멈춰 있어도 자세 오차·빔 잡음으로 막힘 칸이 드문드문 생기므로.
-  in.idle = !e.contact && !in.closed && !decl && (float)e.since_prog * dt_act >= mdp::cur::kIdleTime;
-  float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
-  e.reward = mdp::rew::terms(in, T);
-  e.slip_acc = 0.f;
+  const bool idle = !e.contact && !closed && !decl && (float)e.since_prog * dt_act >= mdp::cur::kIdleTime;
   e.coverage = cov;
   e.floor_cov = (float)e.seen_floor / (float)m.n_floor;
   e.step += 1;
@@ -1454,33 +1375,12 @@ DEV void finish_step(const EnvBatch& b, EnvState& e, int env, int new_wall, int 
   // con_end = 0 (진단)이면 닿아도 안 끝냄 — 정답 충돌은 물리가 몸통을 멈출 뿐
   if (e.halt) e.done = 0;   // 판 끝 뒤 멈춤 (end_hold): 더 판정 안 함
   else if (e.contact && c.con_end) e.done = mdp::cur::kCollision;   // 닿음 (센서) — 사람인지는 모름
-  else if (in.closed) e.done = mdp::cur::kDeclareOk;   // 성공 코드 1 = 지도 닫힘 (닫힘 성공 규칙 · 닫힌 지도에서 선언)
+  else if (closed) e.done = mdp::cur::kDeclareOk;   // 성공 코드 1 = 지도 닫힘 (닫힘 성공 규칙 · 닫힌 지도에서 선언)
   else if (decl) e.done = e.map_closed ? mdp::cur::kDeclareOk : mdp::cur::kDeclareShort;   // 선언 (닫힘 규칙을 끈 모드에서도 지도 닫힘이면 성공)
-  else if (in.idle) e.done = mdp::cur::kNoProgress;
+  else if (idle) e.done = mdp::cur::kNoProgress;
   else if (e.step >= c.max_steps) e.done = mdp::cur::kTruncated;
   if (e.done) episode_end(b, e, env, cov, dt_act);
   lowrl_finish(b, e, env);   // 아래층 걸음 길: 막힘 신호 (끄면 아무것도 안 함)
-}
-
-// 스레드 0, 관측의 프론티어 요약이 나온 바로 뒤 (GPU env_reach_kernel · CPU env_ref.cpp — write_obs 다음): approach·front_cells 항 (rewards.h).
-// 걸음 끝(finish_step)이 아니라 여기인 까닭: 두 항은 이번 행동 뒤 지도의 프론티어 요약이 있어야 하는데 요약은 관측 때 나온다 — 그래서 방금 한
-// 행동의 보상에 지금 더한다(항 둘을 채우고 보상에 번호 순으로 더함 → 보상 = 항 합 그대로). 판이 막 리셋됐으면(step 0) 값만 적는다 —
-// 판 첫 관측엔 직전이 없고, 판을 끝낸 걸음엔 다음 관측이 새 판 것이라 0. 계층형은 아무것도 안 함(두 항 0, 상태도 그대로)
-DEV void shape_obs(const EnvBatch& b, EnvState& e, int env, const mdp::ReachSummary& R) {
-  const EnvCfg& c = b.cfg;
-  if (c.action_mode == kActPath) return;
-  const int d = R.top[0].n > 0 ? R.top[0].dist : -1;
-  if (e.step > 0) {
-    float* T = b.reward_terms + (size_t)env * mdp::rew::kTerms;
-    const float a = mdp::rew::approach_reward(e.fr_dist, d, c.res, (float)c.substeps * c.dt);
-    const float f = mdp::rew::front_cells_reward(e.fr_cells, R.n_cells);
-    T[mdp::rew::kTermApproach] = a;
-    T[mdp::rew::kTermFrontCells] = f;
-    e.reward = (e.reward + a) + f;
-    b.reward[env] = e.reward;
-  }
-  e.fr_dist = d;
-  e.fr_cells = R.n_cells;
 }
 
 // 스레드 0: 링 다음 칸으로 (이번 장이 있을 때) — 그 칸의 지도 자세도 적음 (걸음 끝 자세, 장은 걸음 동안 쏨)

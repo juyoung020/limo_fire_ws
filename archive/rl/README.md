@@ -44,6 +44,7 @@
 |---|---|
 | `train/explore/mdp/graph.h` · `sim/include/graph_env.h` · `sim/tools/graph_check.cu` | 그래프 모드(HEADER·ARiADNE 식 노드 그래프 관측·결정) — 시뮬 커널·참조판·`env_verify --graph`·`env_bench --graph`·env.yaml `action.graph` 도 뺌 |
 | `train/explore/scripts/oracle_run.cpp` | 정답 지도를 아는 허용 상한 (커리큘럼 문턱 측정) |
+| `train/explore/mdp/rewards.h` · `curriculums.h` | 보상 항·커리큘럼(단계 오르내림) — 판 끝 코드·끝 조건은 `mdp/episode.h` 로 남김. 시뮬의 보상 버퍼·`Env::get_reward`·`get_terms`·단계별 맵 고르기·오차 배율도 뺌 (`get_done` 으로) |
 | (코드에서만 뺌) | `frontier_run` 의 계층형 규칙 정책 판(`slot0` · `graph_*` · `cand_*` — 기준선 `nav2` · `fast` 는 그대로), 아래층 단독 과제 모드(`low_explore 0` — 목표 수·시간으로 판을 끝내던 학습 판) |
 
 같은 커밋에서 지금 코드에서 뺀 것: `low_rl` 노드의 `lower:=rl` · `checkpoint` · `upper:=topic`(RL 아래층에서만 돌던 시험용), `combine_run --policy`(와 그것만 쓰던

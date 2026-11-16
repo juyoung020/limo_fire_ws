@@ -157,7 +157,7 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
   std::vector<int16_t> lm;
   std::vector<uint32_t> tr;
   std::vector<uint8_t> vox, img;
-  std::vector<float> pts, o1d, rew;
+  std::vector<float> pts, o1d;
   std::vector<int32_t> cand, ccur, dn;
   std::vector<float> act((size_t)mdp::act::DIM, 0.f);
   const double dt = (double)C.hc.cfg.substeps * C.hc.cfg.dt;
@@ -196,7 +196,7 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
     cpu.step(act.data());
     g_tm[3] += since(tp);
     g_tm[5] += 1;
-    cpu.get_reward(rew, dn);
+    cpu.get_done(dn);
     cpu.get_state(st);
     if (dn[0] != 0) {
       std::vector<sim::EpInfo> ep;
@@ -243,7 +243,7 @@ int snap_test(const Cfg& C, int a, int n) {
   std::vector<int16_t> lm;
   std::vector<uint32_t> tr;
   std::vector<uint8_t> vox, img;
-  std::vector<float> pts, o1d, rew;
+  std::vector<float> pts, o1d;
   std::vector<int32_t> cand, ccur, dn;
   std::vector<float> act((size_t)mdp::act::DIM, 0.f);
   const auto one = [&](int t) {
@@ -257,7 +257,7 @@ int snap_test(const Cfg& C, int a, int n) {
     act[0] = (float)cs.slot();
     cpu.low_prepare(act.data());
     cpu.step(act.data());
-    cpu.get_reward(rew, dn);
+    cpu.get_done(dn);
     cpu.get_state(st);
     std::vector<sim::LowRl> R;
     std::vector<sim::LowEp> L;
@@ -321,7 +321,7 @@ Out base_gpu(const Cfg& C, int every, std::vector<Snap>* snaps, std::vector<Cap>
   std::vector<int16_t> lm;
   std::vector<uint32_t> tr;
   std::vector<uint8_t> vox, img;
-  std::vector<float> pts, o1d, rew;
+  std::vector<float> pts, o1d;
   std::vector<int32_t> cand, ccur, dn;
   std::vector<float> act((size_t)mdp::act::DIM, 0.f);
   GpuAct da(1);
@@ -351,7 +351,7 @@ Out base_gpu(const Cfg& C, int every, std::vector<Snap>* snaps, std::vector<Cap>
     da.up(act);
     g.low_prepare(da.d);
     g.step(da.d);
-    g.get_reward(rew, dn);
+    g.get_done(dn);
     g.get_state(st);
     if (dn[0] != 0) {
       std::vector<sim::EpInfo> ep;
@@ -396,7 +396,7 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
     }
     const sim::World& w = C.worlds[0];
     std::vector<int32_t> cand, ccur, dn;
-    std::vector<float> o1d((size_t)n * mdp::hier::POLICY_1D), rew, act((size_t)AW * n, 0.f);
+    std::vector<float> o1d((size_t)n * mdp::hier::POLICY_1D), act((size_t)AW * n, 0.f);
     std::vector<sim::LowCmd> cmd((size_t)n, sim::LowCmd{-1, 0});
     std::vector<sim::LowRl> R;
     std::vector<sim::LowEp> L;
@@ -462,7 +462,7 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
       da.up(act);
       g.low_prepare(da.d);
       g.step(da.d);
-      g.get_reward(rew, dn);
+      g.get_done(dn);
       g.get_state(st);
       g.get_low_rl(R); g.get_low(L);
       bool need_ep = false;

@@ -293,7 +293,7 @@ int run(const Args& a) {
       env.reset();
       env.sync();
     }
-    std::vector<float> act((size_t)AW * N, 0.f), rew;
+    std::vector<float> act((size_t)AW * N, 0.f);
     std::vector<sim::LowCmd> cmd(N, sim::LowCmd{-1, 0});
     std::vector<int32_t> cand, cur, done;
     std::vector<sim::EnvState> st;
@@ -1103,7 +1103,7 @@ int run(const Args& a) {
       env.sync();
       env.step(d_act);
       env.sync();
-      env.get_reward(rew, done);
+      env.get_done(done);
       env.get_ep(ep);
       env.get_state(st);
       env.get_low(low);

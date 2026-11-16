@@ -182,7 +182,7 @@ int main(int argc, char** argv) {
     }
     sim::set_cpu_tap(&tap);
     const int AW = mdp::act::DIM;
-    std::vector<float> act((size_t)AW, 0.f), a3((size_t)mdp::low::ACT, 0.f), rew;   // a3: RobotEnv::low_act 행동 칸 (규칙 추종기는 안 씀 — 0)
+    std::vector<float> act((size_t)AW, 0.f), a3((size_t)mdp::low::ACT, 0.f);   // a3: RobotEnv::low_act 행동 칸 (규칙 추종기는 안 씀 — 0)
     std::vector<int32_t> dn;
     const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
     const int max_steps = (int)std::lround(max_s / dt);
@@ -222,7 +222,7 @@ int main(int argc, char** argv) {
       robot.low_act(a3.data(), &v, &w);
       if (rec) rec->act(a3.data(), v, w);
       cpu.step(act.data());   // 탭이 라이다 장·감각을 RobotEnv 로 (step)
-      cpu.get_reward(rew, dn);
+      cpu.get_done(dn);
       const int rd = robot.done();
       if (rd == mdp::cur::kDeclareOk || rd == mdp::cur::kNoProgress || rd == mdp::cur::kTruncated) {
         why = rd == mdp::cur::kDeclareOk ? "닫힘 성공" : rd == mdp::cur::kNoProgress ? "진척 없음" : "시간";

@@ -356,7 +356,6 @@ int main(int argc, char** argv) {
     start();
     sim::set_cpu_tap(&tap);
     std::vector<float> act((size_t)AW, 0.f), a3((size_t)mdp::low::ACT, 0.f);   // a3: RobotEnv::low_act 의 행동 칸 (규칙 추종기는 안 씀 — 0)
-    std::vector<float> rew;
     std::vector<int32_t> dn;
     for (int t = 0; t < steps; ++t) {
       cpu.get_state(st);
@@ -508,7 +507,7 @@ int main(int argc, char** argv) {
       if (!contact_log.empty()) cpu.get_state(st_pre);
       cpu.step(act.data());
       cpu.get_state(st);
-      cpu.get_reward(rew, dn);
+      cpu.get_done(dn);
       if (const char* nn = std::getenv("LOW_CHECK_NNEW")) {   // 걸음마다 새로 안 칸 수(prog 링) · 새 막힘(occ 링) · 몸통 v ω — 진행 없음 문턱 재기
         static FILE* nf = std::fopen(nn, "w");
         const sim::EnvState& e = st[0];

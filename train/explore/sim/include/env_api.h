@@ -31,8 +31,6 @@ std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCf
 struct StepOut {
   const uint8_t* obs_img;       // [N][mdp::obs::IMG_SIZE]
   const float* obs_1d;          // [N][o1d] — o1d = mdp::obs::POLICY_1D (기본), mdp::hier::POLICY_1D (계층형: 뒤에 후보 칸)
-  const float* reward;          // [N]
-  const float* reward_terms;    // [N][mdp::rew::kTerms]
   const int32_t* done;          // [N] mdp::cur::Done — 종료 여부는 mdp::cur::terminal(done), 끊김 = 3
   const EpInfo* ep;             // [N] done ≠ 0 인 환경의 끝난 판 정보 (덮음·t95·길이·충돌·단계·맵)
   int o1d;                      // 관측 1D 한 환경 칸 수
@@ -88,9 +86,8 @@ class Env {
   void get_low_cmd(std::vector<LowCmd>& out) const;
   void get_low_rl(std::vector<LowRl>& out) const;
   void get_low_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
-  void get_terms(std::vector<float>& terms) const;
   void get_ep(std::vector<EpInfo>& ep) const;
-  void get_reward(std::vector<float>& reward, std::vector<int32_t>& done) const;
+  void get_done(std::vector<int32_t>& done) const;   // 판 끝 코드 [N] (mdp::cur::Done — 끝난 판은 리셋됨)
   // 움직이는 사람 (src/people_host.cpp): 환경마다 다음 판 사람 수 상한 (판 시작 인자, 0 ~ kMaxPeople) · 이 판 사람들 (뷰어 재생)
   void set_people_max(const std::vector<int>& k);
   void get_people(std::vector<People>& out) const;
