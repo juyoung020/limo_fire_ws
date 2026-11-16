@@ -151,11 +151,13 @@ ros2 topic echo /low_rl/done            # true 면 끝 (지도 닫힘)
 
 ### 위층 판단 모델 (`upper:=decider`) 띄우기
 
-로봇 안에서 llama-server(판단 모델 d1-3B, `/v1/systemone` 이 있는 빌드)를 먼저 띄운다. 메모리가 빠듯하면(가용 4 GB 아래) 다른 무거운 것을 끄고 띄운다:
+로봇 안에서 llama-server(판단 모델 d1-3B, `/v1/systemone` 이 있는 빌드)를 먼저 띄운다. `-lm dio` 를 꼭 준다: 기본(mmap)이면 모델 파일(2.9 GB)이 page cache 에 남은 채
+같은 내용을 GPU 버퍼로 또 잡아 Orin Nano 8 GB 에서 KV 캐시 할당이 실패한다(NvMap error 12 — Jetson 은 GPU 할당 때 page cache 를 못 비움). DirectIO 로 읽으면 page cache 를 안 거친다.
+이미 page cache 가 차 있으면(free 3 GB 아래) 한 번 비우고 띄운다 (`sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`):
 
 ```bash
 cd ~/decider_test && nohup ./llama.cpp/build/bin/llama-server -m models/d1-3B-Q8_0.gguf --mmproj models/mmproj-d1-3B-Q8_0.gguf \
-  --host 127.0.0.1 --port 8171 -ngl 99 -c 4096 -np 1 > server_dec.log 2>&1 &
+  --host 127.0.0.1 --port 8171 -ngl 99 -c 4096 -np 1 -lm dio > server_dec.log 2>&1 &
 # 뜰 때까지 (모델 읽기 약 1 분): grep -m1 "listening" server_dec.log
 ros2 launch limo_fire_rl explore_fuel_rl.launch.xml upper:=decider [decider_period:=3.0] [dry_run:=false] [rviz:=true]
 ```
