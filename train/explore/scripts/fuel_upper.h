@@ -24,7 +24,8 @@
 #include <functional>
 #include <vector>
 
-#include "env_api.h"
+#include "env.h"
+#include "world.h"   // CUDA 없이 (실물 노드도 이 파일을 씀)
 #include "frontier.h"
 #include "observations.h"
 

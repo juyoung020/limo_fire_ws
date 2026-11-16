@@ -13,6 +13,7 @@
 
 #include "env_cfg.h"   // train/explore/sim/include
 #include "obs_ref.h"
+#include "plan_ref.h"   // 경로 계획 CPU 판 (합친 탐사 모드 — 시뮬 env_ref.cpp 와 같은 함수)
 #include "limo_fire_rl/low_mov.h"   // 아래층 정책의 움직이는 것 칸 (시뮬과 같은 라이다 추적)
 
 namespace limo_fire_rl {
@@ -81,7 +82,13 @@ class RobotEnv {
   //   low_obs  = 시뮬 준비 단계(목표를 환경이 주는 학습 판, low_auto 1): 깊이 카메라 층(lowrl_cam_due) · 새 목표면 goal_only_issue · lowrl_pack · lowrl_img ·
   //              lowrl_body_clear(몸 둘레 간격, SIM_LOW_BODY) · 넓은 지도(lowrl_wred · lowrl_wide). 경로 계획은 없다 (학습 판 정책 환경도 안 짬 — low_rl.h lowrl_replan)
   explicit RobotEnv(const sim::EnvHostCfg& hc, bool low);
+  // 합친 탐사 모드 (explore = true — combine_run --upper fuel --policy 와 같은 설정: low_auto 0 · low_explore 1, 판 끝은 탐사 규칙):
+  //   목표는 set_cmd (시뮬 Env::set_low_cmd 그대로 — LowCmd 만 씀), low_obs 의 계획 차례에 새 목표면 경로를 짠다 (plan_ref — env_ref.cpp low_prepare_env 와 같은 길)
+  RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore);
   bool low() const { return low_on_; }
+  bool explore() const { return explore_; }
+  void set_cmd(const sim::LowCmd& cmd);   // 합친 탐사 모드: 위층 명령 (combine_run 의 env.set_low_cmd)
+  const sim::LowEp& low_ep() const { return lowep_[0]; }
   // 목표 칸 (cell = cy · gw + cx, −1 = 없음) — 시뮬 lowrl_goal_set 과 같은 칸을 고침 (난수 빼고). 위층이 새 목적지를 줄 때만 부른다
   void set_goal(int cell);
   int goal_of(float x, float y) const;   // 지도 자세 좌표 → 목표 칸 (창 밖이면 −1)
@@ -113,6 +120,8 @@ class RobotEnv {
   const sim::MapDev& map() const { return m_; }
   const int16_t* lmap() const { return b_.lmap; }
   const uint8_t* cam_layer() const { return b_.cvox; }
+  const uint32_t* trail() const { return b_.trail; }   // 지나간 칸·본 칸 판 (fuel 위층 입력)
+  const int32_t* cand() const { return b_.cand; }     // 후보 칸 K 개
 
   // 시험용 (rl_node_check): 시뮬과 같은 판 시작 상태를 넣음 — reset 뒤에 부름
   sim::EnvState& state_mut() { return e_; }
@@ -125,7 +134,7 @@ class RobotEnv {
   sim::EnvState e_{};
   sim::Shared sh_{};
   int done_ = 0;
-  bool mov_on_ = false, low_on_ = false;
+  bool mov_on_ = false, low_on_ = false, explore_ = false;
   LowMov mov_;
   // 메모리 (EnvBatch 포인터가 가리킴)
   std::vector<uint8_t> grid_;
@@ -144,7 +153,7 @@ class RobotEnv {
   std::vector<float> l1d_;
   std::vector<uint32_t> lwred_;
   std::vector<int32_t> lvdone_;
-  void init(const sim::EnvHostCfg& hc, bool low);
+  void init(const sim::EnvHostCfg& hc, bool low, bool explore = false);
 };
 
 }  // namespace limo_fire_rl

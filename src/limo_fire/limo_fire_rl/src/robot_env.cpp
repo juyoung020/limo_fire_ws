@@ -9,8 +9,9 @@ namespace limo_fire_rl {
 
 RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) { init(hc, false); }
 RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low) { init(hc, low); }
+RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore) { init(hc, low, explore); }
 
-void RobotEnv::init(const sim::EnvHostCfg& hc, bool low) {
+void RobotEnv::init(const sim::EnvHostCfg& hc, bool low, bool explore) {
   b_.cfg = hc.cfg;
   sim::EnvCfg& c = b_.cfg;
   c.action_mode = sim::kActPath;   // 계층형 (train --hier 와 같음)
@@ -23,6 +24,14 @@ void RobotEnv::init(const sim::EnvHostCfg& hc, bool low) {
     c.low_solo = 0;
     c.low_act_w = mdp::low::ACT;
     c.lo_aux = 0;   // 보조 예측 재료는 학습 전용 (관측 아님)
+    if (explore) {   // 합친 탐사 (scripts/combine_run.cpp:224-231 와 같게): 목표는 호스트(위층) · 탐사 판 끝 규칙 · 정체는 막힘 신호만
+      c.low_auto = 0;
+      c.low_explore = 1;
+      c.low_act_w = 0;
+      explore_ = true;
+    }
+  } else if (explore) {
+    throw std::runtime_error("RobotEnv: 합친 탐사 모드는 아래층 모드와 같이");
   }
   const int n = c.size * c.size;
   const int nf = c.size * sim::fmap_row(c);
@@ -276,6 +285,11 @@ int RobotEnv::goal_of(float x, float y) const {
   return cy * m_.gw + cx;   // 목표 칸 번호는 창 너비 기준 (low_rl.h lowrl_track: tgt % gw)
 }
 
+void RobotEnv::set_cmd(const sim::LowCmd& cmd) {
+  if (!explore_) throw std::runtime_error("RobotEnv::set_cmd: 합친 탐사 모드가 아님 (학습 판 목표는 set_goal)");
+  lowcmd_[0] = cmd;   // 시뮬 Env::set_low_cmd 와 같음 (LowRl 은 안 건드림 — 새 목표 판정은 lowrl_goal_new 가 tgt_seen 으로)
+}
+
 void RobotEnv::low_act(const float* a, float* v, float* w) {
   if (!low_on_) throw std::runtime_error("RobotEnv::low_act: 아래층 모드가 아님");
   // 시뮬 step_env 첫머리 + apply_action 아래층 가지 (env.h): collided 0 → lowrl_begin → lowrl_act
@@ -295,7 +309,10 @@ void RobotEnv::low_obs() {
   if (sim::lowrl_cam_due(b_, e_, 0) && !sim::lowrl_due(b_, e_, 0)) sim::camlayer_ref(b_, e_, 0);
   if (sim::lowrl_due(b_, e_, 0)) {
     sim::camlayer_ref(b_, e_, 0);
-    if (sim::lowrl_replan(b_, e_, 0)) {
+    if (sim::lowrl_replan(b_, e_, 0) && explore_) {
+      // 합친 탐사: env_ref.cpp low_prepare_env 의 plan_cpu 와 같은 부름 — 정책 환경(follow 2)은 0 번 칸(LowCmd 목표), 아니면 행동 칸 −1(목표 없음)
+      sim::plan_ref(b_, e_, 0, sim::lowrl_policy(b_, 0) ? 0 : -1);
+    } else if (sim::lowrl_replan(b_, e_, 0)) {
       if (lowcmd_[0].target >= 0) throw std::runtime_error("RobotEnv::low_obs: 경로 계획이 필요한 길 (목적지만 정책 환경이 아님)");
       sim::goal_only_issue(b_, e_, 0);   // 목표 없음: 시뮬 plan_cpu 의 tgt < 0 가지와 같은 관측 (goal_cell −1 · 경로 없음)
     } else if (sim::lowrl_go_policy(b_, 0) && sim::lowrl_goal_new(b_, 0)) {

@@ -9,14 +9,16 @@ namespace limo_fire_rviz {
 
 namespace {
 // 콤보 차례 = 노드 이름 (README 표와 같게)
-const char* const kNodes[] = {"/explore_frontier", "/explore_rl"};
-const char* const kModeNames[] = {"frontier", "rl"};
+const char* const kNodes[] = {"/explore_frontier", "/explore_rl", "/low_rl"};
+const char* const kModeNames[] = {"frontier", "rl", "low"};
+constexpr int kNModes = 3;
 }  // namespace
 
 ExplorePanel::ExplorePanel(QWidget* parent) : rviz_common::Panel(parent) {
   mode_ = new QComboBox;
   mode_->addItem("프론티어 (/explore_frontier)");
   mode_->addItem("RL (/explore_rl)");
+  mode_->addItem("fuel + 아래층 RL (/low_rl)");
   button_ = new QPushButton("Auto explore OFF");
   button_->setCheckable(true);
   button_->setMinimumHeight(36);
@@ -46,7 +48,7 @@ void ExplorePanel::onInitialize() {
   timer_->start(500);
 }
 
-std::string ExplorePanel::ns() const { return kNodes[std::max(0, std::min(1, mode_->currentIndex()))]; }
+std::string ExplorePanel::ns() const { return kNodes[std::max(0, std::min(kNModes - 1, mode_->currentIndex()))]; }
 
 void ExplorePanel::connectNode() {
   if (!node_) return;
@@ -105,7 +107,7 @@ void ExplorePanel::refresh() {
   if (!ready) st = "노드 없음";
   else if (!state_.empty()) st = state_;
   else st = done_ ? "done" : (enabled_ ? "running" : "idle");
-  const char* ko = st == "running" ? "탐사 중" : st == "done" ? "끝 (다시 누르면 처음부터)" : st == "idle" ? "멈춤" : "서비스를 기다림";
+  const char* ko = st == "running" ? "탐사 중" : st == "done" ? "끝 (다시 누르면 처음부터)" : st == "idle" ? "멈춤" : st == "paused" ? "멈춤 (리모컨·닿음 — 상세 보기)" : "서비스를 기다림";
   state_label_->setText(QString::fromStdString("상태: " + st + " — ") + QString::fromUtf8(ko));
   button_->blockSignals(true);
   button_->setChecked(on);
@@ -120,12 +122,14 @@ void ExplorePanel::refresh() {
 void ExplorePanel::load(const rviz_common::Config& config) {
   rviz_common::Panel::load(config);
   QString m;
-  if (config.mapGetString("mode", &m)) mode_->setCurrentIndex(m == kModeNames[1] ? 1 : 0);
+  if (config.mapGetString("mode", &m))
+    for (int k = 0; k < kNModes; ++k)
+      if (m == kModeNames[k]) mode_->setCurrentIndex(k);
 }
 
 void ExplorePanel::save(rviz_common::Config config) const {
   rviz_common::Panel::save(config);
-  config.mapSetValue("mode", kModeNames[std::max(0, std::min(1, mode_->currentIndex()))]);
+  config.mapSetValue("mode", kModeNames[std::max(0, std::min(kNModes - 1, mode_->currentIndex()))]);
 }
 
 }  // namespace limo_fire_rviz
