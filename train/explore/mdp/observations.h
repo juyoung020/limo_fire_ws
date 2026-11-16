@@ -277,6 +277,16 @@ DEV void obs_depth(const EnvBatch& b, const EnvState& e, int env, int i) {
   depth_out(b, env)[i] = depth_u8(c.depth, z);
 }
 
+// 깊이 카메라 층 전용 격자 픽셀 i (EnvCfg::cam_lw · cam_lh, sim::cam_uv) — 관측 깊이와 같은 카메라·모델, 다른 난수 줄 (관측 픽셀 번호 뒤)
+DEV void cam_layer_depth(const EnvBatch& b, const EnvState& e, int env, int i) {
+  const sim::EnvCfg& c = b.cfg;
+  const sim::MapDev& m = b.maps[e.map];
+  float u, v;
+  sim::cam_uv(c, i, &u, &v);
+  const float z = sim::depth_pixel_real(sim::with_people(m.scene, e.people), c.depth, depth_camera(c, e), u, v, depth_seed(e, mdp::obs::DEPTH_SIZE + i), e.depth_floor);
+  b.cldep[(size_t)env * sim::cam_npix(c) + i] = depth_u8(c.depth, z);
+}
+
 // 프론티어 덩어리 칸 (mdp::ReachSummary → V): BFS 거리 짧은 순 3 개 — 거리, 그 칸(덩어리에서 BFS 거리 가장 짧은 칸) 방향 sin·cos, 크기. 없으면 0.
 // px, py, s, co = 지도 자세 위치·sin·cos. 이 칸들만 따로 쓰는 GPU 커널(env_kernel.cu env_reach_kernel)과 obs_finish 가 같이 부른다
 DEV bool reach_slot(int i) {

@@ -302,6 +302,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     if (hc.cfg.cam_on) {   // 깊이 카메라 장애물 층 (hier_path.h) — 리셋(reset_map)이 비움
       b_.cvox = alloc<uint8_t>(cells * n_env);
       b_.cpts = alloc<float>((size_t)mdp::obs::DEPTH_W * 2 * n_env);
+      if (hc.cfg.cam_lw > 0) b_.cldep = alloc<uint8_t>((size_t)cam_npix(hc.cfg) * n_env);   // 층 전용 깊이 (갱신 때마다 새로 그림 — 상태 아님)
     }
     if (hc.cfg.low_stat || hc.cfg.low_task) b_.low = alloc<LowEp>(n_env);   // 아래층 계측·단독 과제 (include/low_task.h)
     if (hc.cfg.low_task && !hc.cfg.low_explore) throw std::runtime_error("low_task 는 low_explore(합친 탐사)와 같이 켠다 — 단독 과제 모드는 걷어냄 (archive/rl)");
@@ -507,6 +508,10 @@ void Env::get_camlayer(std::vector<uint8_t>& vox, std::vector<float>& pts) const
   if (!b_.cvox) { vox.clear(); pts.clear(); return; }
   fetch(gpu_, b_.cvox, (size_t)b_.cfg.size * b_.cfg.size * b_.n_env, vox);
   fetch(gpu_, b_.cpts, (size_t)mdp::obs::DEPTH_W * 2 * b_.n_env, pts);
+}
+void Env::get_layer_depth(std::vector<uint8_t>& out) const {
+  if (!b_.cldep) { out.clear(); return; }
+  fetch(gpu_, b_.cldep, (size_t)cam_npix(b_.cfg) * b_.n_env, out);
 }
 void Env::get_cand(std::vector<int32_t>& out) const {
   if (!b_.cand) throw std::runtime_error("get_cand: 계층형 모드가 아님");

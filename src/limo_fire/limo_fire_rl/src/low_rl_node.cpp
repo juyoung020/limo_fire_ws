@@ -406,15 +406,22 @@ class LowRlNode : public rclcpp::Node {
     }
     const double step_ms = std::chrono::duration<double, std::milli>(clk::now() - t0).count();
     // 깊이 (센서 입력)
-    std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE, 0);
+    std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE, 0), ldep((size_t)env_->layer_n(), 0);   // 관측 깊이 · 깊이 카메라 층 전용 격자 (없으면 0 칸)
     if (depth_ && info_ && (now() - rclcpp::Time(depth_->header.stamp)).seconds() < depth_timeout_ && depth_->encoding == "16UC1") {
       env_->depth_from_image(reinterpret_cast<const uint16_t*>(depth_->data.data()), (int)depth_->width, (int)depth_->height, (int)(depth_->step / 2),
                              (float)info_->k[0], (float)info_->k[4], (float)info_->k[2], (float)info_->k[5], dep.data());
+      if (!ldep.empty())
+        env_->layer_from_image(reinterpret_cast<const uint16_t*>(depth_->data.data()), (int)depth_->width, (int)depth_->height, (int)(depth_->step / 2),
+                               (float)info_->k[0], (float)info_->k[4], (float)info_->k[2], (float)info_->k[5], ldep.data());
     } else {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "깊이 영상 없음·오래됨·16UC1 아님 — 깊이 관측 0 (구멍)");
     }
     env_->set_depth(dep.data());
     if (rec_) rec_->depth(dep.data());
+    if (!ldep.empty()) {
+      env_->set_layer_depth(ldep.data());
+      if (rec_) rec_->layer(ldep.data(), ldep.size());
+    }
     // 위층
     const auto t1 = clk::now();
     double dec_ms = -1.0;

@@ -205,6 +205,10 @@ int main(int argc, char** argv) {
           rows.push_back(cur);
           if (!map_out.empty() && !map_done && cur.ep == 0) dump_map(cur);
         }
+      } else if (ch == 'L') {   // 판 4: 깊이 층 전용 격자 ('D' 뒤)
+        std::vector<uint8_t> ld(rd.layer_n());
+        rd.layer(ld.data());
+        robot.set_layer_depth(ld.data());
       } else if (ch == 'D') {
         rd.depth(dep.data());
         robot.set_depth(dep.data());

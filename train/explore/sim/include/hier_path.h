@@ -125,17 +125,37 @@ DEV bool path_scan_cell(const EnvBatch& b, const EnvState& e, int env, int k, in
 constexpr float kCamNone = 3e38f;   // EnvBatch::cpts 빈 칸
 // 관측 깊이 픽셀 i (행 · DEPTH_W + 열, 값 q = obs_img 깊이 바이트 — 정책 입력과 같은 값, observations.h depth_u8) → base_link 점 (m).
 // 0 = 구멍 · 255 = obs_max_z(3 m) 넘음 → 점 없음 (Nav2 inf_is_valid 기본 false — 무한 값은 표시·지우기 모두 안 씀). 1~254 는 칸 가운데 거리
-DEV bool cam_point_base(const EnvCfg& c, uint8_t q, int i, float* bx, float* by, float* bz) {
+DEV bool cam_point_uv(const EnvCfg& c, uint8_t q, float u, float v, float* bx, float* by, float* bz) {
   if (q == 0 || q == 255) return false;
   const DepthSpec& D = c.depth.spec;
   const float z = D.min_z + ((float)(q - 1) + 0.5f) * ((D.obs_max_z - D.min_z) / 254.f);
-  const float su = (float)D.w / (float)mdp::obs::DEPTH_W, sv = (float)D.h / (float)mdp::obs::DEPTH_H;   // observations.h depth_uv 와 같은 픽셀
-  const float u = ((float)(i % mdp::obs::DEPTH_W) + 0.5f) * su - 0.5f, v = ((float)(i / mdp::obs::DEPTH_W) + 0.5f) * sv - 0.5f;
   const float X = z, Y = z * (-(u - D.cx) / D.fx), Z = z * (-(v - D.cy) / D.fy);   // 센서 FLU (sensors.h depth_ray × z)
   *bx = c.cam_x + (c.cam_cp * X + c.cam_sp * Z);                                    // 숙인 각 (observations.h depth_camera 의 yaw 0 회전)
   *by = c.cam_y + Y;
   *bz = c.cam_z + (c.cam_cp * Z - c.cam_sp * X);
   return true;
+}
+DEV bool cam_point_base(const EnvCfg& c, uint8_t q, int i, float* bx, float* by, float* bz) {
+  const DepthSpec& D = c.depth.spec;
+  const float su = (float)D.w / (float)mdp::obs::DEPTH_W, sv = (float)D.h / (float)mdp::obs::DEPTH_H;   // observations.h depth_uv 와 같은 픽셀
+  return cam_point_uv(c, q, ((float)(i % mdp::obs::DEPTH_W) + 0.5f) * su - 0.5f, ((float)(i / mdp::obs::DEPTH_W) + 0.5f) * sv - 0.5f, bx, by, bz);
+}
+// 층 픽셀 격자: cam_lw > 0 이면 층 전용 격자(EnvBatch::cldep), 아니면 정책 관측 깊이(64 × 40) 그대로
+DEV int cam_gw(const EnvCfg& c) { return c.cam_lw > 0 ? c.cam_lw : mdp::obs::DEPTH_W; }
+DEV int cam_gh(const EnvCfg& c) { return c.cam_lw > 0 ? c.cam_lh : mdp::obs::DEPTH_H; }
+DEV int cam_npix(const EnvCfg& c) { return cam_gw(c) * cam_gh(c); }
+// 격자 픽셀 i (행 · gw + 열) → 센서 픽셀 (u, v): 원본 영상을 고르게 건너뛴 가운데 (observations.h depth_uv 와 같은 꼴)
+DEV void cam_uv(const EnvCfg& c, int i, float* u, float* v) {
+  const DepthSpec& D = c.depth.spec;
+  const int gw = cam_gw(c), gh = cam_gh(c);
+  *u = ((float)(i % gw) + 0.5f) * ((float)D.w / (float)gw) - 0.5f;
+  *v = ((float)(i / gw) + 0.5f) * ((float)D.h / (float)gh) - 0.5f;
+}
+// 층 격자 픽셀 i 의 깊이 바이트 q → base_link 점 (cam_point_base 와 같은 셈, 픽셀 자리만 층 격자)
+DEV bool cam_point_grid(const EnvCfg& c, uint8_t q, int i, float* bx, float* by, float* bz) {
+  float u, v;
+  cam_uv(c, i, &u, &v);
+  return cam_point_uv(c, q, u, v, bx, by, bz);
 }
 // 높이 → 높이 칸 번호 (띠 밖 −1)
 DEV int cam_voxel(const EnvCfg& c, float h) {
@@ -143,7 +163,10 @@ DEV int cam_voxel(const EnvCfg& c, float h) {
   const int k = (int)floorf((h - c.cam_min_h) * ((float)c.cam_nz / (c.cam_max_h - c.cam_min_h)));
   return k < c.cam_nz ? k : c.cam_nz - 1;
 }
-DEV const uint8_t* cam_depth(const EnvBatch& b, int env) { return b.obs_img + (size_t)env * mdp::obs::IMG_SIZE + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE; }
+DEV const uint8_t* cam_depth(const EnvBatch& b, int env) {
+  if (b.cfg.cam_lw > 0) return b.cldep + (size_t)env * cam_npix(b.cfg);
+  return b.obs_img + (size_t)env * mdp::obs::IMG_SIZE + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE;
+}
 // 픽셀 하나의 층 갱신 몫. phase 0 = 지우기: 띠 안 점까지 3 차원 광선이 지나는 높이 칸 (끝 칸 빼고, 센서에서 cam_ray_range 안) → op(칸, 비트) 로 끔.
 // phase 1 = 표시: 띠 안 점이 센서에서 cam_obs_range 안이면 그 칸 그 높이 비트 → op(칸, 비트) 로 켬. 지도 자세(참값 + 오차)로 칸 — 실물과 같은 값.
 // Nav2 voxel_layer.cpp updateBounds (raytraceFreespace → markVoxelInMap) · observation_buffer.cpp bufferCloud(min/max_obstacle_height 로 거른 점만 둘 다 씀)
@@ -152,7 +175,7 @@ DEV void cam_pixel(const EnvBatch& b, const EnvState& e, int env, int i, int pha
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
   float bx, by, bz;
-  const bool pt = cam_point_base(c, cam_depth(b, env)[i], i, &bx, &by, &bz);
+  const bool pt = cam_point_grid(c, cam_depth(b, env)[i], i, &bx, &by, &bz);
   const int kv = pt ? cam_voxel(c, bz) : -1;
   if (kv < 0) return;
   const float px = e.x + e.ex, py = e.y + e.ey;
@@ -210,16 +233,18 @@ DEV int cam_fp_cells(const EnvCfg& c) {
 DEV void cam_column(const EnvBatch& b, const EnvState& e, int env, int col) {
   const EnvCfg& c = b.cfg;
   float best = 3e38f, bx0 = 0.f, by0 = 0.f;
-  for (int r = 0; r < mdp::obs::DEPTH_H; ++r) {
-    const int i = r * mdp::obs::DEPTH_W + col;
-    float bx, by, bz;
-    if (!cam_point_base(c, cam_depth(b, env)[i], i, &bx, &by, &bz) || cam_voxel(c, bz) < 0) continue;
-    const float hx = bx - c.cam_x, hy = by - c.cam_y, l2 = hx * hx + hy * hy;
-    if (l2 > c.cam_obs_range * c.cam_obs_range || !(l2 < best)) continue;
-    best = l2;
-    bx0 = bx;
-    by0 = by;
-  }
+  const int gw = cam_gw(c), gh = cam_gh(c), k = gw / mdp::obs::DEPTH_W;   // 관측 열 col 에 든 층 열 k 개 (cam_lw 0 이면 1)
+  for (int r = 0; r < gh; ++r)
+    for (int q = col * k; q < (col + 1) * k; ++q) {
+      const int i = r * gw + q;
+      float bx, by, bz;
+      if (!cam_point_grid(c, cam_depth(b, env)[i], i, &bx, &by, &bz) || cam_voxel(c, bz) < 0) continue;
+      const float hx = bx - c.cam_x, hy = by - c.cam_y, l2 = hx * hx + hy * hy;
+      if (l2 > c.cam_obs_range * c.cam_obs_range || !(l2 < best)) continue;
+      best = l2;
+      bx0 = bx;
+      by0 = by;
+    }
   float* P = b.cpts + ((size_t)env * mdp::obs::DEPTH_W + col) * 2;
   if (best == 3e38f) { P[0] = kCamNone; P[1] = kCamNone; return; }
   float s, co;

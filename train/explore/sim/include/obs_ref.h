@@ -92,8 +92,9 @@ struct CamMark {
 inline void camlayer_ref(const EnvBatch& b, const EnvState& e, int env) {
   if (!b.cvox) return;
   uint8_t* V = b.cvox + (size_t)env * b.cfg.size * b.cfg.size;
-  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) cam_pixel(b, e, env, i, 0, CamClear{V});
-  for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) cam_pixel(b, e, env, i, 1, CamMark{V});
+  const int np = cam_npix(b.cfg);   // 층 격자 (cam_lw 0 이면 관측 깊이 64 × 40)
+  for (int i = 0; i < np; ++i) cam_pixel(b, e, env, i, 0, CamClear{V});
+  for (int i = 0; i < np; ++i) cam_pixel(b, e, env, i, 1, CamMark{V});
   for (int col = 0; col < mdp::obs::DEPTH_W; ++col) cam_column(b, e, env, col);
   cam_compact(b, env);
   const int nfp = cam_fp_cells(b.cfg);

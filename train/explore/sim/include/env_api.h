@@ -68,6 +68,8 @@ class Env {
   void get_seen(std::vector<uint8_t>& out) const;
   // 깊이 카메라 장애물 층 (계층형 cam_on — 아니면 빈 벡터): 칸마다 높이 칸 비트 [env · size²], 마지막 깊이 장 열마다 띠 안 점 [env · DEPTH_W · 2]
   void get_camlayer(std::vector<uint8_t>& vox, std::vector<float>& pts) const;
+  // 깊이 카메라 층 전용 깊이 바이트 [env · cam_lw · cam_lh] (마지막 층 갱신 때 그린 것, cfg.cam_lw 0 이면 빈 벡터) — 실물 RobotEnv::set_layer_depth 에 넣어 견줄 때
+  void get_layer_depth(std::vector<uint8_t>& out) const;
   // 닫힘 규칙의 지나간 길 비트 판 [env · 2 · size · fmap_row] (env.h EnvBatch::trail: 0 지나간 칸 · 1 본 칸) — 도구가 닫힘을 호스트에서 다시 셀 때
   void get_trail(std::vector<uint32_t>& out) const;
   void get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;

@@ -106,7 +106,11 @@ void set_cpu_tap(CpuTap* t) { g_tap = t; }
 
 void hier_plan_cpu(const EnvBatch& b, EnvState& e, int env, int slot) { plan_cpu(b, e, env, slot); }
 // 깊이 카메라 장애물 층 갱신 — include/obs_ref.h camlayer_ref (실물 노드 limo_fire_rl 도 같은 함수)
-void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env) { camlayer_ref(b, e, env); }
+void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env) {
+  if (b.cldep)   // 층 전용 깊이를 이 상태로 그림 (GPU env_camlayer_kernel 과 같은 함수) — 실물은 RobotEnv::set_layer_depth 로 영상에서
+    for (int i = 0, np = cam_npix(b.cfg); i < np; ++i) mdp::obsgen::cam_layer_depth(b, e, env, i);
+  camlayer_ref(b, e, env);
+}
 
 // 아래층 준비 단계 (include/low_rl.h 머리말 — GPU env_low_prepare_gpu 와 같은 차례): 깊이 카메라 층·경로 계획(차례일 때만)
 static void low_prepare_env(const EnvBatch& b, const float* actions, int env) {

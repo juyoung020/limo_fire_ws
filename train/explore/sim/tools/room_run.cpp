@@ -165,6 +165,7 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> img;
     std::vector<float> o1d;
     std::vector<std::vector<uint8_t>> dep_hist;
+    std::vector<uint8_t> ldep;
     sim::World rw;
     {
       const sim::EnvState& e = st[0];
@@ -214,6 +215,11 @@ int main(int argc, char** argv) {
       const uint8_t* dep = dep_hist.back().data();
       robot.set_depth(dep);
       if (rec) rec->depth(dep);
+      if (robot.layer_n() > 0) {   // 깊이 층 전용 격자: 시뮬이 준비 단계에서 그린 것을 그대로 (실물 노드는 영상에서)
+        cpu.get_layer_depth(ldep);
+        robot.set_layer_depth(ldep.data());
+        if (rec) rec->layer(ldep.data(), ldep.size());
+      }
       robot.set_slot(ctl.slot());
       robot.low_prepare();
       float v, w;

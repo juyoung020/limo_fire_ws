@@ -1,7 +1,9 @@
 // 실물 합친 탐사 노드 녹화 꼴 (limo_fire_rl low_rl record:= · 시뮬 room_run --rec 가 쓰고, low_explore_replay · node_stats 가 읽는다):
 // RobotEnv 가 받은 입력을 부른 차례대로 + 그때 낸 명령. 노드 차례를 그대로 다시 돌려 위층 결정·명령이 같은지 본다.
 //
-// 판 3 (2026-11-17 —): 판 2 와 같고 EnvHostCfg 에 EnvCfg::cam_every(깊이 층 걸음마다 갱신) 칸이 더해짐. 판 2 녹화는 그 칸에 0 (= 그때 동작)을 끼워 읽는다.
+// 판 4 (2026-11-17 —): 판 3 과 같고 EnvHostCfg 에 EnvCfg::cam_lw·cam_lh(깊이 층 전용 격자) 칸, 사건 'L' (층 전용 깊이 바이트 cam_lw × cam_lh — 'D' 바로 뒤, 격자가 있을 때만).
+//   판 3 · 2 · 1 은 그 칸에 0 (= 층은 관측 깊이 그대로, 그때 동작)을 끼워 읽는다.
+// 판 3 (2026-11-17): 판 2 와 같고 EnvHostCfg 에 EnvCfg::cam_every(깊이 층 걸음마다 갱신) 칸이 더해짐. 판 2 녹화는 그 칸에 0 (= 그때 동작)을 끼워 읽는다.
 // 판 2 (2026-11-17): 머리 = 매직 "LOWN" · 판 번호 2 · 구조체 크기(EnvHostCfg · Proprio · Window) · EnvHostCfg 바이트. 그 뒤 사건(한 바이트 종류 + 몸):
 //   'R' 리셋 (x0 y0 th0 · Proprio · fov · Window)   'S' 걸음 (Proprio · 빔 수 · 거리 · 세기 수 · 세기 · angle_min angle_increment time_increment x y th w n_rev scan_time)
 //   'D' 깊이 바이트 (DEPTH_SIZE)   'A' 낸 명령 v w · 그때 아래층 목적지 (세계 x y, 없으면 NaN — 판단 모델 위층처럼 다시 못 내는 목표를 남김)
@@ -26,10 +28,12 @@
 
 namespace lowrec {
 constexpr int32_t kMagic = 0x4E574F4C;   // "LOWN"
-constexpr int32_t kVersion = 3;
-// 판 3 에서 더한 칸 (지금 구조체 안 자리, 바이트) — 판 2 · 판 1 은 이 자리에 0 을 끼움
+constexpr int32_t kVersion = 4;
+// 판 3 · 4 에서 더한 칸 (지금 구조체 안 자리, 바이트) — 옛 판은 이 자리에 0 을 끼움
 constexpr size_t kV3Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, cam_every), kV3Len = sizeof(int32_t);
-constexpr size_t kV2Size = sizeof(sim::EnvHostCfg) - kV3Len;
+constexpr size_t kV4Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, cam_lw), kV4Len = 2 * sizeof(int32_t);
+constexpr size_t kV3Size = sizeof(sim::EnvHostCfg) - kV4Len;
+constexpr size_t kV2Size = kV3Size - kV3Len;
 using Window = limo_fire_rl::RobotEnv::Window;
 // 'A' 사건의 아래층 목적지: 0 없음 · 1 세계 좌표 (x, y) · 2 판 1 녹화 — 지도 자세 기준 (x = 거리 m, y = 방향 rad, 그 걸음 지도 자세에서 셈)
 struct Goal { int kind = 0; float x = 0.f, y = 0.f; };
@@ -65,6 +69,7 @@ class Writer {
     w(f, sizeof(f));
   }
   void depth(const uint8_t* d) { tag('D'); w(d, (size_t)mdp::obs::DEPTH_SIZE); }
+  void layer(const uint8_t* d, size_t n) { tag('L'); w(d, n); }   // 깊이 층 전용 격자 (cam_lw × cam_lh, 'D' 바로 뒤)
 
  private:
   FILE* f_;
@@ -105,20 +110,16 @@ class Reader {
     int32_t hd[2];
     r(hd, sizeof(hd));
     if (hd[0] != kMagic) throw std::runtime_error("녹화 머리가 아님");
-    if (hd[1] == kVersion || hd[1] == 2) {
+    if (hd[1] >= 2 && hd[1] <= kVersion) {
       int32_t sz[3];
       r(sz, sizeof(sz));
-      const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : kV2Size;
+      const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : hd[1] == 3 ? kV3Size : kV2Size;
       if (sz[0] != (int32_t)want || sz[1] != (int32_t)sizeof(limo_fire_rl::Proprio) || sz[2] != (int32_t)sizeof(Window))
         throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
-      if (hd[1] == kVersion) {
-        r(&hc, sizeof(hc));
-      } else {
-        version = 2;
-        std::vector<uint8_t> v2(kV2Size);
-        r(v2.data(), v2.size());
-        from_v2(v2.data());
-      }
+      version = hd[1];
+      std::vector<uint8_t> raw(want);
+      r(raw.data(), raw.size());
+      from_old(raw.data(), version);
       return;
     }
     if (hd[1] < 100) throw std::runtime_error("모르는 녹화 판 " + std::to_string(hd[1]));
@@ -128,7 +129,7 @@ class Reader {
   sim::EnvHostCfg hc{};
   int version = kVersion;
   bool truncated = false;   // next() 가 건너뛰는 사건(판 1 'O' · 'G')에서 녹화가 끝남
-  // 다음 사건 종류 'R' · 'S' · 'D' · 'A' (끝이면 0). 판 1 의 'O' · 'G' 는 건너뜀
+  // 다음 사건 종류 'R' · 'S' · 'D' · 'L'(판 4) · 'A' (끝이면 0). 판 1 의 'O' · 'G' 는 건너뜀
   char next() {
     for (;;) {
       char c;
@@ -180,6 +181,8 @@ class Reader {
     s->scan_time = f[8];
   }
   void depth(uint8_t* d) { r(d, (size_t)mdp::obs::DEPTH_SIZE); }
+  size_t layer_n() const { return hc.cfg.cam_lw > 0 ? (size_t)sim::cam_npix(hc.cfg) : 0; }
+  void layer(uint8_t* d) { r(d, layer_n()); }   // 'L' 사건 몸 (판 4)
 
  private:
   FILE* f_;
@@ -232,14 +235,23 @@ class Reader {
       at = (size_t)g.second;
     }
     std::memcpy(dst + out, full.data() + at, kV1Size - at);
-    from_v2(v2.data());
+    from_old(v2.data(), 2);
   }
-  // 판 2 꼴 EnvHostCfg 바이트 → 지금 구조체 (판 3 칸 자리에 0)
-  void from_v2(const uint8_t* v2) {
+  // 판 ver 꼴 EnvHostCfg 바이트 → 지금 구조체 (그 뒤 판에서 더한 칸 자리에 0)
+  void from_old(const uint8_t* src, int ver) {
+    std::vector<std::pair<size_t, size_t>> gaps;
+    if (ver < 3) gaps.emplace_back(kV3Off, kV3Len);
+    if (ver < 4) gaps.emplace_back(kV4Off, kV4Len);
+    std::sort(gaps.begin(), gaps.end());
     uint8_t* d = reinterpret_cast<uint8_t*>(&hc);
-    std::memcpy(d, v2, kV3Off);
-    std::memset(d + kV3Off, 0, kV3Len);
-    std::memcpy(d + kV3Off + kV3Len, v2 + kV3Off, kV2Size - kV3Off);
+    size_t at = 0, from = 0;
+    for (const auto& g : gaps) {
+      std::memcpy(d + at, src + from, g.first - at);
+      from += g.first - at;
+      std::memset(d + g.first, 0, g.second);
+      at = g.first + g.second;
+    }
+    std::memcpy(d + at, src + from, sizeof(hc) - at);
   }
   void skip(size_t n) {
     if (n && std::fseek(f_, (long)n, SEEK_CUR) != 0) throw std::runtime_error("녹화가 짧음");

@@ -143,10 +143,18 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     // 깊이 카메라 장애물 층 (hier_path.h "깊이 카메라 장애물 층"): 절이 없으면 끔 (옛 설정 그대로). SIM_CAM_OBSTACLES=0/1 이면 그 값 (앞뒤 비교)
     c.cam_on = c.cam_nz = 0;
     c.cam_every = 0;
+    c.cam_lw = c.cam_lh = 0;
     c.cam_min_h = c.cam_max_h = c.cam_obs_range = c.cam_ray_range = 0.f;
     if (const YAML::Node co = ap["camera_obstacles"]) {
       c.cam_on = co["enabled"].as<bool>() ? 1 : 0;
       c.cam_every = co["update_every_step"] && co["update_every_step"].as<bool>() ? 1 : 0;
+      if (const YAML::Node lg = co["layer_grid"]) {   // 층 전용 픽셀 격자 [열, 행] — 없으면 정책 관측 깊이 그대로
+        if (lg.size() != 2) throw std::runtime_error(path + ": camera_obstacles.layer_grid 는 [열, 행]");
+        c.cam_lw = lg[0].as<int>();
+        c.cam_lh = lg[1].as<int>();
+        if (c.cam_lw < mdp::obs::DEPTH_W || c.cam_lw % mdp::obs::DEPTH_W != 0 || c.cam_lh < 1 || c.cam_lw * c.cam_lh > (1 << 16))
+          throw std::runtime_error(path + ": camera_obstacles.layer_grid 열은 64 의 배수, 픽셀 65536 이하");
+      }
       c.cam_min_h = co["min_obstacle_height"].as<float>();
       c.cam_max_h = co["max_obstacle_height"].as<float>();
       c.cam_nz = co["z_voxels"].as<int>();

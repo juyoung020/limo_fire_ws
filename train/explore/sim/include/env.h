@@ -159,6 +159,8 @@ struct EnvCfg {
                                    //     정체·통과는 판을 안 끝낸다. 정체는 막힘 신호(LowRl::stall)만 올린다
   int32_t cam_every;               // 1 = 깊이 카메라 장애물 층을 걸음(0.1 s)마다 갱신 (env.yaml camera_obstacles.update_every_step — 실물 Nav2 층은 센서 장마다), 0 = 경로 계획 차례만(옛 동작).
                                    //     녹화 판 2 이전 머리에는 없음 — 읽을 때 0 (sim/tools/low_node_rec.h)
+  int32_t cam_lw, cam_lh;          // 깊이 카메라 층 전용 픽셀 격자 (열 · 행, env.yaml camera_obstacles.layer_grid). 0 = 정책 관측 깊이(64 × 40)를 그대로 씀(옛 동작).
+                                   //     열은 DEPTH_W 의 배수 (collision_monitor 열 점은 관측 열마다 하나 — 그 열에 든 층 열들 중 가장 가까운 점). 녹화 판 3 이전은 0
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -343,6 +345,7 @@ struct EnvBatch {
   // 마지막 깊이 장 열마다 가장 가까운 높이 띠 안 점 (지도 좌표 x, y — 앞으로 모음, 끝 x = kCamNone) [env · DEPTH_W · 2] — collision_monitor 점 출처
   uint8_t* cvox;
   float* cpts;
+  uint8_t* cldep;   // 층 전용 깊이 바이트 [env · cam_lw · cam_lh] (cam_lw > 0 일 때만, 아니면 nullptr — 정책 관측 깊이를 씀). 시뮬은 층 갱신 때 그리고, 실물은 영상에서 (RobotEnv::set_layer_depth)
   // 아래층 계측·목표 넣기 (low_stat·low_task 일 때만, 아니면 nullptr — include/low_task.h): 판 누적 [env] · 호스트가 넣는 목표 [env]
   LowEp* low;
   LowCmd* lowcmd;

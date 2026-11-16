@@ -1397,10 +1397,15 @@ __global__ void __launch_bounds__(kRT) env_camlayer_kernel(EnvBatch b) {
   const EnvState& e = b.st[env];
   if (!lowrl_cam_due(b, e, env)) return;   // 아래층 걸음 길: 계획 차례인 환경만 (cam_every 면 걸음마다, 끄면 늘 true)
   uint32_t* V = reinterpret_cast<uint32_t*>(b.cvox + (size_t)env * b.cfg.size * b.cfg.size);
-  for (int i = tid; i < mdp::obs::DEPTH_SIZE; i += kRT)
+  const int np = cam_npix(b.cfg);   // 층 격자 (cam_lw 0 이면 관측 깊이 64 × 40)
+  if (b.cldep) {   // 층 전용 깊이를 이 상태로 그림 (CPU env_ref.cpp hier_camlayer_cpu 와 같은 함수)
+    for (int i = tid; i < np; i += kRT) mdp::obsgen::cam_layer_depth(b, e, env, i);
+    __syncthreads();
+  }
+  for (int i = tid; i < np; i += kRT)
     cam_pixel(b, e, env, i, 0, [&](int ci, uint8_t bit) { atomicAnd(&V[ci >> 2], ~((uint32_t)bit << (8 * (ci & 3)))); });
   __syncthreads();
-  for (int i = tid; i < mdp::obs::DEPTH_SIZE; i += kRT)
+  for (int i = tid; i < np; i += kRT)
     cam_pixel(b, e, env, i, 1, [&](int ci, uint8_t bit) { atomicOr(&V[ci >> 2], (uint32_t)bit << (8 * (ci & 3))); });
   for (int col = tid; col < mdp::obs::DEPTH_W; col += kRT) cam_column(b, e, env, col);
   __syncthreads();

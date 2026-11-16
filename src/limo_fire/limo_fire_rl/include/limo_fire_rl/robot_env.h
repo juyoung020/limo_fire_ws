@@ -59,6 +59,11 @@ class RobotEnv {
   // 깊이 → 관측 칸: 실물 깊이 영상(16UC1 mm, 내부 파라미터 fx fy cx cy, 크기 w·h) → 40 × 64. 시뮬 관측 픽셀 (u, v)(depth_uv) 의 광선 방향을
   // 실물 카메라 내부 파라미터로 다시 투영한 가장 가까운 픽셀의 z (정렬 켬이면 같은 내부 파라미터라 그 픽셀 그대로) → valid_rect 밖 0 → depth_u8
   void depth_from_image(const uint16_t* mm, int w, int h, int step_px, float fx, float fy, float cx, float cy, uint8_t* out) const;
+  // 깊이 카메라 층 전용 격자 (cfg.cam_lw × cam_lh, env.yaml camera_obstacles.layer_grid — 0 이면 없음: 층은 관측 깊이를 씀).
+  // layer_n() 바이트를 영상에서 (depth_from_image 와 같은 다시 투영, 픽셀 자리만 sim::cam_uv) → set_layer_depth 로 넣고 low_prepare 앞에
+  int layer_n() const { return b_.cfg.cam_lw > 0 ? sim::cam_npix(b_.cfg) : 0; }
+  void layer_from_image(const uint16_t* mm, int w, int h, int step_px, float fx, float fy, float cx, float cy, uint8_t* out) const;
+  void set_layer_depth(const uint8_t* d);
 
   // ---- 아래층 (규칙 추종기) — 한 걸음 차례 (시뮬 env_ref.cpp step_env + low_prepare_env 와 같게):
   //   step(감각, 라이다 장) → set_depth(깊이) → [set_cmd(위층 목표, 바뀔 때만)] → set_slot · low_prepare() → low_act(명령) → (명령을 내보냄)
@@ -103,7 +108,7 @@ class RobotEnv {
   std::vector<uint8_t> grid_;
   std::vector<int16_t> lmap_;
   std::vector<uint32_t> marks_, trail_;
-  std::vector<uint8_t> img_, cvox_;
+  std::vector<uint8_t> img_, cvox_, cldep_;
   std::vector<float> o1d_, ring_, vprev_, lint_, cpts_;
   std::vector<int32_t> done_buf_, cand_, cand_cur_;
   std::vector<sim::EpInfo> ep_;

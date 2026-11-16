@@ -59,6 +59,7 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
     cpts_.assign((size_t)mdp::obs::DEPTH_W * 2, 3e38f);
     b_.cvox = cvox_.data();
     b_.cpts = cpts_.data();
+    if (layer_n() > 0) { cldep_.assign((size_t)layer_n(), 0); b_.cldep = cldep_.data(); }   // 층 전용 깊이 (set_layer_depth)
   }
   // 아래층 걸음 길 (env_host.cpp 가 low_rl 일 때 잡는 칸)
   lowrl_.assign(1, sim::LowRl{});
@@ -188,6 +189,25 @@ void RobotEnv::depth_from_image(const uint16_t* mm, int w, int h, int step_px, f
     mdp::obsgen::depth_uv(DM, i, &u, &v);
     if (!sim::depth_valid(D, u, v)) { out[i] = 0; continue; }   // 시뮬과 같은 유효 영역 (정렬 켬: 위 20 행·왼 6 열 늘 0)
     // 시뮬 픽셀 광선 (1, −(u−cx)/fx, −(v−cy)/fy) → 실물 카메라 픽셀
+    const float ru = cx + (u - D.cx) * (fx / D.fx), rv = cy + (v - D.cy) * (fy / D.fy);
+    const int pu = (int)std::floor(ru + 0.5f), pv = (int)std::floor(rv + 0.5f);
+    if (pu < 0 || pv < 0 || pu >= w || pv >= h) { out[i] = 0; continue; }
+    const uint16_t z = mm[(size_t)pv * step_px + pu];
+    out[i] = mdp::obsgen::depth_u8(DM, z == 0 ? 0.f : (float)z * 0.001f);
+  }
+}
+
+void RobotEnv::set_layer_depth(const uint8_t* d) {
+  if (!cldep_.empty()) std::memcpy(cldep_.data(), d, cldep_.size());
+}
+
+void RobotEnv::layer_from_image(const uint16_t* mm, int w, int h, int step_px, float fx, float fy, float cx, float cy, uint8_t* out) const {
+  const sim::DepthModel& DM = b_.cfg.depth;
+  const sim::DepthSpec& D = DM.spec;
+  for (int i = 0, n = layer_n(); i < n; ++i) {
+    float u, v;
+    sim::cam_uv(b_.cfg, i, &u, &v);
+    if (!sim::depth_valid(D, u, v)) { out[i] = 0; continue; }
     const float ru = cx + (u - D.cx) * (fx / D.fx), rv = cy + (v - D.cy) * (fy / D.fy);
     const int pu = (int)std::floor(ru + 0.5f), pv = (int)std::floor(rv + 0.5f);
     if (pu < 0 || pv < 0 || pu >= w || pv >= h) { out[i] = 0; continue; }

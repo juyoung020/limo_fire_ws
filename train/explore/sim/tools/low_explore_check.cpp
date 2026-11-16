@@ -295,7 +295,7 @@ int main(int argc, char** argv) {
     tap.robot = &robot;
     std::vector<int16_t> lm;
     std::vector<uint32_t> tr;
-    std::vector<uint8_t> vox, img;
+    std::vector<uint8_t> vox, img, ldep;
     std::vector<float> pts, o1d;
     std::vector<sim::EnvState> st_prep;
     std::vector<int32_t> cand, ccur;
@@ -481,6 +481,10 @@ int main(int argc, char** argv) {
       cpu.low_prepare(act.data());
       cpu.get_obs(img, o1d);
       robot.set_depth(img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE);
+      if (robot.layer_n() > 0) {   // 깊이 층 전용 격자: 시뮬이 준비 단계에서 그린 것을 실물 쪽에 그대로 (실물 노드는 영상에서 layer_from_image)
+        cpu.get_layer_depth(ldep);
+        robot.set_layer_depth(ldep.data());
+      }
       { const auto t0 = std::chrono::steady_clock::now(); robot.low_prepare(); t_obs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
       cpu.get_state(st_prep);
       ++n_obs;
