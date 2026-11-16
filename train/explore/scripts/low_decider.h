@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,11 @@ struct Params {
   bool hint = true;         // 후보 모드 글의 "Rules of thumb" (가까운 쪽으로 쏠리게 함 — 평가에서 빼고도 잼)
   bool mem_image = true;    // 후보 모드 지도 사진에 지나온 길 · 지난 목표 표시 (꼴 A)
   int cam = 0;              // 후보 모드 둘째 사진: 0 = 없음 · n = 앞 n 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 (cam_memory.h — 2 × 2 격자, 512 × 384)
+  int mode = 0;             // 0 = periodic (period_steps 마다) · 1 = event: 목표에 다가감(남은 길 ≤ approach_m — 미리 물어 닿기 전에 답) · 목표 실패 · 후보가 크게 바뀜
+                            //   (지금 목표 덩어리가 사라짐 · 점수가 switch_ratio 배 넘는 새 1 순위) · 마지막으로 보낸 지 max_steps 넘음 일 때만 물음 (후보 모드)
+  float approach_m = 1.0f;
+  float switch_ratio = 1.5f;
+  int max_steps = 100;      // event 모드 최대 간격 (걸음 — 10 s)
   int log_k = 8;            // 후보 모드 결정 기록: 최근 K 개 결정(언제 · 고른 번호의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 가장 최근)로 — 0 = 끔
   int image = 0;            // 후보 모드 사진 꼴: 0 = A (지금 지도 한 장) · 1 = B (2 × 2 칸: 지금 · 5 · 15 · 30 s 전, 같은 범위 — 토큰 수 같음, 칸마다 해상도 반)
   float match_r = 1.5f;     // 답의 후보 칸 → 지금 후보 (m). hier 후보 칸은 덩어리에서 로봇에 가장 가까운 칸이라 답을 기다리는 동안 옮겨감 — 0.5 m 면 답의 40 ~ 55 % 를 버림 (low_explore_check, 지연 2.6 s)
@@ -49,6 +55,7 @@ struct Req {
   std::string body;
   std::vector<int> cells;   // 글자 차례의 후보 칸 (후보 모드: 서는 자리 vp)
   std::vector<int> ids;     // 후보 모드: 글자 차례의 안정 번호
+  std::string why;          // 묻는 까닭 (period · start · goal failed or lost · approaching goal · current goal's frontier gone · much better candidate · max interval)
 };
 // 위층 결정 하나 (후보 모드 — 판단 모델 답을 따른 것 · 규칙으로 대신 고른 것 모두)
 struct Dec {
@@ -135,12 +142,22 @@ class Upper {
       urgent = true;
       ++n_fallback_;
     }
-    if (!wait_ && (urgent || last_send_ < 0 || s.step - last_send_ >= p_.period_steps)) {
+    std::string trig;   // 이번에 묻는 까닭 (RViz · 상태 글)
+    if (!wait_) {
+      if (urgent) trig = "goal failed or lost";
+      else if (last_send_ < 0) trig = "start";
+      else if (p_.mode == 0) { if (s.step - last_send_ >= p_.period_steps) trig = "period"; }
+      else trig = event_trigger(v, ctl);
+    }
+    if (!trig.empty()) {
       last_send_ = s.step;
       Req r;
       if (p_.cand ? build_cand(v, ctl, &r) : build(v, F, ctl, &r)) {
         r.id = ++next_id_;
         r.step = s.step;
+        r.why = trig;
+        last_trig_ = trig;
+        ++n_trig_[trig];
         req_ = r;
         wait_ = true;
         ++n_sent_;
@@ -149,6 +166,32 @@ class Upper {
     }
     return changed;
   }
+  // event 모드: 물을 까닭 (없으면 빈 글)
+  std::string event_trigger(const lxc::View& v, lxc::Ctl& ctl) {
+    const sim::EnvState& s = *v.s;
+    if (!ctl.due(s)) return "";   // 1 s 결정 차례에만 봄 (갈래 굴리기는 이 걸음에만 지도를 꺼냄)
+    if (s.step - last_send_ >= p_.max_steps) return "max interval";
+    if (ctl.live(s) && ctl.cmd().target >= 0 && approach_goal_ != ctl.cmd().target && s.p_n > 0) {   // 남은 길 (지금 웨이포인트부터 끝까지)
+      const float rx = (s.x + s.ex - v.W->ox) / v.c->res, ry = (s.y + s.ey - v.W->oy) / v.c->res;
+      const int pi = std::max(0, std::min((int)s.p_i, (int)s.p_n - 1));
+      double len = std::hypot(s.wp[2 * pi] + 0.5 - rx, s.wp[2 * pi + 1] + 0.5 - ry);
+      for (int k = pi; k + 1 < s.p_n; ++k) len += std::hypot((double)(s.wp[2 * k + 2] - s.wp[2 * k]), (double)(s.wp[2 * k + 3] - s.wp[2 * k + 1]));
+      if (len * v.c->res <= p_.approach_m) { approach_goal_ = ctl.cmd().target; return "approaching goal"; }
+    }
+    if (p_.cand && v.lmap) {   // 1 s 결정 차례마다 후보를 새로 만들어 견줌
+      const cand::Out& co = ctl.build_cands(v);
+      const int cur = ctl.cur_id();
+      if (cur >= 0 && ctl.cmd().follow != 0 && ctl.cand_index(cur) < 0 && gone_id_ != cur) { gone_id_ = cur; return "current goal's frontier gone"; }
+      const int ci = cur >= 0 ? ctl.cand_index(cur) : -1;
+      if (!co.c.empty() && ci > 0 && co.c[0].id != better_id_ && co.c[0].score >= p_.switch_ratio * co.c[(size_t)ci].score) {
+        better_id_ = co.c[0].id;
+        return "much better candidate";
+      }
+    }
+    return "";
+  }
+  const std::string& last_trigger() const { return last_trig_; }
+  const std::map<std::string, long>& trigger_counts() const { return n_trig_; }
   // 요청 본문 (combine_run.cpp 판단 모델 가지 — 후보 특징 → dec::Cand, render_png, build_body)
   bool build(const lxc::View& v, const float* F, const lxc::Ctl& ctl, Req* r) const {
     const sim::EnvState& s = *v.s;
@@ -440,6 +483,9 @@ class Upper {
   Req req_;
   bool wait_ = false;
   int last_send_ = -1;
+  int approach_goal_ = -1, gone_id_ = -1, better_id_ = -1;
+  std::string last_trig_;
+  std::map<std::string, long> n_trig_;
   const camm::Memory* cam_ = nullptr;
   std::vector<Dec> decs_;
   std::deque<std::pair<int, std::vector<int16_t>>> hist_;   // 꼴 B 지난 지도 (걸음, 지도)

@@ -95,6 +95,7 @@ class LowRlNode : public rclcpp::Node {
     // 위층 판단 모델 (upper:=decider — scripts/low_decider.h). 주기 = 로봇에서 잰 답 시간(약 2.6 s) + 여유
     const std::string dec_url = declare_parameter<std::string>("decider_url", "http://127.0.0.1:8171");
     const double dec_period = declare_parameter<double>("decider_period", 3.0);
+    const std::string dec_mode_s = declare_parameter<std::string>("decider_mode", "periodic");
     const double dec_timeout = declare_parameter<double>("decider_timeout", 8.0);
     const std::string dec_input = declare_parameter<std::string>("decider_input", "both");
     lxd::Params dp;
@@ -132,6 +133,7 @@ class LowRlNode : public rclcpp::Node {
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
     if (upper_ == "decider") {
       dp.period_steps = std::max(1, (int)std::lround(dec_period / dt()));
+      dp.mode = dec_mode_s == "event" ? 1 : 0;   // periodic (decider_period 마다) · event (목표에 다가감 · 실패 · 후보 크게 바뀜 · 최대 간격 — scripts/low_decider.h)
       dp.timeout_steps = std::max(1, (int)std::lround(dec_timeout / dt()));
       dec_up_ = std::make_unique<lxd::Upper>(dp);
       dp_cand_ = dp.cand;
@@ -573,6 +575,8 @@ class LowRlNode : public rclcpp::Node {
         n += std::snprintf(buf + n, sizeof buf - (size_t)n, "\ndecider: %s #%d  %.1f s ago  latency %.1f s  ans %ld/%ld%s%s", dec_up_->last_choice().empty() ? "-" : dec_up_->last_choice().c_str(),
                            dec_up_->last_pick_id(), as >= 0 ? (env_->state().step - as) * dt_s : -1.0, dec_up_->last_ms() / 1000.0, dec_up_->n_ans(), dec_up_->n_sent(),
                            dec_up_->last_err().empty() ? "" : "  err: ", dec_up_->last_err().c_str());
+        if (!dec_up_->last_trigger().empty() && n < (int)sizeof buf)
+          n += std::snprintf(buf + n, sizeof buf - (size_t)n, "\nasked because: %s%s", dec_up_->last_trigger().c_str(), dec_up_->waiting() ? " (waiting)" : "");
       }
       ot.text = buf;
       pub_cand_txt_->publish(ot);

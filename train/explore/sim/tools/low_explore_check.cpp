@@ -35,6 +35,7 @@ long n_step = 0, n_tdec = 0;
 // 가짜 판단 모델: 본문 해시로 글자, lat 걸음 뒤 답 (now 는 부르는 쪽이 걸음마다 맞춤)
 struct FakeModel : lxd::Transport {
   int lat = 26, now = 0;
+  bool first = false;   // --dec-fake A: 늘 글자 A (후보 0 번 = 규칙 1 순위) — 지연 · 주기만의 비용을 잼
   struct P { int ready; lxd::Answer a; std::string body; };
   std::vector<P> q;
   std::vector<std::string> sent;   // 보낸 본문 (두 쪽 비교)
@@ -63,7 +64,7 @@ struct FakeModel : lxd::Transport {
     lxd::Answer a;
     a.id = r.id;
     a.ok = true;
-    a.choice = std::string(1, (char)('A' + (int)(h % (uint64_t)(r.cells.size()))));
+    a.choice = std::string(1, (char)('A' + (first ? 0 : (int)(h % (uint64_t)(r.cells.size())))));
     q.push_back({now + lat, a, r.body});
     sent.push_back(r.body);
   }
@@ -116,8 +117,10 @@ int main(int argc, char** argv) {
   bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true;
   int dec_img = 0, dec_logk = 8;
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
+  int dec_mode = 0;
   std::string dec_input = "both", dec_url;
-  std::string ep_log;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
+  std::string ep_log, lat_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 아는 넓이 m² 30/60/90/120/180 s)
+  bool dec_fake_a = false;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
   int max_ep = 0;
   bool close_lidar = false;
   bool cand_on = false, open_scene = false;
@@ -161,11 +164,14 @@ int main(int argc, char** argv) {
     else if (a == "--dec-log-k") dec_logk = std::stoi(nx());
     else if (a == "--upper") { const std::string u = nx(); if (u != "fuel" && u != "slot0" && u != "decider" && u != "cand") throw std::runtime_error("--upper 는 fuel · slot0 · decider · cand"); use_fuel = u == "fuel"; use_dec = u == "decider"; use_cand = u == "cand"; }
     else if (a == "--dec-period") dec_period = std::stod(nx());
+    else if (a == "--dec-mode") dec_mode = nx() == "event" ? 1 : 0;
     else if (a == "--dec-latency") dec_lat = std::stod(nx());
     else if (a == "--dec-input") dec_input = nx();
     else if (a == "--dec-match") dec_match = std::stod(nx());
     else if (a == "--dec-url") dec_url = nx();
     else if (a == "--ep-log") ep_log = nx();
+    else if (a == "--lat-log") lat_log = nx();
+    else if (a == "--dec-fake") dec_fake_a = nx() == "A";
     else if (a == "--max-ep") max_ep = std::stoi(nx());
     else if (a == "--fuel-v") fo.v_eff = std::stof(nx());
     else if (a == "--fuel-w") fo.w_eff = std::stof(nx());
@@ -215,6 +221,7 @@ int main(int argc, char** argv) {
     const double dt = (double)hc.cfg.substeps * hc.cfg.dt;
     lxd::Params dp;
     dp.period_steps = std::max(1, (int)std::lround(dec_period / dt));
+    dp.mode = dec_mode;
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
     dp.cand = dec_cand; dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img; dp.log_k = dec_logk;
@@ -222,6 +229,10 @@ int main(int argc, char** argv) {
     lxd::Upper us(dp), ur(dp);
     FakeModel ms, mr;
     ms.lat = mr.lat = std::max(0, (int)std::lround(dec_lat / dt));
+    ms.first = mr.first = dec_fake_a;
+    long l_fb0 = 0, l_rw = 0;
+    double l_area[5] = {-1, -1, -1, -1, -1};
+    const double l_mark[5] = {30, 60, 90, 120, 180};
     std::unique_ptr<limo_fire_rl::DeciderClient> real;
     std::vector<lxd::Answer> real_log;
     double real_ms = 0, real_max = 0;
@@ -431,6 +442,18 @@ int main(int argc, char** argv) {
           if (first_bad < 0) first_bad = t;
           if (std::getenv("LOW_CHECK_VERBOSE")) std::printf("  걸음 %d 판 끝 시뮬 %d 실물 %d\n", t, dn[0], robot.done());
         }
+        if (!lat_log.empty()) {
+          if (FILE* lf2 = std::fopen(lat_log.c_str(), "a")) {
+            const long fb = (n_fb_all + us.n_fallback()) - l_fb0;
+            std::fprintf(lf2, "%ld\t%d\t%.1f\t%ld\t%ld", n_ep, dn[0], robot.state().step * dt, fb, l_rw);
+            for (int q = 0; q < 5; ++q) std::fprintf(lf2, "\t%.1f", l_area[q]);
+            std::fprintf(lf2, "\n");
+            std::fclose(lf2);
+          }
+          for (double& x : l_area) x = -1;
+          l_rw = 0;
+          l_fb0 = n_fb_all + us.n_fallback();
+        }
         if (!ep_log.empty()) {
           if (FILE* ef = std::fopen(ep_log.c_str(), "a")) {
             std::fprintf(ef, "%ld\t%d\t%.1f\t%ld\t%ld\n", n_ep, dn[0], robot.state().step * (double)hc.cfg.substeps * hc.cfg.dt, n_dec - ep_dec0, n_sw - ep_sw0);
@@ -462,6 +485,16 @@ int main(int argc, char** argv) {
       }
       cpu.get_low_rl(R); cpu.get_low(L);
       cs.after_step(st[0], R[0], L[0]);
+      if (!lat_log.empty() && use_dec) {
+        if (L[0].reach_step == st[0].step && L[0].reached > 0 && us.waiting()) ++l_rw;
+        const double ts = st[0].step * dt;
+        for (int q = 0; q < 5; ++q)
+          if (l_area[q] < 0 && ts >= l_mark[q]) {
+            long kn = 0;
+            for (int16_t v_ : lm) kn += v_ != sim::kUnknown;
+            l_area[q] = kn * hc.cfg.res * hc.cfg.res;
+          }
+      }
       if (cand_on) {   // 후보 기억: 자취 · 실패 자리 (Ctl::after_step 과 같은 판정 — 막힘 신호 · 경로 끝 밖 · 경로 없음)
         const sim::EnvState& e = robot.state();
         const sim::LowRl& rl = robot.low_rl();
