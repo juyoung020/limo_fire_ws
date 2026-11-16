@@ -159,12 +159,13 @@ inline void plan_ref(const EnvBatch& b, EnvState& e, int env, int k) {
     if (start < 0) return false;
     for (int y = y0; y <= y1; ++y)
       for (int x = x0; x <= x1; ++x) { dist[(size_t)y * m.gw + x] = -1; tent[(size_t)y * m.gw + x] = 1 << 30; }
-    std::vector<int32_t> bk[4];
+    thread_local std::vector<int32_t> bk[4], cur;   // 층 통 (용량은 걸음 사이에 남김 — 할당 없음)
+    for (auto& q : bk) q.clear();
     bk[0].push_back(start);
     tent[start] = 0;
     for (int t = 0;; ++t) {
       if (bk[0].empty() && bk[1].empty() && bk[2].empty() && bk[3].empty()) return far_goal(mode);
-      std::vector<int32_t> cur;
+      cur.clear();
       cur.swap(bk[t & 3]);
       int64_t best = -1;   // 층 t 에서 정해진 목표 칸 중 (목표까지 거리², 칸) 가장 작은 것 — GPU 와 같은 규칙
       for (int v : cur) {

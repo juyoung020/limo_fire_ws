@@ -24,10 +24,10 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
     for (int y = e.kb_y0; y <= e.kb_y1; ++y)
       for (int x = e.kb_x0; x <= e.kb_x1; ++x) n_tot += mdp::frontier_cell(mv, x, y) ? 1 : 0;
     thread_local std::vector<uint8_t> flag;
-    thread_local std::vector<int32_t> qa, qb, dist, label;
+    thread_local std::vector<int32_t> qa, qb, dist, label, pre;
     thread_local std::vector<mdp::Frontier> out;
     const size_t n = (size_t)m.gw * m.gh;
-    if (flag.size() < n) { flag.resize(n); qa.resize(n); qb.resize(n); dist.resize(n); label.resize(n); }
+    if (flag.size() < n) { flag.resize(n); qa.resize(n); qb.resize(n); dist.resize(n); label.resize(n); pre.resize((size_t)(m.gw + 2) * m.gh); }
     if (out.size() < (size_t)mdp::kReachCap + 1) out.resize(mdp::kReachCap + 1);
     int rx, ry;
     cell_of(c, m, e.x + e.ex, e.y + e.ey, &rx, &ry);
@@ -41,6 +41,7 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh)
       sb.rbc = mdp::robot_cells(c.close_radius, c.res);
       // 깊이 카메라 층 (계층형 cam_on). 합친 탐사 low_explore 2 는 안 씀 — 닫힘은 로봇 지도(라이다)로만 (mdp/frontier.h 머리글 "합친 탐사의 닫힘", 켜야 씀)
       sb.cam = b.cvox && c.low_explore != 2 ? b.cvox + (size_t)env * c.size * c.size : nullptr;
+      sb.pre = pre.data();   // 원판 검사 지름길 (값 같음 — GPU reach_block 과 비트 비교는 env_verify)
     }
     // reach_summary 와 같음: 문턱 1 로 모든 덩어리를 out 에, 문턱은 고를 때
     const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, out.data(), (int)out.size());

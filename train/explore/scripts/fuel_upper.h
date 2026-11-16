@@ -87,11 +87,12 @@ struct Work {
   std::vector<int32_t> qa, qb, dist, label, cd, cd2, room;
   std::vector<int32_t> bk[8];
   std::vector<uint8_t> narrow;
+  std::vector<int32_t> pre;   // frontier_search 지름길 (SearchBuf::pre, (w + 2) × h ≤ 2 n)
   std::vector<mdp::Frontier> out;
   std::vector<uint64_t> key2;
   Stat st;
   void fit(int n) {
-    if ((int)flag.size() < n) { flag.resize(n); qa.resize(n); qb.resize(n); dist.resize(n); label.resize(n); cd.assign(n, -1); cd2.assign(n, -1); room.assign(n, -1); narrow.assign(n, 0); }
+    if ((int)flag.size() < n) { flag.resize(n); qa.resize(n); qb.resize(n); dist.resize(n); label.resize(n); cd.assign(n, -1); cd2.assign(n, -1); room.assign(n, -1); narrow.assign(n, 0); pre.resize(2 * (size_t)n); }
     if (out.size() < (size_t)mdp::kReachCap + 1) { out.resize(mdp::kReachCap + 1); key2.resize(mdp::kReachCap + 1); }
   }
 };
@@ -343,6 +344,7 @@ inline int decide(const In& in, const Opt& o, Mem& mem, Work& w) {
   sb.close_min = c.close_min;
   sb.rbc = mdp::robot_cells(c.close_radius, c.res);
   sb.cam = in.cam;
+  sb.pre = w.pre.data();
   const mdp::Robot rb = mdp::obsgen::reach_robot(c);
   const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, rb, 1, sb, w.out.data(), (int)w.out.size());
   const int n_out = std::min(r.n_found, (int)w.out.size());

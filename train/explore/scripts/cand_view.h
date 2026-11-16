@@ -160,6 +160,7 @@ struct Work {
   std::vector<int32_t> bknown, btotal;   // 굵은 칸마다 아는 칸 · 맵 안 칸 수
   std::vector<double> bnew, bcov;        // 굵은 칸마다 이 시점이 새로 볼 칸 (어림) · 고른 후보들이 덮은 칸 (어림)
   std::vector<int32_t> btouch;
+  std::vector<int32_t> lab_n, lab_at;    // 덩어리 묶기 (라벨별 칸 수 · 노드 번호)
   void fit(int n) {
     fw.fit(n);
     if ((int)dto.size() < n) { dto.assign(n, 0); room.assign(n, -1); stamp.assign(n, 0); seen.assign(n, 0); }
@@ -244,14 +245,15 @@ struct Run {
         dmin(std::max((double)o_.vp_min, (double)c.low_pass_r)), t_start(std::chrono::steady_clock::now()), t_mark(t_start) {}
 
   void lap(int k) { const auto now = std::chrono::steady_clock::now(); out.ms_part[k] += std::chrono::duration<double, std::milli>(now - t_mark).count(); t_mark = now; }
-  Out& done() { out.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_start).count(); return out; }
+  void done() { out.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_start).count(); }
 
   // ---- 바탕 (여러 단계가 같이 씀)
   bool pass(int idx) const { return (fw.flag[idx] & 1) && fw.dist[idx] >= 0; }   // 로봇에서 BFS 로 번진 갈 수 있는 칸
   double dto_m(int idx) const { return w.dto[idx] * res / 3.0; }                 // 막힘까지 (m)
   double len_m(int idx) const { return fw.cd[idx] >= 0 ? fw.cd[idx] * 0.2 * res : 1e6; }   // 로봇에서 길 (모따기, m)
   // 시점에서 로봇 쪽으로 모따기 거리를 거슬러 감 (visit 가 거짓이면 멈춤)
-  void descend(int idx, const std::function<bool(int)>& visit) const {
+  template <class Visit>
+  void descend(int idx, const Visit& visit) const {
     int at = idx;
     for (int g = 0; g < 4 * n && at >= 0 && fw.cd[at] > 0; ++g) {
       if (!visit(at)) return;
@@ -307,6 +309,7 @@ struct Run {
     sb.close_min = c.close_min;
     sb.rbc = mdp::robot_cells(c.close_radius, c.res);
     sb.cam = in.cam;
+    sb.pre = fw.pre.data();
     const int rx = (int)std::floor(rxf), ry = (int)std::floor(ryf);
     const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, fw.out.data(), (int)fw.out.size());
     n_out = std::min(r.n_found, (int)fw.out.size());
@@ -365,10 +368,15 @@ struct Run {
       return !mdp::looked_cell(mv, sb.look, sb.vis, ws, idx % gw, idx / gw);
     };
     std::vector<fu::Node> nodes;
-    {
-      std::vector<std::vector<int>> by(n_out);
-      for (int q = 0; q < nr0; ++q) { const int idx = fw.qa[q]; if (eligible(idx)) by[fw.label[idx]].push_back(idx); }
-      for (int l = 0; l < n_out; ++l) if (!by[l].empty()) { fu::Node nd; nd.cells.swap(by[l]); nodes.push_back(std::move(nd)); }
+    {   // 라벨별로 (번진 차례 그대로) — 두 번 훑어 세고 나눔
+      std::vector<int32_t>& cnt = w.lab_n;
+      cnt.assign(n_out, 0);
+      int ne = 0;
+      for (int q = 0; q < nr0; ++q) { const int idx = fw.qa[q]; if (eligible(idx)) { fw.qb[ne++] = idx; cnt[fw.label[idx]] += 1; } }
+      std::vector<int32_t>& at = w.lab_at;
+      at.assign(n_out, -1);
+      for (int l = 0; l < n_out; ++l) if (cnt[l] > 0) { at[l] = (int)nodes.size(); nodes.emplace_back(); nodes.back().cells.reserve(cnt[l]); }
+      for (int e = 0; e < ne; ++e) nodes[at[fw.label[fw.qb[e]]]].cells.push_back(fw.qb[e]);
     }
     const auto fill = [&](fu::Node& nd) {   // 가운데 · 대표 칸 (BFS 가장 가까운 칸)
       double sx = 0, sy = 0;
@@ -391,8 +399,7 @@ struct Run {
 
   // ---- 5 바탕: 로봇에서 모따기 길 (가는 시간) · 굵은 칸마다 아는 칸 수 (예상 넓이)
   void robot_dist() {
-    std::vector<int32_t> cells0(fw.qa.begin(), fw.qa.begin() + nr0);
-    fu::detail::chamfer(start, gw, gh, [&](int idx) { return pass(idx); }, cells0, nr0, fw.cd, fw.bk);
+    fu::detail::chamfer(start, gw, gh, [&](int idx) { return pass(idx); }, fw.qa, nr0, fw.cd, fw.bk);   // 번진 칸 = qa[0 … nr0) (chamfer 는 읽기만)
   }
   void coarse_stats() {
     if (!B) return;
@@ -607,6 +614,7 @@ struct Run {
       const int ra = room_of(a.vp);
       for (const Cand& b : out.c) a.room_left += &a != &b && ra >= 0 && room_of(b.vp) == ra;
     }
+    if (std::none_of(out.c.begin(), out.c.end(), [](const Cand& a) { return a.recent_fail != 0; })) return;   // 대개 — 차례 그대로
     std::vector<size_t> ord;
     for (size_t i = 0; i < out.c.size(); ++i) if (!out.c[i].recent_fail) ord.push_back(i);
     for (size_t i = 0; i < out.c.size(); ++i) if (out.c[i].recent_fail) ord.push_back(i);
@@ -625,12 +633,12 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
   w.fit(in.W->gw * in.W->gh);
   detail::Run R(in, o, mem, w, out);
   // 1. 프론티어 칸
-  if (!R.frontier()) { R.lap(0); mem.prev.clear(); return R.done(); }
+  if (!R.frontier()) { R.lap(0); mem.prev.clear(); R.done(); return out; }
   R.lap(0);
   R.dist_maps();
   R.lap(1);
   // 2. 덩어리
-  const std::vector<fu::Node> nodes = R.clusters();
+  std::vector<fu::Node> nodes = R.clusters();
   out.n_clu = (int)nodes.size();
   R.lap(2);
   R.robot_dist();
@@ -652,13 +660,14 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
   for (const detail::Run::Pick& p : R.select(live)) {
     const detail::Run::Live& L = live[p.i];
     out.c.push_back(R.describe(L, nodes[L.node], p));
-    out.cells.push_back(nodes[L.node].cells);
+    out.cells.push_back(std::move(nodes[L.node].cells));   // 이 뒤로 nodes 칸은 안 씀 (기억은 anc 만)
   }
   R.finish_list();
   R.lap(5);
   mem.prev.clear();   // 다음 결정의 6 번호 잇기용: 쉬지 않은 모든 덩어리 (고르지 않은 것도 — 번호가 상한 밖에서도 이어지게)
   for (const detail::Run::Live& L : live) mem.prev.push_back(Mem::Prev{L.id, nodes[L.node].anc, L.vp, L.age, (float)(L.g / (L.t + o.t0))});
-  return R.done();
+  R.done();
+  return out;
 }
 
 }  // namespace cand

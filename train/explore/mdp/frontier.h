@@ -119,6 +119,14 @@ DEV bool standable(const MapView& m, int x, int y, Robot rb) {
   return true;
 }
 
+// 낮은 쪽부터 첫 1 비트 자리 (v ≠ 0)
+DEV int ctz32(uint32_t v) {
+#ifdef __CUDA_ARCH__
+  return __ffs((int)v) - 1;
+#else
+  return __builtin_ctz(v);
+#endif
+}
 // 칸 비트 판 (줄마다 낱말 ws 개, 칸 x 는 낱말 x / 32 의 비트 x % 32 — sim fmap 과 같은 꼴)
 DEV bool plane_bit(const uint32_t* P, int ws, int x, int y) { return (P[y * ws + (x >> 5)] >> (x & 31)) & 1u; }
 // 칸 바이트 판 (sim cam 층 꼴: 칸마다 한 바이트, 줄 stride) 이 (x, y) 둘레 반경 rb 원판 안에 0 아닌 칸이 있나 (맵 밖은 안 봄)
@@ -174,6 +182,8 @@ struct SearchBuf {
   int close_min = 1;                // 이 칸 수 미만 덩어리는 닫힘을 안 막음
   Robot rbc{-1, -1};                // vis 가 있을 때 번지기의 몸통 반경 = 계획기 반경 (r < 0 이면 rb)
   const uint8_t* cam = nullptr;     // vis 가 있을 때 계획기가 더 막는 칸 (sim 깊이 카메라 층 — 칸마다 한 바이트, 줄 = MapView::stride, 0 아님 = 막힘)
+  int32_t* pre = nullptr;           // 호스트 전용 지름길 ((w + 2) × h 칸): 있으면 vis 의 plan_ok 원판 검사를 줄마다 막힘(지도 막힘 + cam) 누적 수로 —
+                                    //   칸마다 (2r+1)² 대신 2r+1 번, 줄 누적은 번지기가 처음 건드릴 때만 (값 같음, 시뮬·실물). GPU 는 안 줌
 };
 
 struct SearchResult {
@@ -257,10 +267,41 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
   if (!r.start_free) return r;
   // 번지기: 설 수 있는 칸, 4 이웃 (닫힘 판정과 같은 flood fill). 닫힘 규칙(b.vis)이면 계획기가 설 수 있는 칸 (plan_ok)
   const Robot rc = b.rbc.r < 0 ? rb : b.rbc;
+  // 지름길 (b.pre): 줄 y 의 [x0, x1] 안 막힘 수 = pre[y (w+1) + x1 + 1] − pre[y (w+1) + x0]. 원판 = 줄마다 반폭 hw[dy] (dx² ≤ r2 − dy²)
+  const int W1 = m.w + 1;
+  int hw[65];
+  const bool fast = b.vis && b.pre && rc.r <= 32;
+  int32_t* row_ok = fast ? b.pre + W1 * m.h : nullptr;   // 줄 누적을 만들었나 (줄마다)
+  if (fast) {
+    for (int y = 0; y < m.h; ++y) row_ok[y] = 0;
+    for (int dy = -rc.r; dy <= rc.r; ++dy) {
+      int k = 0;
+      while ((k + 1) * (k + 1) + dy * dy <= rc.r2) ++k;
+      hw[dy + rc.r] = k;
+    }
+  }
+  const auto disc_clear = [&](int x, int y) {   // standable(rc) · !byte_near(cam, rc) 와 같음
+    if (cls_at(m, x, y) != kFree) return false;
+    for (int dy = -rc.r; dy <= rc.r; ++dy) {
+      const int v = y + dy;
+      if (v < 0 || v >= m.h) continue;
+      if (!row_ok[v]) {
+        int32_t* P = b.pre + v * W1;
+        P[0] = 0;
+        for (int u = 0; u < m.w; ++u) P[u + 1] = P[u] + ((cls_at(m, u, v) == kOcc || (b.cam && b.cam[v * m.stride + u])) ? 1 : 0);
+        row_ok[v] = 1;
+      }
+      const int x0 = x - hw[dy + rc.r] < 0 ? 0 : x - hw[dy + rc.r], x1 = x + hw[dy + rc.r] >= m.w ? m.w - 1 : x + hw[dy + rc.r];
+      if (b.pre[v * W1 + x1 + 1] != b.pre[v * W1 + x0]) return false;
+    }
+    return true;
+  };
   const auto plan_ok = [&](int x, int y) {
     uint8_t& f = b.flag[y * m.w + x];
     if (f & 8) return (f & 16) != 0;
-    const bool ok = !b.vis ? standable(m, x, y, rb) : (standable(m, x, y, rc) && !(b.cam && byte_near(b.cam, m.stride, m, x, y, rc)));
+    const bool ok = !b.vis ? standable(m, x, y, rb)
+                    : fast ? disc_clear(x, y)
+                           : (standable(m, x, y, rc) && !(b.cam && byte_near(b.cam, m.stride, m, x, y, rc)));
     f |= ok ? 24 : 8;
     return ok;
   };
@@ -291,13 +332,20 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
     const auto pass = [&](int x, int y) {
       return plan_ok(x, y) || (plane_bit(b.vis, b.tws, x, y) && cls_at(m, x, y) != kOcc && !(b.cam && b.cam[y * m.stride + x]));
     };
-    for (int i = 0; i < n; ++i) {
-      const int x = i % m.w, y = i / m.w;
-      if ((b.flag[i] & 1) || !plane_bit(b.vis, b.tws, x, y) || !pass(x, y)) continue;
-      b.flag[i] |= 1;
-      if (b.dist) b.dist[i] = -1;
-      b.qa[tail++] = i;
-    }
+    for (int y = 0; y < m.h; ++y)   // 칸 차례(줄 · 열) 그대로, 비트 없는 낱말(32 칸)은 건너뜀
+      for (int wi = 0; wi * 32 < m.w; ++wi) {
+        uint32_t bits = b.vis[y * b.tws + wi];
+        while (bits) {
+          const int x = wi * 32 + ctz32(bits);
+          bits &= bits - 1;
+          if (x >= m.w) break;
+          const int i = y * m.w + x;
+          if ((b.flag[i] & 1) || !pass(x, y)) continue;
+          b.flag[i] |= 1;
+          if (b.dist) b.dist[i] = -1;
+          b.qa[tail++] = i;
+        }
+      }
     head = 0;
     while (head < tail) {
       const int idx = b.qa[head++];
