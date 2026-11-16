@@ -47,6 +47,9 @@ struct Opt {
   float unk_depth_m = 0.0f;   // m — 광선마다 처음 만난 모름에서 이 길이까지만 셈 (0 = 끝까지). 1 m 로 줄이면 정답 견줌이 나빠짐 (0.75 → 0.30, bookstore 씨앗 4)
   float path_unk_m = 0.0f;    // m — 길(시점 → 로봇)이 시점에서 path_skip_m 넘게 떨어진 곳에서는 모름에서 이만큼 떨어져야 (빔 줄 사이 가는 빈 칸 길 · 벽 틈 너머로 가는 길 막기, 0 = 끔)
   float path_skip_m = 0.6f;   // m — 시점 둘레 이 길이는 검사 안 함 (프론티어 곁이라 늘 모름 가까움)
+  float coarse_m = 0.5f;      // m — 예상 넓이를 이 크기 굵은 칸 수로: 아는 칸 몫이 known_frac 미만인 굵은 칸이 그 자리에서 보면 넘어가는 수 (사용자 목표: 공간을 "대충" 빨리 앎 —
+                              //   이미 대충 아는 굵은 칸 안 작은 모름 구멍은 값 0 → 그런 덩어리는 쉼). 0 = 칸 단위 모름 넓이 (옛 방식)
+  float known_frac = 0.5f;    // 굵은 칸을 "대충 앎" 으로 보는 아는 칸 몫 (잠정)
   float sliver_m = 0.0f;      // m — 예상 넓이는 아는 칸에서 이 거리 이상인 모름만 (빔 사이 가는 모름 줄 빼기, 0 = 끔 — 0.1 m 는 정답 견줌에 차이 없음)
 };
 
@@ -89,6 +92,7 @@ struct Out {
   int n_clu = 0;          // 자격 프론티어 덩어리 (합침·나눔 뒤)
   int n_dormant = 0;      // 시점이 없어 쉬는 덩어리
   int n_near = 0;         // 그중 로봇 곁(대표 칸이 vp_min 안) — 로봇 몸·뒤 사각지대 몫
+  int n_pocket = 0;       // 그중 구멍: 덩어리 둘레 굵은 칸이 모두 이미 대충 앎 (coarse_m) — 값 0 으로 쉼
   int rotate = 0;         // 후보 0 개인데 쉬는 덩어리가 모두 로봇 곁 → 제자리 회전으로 봄
   double ms = 0;          // 이 결정에 걸린 시간 (ms)
   double ms_part[6] = {0, 0, 0, 0, 0, 0};   // 찾기 · 거리 지도·방 · 덩어리 · 로봇 거리 · 시점 · 고르기
@@ -145,6 +149,9 @@ struct Work {
   std::vector<uint32_t> stamp;       // 덮음 표시 (번호가 cov_id 이면 덮임) · 한 후보 안 겹침 막기
   uint32_t cov_id = 1, seen_id = 1;
   std::vector<uint32_t> seen;
+  std::vector<int32_t> bknown, btotal;   // 굵은 칸마다 아는 칸 · 맵 안 칸 수
+  std::vector<double> bnew, bcov;        // 굵은 칸마다 이 시점이 새로 볼 칸 (어림) · 고른 후보들이 덮은 칸 (어림)
+  std::vector<int32_t> btouch;
   void fit(int n) {
     fw.fit(n);
     if ((int)dto.size() < n) { dto.assign(n, 0); dtu.assign(n, 0); dtk.assign(n, 0); room.assign(n, -1); stamp.assign(n, 0); seen.assign(n, 0); }
@@ -343,12 +350,47 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
     return std::atan2(at / gw + 0.5 - ryf, at % gw + 0.5 - rxf);
   };
   const auto t_of = [&](int idx) { return len_m(idx) / o.v_eff + fu::detail::wrap(first_dir(idx) - th) / o.w_eff; };
+  // ---- 굵은 칸 (coarse_m) — 상자 안 굵은 칸마다 아는 칸 수
+  const int B = o.coarse_m > 0.f ? std::max(1, (int)std::lround(o.coarse_m * c.inv_res)) : 0;
+  const int bw = B ? (gw + B - 1) / B : 0, bh = B ? (gh + B - 1) / B : 0;
+  (void)bh;
+  if (B) {
+    if ((int)w.bknown.size() < bw * bh) { w.bknown.assign(bw * bh, 0); w.btotal.assign(bw * bh, 0); w.bnew.assign(bw * bh, 0.0); w.bcov.assign(bw * bh, 0.0); }
+    const int qx0 = bx0 / B, qy0 = by0 / B, qx1 = bx1 / B, qy1 = by1 / B;
+    for (int qy = qy0; qy <= qy1; ++qy)
+      for (int qx = qx0; qx <= qx1; ++qx) {
+        int kn = 0, tot = 0;
+        for (int y = qy * B; y < std::min(gh, qy * B + B); ++y)
+          for (int x = qx * B; x < std::min(gw, qx * B + B); ++x) { ++tot; kn += mdp::cls_at(mv, x, y) != mdp::kUnk; }
+        w.bknown[qy * bw + qx] = kn; w.btotal[qy * bw + qx] = tot; w.bnew[qy * bw + qx] = 0.0; w.bcov[qy * bw + qx] = 0.0;
+      }
+  }
   // ---- 5. 시점
   const int step = std::max(1, mdp::hier::kGainRays / std::max(1, o.rays));
   const int Ud = o.unk_depth_m > 0.f ? std::max(1, (int)std::lround(o.unk_depth_m * c.inv_res)) : 1 << 20;
+  const double ray_k = (double)step * 2.0 * M_PI / mdp::hier::kGainRays;   // 광선 무게 t → 칸 수 (부채꼴 t · dθ)
   const auto gain = [&](int vp, bool marginal) {   // 광선이 닿는 모름 넓이 (칸 × t 무게 — cand_gain_ray 와 같은 무게). marginal: 덮인 칸 빼고, 같은 후보 안 겹침 한 번만
     long g = 0;
     ++w.seen_id;
+    if (B) {   // 굵은 칸: 대충 앎으로 넘어가는 굵은 칸 수 (marginal: 앞 후보들이 덮은 몫을 아는 칸에 더함)
+      w.btouch.clear();
+      for (int a = 0; a < mdp::hier::kGainRays; a += step)
+        mdp::gain_ray_walk(mv, vp % gw, vp / gw, a, Rg, [&](int x, int y, int t, uint8_t cl) {
+          if (cl != mdp::kUnk) return;
+          const int j = y * gw + x;
+          if (w.seen[j] == w.seen_id || (marginal && w.stamp[j] == w.cov_id)) return;
+          w.seen[j] = w.seen_id;
+          const int b = (y / B) * bw + x / B;
+          if (w.bnew[b] == 0.0) w.btouch.push_back(b);
+          w.bnew[b] += t * ray_k;
+        });
+      for (int b : w.btouch) {
+        const double base = w.bknown[b] + (marginal ? w.bcov[b] : 0.0), need = o.known_frac * w.btotal[b];
+        if (base < need && base + w.bnew[b] >= need) ++g;
+        w.bnew[b] = 0.0;
+      }
+      return g;
+    }
     for (int a = 0; a < mdp::hier::kGainRays; a += step) {
       int t_u = -1;   // 이 광선에서 처음 만난 모름의 t
       mdp::gain_ray_walk(mv, vp % gw, vp / gw, a, Rg, [&](int x, int y, int t, uint8_t cl) {
@@ -364,7 +406,7 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
     }
     return g;
   };
-  const double area_k = (double)step * 2.0 * M_PI / mdp::hier::kGainRays * res * res;   // 광선 무게 t → m² (부채꼴 t · dθ · res²)
+  const double area_k = B ? (double)B * B * res * res : (double)step * 2.0 * M_PI / mdp::hier::kGainRays * res * res;   // 이득 → m² (굵은 칸 넓이 · 부채꼴 t · dθ · res²)
   const auto los = [&](int a, int b) {
     const int x0 = a % gw, y0 = a / gw, x1 = b % gw, y1 = b / gw, N = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
     for (int t = 1; t < N; ++t) {
@@ -399,7 +441,22 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
     int bv = -1;
     long bg = 0;
     double bs = -1, bt = 0;
-    for (int pass_i = 0; pass_i < 3 && bv < 0; ++pass_i) {   // 0: 간격 margin + 모름 간격 · 1: margin · 2: margin_min
+    bool pocket = false;
+    if (B) {   // 구멍: 덩어리 칸과 그 4 이웃이 든 굵은 칸이 모두 이미 대충 앎 → 값 0 (대충 아는 곳 안의 작은 모름은 탐사를 붙들지 않음)
+      pocket = true;
+      for (size_t q = 0; q < nd.cells.size() && pocket; ++q) {
+        const int x0 = nd.cells[q] % gw, y0 = nd.cells[q] / gw;
+        for (int k = -1; k < 4 && pocket; ++k) {
+          int dx = 0, dy = 0;
+          if (k >= 0) mdp::nb4(k, &dx, &dy);
+          const int u = x0 + dx, v = y0 + dy;
+          if (u < 0 || v < 0 || u >= gw || v >= gh) continue;
+          const int b = (v / B) * bw + u / B;
+          if (w.bknown[b] < o.known_frac * w.btotal[b]) pocket = false;
+        }
+      }
+    }
+    for (int pass_i = 0; pass_i < 3 && bv < 0 && !pocket; ++pass_i) {   // 0: 간격 margin + 모름 간격 · 1: margin · 2: margin_min
       if (pass_i == 1 && o.unk_clear <= 0.f) continue;   // 모름 간격을 안 쓰면 0 과 같음
       const bool unk = pass_i == 0;
       const double clear_need = c.close_radius + (pass_i < 2 ? o.margin : o.margin_min);
@@ -433,6 +490,7 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
     if (bv < 0) {   // 쉼 (짝이 있어도 — 그 덩어리는 지금 설 자리가 없음)
       out.n_dormant += 1;
       out.dormant.push_back(nd.anc);
+      out.n_pocket += pocket;
       if (std::hypot(nd.anc % gw + 0.5 - rxf, nd.anc / gw + 0.5 - ryf) * res < dmin) out.n_near += 1;
       continue;
     }
@@ -481,7 +539,14 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
         mdp::gain_ray_walk(mv, vp % gw, vp / gw, a, Rg, [&](int x, int y, int t, uint8_t cl) {
           if (cl != mdp::kUnk) return;
           if (t_u < 0) t_u = t;
-          if (t - t_u < Ud && (sliver3 <= 0 || w.dtk[y * gw + x] >= sliver3)) w.stamp[y * gw + x] = w.cov_id;
+          const int j = y * gw + x;
+          if (B) {   // 굵은 칸: 덮은 몫을 그 굵은 칸에 더함 (칸마다 한 번)
+            if (w.stamp[j] == w.cov_id) return;
+            w.stamp[j] = w.cov_id;
+            w.bcov[(y / B) * bw + x / B] += t * ray_k;
+            return;
+          }
+          if (t - t_u < Ud && (sliver3 <= 0 || w.dtk[j] >= sliver3)) w.stamp[j] = w.cov_id;
         }); }
     Cand cd;
     const Live& L = live[bi];

@@ -351,6 +351,14 @@ class LowRlNode : public rclcpp::Node {
         stop("paused", b, true);
       }
       // 판 끝 (시뮬 finish_step 의 합친 탐사 규칙 — combine_run.cpp:1270)
+      if (ctl_->rough_done(e.step)) {   // 후보 모드 "대충 다 앎" 끝 (Ctl::rough_done — low_explore_check 끝 코드 11 과 같은 판정)
+        finished_ = true;
+        stop("done", "끝: 대충 다 앎 (후보 0 · 남은 덩어리는 대충 아는 곳 안 구멍뿐 10 s)", true);
+        std_msgs::msg::Bool d;
+        d.data = true;
+        pub_done_->publish(d);
+        return;
+      }
       const int dn = env_->done();
       if (dn == mdp::cur::kDeclareOk || dn == mdp::cur::kNoProgress || dn == mdp::cur::kTruncated) {
         finished_ = true;

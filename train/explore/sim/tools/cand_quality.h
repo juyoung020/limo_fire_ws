@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -44,28 +45,60 @@ inline void eval(const cand::In& in, const cand::Opt& o, const cand::Work& w, co
   const double area_k = (double)step * 2.0 * M_PI / mdp::hier::kGainRays * res * res;
   const cand::Work& W = w;
   const auto pass = [&](int idx) { return (W.fw.flag[idx] & 1) && W.fw.dist[idx] >= 0 && W.fw.cd[idx] >= 0; };
-  const auto pred = [&](int vp) {
-    long g = 0;
-    for (int a = 0; a < mdp::hier::kGainRays; a += step) mdp::gain_ray_walk(mv, vp % gw, vp / gw, a, Rg, [&](int, int, int t, uint8_t cl) { if (cl == mdp::kUnk) g += t; });
-    return g * area_k;
-  };
-  const auto truth = [&](int vp) {   // 정답 격자로 광선 — 정답 막힘에서 멈춤, 로봇 지도 모름 칸만 셈
-    long g = 0;
-    const int cx = vp % gw, cy = vp / gw;
-    for (int a = 0; a < mdp::hier::kGainRays; a += step) {
-      // gain_ray_walk 는 로봇 지도 막힘에서 멈추므로 여기서는 정답 격자로 같은 광선 (같은 표)
-      static const int16_t T[64] = {16364,16207,15893,15426,14811,14053,13160,12140,11003,9760,8423,7005,5520,3981,2404,804,-804,-2404,-3981,-5520,-7005,-8423,-9760,-11003,-12140,-13160,-14053,-14811,-15426,-15893,-16207,-16364,-16364,-16207,-15893,-15426,-14811,-14053,-13160,-12140,-11003,-9760,-8423,-7005,-5520,-3981,-2404,-804,804,2404,3981,5520,7005,8423,9760,11003,12140,13160,14053,14811,15426,15893,16207,16364};
-      const int C = T[a], S = T[(a + 48) & 63];
-      const auto rnd = [](int v) { v += 8192; return v >= 0 ? v >> 14 : -((-v + 16383) >> 14); };
-      for (int t = 1; t <= Rg; ++t) {
-        const int x = cx + rnd(t * C), y = cy + rnd(t * S);
-        if (x < 0 || y < 0 || x >= gw || y >= gh) break;
-        if (gt->grid[(size_t)y * gw + x] & sim::kCellBlocked) break;
-        if (mdp::cls_at(mv, x, y) == mdp::kUnk) g += t;
-      }
+  // 예상 · 참 넓이: cand::Opt::coarse_m > 0 이면 굵은 칸(대충 앎으로 넘어가는 굵은 칸 수 × 넓이 — cand_view.h 와 같은 셈), 아니면 칸 모름 넓이
+  const float qcoarse = o.coarse_m > 0.f ? o.coarse_m : 0.5f;   // 잣대는 늘 굵은 칸 (후보를 칸 단위로 만들어도 같은 잣대로 견줌)
+  const int B = std::max(1, (int)std::lround(qcoarse * c.inv_res));
+  const int bw = (gw + B - 1) / B, bh = (gh + B - 1) / B;
+  static std::vector<int32_t> bkn, btot;
+  static std::vector<double> bnew;
+  static std::vector<uint32_t> seen;
+  static uint32_t sid = 0;
+  if (B) {
+    bkn.assign((size_t)bw * bh, 0); btot.assign((size_t)bw * bh, 0); bnew.assign((size_t)bw * bh, 0.0);
+    for (int y = 0; y < gh; ++y)
+      for (int x = 0; x < gw; ++x) { const int q = (y / B) * bw + x / B; btot[q] += 1; bkn[q] += mdp::cls_at(mv, x, y) != mdp::kUnk; }
+  }
+  if ((int)seen.size() < gw * gh) seen.assign((size_t)gw * gh, 0);
+  const double ray_k = (double)step * 2.0 * M_PI / mdp::hier::kGainRays;
+  static const int16_t T[64] = {16364,16207,15893,15426,14811,14053,13160,12140,11003,9760,8423,7005,5520,3981,2404,804,-804,-2404,-3981,-5520,-7005,-8423,-9760,-11003,-12140,-13160,-14053,-14811,-15426,-15893,-16207,-16364,-16364,-16207,-15893,-15426,-14811,-14053,-13160,-12140,-11003,-9760,-8423,-7005,-5520,-3981,-2404,-804,804,2404,3981,5520,7005,8423,9760,11003,12140,13160,14053,14811,15426,15893,16207,16364};
+  // 광선 하나 (gain_ray_walk 와 같은 표·같은 칸) — stop_gt 면 정답 막힘에서, 아니면 로봇 지도 막힘에서 멈춤
+  const auto walk = [&](int vp, int a, bool stop_gt, const std::function<void(int, int, int)>& fn) {
+    const int cx = vp % gw, cy = vp / gw, C = T[a], S = T[(a + 48) & 63];
+    const auto rnd = [](int v) { v += 8192; return v >= 0 ? v >> 14 : -((-v + 16383) >> 14); };
+    for (int t = 1; t <= Rg; ++t) {
+      const int x = cx + rnd(t * C), y = cy + rnd(t * S);
+      if (x < 0 || y < 0 || x >= gw || y >= gh) break;
+      if (stop_gt ? (gt->grid[(size_t)y * gw + x] & sim::kCellBlocked) != 0 : mdp::cls_at(mv, x, y) == mdp::kOcc) break;
+      if (mdp::cls_at(mv, x, y) == mdp::kUnk) fn(x, y, t);
     }
-    return g * area_k;
   };
+  const auto area_of = [&](int vp, bool stop_gt) {
+    ++sid;
+    if (!B) {
+      long g = 0;
+      for (int a = 0; a < mdp::hier::kGainRays; a += step) walk(vp, a, stop_gt, [&](int, int, int t) { g += t; });
+      return g * area_k;
+    }
+    std::vector<int> touch;
+    for (int a = 0; a < mdp::hier::kGainRays; a += step)
+      walk(vp, a, stop_gt, [&](int x, int y, int t) {
+        const int j = y * gw + x;
+        if (seen[j] == sid) return;
+        seen[j] = sid;
+        const int q = (y / B) * bw + x / B;
+        if (bnew[q] == 0.0) touch.push_back(q);
+        bnew[q] += t * ray_k;
+      });
+    long g = 0;
+    for (int q : touch) {
+      const double need = o.known_frac * btot[q];
+      if (bkn[q] < need && bkn[q] + bnew[q] >= need) ++g;
+      bnew[q] = 0.0;
+    }
+    return g * (double)B * B * res * res;
+  };
+  const auto pred = [&](int vp) { return area_of(vp, false); };
+  const auto truth = [&](int vp) { return area_of(vp, true); };   // 정답 격자로 광선 — 정답 막힘에서 멈춤, 로봇 지도 모름 칸만
   const auto t_of = [&](int idx) { return W.fw.cd[idx] >= 0 ? W.fw.cd[idx] * 0.2 * res / o.v_eff : 1e6; };   // 정답 견줌용 (회전 뺌 — 두 무리 같은 잣대)
   // 정답 격자로 정말 갈 수 있나 (시뮬만): 정답 막힘을 몸통 반경(close_radius)만큼 키운 밖의 칸을 로봇 참 자리에서 4 이웃으로 번짐
   static std::vector<uint8_t> gst, gfl;

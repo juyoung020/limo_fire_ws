@@ -29,6 +29,7 @@ struct Params {
   bool avoid = true, redecide = true, stick = true;   // combine_run 기본 (--no-avoid · --no-redecide · --no-stick 로 끔)
   bool use_fuel = true;     // false = combine_run --upper slot0 (fuel 을 안 부르고 늘 아래 slot0 차례 — 피하지 않는 첫 후보)
   fu::Opt fuel;             // --fuel-* (부르는 쪽이 채움)
+  int rough_steps = 100;    // 후보 모드 "대충 다 앎" 끝: 후보 0 개이고 남은 덩어리가 모두 구멍인 상태가 이 걸음 수 이어지면 (EnvCfg::close_idle_s — 닫힘 끝과 같은 10 s)
   bool use_cand = false;    // 위층 후보 = scripts/cand_view.h (서는 자리 ≤ 8 개, 안정 번호). decide 는 후보 고르기(cand_pick)로, 판단 모델은 build_cands → go_cand
   cand::Opt cand;
   static Params from_cfg(const sim::EnvCfg& c) {
@@ -37,6 +38,7 @@ struct Params {
     const double dt = (double)c.substeps * c.dt;
     p.bl_r = c.rec_bl_r > 0.f ? c.rec_bl_r : 0.5f;
     p.bl_steps = c.rec_bl_steps > 0 ? c.rec_bl_steps : (int)std::lround(10.0 / dt);
+    p.rough_steps = std::max(1, (int)std::lround(c.close_idle_s / dt));
     return p;
   }
 };
@@ -118,6 +120,9 @@ class Ctl {
     cand_step_ = s.step;
     const cand::In in{v.c, v.W, v.lmap, v.trail, v.cam, v.s, [this, &s](int cell) { return avoided(cell, s.step); }, cmd_.follow != 0 ? cmd_.target : -1};
     cout_ = cand::build(in, p_.cand, cmem_, cwork_);
+    // 대충 다 앎 판정: 후보 0 · 남은 덩어리 모두 구멍(대충 아는 굵은 칸 안) — 덩어리 0 개도
+    if (cout_.c.empty() && cout_.start_free && cout_.n_pocket == cout_.n_dormant) { if (rough_since_ < 0) rough_since_ = s.step; }
+    else rough_since_ = -1;
     return cout_;
   }
   // 후보 idx 로 감 (−1 = 규칙: 지금 목표 번호가 목록에 있고 점수가 0 번의 keep 배 이상이면 그대로, 아니면 0 번). why: 0 후보로 감 · 2 목표 없음
@@ -153,6 +158,8 @@ class Ctl {
   const cand::Out& cands() const { return cout_; }
   const cand::Mem& cand_mem() const { return cmem_; }
   int cur_id() const { return cur_id_; }
+  // 대충 다 앎 (사용자 목표 — 공간을 대충 빨리 앎): 후보 0 개이고 남은 덩어리가 모두 구멍인 상태가 rough_steps 이어짐. 노드·확인 도구가 판 끝으로 씀 (시뮬 == 실물 같은 판정)
+  bool rough_done(int step) const { return p_.use_cand && rough_since_ >= 0 && step - rough_since_ >= p_.rough_steps; }
   // 지금 목표가 살아 있나 (고른 후보로 가는 경로가 있고 피하는 칸이 아님)
   bool live(const sim::EnvState& s) const { return slot_ >= 0 && s.goal_cell >= 0 && s.p_n > 0 && !avoided(s.goal_cell, s.step); }
   bool redo_pending() const { return redo_; }   // 막힘 · 통과 · 경로 끝 밖 · 경로 없음 뒤 바로 다시 결정해야 함
@@ -227,6 +234,7 @@ class Ctl {
   cand::Out cout_;
   int cur_id_ = -1;
   int cand_step_ = -1;   // build_cands 를 마지막으로 부른 걸음
+  int rough_since_ = -1;   // 후보 0 · 모두 구멍인 결정이 이어진 첫 걸음 (아니면 −1)
   void avoid_add(int cell, int step) {
     if (!p_.avoid || cell < 0) return;
     av_cell_[av_n_ % kBl] = cell;

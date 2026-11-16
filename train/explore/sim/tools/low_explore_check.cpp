@@ -30,6 +30,22 @@
 #include "cand_quality.h"
 
 namespace {
+constexpr int kRoughDone = 11;   // --ep-log 끝 코드: 후보 모드 "대충 다 앎" (Ctl::rough_done)
+// 대충 앎 넓이 (사용자 목표 잣대): 정답 바닥 칸이 든 0.5 m 굵은 칸 가운데 그 바닥 칸의 20 % 이상을 로봇 지도가 아는 칸 몫 (판단 모델 담당 scripts/coverage.h 의 "0.5 m @ 20 %" 와 같은 뜻)
+double rough_cover(const int16_t* L, int stride, const uint8_t* grid, int gw, int gh, float res) {
+  const int B = std::max(1, (int)std::lround(0.5f / res)), bw = (gw + B - 1) / B, bh = (gh + B - 1) / B;
+  std::vector<int> fl((size_t)bw * bh, 0), kn((size_t)bw * bh, 0);
+  for (int y = 0; y < gh; ++y)
+    for (int x = 0; x < gw; ++x)
+      if (grid[(size_t)y * gw + x] & sim::kCellFloor) {
+        const int q = (y / B) * bw + x / B;
+        fl[q] += 1;
+        kn[q] += L[(size_t)y * stride + x] != mdp::kUnknownL;
+      }
+  int nb = 0, nk = 0;
+  for (size_t q = 0; q < fl.size(); ++q) if (fl[q] > 0) { ++nb; nk += kn[q] * 5 >= fl[q]; }
+  return nb ? (double)nk / nb : 0.0;
+}
 // 실물 쪽 걸음 시간 (이 기기 한 코어) — RobotEnv::step(라이다 장 → 지도·관측·닫힘) · low_obs · 위층 결정(Ctl::decide)
 double t_step = 0, t_obs = 0, t_dec = 0, t_dec_max = 0;
 long n_step = 0, n_tdec = 0;
@@ -157,6 +173,8 @@ int main(int argc, char** argv) {
     else if (a == "--cand-unk-clear") co.unk_clear = std::stof(nx());
     else if (a == "--cand-path-unk") co.path_unk_m = std::stof(nx());
     else if (a == "--cand-margin") co.margin = std::stof(nx());
+    else if (a == "--cand-coarse") co.coarse_m = std::stof(nx());
+    else if (a == "--cand-known") co.known_frac = std::stof(nx());
     else if (a == "--cand-path-skip") co.path_skip_m = std::stof(nx());   // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
     else if (a == "--dec-cand") dec_cand = std::stoi(nx()) != 0;   // 판단 모델 후보: 1 = cand_view.h (기본) · 0 = hier 8 칸
@@ -274,7 +292,7 @@ int main(int argc, char** argv) {
     candq::Acc qacc;
     long g_chosen = 0, g_fail[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, g_reach = 0;
     int c_sig = 0, c_last_dec = 0;
-    long c_dec = 0, c_diff = 0, c_n = 0, c_rot = 0, c_none = 0, c_dorm = 0, c_near = 0, c_kept = 0;
+    long c_pocket = 0, c_dec = 0, c_diff = 0, c_n = 0, c_rot = 0, c_none = 0, c_dorm = 0, c_near = 0, c_kept = 0;
     double c_ms = 0, c_ms_max = 0, c_part[6] = {0, 0, 0, 0, 0, 0};
     long s_n = 0, s_same = 0, h_n = 0, h_same = 0;   // 3 결정 뒤에도 남음 (새: 같은 번호 · 같은 칸 / hier: 1.5 m 안 후보 있음)
     double s_move = 0, h_move = 0;
@@ -282,9 +300,11 @@ int main(int argc, char** argv) {
     long ep_dec0 = 0, ep_sw0 = 0;   // --ep-log: 이 판 시작 때 셈
     long n_obs = 0, d_img = 0, d_1d = 0, d_cmd = 0, d_dec = 0, n_dec = 0, n_ep = 0, why_n[3] = {0, 0, 0}, n_sw = 0;
     int first_bad = -1, prev_tgt = -2;
+    int st_ep_map = 0;   // 이 판의 장면 번호 (판 끝 대충 앎 넓이)
     const auto start = [&]() {
       cpu.get_state(st);
       const sim::EnvState& e = st[0];
+      st_ep_map = e.map;
       const sim::World& w = worlds[(size_t)e.map];
       limo_fire_rl::Proprio p0;
       p0.wheel_v = e.drive.wv; p0.wheel_vy = e.drive.wvy; p0.wheel_w = e.drive.ww; p0.gyro_z = e.gyro;
@@ -358,7 +378,7 @@ int main(int argc, char** argv) {
           bool same = a.c.size() == b.c.size() && a.rotate == b.rotate && a.n_clu == b.n_clu && a.n_dormant == b.n_dormant;
           for (size_t i = 0; same && i < a.c.size(); ++i) same = std::memcmp(&a.c[i], &b.c[i], sizeof(cand::Cand)) == 0;
           if (!same) { ++c_diff; if (first_bad < 0) first_bad = t; }
-          c_n += (long)b.c.size(); c_rot += b.rotate; c_none += b.c.empty(); c_dorm += b.n_dormant; c_near += b.n_near;
+          c_n += (long)b.c.size(); c_rot += b.rotate; c_none += b.c.empty(); c_dorm += b.n_dormant; c_near += b.n_near; c_pocket += b.n_pocket;
           for (const cand::Cand& x : b.c) c_kept += x.kept;
           c_last_dec = robot.state().step;
           candq::eval(ri, co, cwr, b, robot.cand(), &w, robot.state().map_closed != 0, qacc, &cmr);
@@ -444,8 +464,13 @@ int main(int argc, char** argv) {
       cpu.step(act.data());
       cpu.get_state(st);
       cpu.get_reward(rew, dn);
-      if (dn[0] != 0) {   // 판 끝 (시뮬은 리셋됨) — 실물 쪽 판 끝 코드가 같은지
-        if (robot.done() != dn[0]) {
+      int end_code = dn[0];
+      if (!end_code && cs.rough_done(st[0].step)) {   // 후보 모드 "대충 다 앎" 끝 (Ctl::rough_done — 실물 노드와 같은 판정) — 두 쪽이 같은 걸음에 끝나야
+        end_code = kRoughDone;
+        if (!cr.rough_done(robot.state().step)) { ++d_cmd; if (first_bad < 0) first_bad = t; }
+      } else if (!end_code && cr.rough_done(robot.state().step)) { ++d_cmd; if (first_bad < 0) first_bad = t; }
+      if (end_code != 0) {   // 판 끝 (시뮬은 리셋됨) — 실물 쪽 판 끝 코드가 같은지
+        if (dn[0] != 0 && robot.done() != dn[0]) {
           ++d_cmd;
           if (first_bad < 0) first_bad = t;
           if (std::getenv("LOW_CHECK_VERBOSE")) std::printf("  걸음 %d 판 끝 시뮬 %d 실물 %d\n", t, dn[0], robot.done());
@@ -471,13 +496,15 @@ int main(int argc, char** argv) {
         }
         if (!ep_log.empty()) {
           if (FILE* ef = std::fopen(ep_log.c_str(), "a")) {
-            std::fprintf(ef, "%ld\t%d\t%.1f\t%ld\t%ld\n", n_ep, dn[0], robot.state().step * (double)hc.cfg.substeps * hc.cfg.dt, n_dec - ep_dec0, n_sw - ep_sw0);
+            std::fprintf(ef, "%ld\t%d\t%.1f\t%ld\t%ld\t%.4f\n", n_ep, end_code, robot.state().step * (double)hc.cfg.substeps * hc.cfg.dt, n_dec - ep_dec0, n_sw - ep_sw0,
+                         rough_cover(robot.lmap(), hc.cfg.size, worlds[(size_t)st_ep_map].grid.data(), rw.gw, rw.gh, hc.cfg.res));
             std::fclose(ef);
           }
           ep_dec0 = n_dec;
           ep_sw0 = n_sw;
         }
         if (max_ep > 0 && n_ep >= max_ep) break;
+        if (dn[0] == 0) cpu.reset();   // 대충 다 앎으로 끝낸 판: 시뮬도 새 판
         no_delay();
         start();
         continue;
@@ -543,8 +570,8 @@ int main(int argc, char** argv) {
     std::printf(use_dec ? "관측 %ld 번 · 판 %ld · 위층 결정 %ld (판단 모델 후보 %ld · slot0 차례 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n" : "관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
                 why_n[2], n_sw, cs.n_reach(), cs.n_stall());
     if (cand_on && c_dec) {
-      std::printf("후보 생성 (scripts/cand_view.h): 결정 %ld · 두 쪽 다름 %ld · 평균 후보 %.2f 개 · 후보 0 %ld (제자리 회전 %ld) · 쉬는 덩어리 평균 %.2f (로봇 곁 %.2f) · 지난 칸 그대로 %.2f · 시간 평균 %.2f ms 최대 %.2f ms\n",
-                  c_dec, c_diff, (double)c_n / c_dec, c_none, c_rot, (double)c_dorm / c_dec, (double)c_near / c_dec, c_n ? (double)c_kept / c_n : 0.0, c_ms / c_dec, c_ms_max);
+      std::printf("후보 생성 (scripts/cand_view.h): 결정 %ld · 두 쪽 다름 %ld · 평균 후보 %.2f 개 · 후보 0 %ld (제자리 회전 %ld) · 쉬는 덩어리 평균 %.2f (로봇 곁 %.2f · 구멍 %.2f) · 지난 칸 그대로 %.2f · 시간 평균 %.2f ms 최대 %.2f ms\n",
+                  c_dec, c_diff, (double)c_n / c_dec, c_none, c_rot, (double)c_dorm / c_dec, (double)c_near / c_dec, (double)c_pocket / c_dec, c_n ? (double)c_kept / c_n : 0.0, c_ms / c_dec, c_ms_max);
       std::printf("  나눠 본 시간 (평균 ms): 찾기 %.2f · 거리 지도·방 %.2f · 덩어리 %.2f · 로봇 거리 %.2f · 시점 %.2f · 고르기 %.2f\n", c_part[0] / c_dec, c_part[1] / c_dec, c_part[2] / c_dec,
                   c_part[3] / c_dec, c_part[4] / c_dec, c_part[5] / c_dec);
       candq::print(qacc, "시뮬 RobotEnv 쪽");
