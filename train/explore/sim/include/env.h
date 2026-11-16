@@ -116,6 +116,10 @@ struct EnvCfg {
   float con_odo_v, con_odo_w;        //   바퀴 오도메트리 |v| · |ω| 와 자이로 |ω| 가 이 아래인 걸음이
   int con_stall;                     //   이 수만큼 이어지면 닿음
   int con_mask;                      //   닿음에 넣는 것 (contact.h kCon* 비트)
+  // 닿은 뒤 바퀴·IMU (2026-11-16, 실물 bag 1103_M_drive3 55.8·59.5 s — 실물은 벽에 닿아도 바퀴가 미끄러지며 돌고 자이로는 몸통만 따름, 수평 가속 튐):
+  //   con_slip 1 이면 닿은 걸음에 몸통만 멈추고 바퀴(오도메트리)는 con_slip_k 배로 줄며 명령을 계속 따름 (0 = 옛 모델: 바퀴도 0), 수평 가속 튐 = con_imp_k × 다가가던 속도
+  int con_slip;
+  float con_slip_k, con_imp_k;       //   바퀴 줄임 배 (물리 걸음마다 — exp(−dt / con_slip_tau)), 가속 튐 배 (1/s)
   int con_end;                       //   1: 닿음이 판을 끝냄 (기본). 0: 진단 전용 — 끝내지 않고 정답 충돌·센서 값을 기록만 (일치도 재기)
   float lr_coll_k;               // 벽 닿음 보상 (판 끝 — low_rl.h kLrCollisionK, SIM_LR_COLL_K)
   float lr_pcol_k;               // 사람 충돌 보상 (벽 충돌은 kLrCollisionK 그대로)
@@ -945,7 +949,7 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
     cmd_w = e.ws;
   }
   // 섀시 구동: 명령 → 바퀴 → 몸통 (바닥 미끄러짐)
-  const float v_prev = e.v, vy_prev = e.vy;
+  const float v_prev = e.v, vy_prev = e.vy, w_prev = e.w;
   e.vy = drive_lat(c.drive, e.drive, c.action_mode != kActGoal ? e.cmd_vy : 0.f, c.dt, e.ground);
   drive_step(c.drive, e.drive, cmd_v, cmd_w, c.dt, e.ground, &e.v, &e.w);
   const float acc = (e.v - v_prev) / c.dt;   // 몸통 직진 가속 (IMU)
@@ -956,9 +960,17 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   dm::sincosf_d(thm, &s, &co);
   const float nx = e.x + (e.v * co - e.vy * s) * c.dt, ny = e.y + (e.v * s + e.vy * co) * c.dt, nth = wrapf(e.th + e.w * c.dt);
   const bool hit_p = people_gap(c, e.people, nx, ny, nth) < 0.f;   // 몸통이 사람과 겹침 (사람이 다가와 겹쳐도)
-  if (body_hits(c, m, nx, ny, nth) || hit_p) {
+  const bool hit = body_hits(c, m, nx, ny, nth) || hit_p;
+  if (hit) {
     e.v = e.w = e.vs = e.ws = e.vy = 0.f;
-    drive_reset(e.drive);   // 부딪히면 바퀴·몸통 모두 멈춤 (밀린 명령도 비움)
+    if (c.con_slip) {   // 실물처럼: 몸통만 멈춤, 바퀴는 줄며 명령을 계속 따름 (오도메트리가 돎 — 자이로와 어긋남), 밀린 명령도 그대로
+      DriveState& d = e.drive;
+      const float k = c.con_slip_k;
+      d.fv *= k; d.sv *= k; d.wv *= k; d.fw *= k; d.sw *= k; d.ww *= k; d.fvy *= k; d.svy *= k; d.wvy *= k;
+      d.bv = d.bw = d.bvy = 0.f;
+    } else {
+      drive_reset(e.drive);   // 옛 모델: 부딪히면 바퀴·몸통 모두 멈춤 (밀린 명령도 비움)
+    }
     e.collided = 1;
     e.people.hit_person |= (int32_t)hit_p;
   } else {
@@ -970,7 +982,18 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   // 자이로 측정·헛돎 (실물 정책도 바퀴 오도메트리 ω 와 IMU 자이로를 본다)
   e.gyro = (e.w + e.gyro_bias) + (c.gyro_sigma * e.err_scale) * gauss(e.rng);
   // IMU 나머지: 몸통 v·ω·직진 가속 + 옆 이동(vy·옆 가속, 정상 메카넘 가정 — 배율은 앞뒤 값 그대로 잠정 📏, imu.h)
-  imu_step(c.imu, e.imu, e.v, e.w, acc, e.rng, e.vy, acc_y);   // 부딪혀 멈춘 걸음은 v·ω 0 (충돌 충격은 모델에 없음)
+  imu_step(c.imu, e.imu, e.v, e.w, acc, e.rng, e.vy, acc_y);   // 부딪혀 멈춘 걸음은 v·ω 0
+  if (hit && c.con_slip) {   // 충돌 충격: 수평 가속 튐 = con_imp_k × 다가가던 속도 (직진 |v| · 꼭짓점 회전 |ω|·r 중 큰 것 — 실물 1.0 m/s 정면 91.9, 0.3 m/s 26.4 m/s²)
+    const float r = sqrtf(c.half_len * c.half_len + c.half_wid * c.half_wid);
+    const float vl = dm::absf(v_prev) + dm::absf(vy_prev), vr = dm::absf(w_prev) * r;
+    const float a = c.con_imp_k * (vl > vr ? vl : vr);
+    if (vl >= vr) {   // 직진 쪽 튐은 다가가던 쪽 반대로
+      const float sg = v_prev >= 0.f ? -1.f : 1.f;
+      e.imu.out[0] += sg * a;
+    } else {          // 회전 꼭짓점 튐은 옆으로
+      e.imu.out[1] += (w_prev >= 0.f ? -1.f : 1.f) * a;
+    }
+  }
   e.slip_acc = e.slip_acc + dm::absf(e.drive.ww - e.gyro) * c.dt;   // 바퀴 오도메트리 ω vs 자이로 (둘 다 로봇이 재는 값)
   // 지도 자세 오차: OU (평균 0, 표준편차 pe_*, 상관 시간 pe_tau)
   const float a = c.dt / c.pe_tau, q = sqrtf(2.f * a);

@@ -370,6 +370,10 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.con_stall = (int)envf("SIM_CON_STALL", 2.f);
       c.con_mask = (int)envf("SIM_CON_MASK", (float)(kConLidar | kConCam | kConStall));
       c.con_end = (int)envf("SIM_CON_END", 1.f);
+      // 닿은 뒤 바퀴·IMU (2026-11-16, 실물 bag 1103_M_drive3 — env.h EnvCfg::con_slip): 끄면 옛 모델 (지문 그대로)
+      c.con_slip = (int)envf("SIM_CON_SLIP", 0.f);
+      c.con_slip_k = (float)std::exp(-(double)c.dt / (double)envf("SIM_CON_SLIP_TAU", 0.25f));   // 55.6~55.9 s 바퀴 v 0.84 → 0.55 → 0.37 (0.1 s 마다 ×0.67) — 잠정
+      c.con_imp_k = envf("SIM_CON_IMP_K", 90.f);    // 정면 약 1.0 m/s → 91.9 m/s² · 0.3 m/s → 26.4 (잠정)
       // 규칙 추종기 앞 범퍼 정지 끄기 (진단 — 기준선을 앞 정지 없이 잴 때). 정책 명령을 고치는 층은 없음 (2026-11-14 에 없앰)
       if (const char* g = std::getenv("SIM_SAFETY")) c.safety = g[0] == '0' ? 0 : c.safety;
     }
