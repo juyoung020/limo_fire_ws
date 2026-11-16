@@ -63,6 +63,7 @@ ros2 topic echo /explore_frontier/state
 | 목표 | fuel (시간 + 전역 + 시점, v 0.981 · ω 3.232 · t0 0.10 — `config/low_rl.yaml`) | 629-645 · 1118-1123 |
 | fuel 이 못 냄 | 피하지 않는 첫 후보(slot0), 같은 덩어리·경로 있음이면 그대로(stick) | 546-555 · 1127-1143 |
 | `upper:=slot0` | fuel 을 안 부르고 늘 위 slot0 차례 (시뮬 `combine_run --upper slot0 --policy` — fuel 과 A/B 용, launch 인자 `upper`) | 546-555 · 1127-1146 |
+| `upper:=decider` | 판단 모델(d1-3B, zero-shot)이 hier 후보 8 개 중 고름 — `scripts/low_decider.h` (시뮬 `combine_run --upper decider --decider-input both` 와 같은 요청: 지도 사진 + 후보 글). `decider_period`(기본 3 s — 로봇 답 약 2.6 s + 여유)마다 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면(막힘·통과·경로 없음) 기다리지 않고 slot0 차례로 바로. `decider_timeout`(8 s) 넘은 답은 버림 | 546-555 · 1127-1146 |
 | 목표 없음 | 시뮬 규칙 추종기와 같은 제자리 회전 (`RobotEnv::low_act` → env.h `path_step_*`) | 1144-1146 |
 | 다시 결정 | 통과 · 경로 끝 밖 · 경로 없음 · 막힘 신호 → fuel 기억 비움(경로 끝 밖·없음·막힘은 그 칸 0.5 m 를 10 s 피함) | 1326-1335 · 1351-1371 · 345-359 |
 | 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `~/done` true | 1270 (`finish_step`) |
@@ -291,3 +292,18 @@ build_sim/low_mov_replay rec.bin   # 젯슨: g++ -O2 -std=c++17 -ffp-contract=of
 - **젯슨 빌드·시간**: x86 에서만 빌드·시험함. 젯슨 Orin Nano 에서 `colcon build` 와 노드 로그의 "걸음 평균·정방향" ms 를 본다(장 하나 100 ms 안이면 됨).
 - **실물 깊이 정렬**: 지금 로봇 설정(`depth_registration: true`, 640 × 480)이 학습 깊이 모델과 같은지 `dry_run` 에서 `camera_layer` 를 보고 확인.
 
+
+
+### 위층 판단 모델 (`upper:=decider`) 띄우기
+
+로봇 안에서 llama-server(판단 모델 d1-3B, `/v1/systemone` 이 있는 빌드)를 먼저 띄운다. 메모리가 빠듯하면(가용 4 GB 아래) 다른 무거운 것을 끄고 띄운다:
+
+```bash
+cd ~/decider_test && nohup ./llama.cpp/build/bin/llama-server -m models/d1-3B-Q8_0.gguf --mmproj models/mmproj-d1-3B-Q8_0.gguf \
+  --host 127.0.0.1 --port 8171 -ngl 99 -c 4096 -np 1 > server_dec.log 2>&1 &
+# 뜰 때까지 (모델 읽기 약 1 분): grep -m1 "listening" server_dec.log
+ros2 launch limo_fire_rl explore_fuel_rl.launch.xml upper:=decider [decider_period:=3.0] [dry_run:=false] [rviz:=true]
+```
+
+상태는 `~/status` 끝에 "판단 모델: 보냄 · 답 (마지막 ms) · 시간 끝 · 실패 · 후보 안 맞음 · slot0 대신". 서버가 없거나 답이 늦으면 slot0 차례로 계속 돈다 (멈추지 않음).
+카메라 그림(시뮬 `--decider-input all`)은 시뮬 장면에 광선을 쏴 칠한 그림이라 실물에는 같은 것이 없어 쓰지 않는다 (`decider_input` text · image · both).

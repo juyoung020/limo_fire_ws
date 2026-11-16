@@ -5,7 +5,13 @@ low_rl:
     checkpoint: ""            # 아래층 체크포인트 .bin (launch 인자 checkpoint 로)
     dry_run: true             # true: /cmd_vel 발행자를 안 만들고 명령을 ~/cmd_debug 에만. 실제 주행은 false (README 점검표 뒤)
     enabled: false            # 늘 꺼진 채 뜸 → ~/enable true (RViz 탐사 패널 "/low_rl") — 리모컨 오토일 때만 켜짐
-    upper: fuel               # fuel: 로봇 지도에서 fuel 이 목표 (combine_run --upper fuel) · slot0: 피하지 않는 첫 후보 + stick (combine_run --upper slot0) · topic: ~/goal (시험용)
+    upper: fuel               # fuel: 로봇 지도에서 fuel 이 목표 (combine_run --upper fuel) · slot0: 피하지 않는 첫 후보 + stick (combine_run --upper slot0) · decider: 로봇 안 llama-server 판단 모델 (README) · topic: ~/goal (시험용)
+    decider_url: http://127.0.0.1:8171   # upper:=decider — llama-server (POST /v1/systemone)
+    decider_period: 3.0       # s, 요청 주기 — 로봇에서 잰 답 시간(후보 8 개 약 2.6 s) + 여유. 기다리는 동안 지금 목표로 몰고, 목표가 죽으면 slot0 차례로 바로
+    decider_timeout: 8.0      # s, 이보다 늦은 답은 버림 (지금 목표 그대로)
+    decider_input: both       # 지도 사진 + 후보 글 (combine_run --decider-input both). all(카메라 그림)은 시뮬 장면을 광선으로 칠한 그림이라 실물에 없음
+    decider_px: 384
+    decider_prompt: 1
     map_frame: map
     base_frame: base_link
     scan_topic: /scan

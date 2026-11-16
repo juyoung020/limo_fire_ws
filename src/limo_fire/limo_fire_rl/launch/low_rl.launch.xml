@@ -9,7 +9,9 @@
   <arg name="require_rc" default="true" description="false: /rc_state 없이 (시뮬·리모컨 없는 녹화만)"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="record" default="" description="입력·관측·명령 녹화 파일 (비우면 안 씀)"/>
-  <arg name="upper" default="fuel" description="위층: fuel · slot0 (피하지 않는 가장 가까운 후보 — combine_run --upper slot0) · topic (~/goal, 시험용)"/>
+  <arg name="upper" default="fuel" description="위층: fuel · slot0 (피하지 않는 가장 가까운 후보 — combine_run --upper slot0) · decider (로봇 안 llama-server 판단 모델 — README) · topic (~/goal, 시험용)"/>
+  <arg name="decider_url" default="http://127.0.0.1:8171" description="upper:=decider 의 llama-server 주소"/>
+  <arg name="decider_period" default="3.0" description="upper:=decider 요청 주기 (s)"/>
 
   <node pkg="limo_fire_rl" exec="low_rl" name="low_rl" output="screen">
     <param from="$(find-pkg-share limo_fire_rl)/config/low_rl.yaml"/>
@@ -19,6 +21,8 @@
     <param name="require_rc" value="$(var require_rc)"/>
     <param name="record" value="$(var record)"/>
     <param name="upper" value="$(var upper)"/>
+    <param name="decider_url" value="$(var decider_url)"/>
+    <param name="decider_period" value="$(var decider_period)"/>
     <param name="use_sim_time" value="$(var use_sim_time)"/>
   </node>
 </launch>

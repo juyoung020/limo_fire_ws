@@ -91,6 +91,36 @@ class Ctl {
     if (why) *why = w;
     return cmd_;
   }
+  // 위층 판단 모델 (upper decider — low_decider.h): 후보 want 를 고른 결정. want < 0 이거나 피하는 칸 · 빈 칸이면 slot0 차례(피하지 않는 첫 후보).
+  // 목표 넘기기는 decide 의 slot0 가지 그대로 (combine_run.cpp:1127-1146 — 판단 모델 · slot0 위층이 같은 길)
+  sim::LowCmd decide_slot(const View& v, int want, int* why = nullptr) {
+    const sim::EnvState& s = *v.s;
+    const int K = mdp::hier::K;
+    int pick = -1;
+    if (want >= 0 && want < K && v.cand[want] >= 0 && !avoided(v.cand[want], s.step)) pick = want;
+    for (int j = 0; j < K && pick < 0; ++j)
+      if (v.cand[j] >= 0 && !avoided(v.cand[j], s.step)) pick = j;
+    redo_ = false;
+    last_dec_ = s.step;
+    ++n_dec_;
+    int tgt = pick >= 0 ? v.cand[pick] : -1;
+    if (p_.stick && pick >= 0 && ((v.cand_cur >> pick) & 1u) && live(s)) tgt = cmd_.target;
+    int w = 1;
+    if (tgt >= 0) {
+      if (tgt != cmd_.target || cmd_.follow != 2) sw_step_ = s.step;
+      cmd_ = sim::LowCmd{tgt, 2};
+    } else {
+      cmd_ = sim::LowCmd{-1, 0};
+      w = 2;
+    }
+    if (why) *why = w;
+    return cmd_;
+  }
+  // 지금 목표가 살아 있나 (아래층이 그 칸으로 가는 경로가 있고 피하는 칸이 아님)
+  bool live(const sim::EnvState& s) const {
+    return cmd_.follow == 2 && cmd_.target >= 0 && cmd_.target == s.goal_cell && s.p_n > 0 && !avoided(cmd_.target, s.step);
+  }
+  bool redo_pending() const { return redo_; }   // 막힘 · 통과 · 경로 끝 밖 · 경로 없음 뒤 바로 다시 결정해야 함
   // 걸음 뒤 (환경 step 끝 상태 · LowRl · LowEp) — combine_run.cpp:1326-1371
   void after_step(const sim::EnvState& s, const sim::LowRl& rl, const sim::LowEp& L) {
     if (rl.stall && !sig_prev_) {

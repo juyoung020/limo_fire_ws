@@ -43,7 +43,12 @@ target_compile_definitions(explore_rl PRIVATE LIMO_FIRE_RL_ENV_YAML="${EXPLORE_D
 ament_target_dependencies(explore_rl rclcpp rclcpp_action geometry_msgs nav_msgs nav2_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs)
 
 # 아래층 RL 노드 — 시험(dry run)만: 학습과 같은 아래층 관측(RobotEnv 아래층 모드) → 아래층 정책 → 명령을 ~/cmd_debug 에만 (/cmd_vel 발행 없음)
-add_executable(low_rl src/low_rl_node.cpp)
+# 위층 판단 모델 (upper:=decider): 지도 사진·요청 본문은 시뮬과 같은 scripts/decider.cpp (PNG 는 zlib, JSON 은 nlohmann_json). HTTP 는 노드의 소켓 일꾼 (DEC_NO_CURL — 로봇에 libcurl 개발 헤더 없음)
+find_package(ZLIB REQUIRED)
+find_package(Threads REQUIRED)
+add_executable(low_rl src/low_rl_node.cpp ${EXPLORE_DIR}/scripts/decider.cpp)
+target_compile_definitions(low_rl PRIVATE DEC_NO_CURL)
+target_link_libraries(low_rl ZLIB::ZLIB Threads::Threads)
 target_include_directories(low_rl PRIVATE ${EXPLORE_DIR}/sim/tools ${EXPLORE_DIR}/scripts)   # low_node_rec.h (녹화 꼴) · fuel_upper.h · low_explore_ctl.h (위층 — combine_run 과 같은 코드)
 target_link_libraries(low_rl limo_fire_rl_core)
 target_compile_definitions(low_rl PRIVATE LIMO_FIRE_RL_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")

@@ -1,7 +1,9 @@
 // decider.h 구현: 지도 사진(PNG) · 요청 본문(JSON) · 동시 요청(libcurl multi).
 #include "decider.h"
 
+#ifndef DEC_NO_CURL   // 실물 노드(limo_fire_rl low_rl)는 사진·본문만 쓰고 HTTP 는 자체 소켓 (로봇에 libcurl 개발 헤더 없음)
 #include <curl/curl.h>
+#endif
 #include <zlib.h>
 
 #include <algorithm>
@@ -528,6 +530,7 @@ std::string build_body_score(const std::vector<Cand>& cand, const std::vector<ui
   return body.dump();
 }
 
+#ifndef DEC_NO_CURL
 struct Client::Impl {
 
   std::string url;
@@ -683,6 +686,7 @@ std::vector<Reply> Client::ask(const std::vector<std::string>& bodies, const std
   }
   return out;
 }
+#endif  // DEC_NO_CURL
 
 bool config_find(const std::string& path, const std::string& key, std::string* out) {
   std::ifstream f(path);
