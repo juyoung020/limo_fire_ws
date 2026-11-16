@@ -221,6 +221,14 @@ A/B 대신 바로 본 학습(`explore_v9`, explore_v8_cur 7400 체크포인트·
 (학습 롤아웃 성공 0.47 → 0.43, 충돌 0.30 → 0.33). σ 가 상한에 붙으면 행동이 자주 잘려 다시 나빠질 수 있다 — 그때는 엔트로피를 0.003~0.005 로 낮춰 이어 학습(잠정).
 가설(표류)의 직접 증거는 아니다 — 세 값을 함께 바꿨고 씨앗 하나라 어느 것이 효과인지는 나누지 않았다.
 
+## 비동기 CUDA 오류 위치 찾기 (2026-11-16)
+
+low_w3 가 반복 36394 에서 `ppo.cu` 갱신 끝 동기화에서 `illegal memory access` 로 멈췄다 (같은 때 커널 로그 `NVRM: Xid 31 … MMU Fault: GPCCLIENT_GCC … FAULT_PDE ACCESS_TYPE_VIRT_READ`).
+비동기 오류라 어느 커널인지 몰랐고, 작은 규모(48 · 192 환경)·compute-sanitizer(memcheck · initcheck · racecheck)로는 재현되지 않았다. 다음에 나면 위치가 나오게:
+- 늘 켜짐 (원래 기다리는 자리라 비용 없음): 롤아웃 끝(`train.cpp`) · 갱신 끝(`PPO::finish_update_dev`) · `Env::sync` 의 오류에 **단계 이름**과 반복 번호를 붙임.
+- 켤 때만: `SIM_KSYNC=1` — 시뮬 커널·OptiX 발사마다 기다려 오류 난 **커널 이름**을 찍고 멈춤 (롤아웃 그래프 `--rollout-graph` 와는 같이 못 씀).
+  `XPPO_NO_GRAPH=1` — 갱신을 CUDA Graph 로 잡지 않고 단계(보조 정답 · 마지막 가치·GAE · 미니배치 · Adam)마다 기다려 **단계 이름**을 찍음. 둘 다 결과는 같고 느려짐.
+
 ## 체크포인트 설정 꼬리 (2026-11-16)
 
 아래층 체크포인트(`train --low`)는 형식 3 내용 뒤에 **정책 입력을 바꾸는 설정과 구조**를 `KEY=VALUE` 줄로 붙인다 (`mdp/ckpt_cfg.h` 꼴 — 줄들 · 바이트 수 · 매직 `XCFG`,

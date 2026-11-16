@@ -3,6 +3,7 @@
 #include "optix_rt.h"
 #endif
 
+#include <string>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
@@ -453,7 +454,10 @@ void Env::low_prepare(const float* actions, cudaStream_t st) {
 }
 
 void Env::sync() const {
-  if (gpu_ && cudaDeviceSynchronize() != cudaSuccess) throw std::runtime_error(cudaGetErrorString(cudaGetLastError()));
+  if (gpu_) {
+    const cudaError_t e = cudaDeviceSynchronize();
+    if (e != cudaSuccess) throw std::runtime_error(std::string("CUDA 오류 (단계: 시뮬 Env::sync): ") + cudaGetErrorString(e) + " — 커널을 찾으려면 SIM_KSYNC=1 로 다시");
+  }
 }
 
 namespace {

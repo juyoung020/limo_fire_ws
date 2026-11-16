@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <numeric>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "../network/distribution.cuh"
@@ -22,6 +24,20 @@ using namespace XNET_NS;
 namespace XPPO_NS {
 
 namespace {
+// 갱신 단계 진단 (2026-11-16, low_w3 반복 36394 의 비동기 illegal memory access — 커널을 모름):
+// XPPO_NO_GRAPH=1 이면 갱신을 CUDA Graph 로 잡지 않고 단계마다(보조 정답 · 수익 · 미니배치 · Adam) 기다려 오류 난 단계 이름을 찍고 멈춤. 끄면 그대로
+bool no_graph_diag() {
+  static const bool on = std::getenv("XPPO_NO_GRAPH") != nullptr;
+  return on;
+}
+void stage_sync(const char* what, int j = -1) {
+  if (!no_graph_diag()) return;
+  const cudaError_t e = cudaDeviceSynchronize();
+  if (e != cudaSuccess) {
+    std::fprintf(stderr, "XPPO_NO_GRAPH: 갱신 단계 '%s'%s 뒤 CUDA 오류: %s\n", what, j >= 0 ? (" (미니배치 " + std::to_string(j) + ")").c_str() : "", cudaGetErrorString(e));
+    std::abort();
+  }
+}
 constexpr int MAXC = 8;  // 연속 성분 최대 수 (커널 안 고정 배열)
 
 // 샘플: a = μ + σ·ε (자르지 않음), 선언 = u < sigmoid(로짓). Philox(씨앗, 환경, 호출 수) → 재현 가능
@@ -1439,6 +1455,7 @@ void PPO::check_pack() {
 UpdateStats PPO::update(const uint8_t* img, const real* obs1d) {
   check_pack();   // 이번 롤아웃 그림이 꼴에 맞았나 (어긋나면 줄여 담은 그림이 원래와 다르므로 갱신 전에 멈춤)
   aux_labels();   // 보조 정답 (켰을 때만 — 롤아웃 재료 → s_auxlm_, 통계 합 0)
+  stage_sync("보조 정답 k_aux_labels");
   UpdateStats o;
   if (cfg_.device_update && !disc_ && !graph_) {   // 장치 갱신 (연속 행동 판)
     upd_img_ = img;
@@ -1457,6 +1474,7 @@ void PPO::update_body_dev() {
   auto st = ac_->stream;
   dev_mb_ = true;
   compute_returns(upd_img_, upd_obs_);
+  stage_sync("마지막 가치·GAE (compute_returns)");
   k_partial_dev<false><<<kRedNB, kRedRT, 0, st>>>(s_val_, S_, d_part_ + 2 * kRedNB);
   k_partial_dev<false><<<kRedNB, kRedRT, 0, st>>>(s_ret_, S_, d_part_ + 3 * kRedNB);
   std::vector<std::pair<long, long>> rng;   // 고칠 변수 구간 (finish_update 와 같음)
@@ -1474,6 +1492,7 @@ void PPO::update_body_dev() {
       ac_->zero_grad();
       double s[5];
       minibatch(d_perm_ + (long)b * mb, mb, mb, true, s);
+      stage_sync("미니배치 정방향·역방향", j);
       for (size_t r = 0; r < rng.size(); ++r)
         k_partial_dev<true><<<kRedNB, kRedRT, 0, st>>>(ac_->d_grads + rng[r].first, rng[r].second, d_part_ + (4 + r) * kRedNB);
       CtrlArgs ca{ac_->log_std(), NC_, mb, mb, cfg_.desired_kl > 0 && !critic_only_ ? 1 : 0, (double)cfg_.desired_kl, cfg_.lr_min, cfg_.lr_max,
@@ -1484,6 +1503,7 @@ void PPO::update_body_dev() {
                                               cfg_.adam_eps, d_bc_ + 2 * j, &d_st_->gscale);
       clamp_std();
       ac_->params_changed();
+      stage_sync("Adam·σ 자름", j);
     }
   }
   dev_mb_ = false;
@@ -1502,7 +1522,7 @@ UpdateStats PPO::finish_update_dev() {
   }
   CK(cudaMemcpyAsync(d_perm_, h_perm_, S_ * sizeof(int), cudaMemcpyHostToDevice, st));
   CK(cudaMemcpyAsync(d_bc_, h_bc_, 2 * nmb * sizeof(float), cudaMemcpyHostToDevice, st));
-  if (cfg_.graph_update) {
+  if (cfg_.graph_update && !no_graph_diag()) {
     cudaGraphExec_t& ex = reinterpret_cast<cudaGraphExec_t&>(upd_exec_[critic_only_ ? 1 : 0]);
     if (!ex) {   // 처음: 캡처 (실행은 안 함) → 만들기. 이후 반복은 같은 그래프 (포인터·모양 고정, 바뀌는 값은 장치에서 읽음)
       cudaGraph_t g;
@@ -1520,7 +1540,15 @@ UpdateStats PPO::finish_update_dev() {
   CK(cudaMemcpyAsync(h_mbrec_, d_mbrec_, sizeof(double) * nmb * kRec, cudaMemcpyDeviceToHost, st));
   CK(cudaMemcpyAsync(h_mbrec_ + (nmb + 1) * kRec, d_part_ + 2 * kRedNB, sizeof(double) * 2 * kRedNB, cudaMemcpyDeviceToHost, st));
   CK(cudaEventRecord(ev_upd_, st));
-  CK(cudaEventSynchronize(ev_upd_));   // 반복에 한 번 (러너가 바로 쓰는 값)
+  {   // 반복에 한 번 (러너가 바로 쓰는 값). 비동기 오류는 여기서 드러나므로 단계 이름을 붙여 알림 — 롤아웃은 러너가 끝에 따로 검사하므로 그 뒤 일:
+      // 보조 정답(k_aux_labels) · 갱신 그래프(마지막 가치·GAE·미니배치·Adam). 어느 커널인지는 XPPO_NO_GRAPH=1 (시뮬은 SIM_KSYNC=1) 로 다시 돌려 찾는다
+    const cudaError_t e = cudaEventSynchronize(ev_upd_);
+    if (e != cudaSuccess) {
+      std::fprintf(stderr, "CUDA 오류 (단계: 갱신 — 보조 정답 · 갱신 그래프(마지막 가치·GAE·미니배치·Adam), 반복 %d): %s — 커널을 찾으려면 XPPO_NO_GRAPH=1 SIM_KSYNC=1 로 다시\n",
+                   iter_, cudaGetErrorString(e));
+      std::abort();
+    }
+  }
   UpdateStats out;
   {
     const double* pv = h_mbrec_ + (nmb + 1) * kRec;

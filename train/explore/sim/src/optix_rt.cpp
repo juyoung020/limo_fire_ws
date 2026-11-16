@@ -7,6 +7,8 @@
 #include <optix_stubs.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -315,6 +317,13 @@ void OptixRt::launch(const RtParams& p0, cudaStream_t st) {
   OptixShaderBindingTable sbt = I.sbt;
   sbt.raygenRecord = I.raygen[p.prog];
   ox(optixLaunch(I.pipe, st, (CUdeviceptr)(I.dparams + slot), sizeof(RtParams), &sbt, dim, 1, 1), "launch");
+  if (std::getenv("SIM_KSYNC")) {   // 진단 (env_kernel.cu ksync 와 같은 스위치): 발사마다 기다려 OptiX 프로그램의 잘못된 접근을 그 자리에서
+    const cudaError_t e = cudaDeviceSynchronize();
+    if (e != cudaSuccess) {
+      std::fprintf(stderr, "SIM_KSYNC: optixLaunch(prog %d) 뒤 CUDA 오류: %s\n", p.prog, cudaGetErrorString(e));
+      std::abort();
+    }
+  }
 }
 
 }  // namespace sim

@@ -679,7 +679,12 @@ int run_low(Args a) {
         ppo.store(o2.reward, c.lo_goal_term ? (const int*)o2.low_vdone : d_done);   // 목표 경계(8)까지 담은 판 끝 칸 (SIM_LOW_GOAL_TERM)
       }
       cudaEventRecord(ev_roll[2 * pc.steps_per_env], 0);
-      cudaEventSynchronize(ev_roll[2 * pc.steps_per_env]);
+      {   // 롤아웃 끝 (반복에 한 번 기다리는 자리): 비동기 오류는 여기서 드러남 — 단계 이름을 붙여 알림 (2026-11-16 low_w3 크래시는 커널·단계를 몰랐음)
+        const cudaError_t e = cudaEventSynchronize(ev_roll[2 * pc.steps_per_env]);
+        if (e != cudaSuccess)
+          throw std::runtime_error(std::string("CUDA 오류 (단계: 롤아웃 — 정책 act · 시뮬 걸음 · 저장, 반복 ") + std::to_string(it) + "): " + cudaGetErrorString(e) +
+                                   " — 커널을 찾으려면 SIM_KSYNC=1 (시뮬 커널마다) 로 다시");
+      }
       for (int t = 0; t < pc.steps_per_env; ++t) {
         float ma = 0, ms = 0;
         cudaEventElapsedTime(&ma, ev_roll[2 * t], ev_roll[2 * t + 1]);

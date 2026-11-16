@@ -12,7 +12,20 @@
 #include "optix_rt.h"
 #endif
 
+#include <cstdio>
+#include <cstdlib>
 namespace sim {
+// 잘못된 메모리 접근 위치 찾기 (2026-11-16, low_w3 반복 36394 크래시 — 비동기 오류라 커널을 모름): SIM_KSYNC=1 이면 커널마다 기다려 오류 난 커널 이름을 찍고 멈춤.
+// 끄면(기본) getenv 한 번 뒤 분기 하나 — 학습 속도 그대로. 켜면 걸음마다 수십 번 기다려 느림 (재현·진단 때만)
+static void ksync(const char* name) {
+  static const bool on = std::getenv("SIM_KSYNC") != nullptr;
+  if (!on) return;
+  const cudaError_t e = cudaDeviceSynchronize();
+  if (e != cudaSuccess) {
+    std::fprintf(stderr, "SIM_KSYNC: 시뮬 커널 %s 뒤 CUDA 오류: %s\n", name, cudaGetErrorString(e));
+    std::abort();
+  }
+}
 namespace {
 
 constexpr int kBeamThreads = 64;
@@ -1880,7 +1893,7 @@ void launch_rays(const EnvBatch& b, G g, int n_static, const int* n_dev, int cou
     blocks = sms * (per > 0 ? per : 1);
   }
   cudaMemsetAsync(b.counters + counter, 0, sizeof(int), st);
-  ray_kernel<G><<<blocks, kRayThreads, 0, st>>>(b, g, n_static, n_dev, b.counters + counter);
+  ray_kernel<G><<<blocks, kRayThreads, 0, st>>>(b, g, n_static, n_dev, b.counters + counter); ksync("ray_kernel<G>");
 }
 
 // 깊이 가운데 광선: job = env · DEPTH_SIZE + 픽셀
@@ -2028,17 +2041,17 @@ void beams_gpu(const EnvBatch& b, cudaStream_t st) {
   if (b.rt) {   // raygen 은 광선만 (결과 뒤는 아래 커널)
     rt_launch(b, kRtBeam, n, 0, st);
     cudaMemsetAsync(b.counters + kCntBeamSide, 0, sizeof(int), st);
-    env_beam_kernel<1><<<grid, kBeamThreads, 0, st>>>(b);
+    env_beam_kernel<1><<<grid, kBeamThreads, 0, st>>>(b); ksync("env_beam_kernel<1>");
     rt_launch(b, kRtBeamSide, n, kCntBeamSide, st);
-    env_beam_side_kernel<1><<<(n + kDepthThreads - 1) / kDepthThreads, kDepthThreads, 0, st>>>(b);
+    env_beam_side_kernel<1><<<(n + kDepthThreads - 1) / kDepthThreads, kDepthThreads, 0, st>>>(b); ksync("env_beam_side_kernel<1>");
     return;
   }
 #endif
   launch_rays(b, BeamCenter{}, n, nullptr, kCntBeamNext, st);
   cudaMemsetAsync(b.counters + kCntBeamSide, 0, sizeof(int), st);
-  env_beam_kernel<4><<<dim3((kMaxBeams + kBeamThreads - 1) / kBeamThreads, b.n_env), kBeamThreads, 0, st>>>(b);
+  env_beam_kernel<4><<<dim3((kMaxBeams + kBeamThreads - 1) / kBeamThreads, b.n_env), kBeamThreads, 0, st>>>(b); ksync("env_beam_kernel<4>");
   launch_rays(b, BeamSide{}, 0, b.counters + kCntBeamSide, kCntBeamSideNext, st);
-  env_beam_side_kernel<4><<<(n + kDepthThreads - 1) / kDepthThreads, kDepthThreads, 0, st>>>(b);   // 옆 광선을 쏜 빔만 마무리
+  env_beam_side_kernel<4><<<(n + kDepthThreads - 1) / kDepthThreads, kDepthThreads, 0, st>>>(b); ksync("env_beam_side_kernel<4>");   // 옆 광선을 쏜 빔만 마무리
 }
 
 void depth_gpu(const EnvBatch& b, cudaStream_t st) {
@@ -2048,17 +2061,17 @@ void depth_gpu(const EnvBatch& b, cudaStream_t st) {
   if (b.rt) {
     rt_launch(b, kRtDepth, n_px, 0, st);
     cudaMemsetAsync(b.counters + kCntDepSide, 0, sizeof(int), st);
-    env_depth_pixel_kernel<1><<<px_blocks, kDepthThreads, 0, st>>>(b);
+    env_depth_pixel_kernel<1><<<px_blocks, kDepthThreads, 0, st>>>(b); ksync("env_depth_pixel_kernel<1>");
     rt_launch(b, kRtDepthSide, n_px, kCntDepSide, st);
-    env_depth_side_kernel<1><<<px_blocks, kDepthThreads, 0, st>>>(b);
+    env_depth_side_kernel<1><<<px_blocks, kDepthThreads, 0, st>>>(b); ksync("env_depth_side_kernel<1>");
     return;
   }
 #endif
   launch_rays(b, DepthCenter{}, n_px, nullptr, kCntDepNext, st);
   cudaMemsetAsync(b.counters + kCntDepSide, 0, sizeof(int), st);
-  env_depth_pixel_kernel<2><<<px_blocks, kDepthThreads, 0, st>>>(b);
+  env_depth_pixel_kernel<2><<<px_blocks, kDepthThreads, 0, st>>>(b); ksync("env_depth_pixel_kernel<2>");
   launch_rays(b, DepthSide{}, 0, b.counters + kCntDepSide, kCntDepSideNext, st);
-  env_depth_side_kernel<2><<<px_blocks, kDepthThreads, 0, st>>>(b);   // 옆 광선을 쏜 픽셀만 마무리
+  env_depth_side_kernel<2><<<px_blocks, kDepthThreads, 0, st>>>(b); ksync("env_depth_side_kernel<2>");   // 옆 광선을 쏜 픽셀만 마무리
 }
 
 }  // namespace
@@ -2083,7 +2096,7 @@ void reach_and_depth(const EnvBatch& b, cudaStream_t st, int gate = 0) {
   ReachStream& r = reach_stream();
   cudaEventRecord(r.go, st);
   cudaStreamWaitEvent(r.s, r.go, 0);
-  env_reach_kernel<<<b.n_env, kRT, 0, r.s>>>(b, gate, -1);
+  env_reach_kernel<<<b.n_env, kRT, 0, r.s>>>(b, gate, -1); ksync("env_reach_kernel");
   cudaEventRecord(r.done, r.s);
   depth_gpu(b, st);
   cudaStreamWaitEvent(st, r.done, 0);
@@ -2099,25 +2112,25 @@ void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub
   const int phys_blocks = (b.n_env + kPhysThreads - 1) / kPhysThreads;
   const bool staged = c.action_mode == kActPath;   // 계층형: 행동(걸음 첫머리)은 env_act_kernel 이 — 무거운 검사를 블록 스레드로 나눠 본다
   for (int s = 0; s < n_scan; ++s) {
-    if (s == 0 && staged) env_act_kernel<<<b.n_env, kActT, 0, st>>>(b, actions, sub);
-    env_phys_kernel<<<phys_blocks, kPhysThreads, 0, st>>>(b, actions, s == 0 && !staged, sub);
+    if (s == 0 && staged) env_act_kernel<<<b.n_env, kActT, 0, st>>>(b, actions, sub); ksync("env_act_kernel");
+    env_phys_kernel<<<phys_blocks, kPhysThreads, 0, st>>>(b, actions, s == 0 && !staged, sub); ksync("env_phys_kernel");
     beams_gpu(b, st);
-    env_apply_kernel<<<b.n_env, kThreads, 0, st>>>(b);
+    env_apply_kernel<<<b.n_env, kThreads, 0, st>>>(b); ksync("env_apply_kernel");
   }
-  env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b, sub);
+  env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b, sub); ksync("env_finish_kernel");
   if (sub < 0) reach_and_depth(b, st);
-  else if (reach) env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1, sub);   // 덩어리 칸 관측의 지연 차례(vec_prev)를 걸음마다 맞춤 — 끝난 환경은 묶음 끝에
+  else if (reach) env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1, sub); ksync("env_reach_kernel");   // 덩어리 칸 관측의 지연 차례(vec_prev)를 걸음마다 맞춤 — 끝난 환경은 묶음 끝에
 }
 }  // namespace
 
 // 아래층 RL 준비 단계 (low_rl.h 머리말): [새 목표] → 깊이 카메라 층·경로 계획(차례인 환경만) → 정책 관측. actions: 규칙 추종 환경(follow 0)의 후보 번호 (없으면 nullptr)
 void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t st) {
   if (!b.lowrl) return;
-  if (b.cfg.low_auto) env_low_goal_kernel<<<b.n_env, kLrProbes, 0, st>>>(b);
-  if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b);
-  env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions);
-  env_low_pack_kernel<<<b.n_env, kLowPackT, 0, st>>>(b);
-  if (b.cfg.lo_body) env_low_body_kernel<<<b.n_env, kLowBodyT, 0, st>>>(b);   // 몸 둘레 간격 (lowrl_pack 이 1D 를 비운 뒤)
+  if (b.cfg.low_auto) env_low_goal_kernel<<<b.n_env, kLrProbes, 0, st>>>(b); ksync("env_low_goal_kernel");
+  if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b); ksync("env_camlayer_kernel");
+  env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions); ksync("env_plan_kernel");
+  env_low_pack_kernel<<<b.n_env, kLowPackT, 0, st>>>(b); ksync("env_low_pack_kernel");
+  if (b.cfg.lo_body) env_low_body_kernel<<<b.n_env, kLowBodyT, 0, st>>>(b); ksync("env_low_body_kernel");   // 몸 둘레 간격 (lowrl_pack 이 1D 를 비운 뒤)
 }
 
 void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st, bool lean) {
@@ -2130,15 +2143,15 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st, bool
     // 목적지만 학습 판(goal_only_train)은 늘 건너뜀 — 요약 버퍼를 안 잡음 (CPU 참조판도 요약을 안 함 — obs_ref.h write_obs)
     const bool skip = (lean && b.cfg.low_auto == 1 && b.cfg.low_explore == 0) || goal_only_train(b.cfg);
     step_once(b, actions, st, 0, !skip);
-    env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
+    env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b); ksync("env_bundle_end_kernel");
     if (skip) depth_gpu(b, st);
     else reach_and_depth(b, st, 2);
     if (b.cfg.low_auto) env_low_prepare_gpu(b, actions, st);
     return;
   }
   // 계층형: 결정 하나 = 경로 계획 → 속도 행동 decide_steps 걸음 → 묶음 끝 (보상 합·끝난 판 리셋·관측)
-  if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b);   // 깊이 카메라 장애물 층 (cam_on) — 계획 앞
-  env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions);
+  if (b.cvox) env_camlayer_kernel<<<b.n_env, kRT, 0, st>>>(b); ksync("env_camlayer_kernel");   // 깊이 카메라 장애물 층 (cam_on) — 계획 앞
+  env_plan_kernel<<<b.n_env, kRT, 0, st>>>(b, actions); ksync("env_plan_kernel");
   if (b.gdec) {
     // 그래프 모드: 결정 하나 = 노드 하나 이동. 환경마다 닿거나 실패·시간 초과까지 걷고 끝난 환경은 쉰다 (graph_env.h gdec_step).
     // 결정 주기(decide_steps) 뒤부터 5 걸음마다 남은 환경 수를 읽어 모두 끝났으면 그만 돈다 (쉬는 걸음은 아무것도 안 바꿔 결과는 같음)
@@ -2148,34 +2161,34 @@ void env_step_gpu(const EnvBatch& b, const float* actions, cudaStream_t st, bool
       if (s + 1 < c.graph_max_steps && (s + 1) % 5 == 0) {
         int n_run = 0;
         cudaMemsetAsync(b.counters + kCntGraphRun, 0, sizeof(int), st);
-        env_graph_active_kernel<<<(b.n_env + 255) / 256, 256, 0, st>>>(b, b.counters + kCntGraphRun);
+        env_graph_active_kernel<<<(b.n_env + 255) / 256, 256, 0, st>>>(b, b.counters + kCntGraphRun); ksync("env_graph_active_kernel");
         cudaMemcpyAsync(&n_run, b.counters + kCntGraphRun, sizeof(int), cudaMemcpyDeviceToHost, st);
         cudaStreamSynchronize(st);
         if (n_run == 0) break;
       }
     }
-    env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 1);   // 다음 결정 관측 + 결정 결과·전작 방식 판 끝·보상 (리셋 앞)
-    env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
+    env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 1); ksync("env_graph_kernel");   // 다음 결정 관측 + 결정 결과·전작 방식 판 끝·보상 (리셋 앞)
+    env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b); ksync("env_bundle_end_kernel");
     reach_and_depth(b, st, 2);
-    env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 2);   // 끝난 환경의 새 판 관측
+    env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 2); ksync("env_graph_kernel");   // 끝난 환경의 새 판 관측
     return;
   }
   for (int s = 0; s < b.cfg.decide_steps; ++s) step_once(b, actions, st, s);
-  env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b);
+  env_bundle_end_kernel<<<b.n_env, kThreads, 0, st>>>(b); ksync("env_bundle_end_kernel");
   reach_and_depth(b, st, 2);
 }
 
 void env_graph_gpu(const EnvBatch& b, cudaStream_t st) {
-  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 0);
+  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 0); ksync("env_graph_kernel");
 }
 
 void env_reset_gpu(const EnvBatch& b, cudaStream_t st) {
-  env_reset_kernel<<<b.n_env, kThreads, 0, st>>>(b);
+  env_reset_kernel<<<b.n_env, kThreads, 0, st>>>(b); ksync("env_reset_kernel");
   if (goal_only_train(b.cfg)) depth_gpu(b, st);   // 목적지만 학습 판: 프론티어 요약 없음
   else reach_and_depth(b, st);
-  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 0);
+  if (b.gfeat) env_graph_kernel<<<b.n_env, kRT, 0, st>>>(b, 0); ksync("env_graph_kernel");
   if (b.lowrl) {
-    env_low_clear_kernel<<<(b.n_env + 255) / 256, 256, 0, st>>>(b);
+    env_low_clear_kernel<<<(b.n_env + 255) / 256, 256, 0, st>>>(b); ksync("env_low_clear_kernel");
     if (b.cfg.low_auto) env_low_prepare_gpu(b, nullptr, st);
   }
 }
