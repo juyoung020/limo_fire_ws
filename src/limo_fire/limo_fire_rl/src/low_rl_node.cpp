@@ -122,7 +122,7 @@ class LowRlNode : public rclcpp::Node {
       hc_.cfg.con_mask &= ~sim::kConStall;
       RCLCPP_WARN(get_logger(), "dry run: 닿음 신호에서 멈춤(명령 대비 바퀴 정지)을 뺌 — 명령이 실제로 안 나가서");
     }
-    env_ = std::make_unique<RobotEnv>(hc_, true, true);   // 아래층 + 합친 탐사 모드
+    env_ = std::make_unique<RobotEnv>(hc_);   // 아래층 + 합친 탐사 모드
     const sim::EnvCfg& c = env_->cfg();
     if (!(max_speed_ > 0.0)) max_speed_ = c.act_v_fwd;   // 기본 = 시뮬 한도 (자르지 않음)
     lp_ = lxc::Params::from_cfg(c);

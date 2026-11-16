@@ -39,9 +39,8 @@ struct Proprio {
 
 class RobotEnv {
  public:
-  // 합친 탐사 모드 (combine_run 과 같은 설정: 아래층 걸음 길 · low_explore 1 — 판 끝은 탐사 규칙, 정체는 막힘 신호만). low · explore 는 늘 true
-  // (옛 아래층 정책·학습 판 모드는 2026-11-16 에 걷어냄 — 인자는 부르는 곳을 그대로 두려고 남김)
-  RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore);
+  // 합친 탐사 (combine_run 과 같은 설정: 아래층 걸음 길 · low_explore 1 — 판 끝은 탐사 규칙, 정체는 막힘 신호만). 닫힘을 라이다 지도만으로 하려면 hc.cfg.low_explore = 2
+  explicit RobotEnv(const sim::EnvHostCfg& hc);
   RobotEnv(const RobotEnv&) = delete;
   RobotEnv& operator=(const RobotEnv&) = delete;
 

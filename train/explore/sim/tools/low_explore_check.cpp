@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
     std::vector<sim::EnvState> st;
     const auto no_delay = [&]() { cpu.get_state(st); st[0].delay = 0; cpu.set_state(0, st[0]); };
     no_delay();
-    limo_fire_rl::RobotEnv robot(hc, true, true);
+    limo_fire_rl::RobotEnv robot(hc);
     const int AW = mdp::act::DIM, K = mdp::hier::K;
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;

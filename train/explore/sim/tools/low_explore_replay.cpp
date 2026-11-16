@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
       else throw std::runtime_error("모르는 인자 " + a);
     }
     lowrec::Reader rd(argv[1]);
-    limo_fire_rl::RobotEnv robot(rd.hc, true, true);
+    limo_fire_rl::RobotEnv robot(rd.hc);
     const sim::EnvCfg& c = robot.cfg();
     lxc::Params lp = lxc::Params::from_cfg(c);
     lp.fuel = fo;

@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
   if (upper != "fuel" && upper != "slot0") { std::fprintf(stderr, "--upper 는 fuel · slot0\n"); return 2; }
   try {
     lowrec::Reader rd(argv[1]);
-    limo_fire_rl::RobotEnv robot(rd.hc, true, true);
+    limo_fire_rl::RobotEnv robot(rd.hc);
     const sim::EnvCfg& c = robot.cfg();
     // 위층 값: 노드 기본 (config/low_rl.yaml — fuel 시간·전역·시점, v 0.981 · ω 3.232 · t0 0.10)
     lxc::Params lp = lxc::Params::from_cfg(c);

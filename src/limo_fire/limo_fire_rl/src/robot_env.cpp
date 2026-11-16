@@ -7,8 +7,7 @@
 
 namespace limo_fire_rl {
 
-RobotEnv::RobotEnv(const sim::EnvHostCfg& hc, bool low, bool explore) {
-  if (!low || !explore) throw std::runtime_error("RobotEnv: 합친 탐사 모드(low · explore 모두 true)만 있음 — 옛 아래층 정책 모드는 2026-11-16 에 걷어냄");
+RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
   b_.cfg = hc.cfg;
   sim::EnvCfg& c = b_.cfg;
   c.action_mode = sim::kActPath;   // 계층형 (후보·경로 계획)

@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
       cpu.set_state(0, e);
       cpu.get_state(st);
     }
-    limo_fire_rl::RobotEnv robot(hc, true, true);
+    limo_fire_rl::RobotEnv robot(hc);
     std::unique_ptr<lowrec::Writer> rec;
     if (!rec_path.empty()) rec.reset(new lowrec::Writer(rec_path, hc));
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
