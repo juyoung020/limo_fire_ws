@@ -911,8 +911,17 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
   cur += sp.n_cont;
   if (sp.aux_out > 0) {   // 보조 예측 머리 (0 으로 시작 — 처음엔 h 로 기울기를 안 돌림, 이어 학습 변환 ppo/tools/ckpt_add_aux 와 같음)
     if (sp.gru_h <= 0) throw std::runtime_error("ACSpec aux_out: 순환 핵(gru_h > 0) 이 있어야");
-    aux_w_off = cur; blocks.push_back({cur, (long)sp.aux_out * sp.gru_h, PKind::LinW, "aux.w"}); cur += (long)sp.aux_out * sp.gru_h;
-    aux_b_off = cur; blocks.push_back({cur, sp.aux_out, PKind::LinB, "aux.b"}); cur += sp.aux_out;
+    if (sp.aux_hidden > 0) {   // 두 층: W1 는 작은 무작위(아래 init), W2 · 편향 0 — 처음엔 h 로 기울기 0 (정책 그대로)
+      if (sp.aux_hidden % 32 != 0) throw std::runtime_error("ACSpec aux_hidden: 32 의 배수");
+      const long n1 = (long)sp.aux_hidden * sp.gru_h, n2 = (long)sp.aux_out * sp.aux_hidden;
+      aux_w1_off = cur; blocks.push_back({cur, n1, PKind::LinW, "aux.w1"}); cur += n1;
+      aux_b1_off = cur; blocks.push_back({cur, sp.aux_hidden, PKind::LinB, "aux.b1"}); cur += sp.aux_hidden;
+      aux_w_off = cur; blocks.push_back({cur, n2, PKind::LinW, "aux.w2"}); cur += n2;
+      aux_b_off = cur; blocks.push_back({cur, sp.aux_out, PKind::LinB, "aux.b2"}); cur += sp.aux_out;
+    } else {
+      aux_w_off = cur; blocks.push_back({cur, (long)sp.aux_out * sp.gru_h, PKind::LinW, "aux.w"}); cur += (long)sp.aux_out * sp.gru_h;
+      aux_b_off = cur; blocks.push_back({cur, sp.aux_out, PKind::LinB, "aux.b"}); cur += sp.aux_out;
+    }
   }
   n_params = cur;
   alloc_common();
@@ -935,6 +944,12 @@ ActorCritic::ActorCritic(const ACSpec& sp, uint64_t seed, int mc) : spec(sp), ma
     gru_c.init(rng, host);
   }
   for (int j = 0; j < sp.n_cont; ++j) host[logstd_off + j] = sp.init_log_std;
+  if (sp.aux_out > 0 && sp.aux_hidden > 0) {   // 보조 첫 층 U(±1/√gru_h) — 따로 씨앗 (다른 층 초기값은 그대로)
+    std::mt19937_64 r2(seed ^ 0xA0A0ull);
+    const float bd = 1.f / std::sqrt((float)sp.gru_h);
+    std::uniform_real_distribution<float> U(-bd, bd);
+    for (long i = 0; i < (long)sp.aux_hidden * sp.gru_h; ++i) host[aux_w1_off + i] = U(r2);
+  }
   if (sp.n_slots > 0) {   // torch nn.Linear 기본 초기화와 같은 꼴 U(±1/√fan_in), float 로 뽑음 (fp64 빌드도 같은 값)
     auto uni = [&](long off, long n, float bound) {
       std::uniform_real_distribution<float> U(-bound, bound);

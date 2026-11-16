@@ -96,6 +96,8 @@ struct Args {
   int low_people = 2;  // --people: 아래층 RL 판마다 사람 0 ~ 이 수
   bool map_prio = false;  // --map-prio (--low): 맵 뽑기를 최근 닿음 비율이 높은 맵 쪽으로 — 확률 ∝ 0.5 + 맵의 닿음으로 끝난 판 비율 (판 수 지수 이동 합, 반감 ~14 반복)
   double goal_curr_up = 0.8;   // --goal-curr-up R: 다음 단계로 넘어가는 지난 50 반복 학습 도달률 문턱 (잠정 — 학습 도달률은 샘플 행동이라 결정적 평가보다 낮음)
+  float aux_a = -1.f, aux_b = -1.f, aux_c = -1.f;   // --aux-a/-b/-c C: 보조 성분마다 계수 (없으면 --aux)
+  int aux_hidden = 0;                                 // --aux-hidden H: 보조 머리 은닉 (0 = 선형)
   float aux = 0.f;               // --aux C (--low --gru): 보조 예측 머리 손실 계수 (0 = 끔, ppo/README "보조 예측 머리" — SIM_LOW_AUX=1 · SIM_LOW_OBS_MOV=1 필요)
   bool entropy_skip_v = false;   // --entropy-skip-v: 엔트로피 보너스를 v 성분에 안 줌 (v 는 [0, 1] 로 잘려 σ_v 가 계속 커짐)
   int goal_curr = -1;   // --goal-curr [단계]: 목표 거리·사람 커리큘럼 시작 단계 (−1 = 끔)
@@ -336,7 +338,10 @@ int run_low(Args a) {
   if (a.desired_kl >= 0) pc.desired_kl = a.desired_kl;
   if (a.std_min > 0) pc.std_min = a.std_min;
   if (a.entropy_skip_v) pc.entropy_from = 1;
-  if (a.aux > 0) pc.aux_coef = a.aux;   // 아래층: v(성분 0) 에는 엔트로피 보너스를 안 줌
+  if (a.aux > 0) pc.aux_coef = a.aux;
+  pc.aux_coef_a = a.aux_a;
+  pc.aux_coef_b = a.aux_b;
+  pc.aux_coef_c = a.aux_c;   // 아래층: v(성분 0) 에는 엔트로피 보너스를 안 줌
   if (a.bound_coef >= 0) pc.bound_coef = a.bound_coef;
   if (a.chunk > 0) pc.chunk = a.chunk;
   if (a.steps > 0) pc.steps_per_env = a.steps;
@@ -360,6 +365,7 @@ int run_low(Args a) {
   if (a.aux > 0) {   // 보조 예측 머리: 재료는 시뮬이 관측과 같이 내보냄 (SIM_LOW_AUX), 추적 움직이는 것은 관측 칸(SIM_LOW_OBS_MOV)이 켜야 만들어짐
     if (a.gru <= 0 || !c.lo_aux || !c.lo_mov) throw std::runtime_error("--aux: --gru 와 SIM_LOW_AUX=1 · SIM_LOW_OBS_MOV=1 이 필요");
     spec.aux_out = mdp::low::AUX_OUT;
+    spec.aux_hidden = a.aux_hidden;
   } else if (c.lo_aux) {
     throw std::runtime_error("SIM_LOW_AUX=1 인데 --aux 없음");
   }
@@ -873,6 +879,10 @@ int main(int argc, char** argv) {
       else if (k == "--goal-curr-up") a.goal_curr_up = std::stod(nx());
       else if (k == "--entropy-skip-v") a.entropy_skip_v = true;
       else if (k == "--aux") a.aux = std::stof(nx());
+      else if (k == "--aux-a") a.aux_a = std::stof(nx());
+      else if (k == "--aux-b") a.aux_b = std::stof(nx());
+      else if (k == "--aux-c") a.aux_c = std::stof(nx());
+      else if (k == "--aux-hidden") a.aux_hidden = std::stoi(nx());
       else if (k == "--goal-curr") a.goal_curr = (i + 1 < argc && argv[i + 1][0] != '-') ? std::stoi(nx()) : 0;
       else if (k == "--map-prio") a.map_prio = true;
       else if (k == "--low-explore") a.low_explore = true;

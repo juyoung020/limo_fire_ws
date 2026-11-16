@@ -179,7 +179,8 @@ __global__ void k_aux_gather(const int* idx, int n, const real* s, real* c) {
 }
 // 머리 정방향 + 손실 기울기 dy (행마다 워프 하나 — 칸 j = lane + 32·q, 나비 합으로 고정 순서). backward 면 h 기울기 dh += dy·W
 // 손실 (행) = coef·[ma·BCE(y0, l0) + mb·Σ(y−l)²/8 (b 칸) + mc·Σ(y−l)²/8 (c 칸)], 통계 칸 = [ma·BCE, ma, mb·mse, mb, mc·mse, mc, ma·l0, 0]
-__global__ void k_aux_fwd(int n, int H, const real* h, long ldh, const real* W, const real* bias, const real* lm, real coef, real* dy, real* st,
+// (b) 손실 균형 (2026-11-16): 정답 > 0 인 구역들 평균과 0 인 구역들 평균을 반반 (둘 중 하나가 없으면 있는 쪽 평균) — 정답 92 % 가 0 이라 그냥 평균이면 신호가 없음
+__global__ void k_aux_fwd(int n, int H, const real* h, long ldh, const real* W, const real* bias, const real* lm, real ca, real cb, real cc, real* dy, real* st,
                           real* dh, long lddh) {
   const int lane = threadIdx.x & 31;
   const long r = (blockIdx.x * (long)blockDim.x + threadIdx.x) >> 5;
@@ -200,22 +201,26 @@ __global__ void k_aux_fwd(int n, int H, const real* h, long ldh, const real* W, 
   const real z = acc[0] + bias[0];
   const real sg = (real)1 / ((real)1 + exp(-z));
   const real bce = (z > 0 ? z : (real)0) - z * l[0] + log1p(exp(-fabs(z)));
-  g[0] = coef * ma * (sg - l[0]);
+  g[0] = ca * ma * (sg - l[0]);
   real eb = 0, ec = 0;
+  int np = 0;
+  for (int k = B0; k < C0; ++k) np += l[k] > (real)0;
+  const int nz = mdp::low::AUX_MOV_SEC - np;
+  const real wp = np == 0 ? (real)0 : (nz == 0 ? (real)1 / np : (real)0.5 / np), wz = nz == 0 ? (real)0 : (np == 0 ? (real)1 / nz : (real)0.5 / nz);
   for (int k = B0; k < C0; ++k) {
-    const real e = acc[k] + bias[k] - l[k];
-    eb += e * e;
-    g[k] = coef * mb * (real)2 * e / (real)mdp::low::AUX_MOV_SEC;
+    const real e = acc[k] + bias[k] - l[k], w = l[k] > (real)0 ? wp : wz;
+    eb += w * e * e;
+    g[k] = cb * mb * (real)2 * w * e;
   }
   for (int k = C0; k < kAuxK; ++k) {
     const real e = acc[k] + bias[k] - l[k];
     ec += e * e;
-    g[k] = coef * mc * (real)2 * e / (real)mdp::low::AUX_LID_SEC;
+    g[k] = cc * mc * (real)2 * e / (real)mdp::low::AUX_LID_SEC;
   }
   if (lane == 0) {
     for (int k = 0; k < kAuxK; ++k) dy[r * kAuxK + k] = g[k];
     real* s = st + r * kAuxNS;
-    s[0] = ma * bce; s[1] = ma; s[2] = mb * eb / (real)mdp::low::AUX_MOV_SEC; s[3] = mb; s[4] = mc * ec / (real)mdp::low::AUX_LID_SEC; s[5] = mc;
+    s[0] = ma * bce; s[1] = ma; s[2] = mb * eb; s[3] = mb; s[4] = mc * ec / (real)mdp::low::AUX_LID_SEC; s[5] = mc;
     s[6] = ma * l[0]; s[7] = ma * l[0] * sg; s[8] = ma * ((real)1 - l[0]) * sg;   // 닿음 예측 확률 합: 정답 1 행 · 0 행 (예측이 닿음을 미리 아는지)
     // (b) 다가오는 사람 행 (정답 구역 가까움 최댓값 > 0.5 — 1 s 뒤 사람이 ~2 m 안): 그 구역 예측 · 정답 합, 행 수 / 사람 없는 행: 예측 평균 합, 행 수
     int kb = B0;
@@ -235,22 +240,52 @@ __global__ void k_aux_fwd(int n, int H, const real* h, long ldh, const real* W, 
     }
 }
 // dW [K][H] · db [K] 부분합: 칸 q < K·H 는 (k = q / H, j = q % H), q ≥ K·H 는 편향 k. 행 묶음 y 가 r = y, y + RB, … 를 차례로 더함
-__global__ void k_aux_dw_part(int n, int H, const real* h, long ldh, const real* dy, real* part) {
+// K 출력 · H 입력 선형 층 (dy [n][K], 입력 h [n] 행 간격 ldh)
+__global__ void k_aux_dw_part(int n, int K, int H, const real* h, long ldh, const real* dy, real* part) {
   const int q = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y;
-  const int nq = kAuxK * (H + 1);
+  const int nq = K * (H + 1);
   if (q >= nq) return;
-  const bool isb = q >= kAuxK * H;
-  const int k = isb ? q - kAuxK * H : q / H, j = isb ? 0 : q % H;
+  const bool isb = q >= K * H;
+  const int k = isb ? q - K * H : q / H, j = isb ? 0 : q % H;
   real a = 0;
-  for (long r = y; r < n; r += kAuxRB) a += dy[r * kAuxK + k] * (isb ? (real)1 : h[r * ldh + j]);
+  for (long r = y; r < n; r += kAuxRB) a += dy[r * K + k] * (isb ? (real)1 : h[r * ldh + j]);
   part[(long)y * nq + q] = a;
 }
-__global__ void k_aux_dw_sum(int H, const real* part, real* grad) {   // grad = aux.w 기울기 자리 (aux.b 가 바로 뒤)
-  const int q = blockIdx.x * blockDim.x + threadIdx.x, nq = kAuxK * (H + 1);
+__global__ void k_aux_dw_sum(int K, int H, const real* part, real* grad) {   // grad = W 기울기 자리 (편향이 바로 뒤)
+  const int q = blockIdx.x * blockDim.x + threadIdx.x, nq = K * (H + 1);
   if (q >= nq) return;
   real a = 0;
   for (int y = 0; y < kAuxRB; ++y) a += part[(long)y * nq + q];
   grad[q] += a;
+}
+// 보조 은닉 층 (aux_hidden > 0): hid = ELU(W1 h + b1) — 행마다 워프, 은닉 m = lane + 32·q
+__global__ void k_aux_hid(int n, int H, int HH, const real* h, long ldh, const real* W1, const real* b1, real* hid) {
+  const int lane = threadIdx.x & 31;
+  const long r = (blockIdx.x * (long)blockDim.x + threadIdx.x) >> 5;
+  if (r >= n) return;
+  const real* hr = h + r * ldh;
+  for (int m = lane; m < HH; m += 32) {
+    real a = b1[m];
+    for (int j = 0; j < H; ++j) a += W1[(long)m * H + j] * hr[j];
+    hid[r * HH + m] = a > (real)0 ? a : (exp(a) - (real)1);
+  }
+}
+// 은닉 기울기 dhid ← dhid · ELU'(= 1 또는 hid + 1), 그 뒤 dh += W1ᵀ dhid (행마다 워프, 칸 j = lane + 32·q)
+__global__ void k_aux_hid_back(int n, int H, int HH, const real* W1, const real* hid, real* dhid, real* dh, long lddh) {
+  const int lane = threadIdx.x & 31;
+  const long r = (blockIdx.x * (long)blockDim.x + threadIdx.x) >> 5;
+  if (r >= n) return;
+  for (int m = lane; m < HH; m += 32) {
+    const real v = hid[r * HH + m];
+    dhid[r * HH + m] *= v > (real)0 ? (real)1 : v + (real)1;
+  }
+  __syncwarp();
+  if (!dh) return;
+  for (int j = lane; j < H; j += 32) {
+    real d = 0;
+    for (int m = 0; m < HH; ++m) d += dhid[r * HH + m] * W1[(long)m * H + j];
+    dh[r * lddh + j] += d;
+  }
 }
 __global__ void k_aux_acc(const real* red, double* acc) {
   const int k = threadIdx.x;
@@ -968,7 +1003,12 @@ PPO::PPO(const PPOConfig& cfg, const ACSpec& spec, uint64_t seed) : cfg_(cfg), s
     c_auxdy_ = dmalloc<real>((long)C * kAuxK, b);
     c_auxst_ = dmalloc<real>((long)C * kAuxNS, b);
     c_auxred_ = dmalloc<real>(16, b);
-    c_auxpart_ = dmalloc<real>((long)kAuxRB * kAuxK * (H_ + 1), b);
+    AUXH_ = spec.aux_hidden;
+    c_auxpart_ = dmalloc<real>((long)kAuxRB * std::max(kAuxK, AUXH_) * (H_ + 1), b);
+    if (AUXH_ > 0) {
+      c_auxhid_ = dmalloc<real>((long)C * AUXH_, b);
+      c_auxdhid_ = dmalloc<real>((long)C * AUXH_, b);
+    }
     d_auxacc_ = dmalloc<double>(16, b);
     CK(cudaMemset(d_auxacc_, 0, sizeof(double) * 16));
   }
@@ -993,7 +1033,7 @@ PPO::~PPO() {
                                               c_aout_, c_v_, c_da_, c_dv_, c_dls_, c_stat_, c_red_, c_gat_, d_perm_, c_x_, c_xh_, c_xc_, c_xch_,
                                               s_mask_, c_logits_, c_G_, c_feat_, c_maskt_, s_lstat_, s_gfeat_, s_gedge_, s_gcur_, d_cnt_, c_gred_,
                                               d_st_, d_part_, d_mbrec_, d_bc_, d_seg_, d_pack_bad_, h_a_, h_c_, s_h0a_, s_h0c_, h_tmp_, h_ia_, s_reset_, c_reset_, c_h0a_, c_h0c_,
-                                              s_auxsrc_, s_auxhit_, s_auxlm_, c_auxlm_, c_auxdy_, c_auxst_, c_auxpart_, d_auxacc_, c_auxred_})
+                                              s_auxsrc_, s_auxhit_, s_auxlm_, c_auxlm_, c_auxdy_, c_auxst_, c_auxpart_, d_auxacc_, c_auxred_, c_auxhid_, c_auxdhid_})
     cudaFree(p);
   cudaFree(d_ev_);
   for (void* p : std::initializer_list<void*>{h_mbrec_, h_bc_, h_perm_, h_pack_bad_}) cudaFreeHost(p);
@@ -1128,13 +1168,31 @@ void PPO::aux_minibatch(int n, const int* ix, int mb, bool backward) {
   auto st = ac_->stream;
   auto& ac = *ac_;
   k_aux_gather<<<nblk((long)n * kAuxW), 256, 0, st>>>(ix, n, s_auxlm_, c_auxlm_);
-  k_aux_fwd<<<nblk((long)n * 32), 256, 0, st>>>(n, H_, c_x_ + NFE_, NF_ + D_, ac.d_params + ac.aux_w_off, ac.d_params + ac.aux_b_off, c_auxlm_,
-                                                  (real)(cfg_.aux_coef / mb), c_auxdy_, c_auxst_, backward && !aux_break_ ? ac.actor.dx0() + NFE_ : nullptr,
-                                                  ac.actor.feat());
-  if (backward) {
-    const int nq = kAuxK * (H_ + 1);
-    k_aux_dw_part<<<dim3((nq + 255) / 256, kAuxRB), 256, 0, st>>>(n, H_, c_x_ + NFE_, NF_ + D_, c_auxdy_, c_auxpart_);
-    k_aux_dw_sum<<<(nq + 255) / 256, 256, 0, st>>>(H_, c_auxpart_, ac.d_grads + ac.aux_w_off);
+  const auto cf = [&](float c) { return (real)((c >= 0.f ? c : cfg_.aux_coef) / mb); };
+  real* dh = backward && !aux_break_ ? ac.actor.dx0() + NFE_ : nullptr;
+  if (AUXH_ == 0) {   // 선형 머리
+    k_aux_fwd<<<nblk((long)n * 32), 256, 0, st>>>(n, H_, c_x_ + NFE_, NF_ + D_, ac.d_params + ac.aux_w_off, ac.d_params + ac.aux_b_off, c_auxlm_,
+                                                    cf(cfg_.aux_coef_a), cf(cfg_.aux_coef_b), cf(cfg_.aux_coef_c), c_auxdy_, c_auxst_, dh, ac.actor.feat());
+    if (backward) {
+      const int nq = kAuxK * (H_ + 1);
+      k_aux_dw_part<<<dim3((nq + 255) / 256, kAuxRB), 256, 0, st>>>(n, kAuxK, H_, c_x_ + NFE_, NF_ + D_, c_auxdy_, c_auxpart_);
+      k_aux_dw_sum<<<(nq + 255) / 256, 256, 0, st>>>(kAuxK, H_, c_auxpart_, ac.d_grads + ac.aux_w_off);
+    }
+  } else {            // 두 층: h → hid (ELU) → 출력
+    k_aux_hid<<<nblk((long)n * 32), 256, 0, st>>>(n, H_, AUXH_, c_x_ + NFE_, NF_ + D_, ac.d_params + ac.aux_w1_off, ac.d_params + ac.aux_b1_off, c_auxhid_);
+    if (backward) CK(cudaMemsetAsync(c_auxdhid_, 0, sizeof(real) * (size_t)n * AUXH_, st));
+    k_aux_fwd<<<nblk((long)n * 32), 256, 0, st>>>(n, AUXH_, c_auxhid_, AUXH_, ac.d_params + ac.aux_w_off, ac.d_params + ac.aux_b_off, c_auxlm_,
+                                                    cf(cfg_.aux_coef_a), cf(cfg_.aux_coef_b), cf(cfg_.aux_coef_c), c_auxdy_, c_auxst_,
+                                                    backward ? c_auxdhid_ : nullptr, AUXH_);
+    if (backward) {
+      int nq = kAuxK * (AUXH_ + 1);
+      k_aux_dw_part<<<dim3((nq + 255) / 256, kAuxRB), 256, 0, st>>>(n, kAuxK, AUXH_, c_auxhid_, AUXH_, c_auxdy_, c_auxpart_);
+      k_aux_dw_sum<<<(nq + 255) / 256, 256, 0, st>>>(kAuxK, AUXH_, c_auxpart_, ac.d_grads + ac.aux_w_off);
+      k_aux_hid_back<<<nblk((long)n * 32), 256, 0, st>>>(n, H_, AUXH_, ac.d_params + ac.aux_w1_off, c_auxhid_, c_auxdhid_, dh, ac.actor.feat());
+      nq = AUXH_ * (H_ + 1);
+      k_aux_dw_part<<<dim3((nq + 255) / 256, kAuxRB), 256, 0, st>>>(n, AUXH_, H_, c_x_ + NFE_, NF_ + D_, c_auxdhid_, c_auxpart_);
+      k_aux_dw_sum<<<(nq + 255) / 256, 256, 0, st>>>(AUXH_, H_, c_auxpart_, ac.d_grads + ac.aux_w1_off);
+    }
   }
   col_sum(c_auxst_, n, kAuxNS, kAuxNS, c_auxred_, false, st);
   if (dev_mb_) {
@@ -1353,8 +1411,11 @@ double PPO::minibatch(const int* d_idx, int n_all, int mb, bool backward, double
     return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * stats[3] / mb + cfg_.slot_cm_coef * stats[4] / mb;
   }
   if (backward) if (NC_ > cfg_.entropy_from) k_add_const<<<1, 32, 0, st>>>(ac.log_std_grad() + cfg_.entropy_from, NC_ - cfg_.entropy_from, -cfg_.entropy_coef * ((real)n_all / mb));
-  stats[3] = ent * n_all;
-  if (AUXK_ && aux_loss_out_) *aux_loss_out_ = cfg_.aux_coef * (aux_host_[0] + aux_host_[2] + aux_host_[4]) / mb;  // 엔트로피 합 자리로 바꿔 쓴다 (ratio 는 안 씀)
+  stats[3] = ent * n_all;  // 엔트로피 합 자리로 바꿔 쓴다 (ratio 는 안 씀)
+  if (AUXK_ && aux_loss_out_) {   // 성분마다 계수 (aux_minibatch 의 cf 와 같은 규칙)
+    const auto c = [&](float x) { return (double)(x >= 0.f ? x : cfg_.aux_coef); };
+    *aux_loss_out_ = (c(cfg_.aux_coef_a) * aux_host_[0] + c(cfg_.aux_coef_b) * aux_host_[2] + c(cfg_.aux_coef_c) * aux_host_[4]) / mb;
+  }
   return stats[0] / mb + cfg_.value_coef * stats[1] / mb - cfg_.entropy_coef * ent * n_all / mb;
 }
 

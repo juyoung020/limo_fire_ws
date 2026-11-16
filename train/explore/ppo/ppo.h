@@ -76,6 +76,7 @@ struct PPOConfig {
   // 보조 예측 머리 (2026-11-16, ppo/README "보조 예측 머리" — ACSpec::aux_out > 0 일 때만): 손실 aux_coef × 행 평균 [(a) 닿음 BCE + (b) · (c) 칸 평균 제곱 오차].
   // 정답 지평 (걸음): (a) 앞 aux_ka 걸음 안 닿음, (b) aux_kb 걸음 뒤 추적 움직이는 것, (c) aux_kc 걸음 뒤 라이다 구역 — 롤아웃 안·같은 판일 때만 (아니면 가림)
   float aux_coef = 0.1f;        // 잠정 (작게 — 기록 train/aux_*)
+  float aux_coef_a = -1.f, aux_coef_b = -1.f, aux_coef_c = -1.f;   // 성분마다 계수 (음수면 aux_coef) — 2026-11-16 (a) · (b) 0.3, (c) 0.03
   int aux_ka = 10, aux_kb = 10, aux_kc = 5;   // 10 Hz: 1 s · 1 s · 0.5 s
 };
 
@@ -248,7 +249,9 @@ class PPO {
   bool aux_break_ = false;
   int AUXK_ = 0;                                // 보조 머리 출력 칸 (0 = 끔)
   real *s_auxsrc_ = nullptr, *s_auxhit_ = nullptr, *s_auxlm_ = nullptr;   // 롤아웃 재료 [S][AUX_SRC] · 닿음 [S] · 정답|가림 [S][AUXK + 3]
-  real *c_auxlm_ = nullptr, *c_auxdy_ = nullptr, *c_auxst_ = nullptr, *c_auxpart_ = nullptr, *c_auxred_ = nullptr;   // 미니배치 [C][AUXK+3] · dy [C][AUXK] · 통계 [C][8] · dW 부분합
+  real *c_auxlm_ = nullptr, *c_auxdy_ = nullptr, *c_auxst_ = nullptr, *c_auxpart_ = nullptr, *c_auxred_ = nullptr;
+  real *c_auxhid_ = nullptr, *c_auxdhid_ = nullptr;   // 보조 은닉 [C][AUXH] · 그 기울기
+  int AUXH_ = 0;   // 미니배치 [C][AUXK+3] · dy [C][AUXK] · 통계 [C][8] · dW 부분합
   double* d_auxacc_ = nullptr;                  // 보조 통계 합 [9] (장치 갱신)
   double aux_host_[16] = {0};
   double* aux_loss_out_ = nullptr;              // loss_and_grad 동안: 보조 손실 (호스트 길) 을 여기에                    // 보조 통계 합 (호스트 갱신 길)

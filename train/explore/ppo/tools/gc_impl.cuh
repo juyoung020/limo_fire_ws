@@ -63,6 +63,7 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
   // 보조 예측 머리 (GC_LOW_AUX=1, gradcheck --low --gru --aux): actor h → 선형 머리 + 앞 걸음 정답 (롤아웃 4 걸음, 지평 2·2·1 로 줄여 정답 있는 행을 만듦)
   const bool aux = gru && std::getenv("GC_LOW_AUX") != nullptr;
   if (aux) spec.aux_out = mdp::low::AUX_OUT;
+  if (aux && std::getenv("GC_AUX_HIDDEN")) spec.aux_hidden = std::atoi(std::getenv("GC_AUX_HIDDEN"));   // gradcheck --aux-hidden N (두 층 보조 머리)
   spec.declare_bias = 0.f;  // 검사에서는 선언 확률을 중간으로 (−7 이면 베르누이 기울기가 거의 0)
   PPOConfig cfg;
   cfg.num_envs = 6;
@@ -76,6 +77,7 @@ GcOut gc_run(bool full, bool negative, bool do_fd, int K, int mlp) {
     cfg.aux_kb = 2;
     cfg.aux_kc = 1;
     cfg.aux_coef = 0.5f;   // 검사에서 보이게 크게
+    cfg.aux_coef_b = 0.7f;  // 성분마다 계수 길도 검사
   }  // S=12 를 4 개씩 3 덩이 → 덩이 누적도 검사 (순환 핵은 순서 하나를 한 번에 — chunk ≥ 미니배치)
   cfg.tf32 = false;  // fp32 정확 모드로 검사
   cfg.cnn_bf16 = false;
