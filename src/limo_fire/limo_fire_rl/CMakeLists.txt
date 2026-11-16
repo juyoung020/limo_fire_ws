@@ -58,6 +58,6 @@ target_compile_definitions(explore_frontier PRIVATE LIMO_FIRE_FRONTIER_YAML="${E
 ament_target_dependencies(explore_frontier rclcpp rclcpp_action nav2_msgs nav_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs ament_index_cpp)
 
 install(TARGETS explore_rl explore_frontier low_rl DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch config rviz DESTINATION share/${PROJECT_NAME})
 
 ament_package()

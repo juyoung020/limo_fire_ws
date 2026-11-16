@@ -6,17 +6,23 @@
   <arg name="checkpoint" default="$(env HOME)/ckpt/low_w3_36000.bin" description="아래층 체크포인트 .bin (low_w3 반복 36000)"/>
   <arg name="dry_run" default="true" description="true: /cmd_vel 안 냄 (~/cmd_debug 에만) · false: 실제 주행"/>
   <arg name="stack" default="false" description="true: Cartographer 같이"/>
-  <arg name="rviz" default="false" description="true: 운용 화면 RViz (stack:=true 와 같이)"/>
+  <arg name="rviz" default="false" description="true: 운용 화면 RViz (rviz/explore_fuel_rl.rviz — 탐사 패널 /low_rl)"/>
   <arg name="map_frame" default="map"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="record" default="" description="입력·관측·명령 녹화 파일 (비우면 안 씀)"/>
 
   <group if="$(var stack)">
     <include file="$(find-pkg-share limo_fire_bringup)/launch/mapping.launch.xml">
-      <arg name="rviz" value="$(var rviz)"/>
+      <arg name="rviz" value="false"/>
       <arg name="use_sim_time" value="$(var use_sim_time)"/>
     </include>
   </group>
+
+  <!-- 운용 화면은 limo_fire.rviz 와 같되 탐사 패널이 /low_rl, 목표 표시가 /low_rl/goal_marker 인 이 launch 전용 설정 -->
+  <node pkg="rviz2" exec="rviz2" name="limo_fire_rviz" output="screen" if="$(var rviz)"
+        args="-d $(find-pkg-share limo_fire_rl)/rviz/explore_fuel_rl.rviz">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
 
   <include file="$(find-pkg-share limo_fire_rl)/launch/low_rl.launch.xml">
     <arg name="checkpoint" value="$(var checkpoint)"/>
