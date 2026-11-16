@@ -1057,6 +1057,7 @@ int run_policy(const Args& a) {
     std::vector<sim::LowCmd> cmd(N, sim::LowCmd{-1, 0});
     for (int i = 0; i < N; ++i) warm[i] = warm_draw();
     std::vector<sim::EnvState> st;
+    std::vector<sim::EpInfo> epi;   // 자취 끝 줄 정답 충돌 비트 (--trace)
     std::vector<float> rew;
     std::vector<int32_t> done;
     std::vector<LowEp> low;
@@ -1135,6 +1136,7 @@ int run_policy(const Args& a) {
       env.get_state(st);
       env.get_low(low);
       if (dg.f) env.get_low_rl(dg.rl_post);
+      if (tr) env.get_ep(epi);   // 자취 끝 줄: 판 동안 정답 충돌 비트 (끝 걸음 포함 — 상태는 이미 새 판)
       for (int i = 0; i < N; ++i) {
         if (phase[i] == 2) continue;
         const LowEp& L = low[i];
@@ -1165,7 +1167,10 @@ int run_policy(const Args& a) {
           float gd = -1.f;
           if (cmd[i].target >= 0)
             gd = std::hypot(W.ox + ((float)(cmd[i].target % W.gw) + 0.5f) * c.res - (st[i].x + st[i].ex), W.oy + ((float)(cmd[i].target / W.gw) + 0.5f) * c.res - (st[i].y + st[i].ey));
-          if (done[i]) std::fprintf(tr, "%s\t%d\t%d\t%d\t%d\t%d\n", W.name.c_str(), people, i, eps[i], st[i].step, L.end == sim::kLowEndNone ? sim::kLowEndTime : L.end);
+          // 끝 줄 7 칸째 = 그 판의 정답 충돌 비트 (EpInfo::gt_touch — 1 벽 · 2 사람, 끝 걸음 포함). 2026-11-16 전에는 없어서 센서 닿음으로 끝난 걸음의
+          // 정답 충돌을 판정(lpr_setv2.py)이 못 셌다 (벽·사람 /100 m 이 센서가 놓친 충돌만 셈 — 측정 오류)
+          if (done[i]) std::fprintf(tr, "%s\t%d\t%d\t%d\t%d\t%d\t%d\n", W.name.c_str(), people, i, eps[i], st[i].step, L.end == sim::kLowEndNone ? sim::kLowEndTime : L.end,
+                                    (int)epi[i].gt_touch);
           else trace_row(tr, c, W, W.name.c_str(), people, i, eps[i], st[i].step - step0[i], 0, st[i], a0, a1, L.kind == sim::kLowSafety, gd);
         }
         if (dg.f && phase[i] == 1 && cmd[i].follow == 2) {   // 진단: 정책이 몬 걸음
