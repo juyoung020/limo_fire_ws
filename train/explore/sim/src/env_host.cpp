@@ -3,6 +3,7 @@
 #include "optix_rt.h"
 #endif
 
+#include <cstring>
 #include <string>
 #include <yaml-cpp/yaml.h>
 
@@ -203,15 +204,18 @@ T* Env::alloc(size_t n) {
     if (cudaMalloc(&p, std::max<size_t>(1, n * sizeof(T))) != cudaSuccess) throw std::runtime_error("cudaMalloc 실패");
     cudaMemset(p, 0, n * sizeof(T));
     owned_.push_back(p);
+    zero_.push_back({p, n * sizeof(T)});
     return (T*)p;
   }
   host_.emplace_back(std::max<size_t>(1, n * sizeof(T)), 0);
+  zero_.push_back({host_.back().data(), n * sizeof(T)});
   return (T*)host_.back().data();
 }
 
 template <class T>
 T* Env::upload(const std::vector<T>& v) {
   T* p = alloc<T>(v.size());
+  zero_.pop_back();   // 올린 값 — restart 가 0 으로 만들지 않음 (정적이거나, 상태·LowRl 처럼 따로 다시 올림)
   if (gpu_) cudaMemcpy(p, v.data(), v.size() * sizeof(T), cudaMemcpyHostToDevice);
   else std::copy(v.begin(), v.end(), p);
   return p;
@@ -307,6 +311,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     e.rng = dm::splitmix64(r);
   }
   b_.st = upload(st);
+  init_st_ = st;
   const size_t cells = (size_t)hc.cfg.size * hc.cfg.size;
   b_.lmap = alloc<int16_t>(cells * n_env);
   b_.marks = alloc<uint32_t>(cells / 4 * n_env);
@@ -351,6 +356,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
         r[i].stall_tgt = -1;
       }
       b_.lowrl = upload(r);
+      init_lowrl_ = r;
       b_.lowstat = alloc<LowRlStat>(n_env);
       b_.map_eps = alloc<int32_t>((size_t)b_.n_maps);   // 맵 뽑기 우선순위 통계 (set_map_cdf 를 안 부르면 쓰이기만 하고 뽑기는 고르게)
       b_.map_hit = alloc<int32_t>((size_t)b_.n_maps);
@@ -422,6 +428,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
 #endif
     // 장치 사본 (OptiX raygen 이 읽음). 묶음은 여기서 다 정해지고 그 뒤 안 바뀐다
     EnvBatch* d = alloc<EnvBatch>(1);
+    zero_.pop_back();   // 장치 사본 (정적)
     b_.dev_self = d;
     cudaMemcpy(d, &b_, sizeof(EnvBatch), cudaMemcpyHostToDevice);
   }
@@ -432,6 +439,21 @@ Env::~Env() {
   delete (OptixRt*)rt_;
 #endif
   for (void* p : owned_) cudaFree(p);
+}
+
+void Env::restart() {
+  for (const auto& [p, n] : zero_) {
+    if (gpu_) cudaMemset(p, 0, n);
+    else std::memset(p, 0, n);
+  }
+  if (gpu_) {
+    cudaMemcpy(b_.st, init_st_.data(), init_st_.size() * sizeof(EnvState), cudaMemcpyHostToDevice);
+    if (b_.lowrl) cudaMemcpy(b_.lowrl, init_lowrl_.data(), init_lowrl_.size() * sizeof(LowRl), cudaMemcpyHostToDevice);
+    if (cudaDeviceSynchronize() != cudaSuccess) throw std::runtime_error("Env::restart: CUDA 오류");
+  } else {
+    std::copy(init_st_.begin(), init_st_.end(), b_.st);
+    if (b_.lowrl) std::copy(init_lowrl_.begin(), init_lowrl_.end(), b_.lowrl);
+  }
 }
 
 void Env::reset() {
@@ -550,7 +572,10 @@ void Env::take_map_stats(std::vector<int32_t>& eps, std::vector<int32_t>& hit) {
 void Env::set_map_cdf(const std::vector<float>& cdf) {
   if (cdf.empty()) { b_.map_cdf = nullptr; return; }
   if ((int)cdf.size() != b_.n_maps) throw std::runtime_error("set_map_cdf: 맵 수와 다름");
-  if (!cdf_buf_) cdf_buf_ = alloc<float>((size_t)b_.n_maps);
+  if (!cdf_buf_) {
+    cdf_buf_ = alloc<float>((size_t)b_.n_maps);
+    zero_.pop_back();   // 호스트가 올리는 값 (restart 가 안 건드림)
+  }
   if (gpu_) cudaMemcpy(cdf_buf_, cdf.data(), sizeof(float) * cdf.size(), cudaMemcpyHostToDevice);
   else std::copy(cdf.begin(), cdf.end(), cdf_buf_);
   b_.map_cdf = cdf_buf_;

@@ -139,6 +139,10 @@ class Env {
   // 움직이는 사람 (src/people_host.cpp): 환경마다 다음 판 사람 수 상한 (판 시작 인자, 0 ~ kMaxPeople) · 이 판 사람들 (뷰어 재생)
   void set_people_max(const std::vector<int>& k);
   void get_people(std::vector<People>& out) const;
+  // 처음 만든 때 상태로 되돌림 (2026-11-16): 같은 씨앗으로 새로 만든 Env 와 같은 상태 — 상태(EnvState·LowRl 난수)를 처음 값으로 다시 올리고,
+  // 할당 때 0 이던 장치 버퍼를 다시 0 으로 (정적 업로드 — 맵·장면·장치 사본 — 는 그대로, OptiX 컨텍스트·모듈도 그대로). 그 뒤 set_people_max · reset 은 부르는 쪽이.
+  // 학습 중 평가가 Env 를 매번 새로 만들고 부수던 것(OptiX 컨텍스트·모듈 파괴 포함)을 없애려고 — scripts/train.cpp evaluate
+  void restart();
 
   const EnvBatch& batch() const { return b_; }
   int n_env() const { return b_.n_env; }
@@ -151,6 +155,9 @@ class Env {
   bool lean_low_ = false;
   EnvBatch b_{};
   std::vector<void*> owned_;            // 장치 메모리
+  std::vector<std::pair<void*, size_t>> zero_;   // 할당 때 0 이고 실행 중 바뀌는 버퍼 (restart 가 다시 0 으로) — upload·장치 사본은 빠짐
+  std::vector<EnvState> init_st_;       // 처음 상태 (restart)
+  std::vector<LowRl> init_lowrl_;
   std::vector<std::vector<uint8_t>> host_;   // CPU 판 메모리
   void* rt_ = nullptr;                  // OptixRt (SIM_OPTIX 빌드·GPU 판, RT 코어가 있으면)
   template <class T>

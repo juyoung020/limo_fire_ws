@@ -442,6 +442,23 @@ int run_low(Args a) {
         .set("stall", s.stall).set("timeout", s.timeout).set("giveup", s.giveup)
         .set("back_frac", s.steps > 0 ? s.back / s.steps : 0.0).set("dist", s.dist);
   };
+  // 평가 Env (시험 맵마다 하나): 처음 평가 때 만들고, 그 뒤는 Env::restart 로 같은 씨앗의 새 Env 와 같은 상태로 되돌려 다시 씀 (2026-11-16).
+  // 전엔 평가마다 Env 를 만들고 부숴 OptiX 컨텍스트·모듈·파이프라인도 학습 중에 만들고 없앴다 — low_w3 의 갱신 단계 Xid 31 (GCC 폴트) 의심 후보를 없앰
+  struct EvalEnv {
+    std::vector<sim::World> one;
+    std::unique_ptr<sim::Env> env;
+  };
+  std::vector<EvalEnv> ev_cache(tests.size()), evx_cache(tests.size());
+  const auto eval_env = [&](std::vector<EvalEnv>& cache, size_t ti, const sim::EnvHostCfg& h, int E) -> sim::Env& {
+    EvalEnv& c = cache[ti];
+    if (!c.env) {
+      c.one = {tests[ti]};
+      c.env.reset(new sim::Env(h, c.one, lidar, E, a.seed * 7919ull + 17 + ti, true));
+    } else {
+      c.env->restart();
+    }
+    return *c.env;
+  };
   auto evaluate = [&](int it, bool sample) {
     const auto t0 = std::chrono::steady_clock::now();
     const int E = std::max(2, std::min(a.eval_eps, N));
@@ -450,8 +467,7 @@ int run_low(Args a) {
     rf::Json rows = rf::Json::array();
     LowSum all;
     for (size_t ti = 0; ti < tests.size(); ++ti) {
-      std::vector<sim::World> one{tests[ti]};
-      sim::Env ev(hc_solo, one, lidar, E, a.seed * 7919ull + 17 + ti, true);
+      sim::Env& ev = eval_env(ev_cache, ti, hc_solo, E);
       std::vector<int> pm(E);
       for (int i = 0; i < E; ++i) pm[i] = i < E / 2 ? 0 : 2;
       ev.set_people_max(pm);
@@ -508,8 +524,7 @@ int run_low(Args a) {
     rf::Json rows = rf::Json::array();
     double a_ok = 0, a_wall = 0, a_n = 0, a_t = 0;
     for (size_t ti = 0; ti < tests.size(); ++ti) {
-      std::vector<sim::World> one{tests[ti]};
-      sim::Env ev(hx, one, lidar, E, a.seed * 7919ull + 17 + ti, true);
+      sim::Env& ev = eval_env(evx_cache, ti, hx, E);
       ev.reset();
       ev.sync();
       std::vector<int> fin(E, 0), fd(E, 0), fs(E, 0);
