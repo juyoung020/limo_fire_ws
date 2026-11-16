@@ -295,12 +295,27 @@ void RobotEnv::low_act(const float* a, float* v, float* w) {
   // 시뮬 step_env 첫머리 + apply_action 아래층 가지 (env.h): collided 0 → lowrl_begin → lowrl_act
   e_.collided = 0;
   sim::lowrl_begin(b_, e_, 0);
-  if (!sim::lowrl_act(b_, e_, 0, a)) {   // 정책 환경이 아님 (set_goal 전) — 시뮬은 규칙 추종기, 실물은 섬
-    e_.cmd_v = e_.cmd_vy = e_.cmd_w = 0.f;
-    sim::path_last_act(b_.cfg, e_, 0.f, 0.f);
+  if (!sim::lowrl_act(b_, e_, 0, a)) {   // 정책 환경이 아님 (위층 목표 없음)
+    if (explore_) {   // 합친 탐사: 시뮬 apply_action 계층형 가지 그대로 (env.h — 목표 없으면 제자리 회전, 속도 다듬기·충돌 감시까지 같은 함수)
+      sim::PathStep ps;
+      sim::path_step_a(b_, e_, 0, nullptr, ps);
+      const bool imm = ps.want_imm && sim::path_imminent(b_, e_, 0, ps.vc, ps.wc, ps.cd);
+      sim::path_step_b(b_, e_, 0, imm, nullptr, ps);
+      sim::path_step_c(b_, e_, 0, sim::path_monitor_scale(b_, e_, 0, ps.v, ps.w), ps);
+    } else {        // 학습 판 모드 (set_goal 전): 섬
+      e_.cmd_v = e_.cmd_vy = e_.cmd_w = 0.f;
+      sim::path_last_act(b_.cfg, e_, 0.f, 0.f);
+    }
   }
   *v = e_.cmd_v;
   *w = e_.cmd_w;
+}
+
+void RobotEnv::hold() {
+  e_.collided = 0;
+  if (low_on_) sim::lowrl_begin(b_, e_, 0);
+  e_.cmd_v = e_.cmd_vy = e_.cmd_w = 0.f;
+  sim::path_last_act(b_.cfg, e_, 0.f, 0.f);
 }
 
 void RobotEnv::low_obs() {

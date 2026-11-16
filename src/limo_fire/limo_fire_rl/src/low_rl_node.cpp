@@ -7,7 +7,8 @@
 // 명령을 고치는 규칙 층은 없다(순수 RL). 명령을 0 으로 만드는 것은 아래 멈춤 조건뿐:
 //   꺼짐(~/enable false · 처음) · 리모컨이 오토가 아님(/rc_state buttons[rc_button] ≠ rc_auto_value, 또는 rc_timeout 넘게 안 옴 — 꺼짐으로 바뀜, 다시 오토가 돼도
 //   ~/enable true 를 따로 불러야 감) · 입력 끊김(라이다·TF·오도메트리 input_timeout 넘게 — 0, 돌아오면 이어 감) · 닿음(시뮬 contact.h sense_step 정의 —
-//   멈추고 꺼짐, contact_resume_s > 0 이면 그만큼 뒤 저절로 켬) · 끝(지도 닫힘 + 진척 없음 10 s · 진척 없음 · 시간 — 시뮬 판 끝 규칙) · 목표 없음(시뮬은 규칙 추종기 회전).
+//   멈추고 꺼짐, contact_resume_s > 0 이면 그만큼 뒤 저절로 켬) · 끝(지도 닫힘 + 진척 없음 10 s · 진척 없음 · 시간 — 시뮬 판 끝 규칙).
+// 위층 목표가 없는 걸음(판 시작·프론티어 없음)은 시뮬과 같게 규칙 추종기의 제자리 회전 (env.h apply_action 계층형 가지 — RobotEnv::low_act).
 // dry_run:=true (기본): /cmd_vel 발행자를 아예 안 만들고 같은 명령을 ~/cmd_debug 에만. 위층 목표는 upper:=topic 이면 ~/goal (시험용).
 #include <chrono>
 #include <cmath>
@@ -361,7 +362,8 @@ class LowRlNode : public rclcpp::Node {
     float a[mdp::low::ACT] = {0.f, 0.f, 0.f}, v = 0.f, w = 0.f;
     if (running()) pol_.act(env_->low_img(), env_->low_1d(), a);   // 꺼짐·멈춤이면 정책을 안 돌리고 행동 0 (명령 0)
     const auto t4 = clk::now();
-    env_->low_act(a, &v, &w);
+    if (running()) env_->low_act(a, &v, &w);
+    else env_->hold();   // 멈춤: 명령 0
     if (rec_) rec_->act(a, v, w);
     if (!running() || stale_) { v = 0.f; w = 0.f; }
     if (std::fabs(v) > max_speed_) v = v > 0.f ? (float)max_speed_ : -(float)max_speed_;   // max_speed (기본 = 학습 한도라 안 자름)

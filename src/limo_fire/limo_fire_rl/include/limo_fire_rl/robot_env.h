@@ -95,6 +95,8 @@ class RobotEnv {
   // 정책 출력 a[ACT] (정규 단위 v, ω, 선언 자리) → 내보낼 명령 v (m/s) · ω (rad/s). 목표가 없으면(정책 환경 아님) 0, 0
   void low_act(const float* a, float* v, float* w);
   void low_obs();
+  // 실물 멈춤(꺼짐·리모컨·닿음) 걸음: 명령 0 (low_act 대신 — 시뮬에는 없는 걸음. 직전 행동 칸도 0, 사람 추적은 그 걸음 건너뜀)
+  void hold();
   const uint8_t* low_img() const { return b_.low_img; }   // [low_img_n(cfg)] — 넓은 지도를 켜면 IMG_WIDE
   const float* low_1d() const { return b_.low_1d; }       // [low_1d_n(cfg)] — 움직이는 것 칸 넷을 켜면 N1D_MOV4
   int low_img_n() const { return sim::low_img_n(b_.cfg); }

@@ -1,7 +1,7 @@
 // 실물 합친 탐사 노드(위층 fuel + 아래층 RL — limo_fire_rl low_rl explore 모드) == CPU 시뮬 합친 탐사 (combine_run --upper fuel --policy 와 같은 설정).
 // 시뮬(환경 하나, CPU 참조판)과 RobotEnv(합친 탐사 모드)가 각자 자기 상태로 위층 결정(scripts/low_explore_ctl.h — combine_run 의 환경 하나 몫)을 하고,
 // 걸음마다 시뮬 라이다 장·감각·깊이를 RobotEnv 에 넣어(rl_node_check 와 같은 탭) 두 쪽의 위층 명령(목표 칸·follow)·아래층 관측(그림·1D)·명령(v, ω)을 비트 비교한다.
-// 아래층 행동은 실물 CPU 정책(network/policy_cpu.h LowPolicy)이 RobotEnv 관측으로 낸 것을 두 쪽에 같이 준다.
+// 아래층 행동은 실물 CPU 정책(network/policy_cpu.h LowPolicy)이 RobotEnv 관측으로 낸 것을 두 쪽에 같이 준다. 목표 없는 걸음은 두 쪽 다 규칙 추종기(제자리 회전).
 //   low_explore_check <장면.scene> … --ckpt 아래층.bin [--steps 1500] [--seed 1] [--people 0] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
 // 지도 자세 오차·관측 지연은 끈다 (rl_node_check 와 같은 까닭). 판이 끝나면 둘 다 새 판 (위층 기억도 비움). 관측 설정은 체크포인트 꼬리(mdp/ckpt_cfg.h)
 #include <cmath>
@@ -124,8 +124,8 @@ int main(int argc, char** argv) {
     std::vector<sim::LowEp> L;
     sim::World rw;   // RobotEnv 지도 창 (gw · gh · ox · oy 만)
     long n_obs = 0, d_img = 0, d_1d = 0, d_cmd = 0, d_dec = 0, n_dec = 0, n_ep = 0, why_n[3] = {0, 0, 0}, n_sw = 0;
-    long ng_1d = 0;   // 목표 없음 걸음과 그 뒤 4 걸음의 1D 다름 (시뮬은 규칙 추종기가 돌고 실물은 0 — 직전 행동 칸이 다름, 따로 셈)
-    int first_bad = -1, prev_tgt = -2, ng_until = -1;
+    long ng_steps = 0;   // 목표 없음 걸음 (두 쪽 다 규칙 추종기 — 시뮬 apply_action 계층형 가지)
+    int first_bad = -1, prev_tgt = -2;
     const auto start = [&]() {
       cpu.get_state(st);
       const sim::EnvState& e = st[0];
@@ -178,8 +178,7 @@ int main(int argc, char** argv) {
       long di = 0, d1 = 0;
       for (int i = 0; i < NI; ++i) di += li[(size_t)i] != robot.low_img()[i];
       for (int i = 0; i < N1; ++i) d1 += std::memcmp(&l1[(size_t)i], &robot.low_1d()[i], 4) != 0;
-      if (cs.cmd().follow != 2) ng_until = t + 5;
-      if (t < ng_until && di == 0) { ng_1d += d1; d1 = 0; }
+      ng_steps += cs.cmd().follow != 2;
       d_img += di; d_1d += d1;
       if ((di || d1) && first_bad < 0) first_bad = t;
       // 아래층 정책 (RobotEnv 관측) → 두 쪽에 같은 행동
@@ -197,7 +196,7 @@ int main(int argc, char** argv) {
         start();
         continue;
       }
-      if (cs.cmd().follow == 2 && (std::memcmp(&st[0].cmd_v, &v, 4) != 0 || std::memcmp(&st[0].cmd_w, &w, 4) != 0)) { ++d_cmd; if (first_bad < 0) first_bad = t; }
+      if ((std::memcmp(&st[0].cmd_v, &v, 4) != 0 || std::memcmp(&st[0].cmd_w, &w, 4) != 0)) { ++d_cmd; if (first_bad < 0) first_bad = t; }
       cpu.get_low_rl(R); cpu.get_low(L);
       cs.after_step(st[0], R[0], L[0]);
       cr.after_step(robot.state(), robot.low_rl(), robot.low_ep());
@@ -205,8 +204,8 @@ int main(int argc, char** argv) {
     sim::set_cpu_tap(nullptr);
     std::printf("관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
                 why_n[2], n_sw, cs.n_reach(), cs.n_stall());
-    std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld (목표 없음 걸음 뒤 직전 행동 칸 다름 %ld — 따로)\n", d_dec, d_img,
-                d_1d, d_cmd, ng_1d);
+    std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 그림 다른 바이트 %ld · 1D 다른 칸 %ld · 아래층 명령·판 끝 다름 %ld (목표 없음 걸음 %ld — 두 쪽 다 규칙 추종기)\n", d_dec, d_img,
+                d_1d, d_cmd, ng_steps);
     const bool ok = d_dec == 0 && d_img == 0 && d_1d == 0 && d_cmd == 0;
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");
     return ok ? 0 : 1;

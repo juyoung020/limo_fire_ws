@@ -1,13 +1,14 @@
 # limo_fire_rl — 탐사 노드 (RL 정책 · 프론티어)
 
-두 노드가 있다. 둘 다 Nav2 `NavigateToPose` 로 목표를 보내고, `~/enable`(std_srvs/SetBool)로 켜고 끄며, 운용 화면 RViz 의 **탐사 패널**
+노드가 셋 있다. `explore_frontier`·`explore_rl` 은 Nav2 `NavigateToPose` 로 목표를 보내고 `low_rl` 은 아래층 RL 정책이 바로 `/cmd_vel` 을 낸다. 셋 다 `~/enable`(std_srvs/SetBool)로 켜고 끄며, 운용 화면 RViz 의 **탐사 패널**
 ("Auto explore ON/OFF" 버튼, [limo_fire_rviz](../limo_fire_rviz/README.md))이 이 서비스를 부른다. 실물에서 RViz 를 켜는 법은
 [limo_fire_bringup README "실물에서 운용 화면(RViz) 켜기"](../limo_fire_bringup/README.md#실물에서-운용-화면rviz-켜기).
 
 | 노드 | 무엇 | 켜기 |
 |---|---|---|
 | `explore_frontier` | 프론티어 탐사 (아래 "프론티어 탐사") — 탐사 기준선과 같은 찾기·고르기 | 멈춘 채 뜸 → 버튼 |
-| `explore_rl` | 학습한 계층형 정책 (아래부터) | 기본 바로 켜짐 (`enabled:=false` 면 버튼) |
+| `explore_rl` | 학습한 계층형 정책 (아래 "RL 정책") | 기본 바로 켜짐 (`enabled:=false` 면 버튼) |
+| `low_rl` | 위층 fuel + 아래층 순수 RL 정책 (아래 "합친 탐사") — Nav2 없음 | 멈춘 채 뜸 → 버튼 (리모컨 오토일 때만) |
 
 ## 프론티어 탐사 (`explore_frontier`)
 
@@ -49,6 +50,87 @@ ros2 topic echo /explore_frontier/state
 - 처음엔 전역 costmap 이 Cartographer 벽을 안 넣어(막힘 문턱 100, 아래 문서) 라이다 3 m 밖 덕트를 뚫는 경로로 7 분 넘게 맴돌았다 —
   `nav2_params.yaml` `lethal_cost_threshold: 65` 로 고친 뒤 위 결과. [docs/simulation.md "Nav2 설정"](../../../docs/simulation.md).
 - 시뮬은 화면 없는 X 의 소프트웨어 렌더링이라 실시간의 약 0.55 배. 실물·젯슨에서는 아직 안 돌림.
+
+## 합친 탐사 (`low_rl` — 위층 fuel + 아래층 순수 RL, 2026-11-16)
+
+시뮬 `combine_run --upper fuel --policy` 와 **같은 코드·같은 값**으로 로봇이 탐사한다. 위층 fuel(`train/explore/scripts/fuel_upper.h`)이 1 s 마다 로봇이 쌓은 지도에서
+목표 칸을 고르고, 아래층 순수 RL 정책(체크포인트)이 0.1 s 마다 `/cmd_vel` 을 낸다. Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`)만 준다.
+
+| 차례 | 실물 노드 | 시뮬 (`train/explore/scripts/combine_run.cpp`, 1bd79b5 기준 줄) |
+|---|---|---|
+| 설정 | `RobotEnv` 합친 탐사 모드 — 목표는 위층, 탐사 판 끝 규칙, 막힘은 신호만 | 224-231 (`low_auto 0` · `low_explore 1`) |
+| 결정 때 | 걸음 % 10 == 0 또는 다시 결정 | 544 |
+| 목표 | fuel (시간 + 전역 + 시점, v 0.981 · ω 3.232 · t0 0.10 — `config/low_rl.yaml`) | 629-645 · 1118-1123 |
+| fuel 이 못 냄 | 피하지 않는 첫 후보(slot0), 같은 덩어리·경로 있음이면 그대로(stick) | 546-555 · 1127-1143 |
+| 목표 없음 | 시뮬 규칙 추종기와 같은 제자리 회전 (`RobotEnv::low_act` → env.h `path_step_*`) | 1144-1146 |
+| 다시 결정 | 통과 · 경로 끝 밖 · 경로 없음 · 막힘 신호 → fuel 기억 비움(경로 끝 밖·없음·막힘은 그 칸 0.5 m 를 10 s 피함) | 1326-1335 · 1351-1371 · 345-359 |
+| 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `~/done` true | 1270 (`finish_step`) |
+
+위층 결정·목표 넘기기는 `train/explore/scripts/low_explore_ctl.h` 하나를 노드와 확인 도구가 같이 쓴다. 관측 설정은 체크포인트 꼬리에서 읽는다.
+
+**멈춤 조건 (이것만 명령을 0 으로 — 정책 명령을 고치는 규칙 층은 없다)**
+
+| 조건 | 동작 |
+|---|---|
+| 처음 · `~/enable false` | 명령 0 (`idle`). `~/enable true` 로 켬 — **리모컨이 오토일 때만 켜진다** |
+| 리모컨이 오토가 아님 (`/rc_state` `buttons[1]` ≠ 2 — SWB 위가 2) 또는 `/rc_state` 0.5 s 넘게 안 옴 | 명령 0 · 꺼짐 (`paused`). **다시 오토로 바꿔도 저절로 안 감 — `~/enable true` 를 다시** |
+| 라이다·TF·오도메트리 0.3 s 넘게 안 옴 | 명령 0, 돌아오면 이어 감 |
+| 닿음 (`train/explore/sim/include/contact.h` `sense_step` — 라이다·깊이·멈춤·IMU 수평 가속 > 15 m/s², 마스크 71 · 멈춤 2 걸음, low_w3 학습 `run.json` `con_cfg`) | 명령 0 · 꺼짐. `contact_resume_s:=1.0` 이면 1 s 뒤 저절로 켬 (기본 0 = `~/enable` 따로) |
+| 끝 (위 표) | 명령 0 · `done` |
+
+- `dry_run:=true`(기본): `/cmd_vel` 발행자를 아예 안 만들고 같은 명령을 `~/cmd_debug`(TwistStamped)에만. dry run 에서는 닿음의 "멈춤" 신호(명령 대비 바퀴 정지)를 뺀다 — 명령이 안 나가 늘 참.
+- `max_speed`: 기본 = 학습 한도(자르지 않음). 토픽: `~/state`(idle · running · paused · done) · `~/status`(한 줄 — 까닭·리모컨·목표·명령·시간) · `~/done` · `~/goal_marker` · `~/cmd_debug`.
+- RViz 탐사 패널: 고르기에서 "fuel + 아래층 RL (/low_rl)". `paused` 면 상세 줄에 까닭.
+- 리모컨 칸 확인: 녹화 `1103_M_drive3`(리모컨으로 몬 것)의 `/rc_state` buttons 는 모두 `[3, 1, 3, 3]`, `1104_M_cmd_mix`(ROS 명령으로 몬 것)는 모두 `[3, 2, 3, 3]`.
+
+**체크포인트**: low_w3 반복 36000 (`w3_model_36000.bin`, md5 `a43b5f95…`) — 검증 세트 2 고친 계측 옛 물리 벽 0.197 · 사람 0.337 · 도달 0.922 · 속도 0.661,
+실물형 물리(slip1) 벽 0.178 · 사람 0.381. 상위 후보 가운데 두 물리를 다 잰 것 (판정은 모두 기준 미달 — 사람 기준 0.10).
+
+| 확인 (이 PC, 2026-11-16) | 결과 |
+|---|---|
+| `train/explore/sim/tools/low_explore_check` — CPU 시뮬과 `RobotEnv` 가 각자 위층 결정, 시뮬 라이다 장·감각·깊이를 `RobotEnv` 에 넣고 걸음마다 비교 | bookstore · small-house, 씨앗 1~3, 사람 0 · 2, 800~2500 걸음: 위층 명령 · 아래층 관측(그림·1D) · 명령 · 판 끝 **비트 같음** (목표 없는 걸음 포함) |
+| 녹화 `1104_M_cmd_mix` (깊이 정렬) 에 `explore_fuel_rl.launch.xml` dry run (`map_frame:=odom`, `use_sim_time:=true`) | 발행자에 `/cmd_vel` 없음. 켬 뒤 결정 141 · 통과 24. x86 한 코어: 걸음 7.3 · 관측 2.1 · 정책 7.7 · 위층 평균 12 ms (최대 22) |
+| 리모컨 (녹화 대신 손으로 낸 `/rc_state`) | 수동(1) → paused · 다시 오토(2) → 그대로 paused · `~/enable` → running · 안 옴 → paused · 안 오는데 `~/enable` → 거절 |
+
+젯슨 Orin Nano 빌드·시간·정지 dry run 은 아직 이 README 에 적지 않음 (그쪽 확인 뒤).
+
+### 실행 (로봇)
+
+`WS` = 이 저장소를 받은 워크스페이스 (예: `export WS=$HOME/limo_fire_ws`). 체크포인트는 로봇의 `~/ckpt/low_w3_36000.bin` (다르면 `checkpoint:=`).
+
+```bash
+# 빌드 (한 번)
+cd $WS && git pull --rebase --autostash && source env.sh
+colcon build --packages-select limo_fire_rl limo_fire_rviz && source install/local_setup.bash
+mkdir -p ~/ckpt   # 학습 PC 에서: scp <...>/w3_model_36000.bin wego@<로봇>:ckpt/low_w3_36000.bin
+
+# 터미널 1 — 센서·섀시·EKF (대시보드 limo_base 가 떠 있으면 켜지 않는다 — 섀시 포트는 하나만)
+ros2 launch limo_fire_bringup robot.launch.xml
+
+# 터미널 2 — 1) dry run 먼저: Cartographer + low_rl + RViz, /cmd_vel 안 냄
+ros2 launch limo_fire_rl explore_fuel_rl.launch.xml stack:=true rviz:=true dry_run:=true
+#   RViz 탐사 패널 "fuel + 아래층 RL (/low_rl)" → Auto explore ON. 확인할 것:
+ros2 topic echo /low_rl/status          # running · 리모컨 오토 · 목표 칸 · 명령 · 시간
+ros2 topic echo /low_rl/cmd_debug       # 정책이 낼 명령 (v ≤ 1.0 m/s, ω ≤ 3.14 rad/s)
+#   리모컨 SWB 를 내렸다 올림 → ~/state paused 로 바뀌고, 올려도 paused 그대로인지 (다시 버튼을 눌러야 running)
+
+# 2) 점검표를 다 확인한 뒤에만 — 실제 주행
+ros2 launch limo_fire_rl explore_fuel_rl.launch.xml stack:=true rviz:=true dry_run:=false
+ros2 service call /low_rl/enable std_srvs/srv/SetBool "{data: true}"    # 버튼과 같음
+ros2 topic echo /low_rl/done            # true 면 끝 (지도 닫힘)
+```
+
+**멈추는 법** (어느 것이든): 리모컨 SWB 를 내림(오토 해제 — 섀시가 ROS 명령을 안 받고 노드도 꺼짐) · RViz 버튼 OFF ·
+`ros2 service call /low_rl/enable std_srvs/srv/SetBool "{data: false}"` · 터미널 2 Ctrl+C (마지막 명령이 남지 않게 SWB 를 먼저 내린다).
+
+**실제 주행 전 점검표**
+- [ ] 충전기를 뺐다 (꽂힌 채 움직이지 않는다)
+- [ ] 주행할 곳이 비었다 — 사람·깨질 것 치움, 지도가 닫히는 공간(문 닫음)
+- [ ] 사람이 로봇 곁에서 리모컨을 들고 있다 (SWB 를 바로 내릴 수 있게)
+- [ ] 리모컨이 켜졌고 오토 모드 (SWB 위) — `ros2 topic echo /rc_state --field buttons` 의 둘째 값이 2
+- [ ] dry run 에서 `~/status` 가 running, 목표·`~/cmd_debug` 가 말이 되고, SWB 내림 → paused 를 봤다
+- [ ] 다른 주행 노드(Nav2·`explore_rl`·`explore_frontier`·teleop)가 `/cmd_vel` 을 안 낸다 — `ros2 topic info /cmd_vel` 의 발행자가 없거나 low_rl 뿐
+- [ ] 젯슨 시간: `~/status` 의 평균 걸음 + 관측 + 정책 + 위층이 100 ms 안 (넘으면 멈추고 알림)
 
 ## RL 정책 (`explore_rl`)
 
@@ -144,8 +226,8 @@ ros2 bag play ~/limo_bags/1103_M_drive1 --clock
 → `set_depth` → `set_goal`(위층이 새 목적지를 줄 때 — 시뮬 `lowrl_goal_set` 의 칸) → `low_obs`(깊이 카메라 층 `lowrl_cam_due` · 새 목표면 `goal_only_issue` ·
 `lowrl_pack`·`lowrl_img`·`lowrl_wred`·`lowrl_wide`). 경로 계획은 없다(학습 판 정책 환경도 안 짬). 보조 예측 재료(`SIM_LOW_AUX`)는 학습 전용이라 안 만든다.
 
-`low_rl` 노드는 이 관측으로 아래층 정책(`LowPolicy`)을 돌려 명령을 **`~/cmd_debug`(TwistStamped)에만** 낸다 — `/cmd_vel` 발행자가 없고
-`dry_run:=false` 면 시작하지 않는다. 목적지는 `~/goal`(PoseStamped, `map` 틀, 위치 NaN = 없음). 관측 설정(`SIM_LOW_*`)은 **체크포인트 꼬리에서 읽는다**
+`low_rl` 노드는 이 관측으로 아래층 정책(`LowPolicy`)을 돌린다 — 지금은 위층 fuel 과 합친 탐사 노드다(아래 "합친 탐사"). `upper:=topic` 이면 목적지를
+`~/goal`(PoseStamped, `map` 틀, 위치 NaN = 없음)로 받는다(시험용). 관측 설정(`SIM_LOW_*`)은 **체크포인트 꼬리에서 읽는다**
 (학습기가 적음 — ppo/README "체크포인트 설정 꼬리"). 환경변수를 다른 값으로 명시하면 시작하지 않는다. 꼬리 없는 옛 체크포인트는 환경변수 그대로라
 학습 판과 같은 값을 export (low_w3 옛 체크포인트: `SIM_LOW_WIDE=1 SIM_LOW_GOALONLY=1 SIM_LOW_OBS_MOV=1 SIM_LOW_MOV4=1 SIM_LOW_CAM_EVERY=1 SIM_LOW_TRACK_MISS=20`); 체크포인트 1D 칸 수가 설정과 다르면 멈춘다.
 `record:=<파일>` 이면 입력·관측·명령을 녹화한다(`low_node_replay` 로 다시 돌려 같은지·시간).
