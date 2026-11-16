@@ -87,7 +87,7 @@ dec_rollout <장면.scene> --seed 1 --out x --snap-test 600   # 상태 저장·�
 GPU 길: 기준 판 106 s 를 2.7 s, 갈래 600 판(요청 28 개 × 후보 × 4 반복, 지평 600 s)을 칸 256 개로 31 s — 환경 걸음 약 13,000 / s (CPU 한 코어의 약 110 배).
 확인: 글자 A · 반복 0 갈래(바꾼 것 없음)의 결과가 기준 판과 같음 (106.0 s, 요청 3 개 모두), `--snap-test` 복원 뒤 400 걸음 해시 같음 (사람 0 · 2).
 
-갈래 굴리기 후보 (2026-11-17): 실물 노드 upper:=decider 의 기본(decider_cand)과 같은 새 후보(`scripts/cand_view.h`, Ctl use_cand · 판단 모델 Upper cand)로 돈다. 줄마다 `cand_ver` "cand-v2-f5334cd"(후보 이득 굵은 칸 판 — 그 전 판 "cand-v1-b8d942b" 출력은 다시 굴림),
+갈래 굴리기 후보 (2026-11-17): 실물 노드 upper:=decider 의 기본(decider_cand)과 같은 새 후보(`scripts/cand_view.h`, Ctl use_cand · 판단 모델 Upper cand)로 돈다. 줄마다 `cand_ver` "cand-v3-96dba13"(후보 이득 굵은 칸 · 막 실패한 후보 뒤로 — 그 전 판 출력은 다시 굴림),
 후보마다 cand::Cand 필드 전부(안정 번호 · 기억 필드 포함)와 판 기억 `mem`(trail · goals · fails)을, `.map.bin` 에 지금 지도와 5 · 15 · 30 s 전 지도(같은 범위)를 남겨 그림 꼴 A · B 를 나중에 다시 그린다.
 갈래 칸은 후보를 만들 걸음(위층 결정 차례 · 답 · 보냄)에만 그 칸의 지도 · 지나간 길 · 깊이 층을 장치에서 꺼낸다. 확인: 글자 A · 반복 0 갈래 = 기준 판 (122.0 s, 요청 3 개).
 

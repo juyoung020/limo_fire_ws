@@ -606,7 +606,7 @@ int main(int argc, char** argv) {
         std::fclose(g);
       }
       std::fprintf(f, "{\"scene\":\"%s\",\"seed\":%llu,\"people\":%d,\"req\":%ld,\"step\":%d,\"x\":%.4f,\"y\":%.4f,\"th\":%.5f,\"res\":%.4f,\"ox\":%.4f,\"oy\":%.4f,\"gw\":%d,"
-                      "\"cand_ver\":\"cand-v2-f5334cd\",\"mode\":\"%s\",\"period_steps\":%d,\"lat_steps\":%d,\"horizon_s\":%.1f,\"base\":{\"done\":%d,\"t\":%.2f},\"mem\":{\"trail\":[",
+                      "\"cand_ver\":\"cand-v3-96dba13\",\"mode\":\"%s\",\"period_steps\":%d,\"lat_steps\":%d,\"horizon_s\":%.1f,\"base\":{\"done\":%d,\"t\":%.2f},\"mem\":{\"trail\":[",
                    jesc(scene).c_str(), (unsigned long long)C.seed, C.people, s.id, s.step, s.x, s.y, s.th, c.res, C.worlds[0].ox, C.worlds[0].oy, C.worlds[0].gw, C.dp.mode ? "event" : "periodic", C.dp.period_steps, C.lat,
                    horizon, b.done, b.t);
       for (size_t q = 0; q < s.mem.trail.size(); ++q) { const auto& t = s.mem.trail[q]; std::fprintf(f, "%s[%.3f,%.3f,%.4f,%d]", q ? "," : "", t.x, t.y, t.th, t.step); }
