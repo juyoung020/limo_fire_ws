@@ -233,6 +233,7 @@ constexpr int kRecBl = 4;   // 계층형 복구가 기억하는 포기한 목표
 constexpr int kLidarRing = mdp::obs::LIDAR_FRAMES + 1;   // 라이다 칸 링 (지금 + 직전 3 장 + 지연 1 장)
 constexpr int kProgRing = 20;                             // 탐사 진행 속도: 최근 20 걸음(2 s) 새로 안 칸 수
 constexpr int kBinNone = 1 << 30;                         // 라이다 칸에 점 없음
+constexpr int kCamHist = 8;   // 깊이 카메라 늦음용 몸통 자세 기록 (물리 걸음 0.02 s × 8 = 0.16 s, sensor_model.yaml depth.latency 상한)
 // 로봇이 재는 간격·닿음 (contact.h): 닿은 센서 비트, 지도·깊이 층 간격을 보는 몸통 둘레 거리 (m — 근접 항 띠 0.2 m 보다 조금 넓게, 밖은 이 값), 라이다 점이 없을 때 간격
 enum : int32_t { kConLidar = 1, kConCam = 2, kConStall = 4, kConMap = 8, kConPerson = 16, kConYaw = 32, kConAcc = 64 };   // kConPerson: 닿음 때 추적 사람이 곁 (닿음 센서 아님) · kConYaw · kConAcc: 바퀴·자이로 어긋남 · IMU 수평 가속 튐 (2026-11-16)
 constexpr float kSenseWin = 0.6f;   // 2026-11-14 low_s4: 0.25 → 0.6 (충돌 시간 항이 1 m/s 에서 0.6 m 앞까지 보게)
@@ -285,6 +286,8 @@ struct EnvState {
   float slip_acc;              // 이번 행동 동안 |바퀴 오도메트리 ω − 자이로| · dt 합 (헛돎 감점 — 둘 다 로봇이 재는 값)
   LidarNoise noise;            // 이 판 라이다 오차 (무작위화)
   float depth_floor;           // 이 판 깊이 바닥 구멍 표 위치 [0, 1] (sensor_model.h DepthModel floor_hole ~ floor_hole_hi)
+  int32_t cam_lag;             // 이 판 깊이 영상이 자세보다 늦은 물리 걸음 수 (0 = 같은 때, sensor_model.yaml depth.latency) — depth_camera 가 cam_h* 에서 그 자세로 그린다
+  float cam_hx[kCamHist], cam_hy[kCamHist], cam_hth[kCamHist];   // 참값 몸통 자세 기록: [k] = k + 1 물리 걸음 전
   People people;              // 이 판 움직이는 사람 (people.h)
   // 로봇이 재는 간격·닿음 (contact.h sense_step, 걸음마다): 라이다 점 · 지도 막힘 칸 · 깊이 층 칸 → 몸통 간격 (m), 그 최솟값(근접 항),
   // 라이다 추적 사람까지 간격(없으면 kSenseFar), 멈춤 시계(걸음), 닿은 센서 비트 (kCon*), 닿음 (con_mask). gt_touch: 판 동안 정답 충돌 (비트 1 벽 · 2 사람) — 기록 전용, 학습에 안 씀
@@ -537,6 +540,24 @@ DEV float body_clearance(const EnvCfg& c, const MapDev& m, float x, float y, flo
 // ---------- 0. 리셋 ----------
 
 // 스레드 0: 상태
+// 깊이 카메라 늦음 (sensor_model.yaml depth.latency): 판마다 물리 걸음 수 하나 — 라이다·지도 자세보다 이만큼 앞 자세에서 찍힌 영상.
+// 판 씨앗(world_seed)에서 해시로 뽑아 난수 줄(e.rng)을 안 씀 — 끄면(범위 0) 다른 값은 비트 그대로
+DEV int32_t cam_lag_pick(const EnvCfg& c, uint64_t world_seed) {
+  const int lo = (int)(c.depth.lat_lo / c.dt + 0.5f), hi = (int)(c.depth.lat_hi / c.dt + 0.5f);
+  if (hi <= 0) return 0;
+  const int n = hi - lo + 1;
+  uint64_t h = world_seed ^ 0x63616d6c6167ull;
+  const int k = lo + (int)(dm::splitmix64(h) % (uint64_t)n);
+  return k < kCamHist ? k : kCamHist;
+}
+DEV void cam_hist_fill(EnvState& e) {   // 판 시작·자세를 밖에서 바꾼 뒤: 기록을 지금 자세로
+  for (int k = 0; k < kCamHist; ++k) { e.cam_hx[k] = e.x; e.cam_hy[k] = e.y; e.cam_hth[k] = e.th; }
+}
+DEV void cam_hist_push(EnvState& e) {   // 물리 걸음마다 자세를 바꾸기 전에
+  for (int k = kCamHist - 1; k > 0; --k) { e.cam_hx[k] = e.cam_hx[k - 1]; e.cam_hy[k] = e.cam_hy[k - 1]; e.cam_hth[k] = e.cam_hth[k - 1]; }
+  e.cam_hx[0] = e.x; e.cam_hy[0] = e.y; e.cam_hth[0] = e.th;
+}
+
 DEV void reset_state(const EnvBatch& b, EnvState& e) {
   const EnvCfg& c = b.cfg;
   if (c.curriculum) {
@@ -586,6 +607,8 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.world_seed = dm::splitmix64(e.rng);
   e.noise = randomize(b.lidar, e.rng);
   e.depth_floor = dm::rand01(e.rng);
+  e.cam_lag = cam_lag_pick(c, e.world_seed);
+  cam_hist_fill(e);
   e.step = 0;
   e.seen_wall = 0;
   e.seen_floor = 0;
@@ -972,8 +995,12 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
   const float nx = e.x + (e.v * co - e.vy * s) * c.dt, ny = e.y + (e.v * s + e.vy * co) * c.dt, nth = wrapf(e.th + e.w * c.dt);
   const bool hit_p = people_gap(c, e.people, nx, ny, nth) < 0.f;   // 몸통이 사람과 겹침 (사람이 다가와 겹쳐도)
   const bool hit = body_hits(c, m, nx, ny, nth) || hit_p;
+  cam_hist_push(e);
   if (hit) {
-    e.v = e.w = e.vs = e.ws = e.vy = 0.f;
+    e.v = e.w = e.vy = 0.f;
+    // 명령 smoother(vs·ws — 규칙 추종기·목표점 행동의 velocity_smoother)는 로봇 쪽 소프트웨어라 닿음을 모른다: 실물처럼(con_slip) 모델에서는 그대로 둔다.
+    // 옛 모델은 예전대로 비움 (지문 그대로)
+    if (!c.con_slip) e.vs = e.ws = 0.f;
     if (c.con_slip) {   // 실물처럼: 몸통만 멈춤, 바퀴는 줄며 명령을 계속 따름 (오도메트리가 돎 — 자이로와 어긋남), 밀린 명령도 그대로
       DriveState& d = e.drive;
       const float k = c.con_slip_k;

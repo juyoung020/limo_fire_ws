@@ -114,6 +114,12 @@ DepthModel load_depth_model(const std::string& path) {
   fill("edge", m.edge_hole, kDepthEdgeBins);
   m.other_hole = h["other"].as<float>();
   m.edge_px = h["edge_px"].as<float>();
+  if (d["latency"]) {   // 없으면 0 (옛 설정 — 자세와 같은 때)
+    if (d["latency"].size() != 2) throw std::runtime_error(path + ": depth.latency 는 [최소, 최대] (s)");
+    m.lat_lo = d["latency"][0].as<float>();
+    m.lat_hi = d["latency"][1].as<float>();
+    if (!(m.lat_lo >= 0.f && m.lat_hi >= m.lat_lo)) throw std::runtime_error(path + ": depth.latency 는 0 ≤ 최소 ≤ 최대");
+  }
   return m;
 }
 

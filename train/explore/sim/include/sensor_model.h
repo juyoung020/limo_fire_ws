@@ -38,6 +38,7 @@ struct DepthModel {
   float edge_hole[kDepthEdgeBins];
   float other_hole = 0.f;
   float edge_px = 3.f;                    // 모서리 판정: 좌우 이만큼 옆 픽셀 광선
+  float lat_lo = 0.f, lat_hi = 0.f;       // 영상이 자세보다 늦은 시간 범위 (s, sensor_model.yaml depth.latency) — 판마다 물리 걸음 단위로 하나 (env.h cam_lag_pick)
 };
 DepthModel load_depth_model(const std::string& yaml_path);
 

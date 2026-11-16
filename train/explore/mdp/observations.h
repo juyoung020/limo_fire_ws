@@ -240,11 +240,14 @@ DEV void obs_cells(const EnvBatch& b, const EnvState& e, int env, Shared& sh, in
 // 깊이 픽셀 하나 (i = 행 · DEPTH_W + 열): 참값 자세의 카메라에서 (실물도 카메라는 실제 자리에서 본다). 픽셀끼리 독립 — CPU 참조판은 obs_depth 로
 // 차례로, GPU 는 같은 단계 함수(depth_camera·depth_uv·depth_seed·sensor_model.h 의 depth_*)로 광선을 묶어 쏜다. 판 끝 리셋 뒤 상태(새 판)로 그린다
 // 몸통 방향(z 축 yaw) · 카메라 숙임(y 축 pitch, 아래로 +, env.yaml body.camera_pitch 실측)
+// 늦음(e.cam_lag > 0, sensor_model.yaml depth.latency): 그만큼 앞 물리 걸음의 참값 자세에서 — 실물 깊이 영상은 라이다 장 자세보다 늦게 찍힌 것이 온다
 DEV sim::Pose depth_camera(const sim::EnvCfg& c, const EnvState& e) {
+  const int k = e.cam_lag - 1;
+  const float x = k >= 0 ? e.cam_hx[k] : e.x, y = k >= 0 ? e.cam_hy[k] : e.y, th = k >= 0 ? e.cam_hth[k] : e.th;
   float ts, tc;
-  dm::sincosf_d(e.th, &ts, &tc);
+  dm::sincosf_d(th, &ts, &tc);
   return sim::Pose{{tc * c.cam_cp, -ts, tc * c.cam_sp, ts * c.cam_cp, tc, ts * c.cam_sp, -c.cam_sp, 0.f, c.cam_cp},
-                   sim::V3{(e.x + tc * c.cam_x) - ts * c.cam_y, (e.y + ts * c.cam_x) + tc * c.cam_y, c.cam_z}};
+                   sim::V3{(x + tc * c.cam_x) - ts * c.cam_y, (y + ts * c.cam_x) + tc * c.cam_y, c.cam_z}};
 }
 // 관측 해상도(64 × 40)에서만 그린다: 원본 640 × 400 칸을 고르게 건너뛴 가운데 광선 하나씩 (모서리 판정 광선 2 개 포함 = 픽셀당 최대 3 광선)
 DEV void depth_uv(const sim::DepthModel& DM, int i, float* u, float* v) {

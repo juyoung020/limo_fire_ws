@@ -64,6 +64,12 @@ depth:
   - {bag: 1104_R_static_aligned, role: fit}   # 실험실 세워 둔 58 s: 시간 σ · 바닥·모서리 구멍 · 카메라 자세 · 유효 영역
   - {bag: 1104_M_cmd_mecanum, role: validate} # 실험실 명령 계단 88 s: 멈춘 구간 2 개로 시간 σ, 장마다 구멍
 
+# 깊이 — 노드 녹화로 재는 것 (sim/tools/node_stats, real_limo.md "실물 방 재현"): 관측 깊이(64 × 40)의 바닥 구멍(입사 cos 구간 → sensor_model.yaml
+# depth.holes.floor_hi) · 영상 늦음(빨리 돌 때 깊이 점이 로봇 지도에 가장 잘 맞는 τ → depth.latency). 녹화는 ~/limo_bags/<bag>_node.bin
+depth_node:
+  - {bag: 1116_fuel_rl_1, role: fit}
+  - {bag: 1116_slot0_1, role: validate}
+
 # 지도 속도 (Cartographer 지도 자세 0.1 s 미분) — tools/mapvel_check (--fit 은 fit 녹화로). CSV 는 motion_export (map_* · mo_* 열).
 # 정지 녹화는 Cartographer 가 돌던 사무실 세 자리 (spot1·2 fit, spot3 validate).
 mapvel:
