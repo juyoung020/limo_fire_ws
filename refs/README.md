@@ -33,7 +33,7 @@ HEADER 의 계획기·학습 코드는 공개되지 않았다(지형 분할 모�
 | `HEADER_2510.15679.pdf` | HEADER (Cao et al., 2025): ARiADNE 를 계층형으로 넓힌 탐사 RL | `curl -L -o refs/papers/HEADER_2510.15679.pdf https://arxiv.org/pdf/2510.15679` |
 | `FARE_2601.14681.pdf` | FARE (Liao et al., 2026): HEADER 위에 LLM 상위 판단 | `curl -L -o refs/papers/FARE_2601.14681.pdf https://arxiv.org/pdf/2601.14681` |
 
-두 논문과 우리 탐사 RL 의 차이는 [papers/header_fare_diff.md](papers/header_fare_diff.md) 에 정리했다.
+두 논문과 우리 탐사 RL(2026-11-16 그만둠)의 차이는 [archive/refs/papers/header_fare_diff.md](../archive/refs/papers/header_fare_diff.md) 에 정리했다.
 판단 모델로 프론티어를 고르는 구상과 가까운 선행연구는 [papers/decision_explore_prior.md](papers/decision_explore_prior.md) 에 정리했다.
 
 ## 판단 전용 모델

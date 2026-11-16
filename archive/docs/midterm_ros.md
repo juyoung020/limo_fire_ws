@@ -2,7 +2,7 @@
 
 서술형 시험용 정리. 이 문서만 보고 **폴더 구조 · 전체 구조 · 노드/토픽/주기 · TF · 액션 주는 법 · 내가 한 일**을 손으로 그리고 적을 수 있게 썼다.
 값은 전부 우리 코드(`src/limo_fire`)·설정(`config/*.yaml`)·실측(11-03 녹화 bag 의 `metadata.yaml` 메시지 수 ÷ 길이)에서 왔다. 2026-11-04 기준.
-센서별 세부 근거는 [sensor_topics.md](sensor_topics.md), 시뮬 구조는 [simulation.md](simulation.md).
+센서별 세부 근거는 [sensor_topics.md](../../docs/sensor_topics.md), 시뮬 구조는 [simulation.md](../../docs/simulation.md).
 
 ---
 
@@ -333,7 +333,7 @@ map
 - **object_mapper**: 탐지와 깊이를 `message_filters` **ApproximateTime** 으로 짝짓고(0.05 s 안), 마스크 픽셀 깊이의 가운데 값(마스크 없으면 상자 가운데 50 %의 하위 30 % 깊이)을 쓴다. 0.2~5 m 만. camera_info(fx, fy, cx, cy)로 역투영해 3D → 영상 시각의 TF(map ← 깊이 카메라)로 지도 좌표 → 같은 클래스가 반경(0.8 m, 연기 1.2, 문 1.0, 계단 1.6) 안이면 합침 → 5번 이상 본 것만 표시.
 - 두 노드는 `component_container_mt` 하나(`perception_container`)에 컴포넌트로 올린다.
 - 서비스 `/object_mapper/clear` (`std_srvs/Trigger`): 지도에 올린 물체를 모두 지운다.
-- 한계: 지금 실물 깊이는 컬러에 정렬하지 않은 640×400 이다. object_mapper 는 깊이 영상과 깊이 camera_info 의 비율(640/640, 400/400 = 1)로 맞추므로 컬러 640×480 기준 탐지 좌표가 그대로 들어가 세로가 어긋나고, 마스크(640×480)는 camera_info(640×400)와 크기가 달라 버려져 상자 깊이로 잰다. 시뮬은 정렬돼 있어 맞다. 고칠 방법: `orbbec_dabai_dc1.yaml` 에 `depth_registration: true` ([sensor_topics.md 주의 1](sensor_topics.md#주의-1-깊이가-컬러에-정렬되지-않게-바뀐다)).
+- 한계: 지금 실물 깊이는 컬러에 정렬하지 않은 640×400 이다. object_mapper 는 깊이 영상과 깊이 camera_info 의 비율(640/640, 400/400 = 1)로 맞추므로 컬러 640×480 기준 탐지 좌표가 그대로 들어가 세로가 어긋나고, 마스크(640×480)는 camera_info(640×400)와 크기가 달라 버려져 상자 깊이로 잰다. 시뮬은 정렬돼 있어 맞다. 고칠 방법: `orbbec_dabai_dc1.yaml` 에 `depth_registration: true` ([sensor_topics.md 주의 1](../../docs/sensor_topics.md#주의-1-깊이가-컬러에-정렬되지-않게-바뀐다)).
 
 ---
 

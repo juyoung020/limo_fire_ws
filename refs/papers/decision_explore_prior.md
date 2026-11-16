@@ -8,7 +8,7 @@
 - **초록**: arXiv·학회 초록 페이지만 열어 확인했다. 세부(모델 이름·지연 등)는 초록에 없으면 모른다.
 - **미확인**: 검색 결과 요약으로만 봤다. 인용하기 전에 반드시 직접 열어 볼 것.
 
-이미 정리된 것은 다시 쓰지 않는다: HEADER·FARE 는 [header_fare_diff.md](header_fare_diff.md), 판단 모델 목록은 [../decision_models.md](../decision_models.md),
+이미 정리된 것은 다시 쓰지 않는다: HEADER·FARE 는 [header_fare_diff.md](../../archive/refs/papers/header_fare_diff.md), 판단 모델 목록은 [../decision_models.md](../decision_models.md),
 FUEL·TARE·DSVP·ARiADNE 와 후보 뽑기 차이는 `train/explore/mdp/README.md` "선행연구와 다른 곳".
 
 우리 구상을 줄여 부르는 말: **(a)** 후보 8 개 중 고르기, **(b)** 탐사 끝내기 판단, **(c)** 못 가는 후보 피하기, **아래층** = 10 Hz RL 주행 + 막힘 신호.

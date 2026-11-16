@@ -43,7 +43,7 @@
 
 ## 2. 몸을 가진 추론 모델
 
-우리 탐사 RL 로 치면 위층보다 한 단 위, FARE 가 LLM 에 맡긴 자리([papers/header_fare_diff.md](papers/header_fare_diff.md))에 해당한다.
+우리 탐사 RL 로 치면 위층보다 한 단 위, FARE 가 LLM 에 맡긴 자리([archive/refs/papers/header_fare_diff.md](../archive/refs/papers/header_fare_diff.md))에 해당한다.
 
 ### 가중치를 받을 수 없는 것 (API 전용)
 
