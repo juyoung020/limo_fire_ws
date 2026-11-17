@@ -61,7 +61,14 @@ class Bench : public rclcpp::Node {
     smoke_ = declare_parameter<bool>("smoke", false);
     goal_timeout_ = declare_parameter<double>("goal_timeout", 180.0);
     report_dir_ = declare_parameter<std::string>("report_dir", ".");
-    truth_topic_ = declare_parameter<std::string>("truth_topic", "/sim/ground_truth");
+    // 실물(real:=true): 정답 자세가 없다. 사람이 줄자로 잰 로봇 자리(지도 좌표)를 truth_topic 으로 알려 준다 — 시작 자리 한 번, 목표마다 멈춘 뒤 한 번.
+    //   ros2 topic pub --once /real/measured_pose geometry_msgs/msg/PoseStamped "{header: {frame_id: map}, pose: {position: {x: 1.2, y: 0.8}}}"
+    // 월드 데이터 파일은 순찰점을 지도 좌표 그대로 쓰도록 robot_start 를 0 0 0 으로 두거나 아예 뺀다.
+    real_ = declare_parameter<bool>("real", false);
+    real_wait_ = declare_parameter<double>("real_wait", 600.0);   // 목표 뒤 잰 값을 기다리는 시간 (s, 시계 시간)
+    // 실물 안전(CLAUDE.md "실물 로봇"): 한 번에 움직이는 거리 한도. 이보다 먼 목표가 있으면 시작 전에 알리고 끝낸다. 0 = 안 막음(사람이 곁에서 보고 정한 뒤에만)
+    max_leg_ = declare_parameter<double>("max_leg", 0.6);
+    truth_topic_ = declare_parameter<std::string>("truth_topic", real_ ? "/real/measured_pose" : "/sim/ground_truth");
     max_goals_ = declare_parameter<int>("max_goals", 0);
     smoke_loc_ = declare_parameter<std::string>("smoke_localization", "hold");   // smoke:=true 일 때 연기 속 위치 (hold · wall)
     // 지도에 없는 장애물(4 단계): Webots 세계 좌표 [x, y, 가로, 세로] (m, 축 정렬). 비면 안 잰다.
@@ -84,6 +91,7 @@ class Bench : public rclcpp::Node {
           if (!loaded_) return;   // 월드(출발 자리)를 읽기 전에는 지도 좌표로 못 바꿈
           Pose2 w{m->pose.position.x, m->pose.position.y, tf2::getYaw(m->pose.orientation)};
           const Pose2 p = to_map(w);
+          ++truth_seq_;
           if (truth_) dist_ += std::hypot(p.x - truth_->x, p.y - truth_->y);
           truth_ = p;
           if (obstacle_.size() == 4) clear_ = std::min(clear_, footprint_gap(w));   // 세계 좌표에서
@@ -96,6 +104,7 @@ class Bench : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "월드 %s: 출발 (%.2f, %.2f, %.2f rad), 순찰점 %zu 개, 조건 '%s'%s", world_.c_str(), start_.x,
                 start_.y, start_.yaw, goals_.size(), label_.c_str(), smoke_ ? " (연기 모드)" : "");
     if (!wait_ready()) return 1;
+    if (real_ && max_leg_ > 0.0 && !legs_ok()) return 4;
     if (smoke_ && (!set_localization() || !set_smoke(true))) return 2;
     double total0 = traveled();
     for (size_t i = 0; i < goals_.size() && rclcpp::ok(); ++i) {
@@ -114,8 +123,8 @@ class Bench : public rclcpp::Node {
     const YAML::Node y = YAML::LoadFile(world_file_);
     world_ = std::filesystem::path(world_file_).stem().string();
     const auto s = y["robot_start"];
-    if (!s) throw std::runtime_error(world_file_ + ": robot_start 없음");
-    start_ = {s["x"].as<double>(), s["y"].as<double>(), s["yaw"].as<double>()};
+    if (!s && !real_) throw std::runtime_error(world_file_ + ": robot_start 없음");
+    if (s) start_ = {s["x"].as<double>(), s["y"].as<double>(), s["yaw"].as<double>()};
     for (const auto& p : y["patrol"]) goals_.push_back(to_map({p[0].as<double>(), p[1].as<double>(), 0.0}));
     if (goals_.empty()) throw std::runtime_error(world_file_ + ": patrol 이 비었음");
     std::lock_guard<std::mutex> l(mu_);
@@ -157,6 +166,7 @@ class Bench : public rclcpp::Node {
 
   // 세계 → 지도: 지도 원점 = robot_start
   Pose2 to_map(const Pose2& w) const {
+    if (real_) return w;   // 실물: 잰 값도 순찰점도 이미 지도 좌표
     const double dx = w.x - start_.x, dy = w.y - start_.y, c = std::cos(-start_.yaw), s = std::sin(-start_.yaw);
     return {c * dx - s * dy, s * dx + c * dy, wrap(w.yaw - start_.yaw)};
   }
@@ -180,7 +190,7 @@ class Bench : public rclcpp::Node {
 
   // 준비 확인: Nav2 액션 서버 · 정답 자세 · map → base_link. 하나라도 없으면 까닭을 알리고 끝낸다
   bool wait_ready() {
-    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(real_ ? static_cast<int>(real_wait_) : 120);   // 실물은 시작 자리를 재는 시간까지
     bool nav = false;
     while (std::chrono::steady_clock::now() < until && rclcpp::ok()) {
       nav = nav || nav_->wait_for_action_server(std::chrono::seconds(1));
@@ -193,7 +203,7 @@ class Bench : public rclcpp::Node {
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
-    RCLCPP_ERROR(get_logger(), "준비 안 됨 (120 s): Nav2 %s · 정답 %s(%s — 월드에서 LIMO supervisor TRUE?) · map → base_link %s",
+    RCLCPP_ERROR(get_logger(), "준비 안 됨 (120 s): Nav2 %s · 정답 %s(%s — 시뮬은 월드에서 LIMO supervisor TRUE, 실물은 real:=true 로 잰 시작 자리를 알려 줘야 함) · map → base_link %s",
                  nav ? "됨" : "없음", truth() ? "됨" : "없음", truth_topic_.c_str(), estimate() ? "됨" : "없음");
     return false;
   }
@@ -272,6 +282,7 @@ class Bench : public rclcpp::Node {
       }
     }
     r.t = (now() - t0).seconds();
+    wait_measure(i, g);
     const auto tr = truth();
     const auto es = estimate();
     r.tx = tr ? tr->x : NAN;
@@ -287,6 +298,42 @@ class Bench : public rclcpp::Node {
       r.clear = clear_;
     }
     return r;
+  }
+
+  // 실물: 시작 자리 → 목표 1 → 목표 2 … 직선 거리가 max_leg 를 넘는 구간이 있으면 막는다 (Nav2 경로는 더 길 수 있으니 직선은 하한)
+  bool legs_ok() {
+    auto p = truth();
+    bool ok = true;
+    Pose2 prev = p ? *p : Pose2{};
+    for (size_t i = 0; i < goals_.size() && (max_goals_ <= 0 || (int)i < max_goals_); ++i) {
+      const double d = std::hypot(goals_[i].x - prev.x, goals_[i].y - prev.y);
+      if (d > max_leg_) {
+        RCLCPP_ERROR(get_logger(), "목표 %zu 까지 직선 %.2f m > max_leg %.2f m — 실물은 한 번에 움직이는 거리를 제한(주변 비움·사람 곁에 확인 뒤 -p max_leg:=<m> 로 올리거나 0 으로)", i + 1, d, max_leg_);
+        ok = false;
+      }
+      prev = goals_[i];
+    }
+    return ok;
+  }
+
+  // 실물: 목표 결과가 나오면 로봇 자리를 줄자로 재서 알려 줄 때까지 기다린다 (추정 오차·도착 오차의 정답). 시뮬이면 바로 지나감
+  void wait_measure(int i, const Pose2& g) {
+    if (!real_) return;
+    uint64_t seq0;
+    {
+      std::lock_guard<std::mutex> l(mu_);
+      seq0 = truth_seq_;
+    }
+    RCLCPP_WARN(get_logger(), "목표 %d (%.2f, %.2f) 끝 — 로봇 자리를 재서 %s 로 알려 주세요 (%.0f s 안)", i, g.x, g.y, truth_topic_.c_str(), real_wait_);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(real_wait_);
+    while (rclcpp::ok() && std::chrono::steady_clock::now() < until) {
+      {
+        std::lock_guard<std::mutex> l(mu_);
+        if (truth_seq_ > seq0) return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    RCLCPP_ERROR(get_logger(), "목표 %d: 잰 값이 안 왔음 — 이전 값을 그대로 씀 (오차가 틀림)", i);
   }
 
   void write_report() {
@@ -310,7 +357,7 @@ class Bench : public rclcpp::Node {
     std::ofstream md(base + ".md");
     md << "# 주행 벤치마크 — " << world_ << " · " << label_
        << (smoke_ ? " (연기 모드: 라이다·카메라 끊음, 위치 " + smoke_loc_ + ")" : std::string()) << "\n\n";
-    md << "- 날짜: " << ts << ", 도구: `limo_fire_navigation nav_benchmark`, 정답: Webots supervisor (" << truth_topic_ << ")\n";
+    md << "- 날짜: " << ts << ", 도구: `limo_fire_navigation nav_benchmark`, 정답: " << (real_ ? std::string("실물 — 사람이 줄자로 잰 자리 (") : std::string("Webots supervisor (")) << truth_topic_ << ")\n";
     md << "- 목표: 월드 데이터 파일 순찰점 " << rows_.size() << " 개 (지도 좌표), 시간 한도 " << goal_timeout_ << " s (시뮬)\n";
     md << "- 도착 오차 = |정답 − 목표|, 추정 오차 = |Nav2 자세(map → base_link) − 정답|, 이동 = 정답으로 잰 거리\n\n";
     md << "| 목표 | 지도 (x, y) | 결과 | 시간 s | 도착 오차 m | 추정 오차 m | 이동 m | 누적 이동 m |\n|---|---|---|---|---|---|---|---|\n";
@@ -339,7 +386,9 @@ class Bench : public rclcpp::Node {
   }
 
   std::string world_file_, label_, report_dir_, truth_topic_, world_, smoke_loc_;
-  bool smoke_;
+  bool smoke_, real_ = false;
+  double real_wait_ = 600.0, max_leg_ = 0.6;
+  uint64_t truth_seq_ = 0;
   double goal_timeout_;
   int max_goals_;
   Pose2 start_;

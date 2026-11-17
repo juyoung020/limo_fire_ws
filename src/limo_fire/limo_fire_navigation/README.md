@@ -102,6 +102,24 @@ ros2 run limo_fire_navigation nav_benchmark --ros-args -p use_sim_time:=true \
 - `smoke:=true` 면 처음 위치를 라이다(AMCL)로 잡은 상태에서 연기 모드를 켜고 출발한다.
 - 목표마다: 결과(성공·중단·시간 초과), 걸린 시간(시뮬), 도착 오차 |정답 − 목표|, 추정 오차 |Nav2 자세 − 정답|, 정답으로 잰 이동 거리.
 
+### 실물 모드 (`real:=true`)
+
+실물에는 `/sim/ground_truth` 가 없다. 사람이 줄자로 잰 로봇 자리(지도 좌표)를 `/real/measured_pose` 로 알려 주면 같은 표(md·CSV)가 나온다.
+
+```bash
+# 월드 데이터 파일: patrol 은 지도 좌표 그대로, robot_start 는 없어도 된다 (있어도 안 씀)
+ros2 run limo_fire_navigation nav_benchmark --ros-args -p real:=true \
+  -p world_file:=<patrol 만 있는 yaml> -p label:=wheel_imu -p smoke:=true -p smoke_localization:=hold \
+  -p report_dir:=docs/benchmarks
+# 시작 자리 한 번, 그리고 "목표 N 끝 — 로봇 자리를 재서 …" 가 뜰 때마다 (잰 값이 올 때까지 기다림, real_wait 600 s):
+ros2 topic pub --once /real/measured_pose geometry_msgs/msg/PoseStamped \
+  "{header: {frame_id: map}, pose: {position: {x: 1.20, y: 0.80}}}"
+```
+
+- 안전: 시작 자리에서 목표들까지 **직선 구간이 `max_leg`(기본 0.6 m)를 넘으면 시작 전에 막는다.** 주변을 비우고 사람이 곁에 있는 걸 확인한 뒤에만 `-p max_leg:=<m>` 로 올린다(0 = 안 막음).
+- 잰 값이 늦으면 이전 값을 그대로 쓰고 오류를 남긴다(그 목표의 오차는 틀림). 이동 거리는 잰 점들 사이 직선이라 시뮬보다 거칠다.
+- 시뮬에서 안 쓰고, 실물에서도 아직 안 돌려 봤다(2026-11-17: 빌드만 확인).
+
 ## "○○ 로 가" 저장 지도 (`object_goto`)
 
 물체 지도(limo_fire_perception `object_map` `/perception/objects`)에서 물체를 찾아 그 옆 설 자리로 Nav2 로 간다. 저장 지도 주행(`navigation.launch.xml`, 기본 `object_goto:=true`)에서만 쓴다.

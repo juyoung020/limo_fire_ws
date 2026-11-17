@@ -26,6 +26,22 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="<VID>", ATTRS{idProduct}=="<PID>", ATTRS{ser
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
+## 가짜 ESP32 로 시험 (실물 없이)
+
+`fake_esp32` 가 가상 시리얼(pty)에 펌웨어와 같은 줄을 흘린다 (장면: `sweep` 오가는 거리 · `noecho` 메아리 없음 · `corrupt` 깨진 줄 섞음 · `stall` 중간에 멈춤. 만드는 쪽은 `include/.../fake_stream.hpp`).
+
+```bash
+lib=$(ros2 pkg prefix limo_fire_esp32_bridge)/lib/limo_fire_esp32_bridge
+$lib/fake_esp32 --link /tmp/fake_esp32 --scenario sweep &
+ros2 run limo_fire_esp32_bridge esp32_bridge --ros-args --params-file <share>/config/esp32_bridge.yaml -p port:=/tmp/fake_esp32
+$lib/fake_bridge_check.sh      # 위를 장면마다 자동으로 돌려 토픽 값을 확인 (다리 먼저 켜기·끊김 복구 포함)
+```
+
+## 확인한 것 (2026-11-17, 가짜 ESP32)
+
+- `colcon test`: 줄 해석 + 가짜 줄 만들기 단위 시험 통과. `fake_bridge_check.sh`: sweep(0.2~4 m, front_right ≈ 2 m)·noecho(`inf`)·corrupt(정상 줄만)·가짜가 죽었다 다시 떠도 이어짐 전부 통과 (Docker `limo-fire:humble`).
+- **살아 있음 경고(`stall`)는 줄 만들기 단위 시험만**, 다리 경고 로그까지는 안 봤다. 실물 ESP32·HC-SR04 는 여전히 안 돌려 봤다.
+
 ## 확인한 것 (2026-11-06, 데스크톱 Jazzy)
 
 - 줄 해석 단위 테스트 통과 (`colcon test --packages-select limo_fire_esp32_bridge`: 체크섬·반쪽 줄·앞쪽 쓰레기·필드 오류).
