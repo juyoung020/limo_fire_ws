@@ -38,11 +38,11 @@ RViz 운용 화면(`limo_fire_description` `viewer.launch.xml`) 왼쪽 아래 **
 | 무엇 | 어디서 | 상태 |
 |---|---|---|
 | 센서 주기 | 트리의 `IsTopicAlive` (타입 상관없이 받음). 시뮬 차이는 `topic_remap`·`min_hz_override` | 있음 |
-| 불·연기·사람 탐지 | `/yolo_detector/detections` (시뮬은 `/gt/detections`), `hit_window_s` 안에 `min_hits` 장 | 있음 |
-| 불 위치·크기·사람 수 | `/object_mapper/objects` (`use_depth` 일 때). 없으면 정렬된 깊이 영상에서 탐지 상자 가운데 거리(`depth.*`), 깊이도 없으면 카메라 앞 `approx_distance_m`(잠정) | 있음 |
+| 불·연기·사람 탐지 | `/perception/detections` (시뮬은 `/gt/detections`), `hit_window_s` 안에 `min_hits` 장 | 있음 |
+| 불 위치·크기·사람 수 | `/perception/objects` (`use_depth` 일 때). 없으면 정렬된 깊이 영상에서 탐지 상자 가운데 거리(`depth.*`), 깊이도 없으면 카메라 앞 `approx_distance_m`(잠정) | 있음 |
 | 순찰점 | `patrol_file` yaml `patrol: [[x, y], ...]`. `robot_start` 가 있으면 세계 좌표(시뮬 월드 yaml)로 보고 지도로 옮김 | 시뮬만 |
 | 연기 모드 | `/smoke_mode/set` (limo_fire_navigation) | 있음 |
-| 탐사 | `/explore_frontier/enable`·`/state` (limo_fire_rl) | 있음 |
+| 탐사 | `/explore/frontier_explorer/enable`·`/state` (limo_fire_explore) | 있음 |
 | 관리자 알림 | `/mission/events` 에 냄. 받는 웹 앱(limo_fire_report)은 아직 없음 | 내기만 |
 | 119 신고 | `call119.enabled: false`(기본)면 로그만. 켜면 `/mission/call119` 에 내고 받는 곳이 없으면 실패 | 중계 없음 |
 | 펌프·노즐·스피커·레이더·열화상 | `/pump/set`, `/nozzle/command`+`/joint_states`, `/speaker/evacuation`, `/radar/people`, `/thermal/image_raw` — 이름·타입 잠정 | 부품 대기 |

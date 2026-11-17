@@ -1,7 +1,7 @@
 # explore — 탐사 시뮬과 위층·아래층 측정
 
 지금 탐사 구성(2026-11-16 실물 시험으로 정함)은 **위층 판단 모델(d1-3B) + 아래층 A* 경로 추종** 이다. 실물 노드는
-[`limo_fire_rl` low_rl](../../src/limo_fire/limo_fire_rl/README.md), 같은 코드를 시뮬에서 수천 판 돌려 재는 것이 여기다.
+[`limo_fire_explore` explorer](../../src/limo_fire/limo_fire_explore/README.md), 같은 코드를 시뮬에서 수천 판 돌려 재는 것이 여기다.
 
 ```
 explore/
@@ -21,9 +21,9 @@ explore/
 
 ```
 실물 센서 (/scan · map→base_link · /odom · /imu · 깊이 영상)              시뮬 센서 (sim/: 장면 광선 추적 + 실측 오차 모델)
-        │  limo_fire_rl low_rl_node.cpp                                        │  sim/src/env_ref.cpp (CPU) · env_kernel.cu (GPU)
+        │  limo_fire_explore explorer_node.cpp                                        │  sim/src/env_ref.cpp (CPU) · env_kernel.cu (GPU)
         ▼                                                                      ▼
-  RobotEnv (limo_fire_rl/robot_env.h) ─────── 같은 함수 ───────  Env (sim/include/env.h · env_api.h)
+  RobotEnv (limo_fire_explore/robot_env.h) ─────── 같은 함수 ───────  Env (sim/include/env.h · env_api.h)
     지도 갱신(Cartographer 꼴) · 닫힘 판정 · 깊이 카메라 장애물 층(걸음 0.1 s 마다)      (mdp/frontier.h · observations.h · sim/include/obs_ref.h)
         │
         ▼

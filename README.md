@@ -97,7 +97,7 @@
 | FUEL (프론티어 탐사 논문 방식) | 0.559 | 228 s |
 
 판단 모델은 시뮬에서 후보마다 실제로 굴려 본 결과로 미세조정(LoRA)하는 중이다 — [upper_lora](train/explore/upper_lora/README.md).
-실행 방법은 [limo_fire_rl](src/limo_fire/limo_fire_rl/README.md), 시뮬·확인 도구는 [train/explore](train/explore/README.md).
+실행 방법은 [limo_fire_explore](src/limo_fire/limo_fire_explore/README.md), 시뮬·확인 도구는 [train/explore](train/explore/README.md).
 
 <br>
 

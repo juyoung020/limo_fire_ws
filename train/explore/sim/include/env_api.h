@@ -136,7 +136,7 @@ void env_step_cpu(const EnvBatch& b, const float* actions);
 void env_low_prepare_gpu(const EnvBatch& b, const float* actions, cudaStream_t st = 0);
 void env_low_prepare_cpu(const EnvBatch& b, const float* actions);
 // 시험용 (tools/low_explore_check · room_run): CPU 참조판 걸음 안의 라이다 장(지도 쪽 준비 뒤 빔마다 거리·세기)과 걸음 끝 상태(판 끝 판정 뒤, 링·관측 전)를
-// 밖으로 넘긴다 — 실물 노드(limo_fire_rl RobotEnv)에 같은 센서 값을 넣어 관측이 같은지 본다. 탭은 스레드 1 개(set_cpu_threads(1))일 때만 쓴다
+// 밖으로 넘긴다 — 실물 노드(limo_fire_explore RobotEnv)에 같은 센서 값을 넣어 관측이 같은지 본다. 탭은 스레드 1 개(set_cpu_threads(1))일 때만 쓴다
 struct CpuTap {
   virtual ~CpuTap() = default;
   virtual void scan(int env, const EnvState& e, const Shared& sh, const std::vector<float>& r, const std::vector<float>& inten) = 0;

@@ -104,10 +104,10 @@ ros2 run limo_fire_navigation nav_benchmark --ros-args -p use_sim_time:=true \
 
 ## "○○ 로 가" (`object_goto`)
 
-물체 지도(limo_fire_perception `object_mapper` `/object_mapper/objects`)에서 물체를 찾아 그 옆 설 자리로 간다. 설정은 `config/object_goto.yaml`(설 자리 거리 · 로봇 반경 · 한글 별칭).
+물체 지도(limo_fire_perception `object_map` `/perception/objects`)에서 물체를 찾아 그 옆 설 자리로 간다. 설정은 `config/object_goto.yaml`(설 자리 거리 · 로봇 반경 · 한글 별칭).
 
-- 저장 지도(`navigation.launch.xml`, 기본 `object_goto:=true`): Nav2 `navigate_to_pose` 로. 물체 지도는 `yolo.launch.xml objects_file:=<지도이름>_objects.txt` 로 읽는다 (`save_map.launch.xml` 이 지도 옆에 저장).
-- 탐사 중(`limo_fire_rl explore_fuel_rl.launch.xml perception:=true`, `mode: explore`): 지시 글을 `/low_rl/instruction`, 글에서 푼 클래스를 `/low_rl/target_class` 로 넘기기만 한다 — 설 자리 고르기·가기는 판단 모델 물체 후보로 `low_rl` 이 한다(limo_fire_rl README "탐사 중 ○○ 로 가"). 이 모드에서는 `/map`·TF 를 구독하지 않는다.
+- 저장 지도(`navigation.launch.xml`, 기본 `object_goto:=true`): Nav2 `navigate_to_pose` 로. 물체 지도는 `perception.launch.xml objects_file:=<지도이름>_objects.txt` 로 읽는다 (`save_map.launch.xml` 이 지도 옆에 저장).
+- 탐사 중(`limo_fire_explore explore.launch.xml perception:=true`, `mode: explore`): 지시 글을 `/explore/instruction`, 글에서 푼 클래스를 `/explore/target_class` 로 넘기기만 한다 — 설 자리 고르기·가기는 판단 모델 물체 후보로 `explorer` 이 한다(limo_fire_explore README "탐사 중 ○○ 로 가"). 이 모드에서는 `/map`·TF 를 구독하지 않는다.
 - 저장 지도(`mode: nav2`): 이름 → 클래스(별칭) → 같은 클래스 중 로봇에서 가장 가까운 것. 설 자리: 물체 둘레 `stand_dist`~`stand_dist + stand_band` 고리에서 `robot_radius` 안이 빈 칸이고 로봇에서 빈 칸으로 이어지는(BFS) 칸 중 길이 가장 짧은 칸, 물체를 바라봄.
   지도에 없으면 상태에 "지도에 없음" 을 내고 물체 지도가 바뀔 때마다 다시 찾는다.
-- 확인 (2026-11-17, PC): 저장 지도 lab_1116b + 가짜 물체 지도(의자 (1.5, 0.5)) → "의자" 에 설 자리 (0.43, 0.02)(물체에서 1.17 m). 탐사 중 설 자리를 `/low_rl/goto` 로 바로 주던 `direct` 모드는 2026-11-17 지움(판단 모델 물체 후보가 대신).
+- 확인 (2026-11-17, PC): 저장 지도 lab_1116b + 가짜 물체 지도(의자 (1.5, 0.5)) → "의자" 에 설 자리 (0.43, 0.02)(물체에서 1.17 m). 탐사 중 설 자리를 `/explore/goto` 로 바로 주던 `direct` 모드는 2026-11-17 지움(판단 모델 물체 후보가 대신).

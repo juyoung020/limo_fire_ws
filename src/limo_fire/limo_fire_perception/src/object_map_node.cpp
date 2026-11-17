@@ -1,7 +1,7 @@
 // YOLO 탐지 상자 + 정렬된 깊이 영상 → 물체의 지도(map) 좌표 → RViz 마커 + 한글 현황판(오버레이)
 // 같은 클래스가 merge_radius 안에서 다시 보이면 같은 물체로 보고 위치를 평균한다. min_hits 번 이상 본 것만 지도에 올린다.
 // 깊이는 컬러 카메라에 정렬돼 있어야 한다 (실물 Orbbec align_mode HW, Webots 는 원래 같은 프레임)
-// 분할 모델이면 같은 시각의 물체 번호 영상(yolo_detector/mask)으로 물체 픽셀만 골라 위치·거리·(불) 넓이를 잰다. 없으면 상자로
+// 분할 모델이면 같은 시각의 물체 번호 영상(/perception/mask)으로 물체 픽셀만 골라 위치·거리·(불) 넓이를 잰다. 없으면 상자로
 //
 // 한 스레드 컨테이너에서 다른 콜백을 막지 않게: 탐지·깊이 짝이 오면 받기 콜백은 작업 줄(max_pending 장, 넘치면 가장 오래된 장을 버림 —
 // 늘 최신 쪽이 남음)에 넣고 바로 돌아오고, 처리는 process_period 타이머가 그 시각 TF 가 있는 장부터 한다(tf_wait 지나도 없으면 버림).
@@ -175,11 +175,11 @@ std::string hex(const Style & s)
 }
 }  // namespace
 
-class ObjectMapperNode : public rclcpp::Node
+class ObjectMapNode : public rclcpp::Node
 {
 public:
-  explicit ObjectMapperNode(const rclcpp::NodeOptions & options)
-  : Node("object_mapper", options), tf_buffer_(get_clock()),
+  explicit ObjectMapNode(const rclcpp::NodeOptions & options)
+  : Node("object_map", options), tf_buffer_(get_clock()),
     tf_listener_(tf_buffer_, this, false, tf2_ros::DynamicListenerQoS(), tf2_ros::StaticListenerQoS(), tf_sub_options(false),
       tf_sub_options(true))
   {
@@ -220,25 +220,25 @@ public:
     rclcpp::PublisherOptions latched;
     latched.use_intra_process_comm = rclcpp::IntraProcessSetting::Disable;
     marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
-      "~/markers", rclcpp::QoS(1).transient_local(), latched);
+      "markers", rclcpp::QoS(1).transient_local(), latched);
     overlay_pub_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>(
-      "~/summary", rclcpp::QoS(1).transient_local(), latched);
+      "summary", rclcpp::QoS(1).transient_local(), latched);
     // 다른 노드(임무 BT)가 읽는 물체 목록: 지도에 올라간 것만, map frame. 마커는 표시용이라 형식이 바뀔 수 있다
     objects_pub_ = create_publisher<vision_msgs::msg::Detection3DArray>(
-      "~/objects", rclcpp::QoS(1).transient_local(), latched);
+      "objects", rclcpp::QoS(1).transient_local(), latched);
     info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
       declare_parameter<std::string>("camera_info_topic", "/camera/depth/camera_info"), rclcpp::SensorDataQoS(),
       [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {info_ = msg;});
     // 마스크는 탐지와 시각이 같다. 최근 몇 장만 두고 탐지가 오면 같은 시각 것을 찾는다
     mask_sub_ = create_subscription<sensor_msgs::msg::Image>(
-      declare_parameter<std::string>("mask_topic", "/yolo_detector/mask"), 10,
+      declare_parameter<std::string>("mask_topic", "/perception/mask"), 10,
       [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
         masks_.push_back(msg);
         if (masks_.size() > 10) {masks_.pop_front();}
       });
 
-    // 지도에 올린 물체를 모두 지운다: ros2 service call /object_mapper/clear std_srvs/srv/Trigger
-    clear_srv_ = create_service<std_srvs::srv::Trigger>("~/clear",
+    // 지도에 올린 물체를 모두 지운다: ros2 service call /perception/clear_objects std_srvs/srv/Trigger
+    clear_srv_ = create_service<std_srvs::srv::Trigger>("clear_objects",
         [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
           landmarks_.clear();
           std::fill(counters_.begin(), counters_.end(), 0);
@@ -250,22 +250,22 @@ public:
         });
 
     // 물체 지도 저장: ~/save (objects_file 에) · ~/save_to (std_msgs/String 경로 — save_map.launch.xml 이 지도 옆에) · ~/load
-    save_srv_ = create_service<std_srvs::srv::Trigger>("~/save",
+    save_srv_ = create_service<std_srvs::srv::Trigger>("save_objects",
         [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
           res->success = !objects_file_.empty() && save(objects_file_);
           res->message = res->success ? "저장: " + objects_file_ : "objects_file 이 비었거나 쓰기 실패";
         });
-    load_srv_ = create_service<std_srvs::srv::Trigger>("~/load",
+    load_srv_ = create_service<std_srvs::srv::Trigger>("load_objects",
         [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
           res->success = !objects_file_.empty() && load(objects_file_);
           res->message = res->success ? "읽음: " + objects_file_ : "objects_file 이 비었거나 읽기 실패";
         });
-    save_to_sub_ = create_subscription<std_msgs::msg::String>("~/save_to", 10,
+    save_to_sub_ = create_subscription<std_msgs::msg::String>("save_objects_to", 10,
         [this](std_msgs::msg::String::ConstSharedPtr m) {save(m->data);});
     if (!objects_file_.empty()) {load(objects_file_);}
 
     // 탐지와 깊이 영상은 시각이 정확히 같지 않으므로 가까운 것끼리 짝짓는다
-    det_sub_.subscribe(this, declare_parameter<std::string>("detections_topic", "/yolo_detector/detections"));
+    det_sub_.subscribe(this, declare_parameter<std::string>("detections_topic", "/perception/detections"));
     det_sub_.registerCallback([this](const vision_msgs::msg::Detection2DArray::ConstSharedPtr &) {++st_.dets;});
     // 깊이: 카메라 드라이버(다른 프로세스)가 내므로 역직렬화한다 — 받기 메시지를 돌려 써서(동기화 줄 10 + 작업 줄 + 여유) 장마다 할당을 안 함
     depth_sub_ = create_subscription<sensor_msgs::msg::Image>(
@@ -279,7 +279,7 @@ public:
     sync_ = std::make_shared<message_filters::Synchronizer<Policy>>(Policy(10), det_sub_, depth_in_);
     // 회전 중에 다른 순간의 깊이와 짝지어지면 엉뚱한 곳에 찍히므로 시각 차이를 제한한다
     sync_->setMaxIntervalDuration(rclcpp::Duration::from_seconds(sync_dt));
-    sync_->registerCallback(std::bind(&ObjectMapperNode::on_pair, this, std::placeholders::_1, std::placeholders::_2));
+    sync_->registerCallback(std::bind(&ObjectMapNode::on_pair, this, std::placeholders::_1, std::placeholders::_2));
     cell_size_ = declare_parameter<double>("cell_size", 0.05);
     // 지도 갱신: 보여야 하는데 neg_misses 장 연속 못 보면 뺌 (시야 가장자리 neg_margin 비율 · neg_max_depth m 밖 · neg_occl_m 넘게 앞이 가린 것은 셈 안 함)
     neg_misses_ = declare_parameter<int>("neg_misses", 20);
@@ -1112,7 +1112,7 @@ private:
       h.pose.pose.position.y = l.base_n > 0 ? l.by : l.y;
       h.pose.pose.position.z = l.base_n > 0 ? l.bz : l.z;
       h.pose.pose.orientation.w = 1.0;
-      h.pose.covariance[35] = std::max(0.0, now().seconds() - l.last_seen);   // 마지막으로 본 뒤 지난 초 (공분산 칸을 빌려 씀 — low_rl 물체 후보 seen_s)
+      h.pose.covariance[35] = std::max(0.0, now().seconds() - l.last_seen);   // 마지막으로 본 뒤 지난 초 (공분산 칸을 빌려 씀 — explorer 물체 후보 seen_s)
     }
     objects_pub_->publish(out);
   }
@@ -1256,4 +1256,4 @@ private:
 
 }  // namespace limo_fire_perception
 
-RCLCPP_COMPONENTS_REGISTER_NODE(limo_fire_perception::ObjectMapperNode)
+RCLCPP_COMPONENTS_REGISTER_NODE(limo_fire_perception::ObjectMapNode)

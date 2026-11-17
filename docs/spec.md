@@ -46,7 +46,7 @@ ROS 통신은 연속 센서 데이터는 Topic, 크기 판단 같은 단발 질�
 두 층이 탐사를 맡는다: **위층**이 프론티어 후보 가운데 갈 곳을 고르고(판단 모델 d1-3B, 로봇 안 llama-server — 답을 기다리는 동안은 지금 목표로),
 **아래층**이 로봇 지도 위 A* 경로를 0.1 초마다 따라가며 속도 명령을 섀시에 바로 낸다(Nav2 없음). 지도 만들기·후보 뽑기·끝 판정(지도 닫힘)은 규칙이다.
 2026-11-16 실물 시험(fuel+RL · 가까운 후보+RL · 판단 모델+RL · 판단 모델+A*)에서 판단 모델+A* 가 가장 잘 됐다. 노드와 실행은
-[limo_fire_rl README](../src/limo_fire/limo_fire_rl/README.md) "합친 탐사", 시뮬에서 같은 코드로 재는 법은 [train/explore/scripts](../train/explore/scripts/README.md).
+[limo_fire_explore README](../src/limo_fire/limo_fire_explore/README.md) "합친 탐사", 시뮬에서 같은 코드로 재는 법은 [train/explore/scripts](../train/explore/scripts/README.md).
 
 처음에는 강화학습 두 층(위층 후보 고르기 + 아래층 속도 직접, PPO)으로 하려 했지만, 실물 LIMO 에서 시뮬과의 격차가 크고 A* 아래층이 훨씬 빠르고 잘 돼서
 2026-11-16 에 그만뒀다. 그때의 계획·결과·코드는 [archive/rl](../archive/rl/README.md).

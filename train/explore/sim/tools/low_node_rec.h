@@ -1,4 +1,4 @@
-// 실물 합친 탐사 노드 녹화 꼴 (limo_fire_rl low_rl record:= · 시뮬 room_run --rec 가 쓰고, low_explore_replay · node_stats 가 읽는다):
+// 실물 합친 탐사 노드 녹화 꼴 (limo_fire_explore explorer record:= · 시뮬 room_run --rec 가 쓰고, low_explore_replay · node_stats 가 읽는다):
 // RobotEnv 가 받은 입력을 부른 차례대로 + 그때 낸 명령. 노드 차례를 그대로 다시 돌려 위층 결정·명령이 같은지 본다.
 //
 // 판 6 (2026-11-18 —): 판 5 와 같고 EnvHostCfg 에서 EnvCfg::finish_declare(판단 모델 끝 선언) · max_delay(관측 지연) · n_dir · n_dist · dist · goal_margin
@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "limo_fire_rl/robot_env.h"
+#include "limo_fire_explore/robot_env.h"
 
 namespace lowrec {
 constexpr int32_t kMagic = 0x4E574F4C;   // "LOWN"
@@ -49,7 +49,7 @@ constexpr size_t v5_kept() {
 }
 static_assert(v5_kept() == sizeof(sim::EnvHostCfg),
               "EnvHostCfg 가 바뀜 — 녹화 판 번호(kVersion)를 올리고 옛 판을 새 구조체로 옮기는 길을 Reader 에 더할 것");
-using Window = limo_fire_rl::RobotEnv::Window;
+using Window = limo_fire_explore::RobotEnv::Window;
 // 'A' 사건의 아래층 목적지: 0 없음 · 1 세계 좌표 (x, y) · 2 판 1 녹화 — 지도 자세 기준 (x = 거리 m, y = 방향 rad, 그 걸음 지도 자세에서 셈)
 struct Goal { int kind = 0; float x = 0.f, y = 0.f; };
 
@@ -57,12 +57,12 @@ class Writer {
  public:
   Writer(const std::string& path, const sim::EnvHostCfg& hc) : f_(std::fopen(path.c_str(), "wb")) {
     if (!f_) throw std::runtime_error("녹화 파일을 못 엶: " + path);
-    const int32_t hd[5] = {kMagic, kVersion, (int32_t)sizeof(sim::EnvHostCfg), (int32_t)sizeof(limo_fire_rl::Proprio), (int32_t)sizeof(Window)};
+    const int32_t hd[5] = {kMagic, kVersion, (int32_t)sizeof(sim::EnvHostCfg), (int32_t)sizeof(limo_fire_explore::Proprio), (int32_t)sizeof(Window)};
     w(hd, sizeof(hd));
     w(&hc, sizeof(hc));
   }
   ~Writer() { if (f_) std::fclose(f_); }
-  void reset(float x0, float y0, float th0, const limo_fire_rl::Proprio& p, float fov, const Window& win) {
+  void reset(float x0, float y0, float th0, const limo_fire_explore::Proprio& p, float fov, const Window& win) {
     tag('R');
     const float a[3] = {x0, y0, th0};
     w(a, sizeof(a));
@@ -75,7 +75,7 @@ class Writer {
     const float a[4] = {v, wv, gx, gy};
     w(a, sizeof(a));
   }
-  void step(const limo_fire_rl::Proprio& p, const limo_fire_rl::Scan& s) {
+  void step(const limo_fire_explore::Proprio& p, const limo_fire_explore::Scan& s) {
     tag('S');
     w(&p, sizeof(p));
     vec(s.ranges);
@@ -128,7 +128,7 @@ class Reader {
       int32_t sz[3];
       r(sz, sizeof(sz));
       const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : hd[1] == 5 ? kV5Size : hd[1] == 4 ? kV4Size : hd[1] == 3 ? kV3Size : kV2Size;
-      if (sz[0] != (int32_t)want || sz[1] != (int32_t)sizeof(limo_fire_rl::Proprio) || sz[2] != (int32_t)sizeof(Window))
+      if (sz[0] != (int32_t)want || sz[1] != (int32_t)sizeof(limo_fire_explore::Proprio) || sz[2] != (int32_t)sizeof(Window))
         throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
       version = hd[1];
       std::vector<uint8_t> raw(want);
@@ -158,7 +158,7 @@ class Reader {
       return c;
     }
   }
-  void reset(float* xyz, limo_fire_rl::Proprio* p, float* fov, Window* win) {
+  void reset(float* xyz, limo_fire_explore::Proprio* p, float* fov, Window* win) {
     r(xyz, 12);
     r(p, sizeof(*p));
     r(fov, 4);
@@ -178,7 +178,7 @@ class Reader {
     *wv = a[1];
     *g = a[2] == a[2] ? Goal{1, a[2], a[3]} : Goal{};
   }
-  void step(limo_fire_rl::Proprio* p, limo_fire_rl::Scan* s) {
+  void step(limo_fire_explore::Proprio* p, limo_fire_explore::Scan* s) {
     r(p, sizeof(*p));
     vec(s->ranges);
     vec(s->intensities);
@@ -213,7 +213,7 @@ class Reader {
     version = 1;
     int32_t hd[4];
     r(hd, sizeof(hd));
-    if (hd[0] != (int32_t)sizeof(limo_fire_rl::Proprio) || hd[1] != (int32_t)sizeof(Window)) throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
+    if (hd[0] != (int32_t)sizeof(limo_fire_explore::Proprio) || hd[1] != (int32_t)sizeof(Window)) throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
     ni1_ = hd[2];
     n11_ = hd[3];
     // 더 옛 판 1: 칸이 더해진 차례대로 (1852 바이트 꼴 안 자리, 바이트). 크기가 "1852 − 뒤에서 j 개 합" 이면 그 j 개 자리에 0 을 끼움 (0 = 그 기능 끔 = 그때 동작)

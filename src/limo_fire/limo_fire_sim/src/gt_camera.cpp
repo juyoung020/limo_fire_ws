@@ -1,7 +1,7 @@
 // 인식 벤치마크용 정답 카메라 (webots_ros2_driver 플러그인)
 // 컬러 영상을 내는 그 카메라(rgb_camera)의 Recognition(분할)을 켜서, 영상과 같은 프레임의 물체별 정답을 낸다:
 //   <gt>/detections  vision_msgs/Detection2DArray  상자 = 보이는 픽셀의 범위, class_id = 클래스 이름, id = 월드 데이터 파일의 물체 번호
-//   <gt>/mask        sensor_msgs/Image mono8       0 = 배경, k = detections[k-1] (yolo_detector/mask 와 같은 형식)
+//   <gt>/mask        sensor_msgs/Image mono8       0 = 배경, k = detections[k-1] (object_detector/mask 와 같은 형식)
 // 물체는 월드에서 recognitionColors [ (클래스+1)/255, (물체 번호)/255, 1 ] 로 표시한다 (sim/webots/README.md "인식 정답").
 // 컬러 영상은 교수님 limo_sensors 플러그인이 큰 렌더에서 잘라 내므로 같은 자리(crop)를 잘라 맞춘다.
 // 받는 쪽이 있을 때만 켠다. 컬러 영상(syncTopic 의 camera_info)이 나오는 시각의 위상을 받아, 그 위상의 걸음에서

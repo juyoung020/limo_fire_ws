@@ -1,5 +1,5 @@
 // 관측 만들기 CPU 참조판 (호스트 전용, CUDA 없음): 프론티어 요약(닫힘)·계층형 후보·깊이 → 관측(write_obs), 깊이 카메라 장애물 층 갱신(camlayer_ref).
-// 시뮬 CPU 참조판(src/env_ref.cpp)과 실물 노드(src/limo_fire/limo_fire_rl)가 이 함수들을 그대로 같이 부른다 — 실물 관측이 시뮬 관측과 갈라지지 않게
+// 시뮬 CPU 참조판(src/env_ref.cpp)과 실물 노드(src/limo_fire/limo_fire_explore)가 이 함수들을 그대로 같이 부른다 — 실물 관측이 시뮬 관측과 갈라지지 않게
 // 한 벌만 둔다. GPU 판(env_kernel.cu)은 같은 단계 함수로 같은 값을 낸다(tools/env_verify).
 #pragma once
 #include <cstdint>

@@ -8,7 +8,7 @@ Panels:
     Tree Height: 70
   - Class: limo_fire_rviz/ExplorePanel
     Name: Explore
-    mode: low
+    mode: explorer
 Visualization Manager:
   Class: ""
   Displays:
@@ -321,7 +321,7 @@ Visualization Manager:
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /object_mapper/markers
+        Value: /perception/markers
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
@@ -333,7 +333,7 @@ Visualization Manager:
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /object_goto/target
+        Value: /explore/object_goto/target
       Value: true
     - Align Bottom: true
       Background Alpha: 0.800000011920929
@@ -352,7 +352,7 @@ Visualization Manager:
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /object_goto/overlay
+        Value: /explore/object_goto/overlay
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
@@ -364,7 +364,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /low_rl/goal_marker
+        Value: /explore/goal_marker
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
@@ -382,7 +382,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /low_rl/candidates
+        Value: /explore/candidates
       Value: true
     - Align Bottom: false
       Background Alpha: 0.75
@@ -401,7 +401,7 @@ Visualization Manager:
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /low_rl/candidates_text
+        Value: /explore/candidates_text
       Value: true
     - Align Bottom: false
       Background Alpha: 0.800000011920929
@@ -420,7 +420,7 @@ Visualization Manager:
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /object_mapper/summary
+        Value: /perception/summary
       Value: true
       font: DejaVu Sans Mono
       height: 128
@@ -471,7 +471,7 @@ Visualization Manager:
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /low_rl/decider_image
+        Value: /explore/decider_image
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
@@ -485,7 +485,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /yolo_detector/image
+        Value: /perception/detection_image
       Value: true
   Enabled: true
   Global Options:

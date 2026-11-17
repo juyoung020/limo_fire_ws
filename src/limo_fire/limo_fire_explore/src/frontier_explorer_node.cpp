@@ -1,4 +1,4 @@
-// 프론티어 탐사 노드 (limo_fire_rl/README "프론티어 탐사"): Cartographer /map 에서 프론티어를 찾아 Nav2 NavigateToPose 목표로 보낸다.
+// 프론티어 탐사 노드 (limo_fire_explore/README "프론티어 탐사"): Cartographer /map 에서 프론티어를 찾아 Nav2 NavigateToPose 목표로 보낸다.
 // 알고리즘은 새로 쓰지 않고 탐사 기준선과 같은 코드를 쓴다:
 //   - 찾기·닫힘: train/explore/mdp/frontier.h frontier_search · closed (학습 시뮬·기준선·RL 노드 공용)
 //   - 고르기: train/explore/baselines/frontier/include/explore_lite.h rank_frontiers · on_blacklist (기준선 Explorer::make_plan 과 같은 함수)
@@ -33,7 +33,7 @@
 #include "explore_lite.h"
 #include "frontier.h"
 
-namespace limo_fire_rl {
+namespace limo_fire_explore {
 
 using NavTo = nav2_msgs::action::NavigateToPose;
 using Spin = nav2_msgs::action::Spin;
@@ -48,7 +48,7 @@ YAML::Node need(const YAML::Node& n, const char* k, const std::string& where) {
 
 class ExploreFrontierNode : public rclcpp::Node {
  public:
-  ExploreFrontierNode() : Node("explore_frontier") {
+  ExploreFrontierNode() : Node("frontier_explorer") {
     const std::string fy = declare_parameter<std::string>("frontier_yaml", LIMO_FIRE_FRONTIER_YAML);
     std::string nav = declare_parameter<std::string>("nav2_params", "");
     if (nav.empty()) nav = ament_index_cpp::get_package_share_directory("limo_fire_navigation") + "/config/nav2_params.yaml";
@@ -86,8 +86,8 @@ class ExploreFrontierNode : public rclcpp::Node {
     pub_done_ = create_publisher<std_msgs::msg::Bool>("~/done", latched);
     pub_status_ = create_publisher<std_msgs::msg::String>("~/status", 10);
     pub_markers_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/frontiers", 10);
-    nav_ = rclcpp_action::create_client<NavTo>(this, "navigate_to_pose");
-    spin_ = rclcpp_action::create_client<Spin>(this, "spin");
+    nav_ = rclcpp_action::create_client<NavTo>(this, "/navigate_to_pose");
+    spin_ = rclcpp_action::create_client<Spin>(this, "/spin");
     srv_enable_ = create_service<std_srvs::srv::SetBool>(
         "~/enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q, std::shared_ptr<std_srvs::srv::SetBool::Response> r) {
           if (q->data) start();
@@ -427,11 +427,11 @@ class ExploreFrontierNode : public rclcpp::Node {
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
-}  // namespace limo_fire_rl
+}  // namespace limo_fire_explore
 
 int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<limo_fire_rl::ExploreFrontierNode>());
+  rclcpp::spin(std::make_shared<limo_fire_explore::ExploreFrontierNode>());
   rclcpp::shutdown();
   return 0;
 }

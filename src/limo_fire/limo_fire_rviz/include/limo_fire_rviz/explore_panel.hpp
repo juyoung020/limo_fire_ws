@@ -1,5 +1,5 @@
 // 운용 화면 탐사 패널: "Auto explore ON/OFF" 버튼 하나로 탐사 노드를 켜고 끈다.
-//   버튼 → <노드>/enable (std_srvs/SetBool) — 프론티어 /explore_frontier (limo_fire_rl explore_frontier) · 합친 탐사 /low_rl (limo_fire_rl low_rl — 위층 판단 모델 + 아래층 A*)
+//   버튼 → <노드>/enable (std_srvs/SetBool) — 프론티어 /explore/frontier_explorer/enable (limo_fire_explore frontier_explorer) · 합친 탐사 /explore/enable (limo_fire_explore explorer — 위층 판단 모델 + 아래층 A*)
 //   상태 ← <노드>/state (idle · running · paused · done) · <노드>/done (Bool) · <노드>/status (한 줄)
 #pragma once
 #include <memory>

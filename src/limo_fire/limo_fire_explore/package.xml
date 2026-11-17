@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>limo_fire_rl</name>
+  <name>limo_fire_explore</name>
   <version>0.1.0</version>
-  <description>탐사 노드: 합친 탐사 low_rl(위층 판단 모델·fuel·slot0 + 아래층 A* 경로 추종, 시뮬과 같은 코드)과 프론티어 탐사(탐사 기준선과 같은 찾기·고르기)</description>
+  <description>탐사 노드: 합친 탐사 explorer(위층 판단 모델 + 아래층 A* 경로 추종, 시뮬과 같은 코드)와 프론티어 탐사 frontier_explorer(탐사 기준선과 같은 찾기·고르기)</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">김주영</maintainer>
   <license>MIT</license>
 

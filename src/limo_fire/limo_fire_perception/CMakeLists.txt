@@ -56,22 +56,22 @@ target_include_directories(trt_yolo PUBLIC
 target_link_libraries(trt_yolo PUBLIC ${NVINFER_LIB} CUDA::cudart opencv_core opencv_imgproc)
 
 # 노드는 컴포넌트(공유 라이브러리)로 만든다: 카메라 드라이버·서로와 한 프로세스에 올리면 메시지를 복사 없이 주고받는다.
-# 같은 이름의 실행 파일(yolo_detector, object_mapper)도 함께 만들어져 따로 띄울 수도 있다
-add_library(yolo_detector_component SHARED src/yolo_detector_node.cpp)
-target_link_libraries(yolo_detector_component trt_yolo)
-ament_target_dependencies(yolo_detector_component rclcpp rclcpp_components sensor_msgs vision_msgs ament_index_cpp)
-rclcpp_components_register_node(yolo_detector_component
-  PLUGIN "limo_fire_perception::YoloDetectorNode" EXECUTABLE yolo_detector)
+# 같은 이름의 실행 파일(object_detector, object_map)도 함께 만들어져 따로 띄울 수도 있다
+add_library(object_detector_component SHARED src/object_detector_node.cpp)
+target_link_libraries(object_detector_component trt_yolo)
+ament_target_dependencies(object_detector_component rclcpp rclcpp_components sensor_msgs vision_msgs ament_index_cpp)
+rclcpp_components_register_node(object_detector_component
+  PLUGIN "limo_fire_perception::ObjectDetectorNode" EXECUTABLE object_detector)
 
 # 탐지 상자 + 깊이 → 지도 위 물체 위치 (TensorRT·OpenCV 안 씀)
-add_library(object_mapper_component SHARED src/object_mapper_node.cpp)
-ament_target_dependencies(object_mapper_component rclcpp rclcpp_components sensor_msgs vision_msgs
+add_library(object_map_component SHARED src/object_map_node.cpp)
+ament_target_dependencies(object_map_component rclcpp rclcpp_components sensor_msgs vision_msgs
   visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs ament_index_cpp)
-rclcpp_components_register_node(object_mapper_component
-  PLUGIN "limo_fire_perception::ObjectMapperNode" EXECUTABLE object_mapper)
+rclcpp_components_register_node(object_map_component
+  PLUGIN "limo_fire_perception::ObjectMapNode" EXECUTABLE object_map)
 
 
-install(TARGETS trt_yolo yolo_detector_component object_mapper_component
+install(TARGETS trt_yolo object_detector_component object_map_component
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY launch config icons DESTINATION share/${PROJECT_NAME})
 # 엔진(기기마다 만듦, git 에 없음): models/ 에 두면 설치되고 engine_path 에 파일 이름만 써도 찾는다

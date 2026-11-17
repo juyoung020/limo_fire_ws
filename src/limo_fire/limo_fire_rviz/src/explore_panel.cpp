@@ -8,16 +8,16 @@
 namespace limo_fire_rviz {
 
 namespace {
-// 콤보 차례 = 노드 이름 (README 표와 같게)
-const char* const kNodes[] = {"/explore_frontier", "/low_rl"};
-const char* const kModeNames[] = {"frontier", "low"};
+// 콤보 차례 = 입출력 앞머리 (README 표와 같게): 프론티어 노드는 자기 이름 아래, 합친 탐사 노드는 이름공간 /explore 바로 아래 (docs/conventions.md "이름")
+const char* const kNodes[] = {"/explore/frontier_explorer", "/explore"};
+const char* const kModeNames[] = {"frontier", "explorer"};
 constexpr int kNModes = 2;
 }  // namespace
 
 ExplorePanel::ExplorePanel(QWidget* parent) : rviz_common::Panel(parent) {
   mode_ = new QComboBox;
-  mode_->addItem("프론티어 (/explore_frontier)");
-  mode_->addItem("합친 탐사 (/low_rl)");
+  mode_->addItem("프론티어 (/explore/frontier_explorer)");
+  mode_->addItem("합친 탐사 (/explore/explorer)");
   button_ = new QPushButton("Auto explore OFF");
   button_->setCheckable(true);
   button_->setMinimumHeight(36);
@@ -123,7 +123,7 @@ void ExplorePanel::load(const rviz_common::Config& config) {
   QString m;
   if (config.mapGetString("mode", &m))
     for (int k = 0; k < kNModes; ++k)
-      if (m == kModeNames[k]) mode_->setCurrentIndex(k);
+      if (m == kModeNames[k] || (k == 1 && m == "low")) mode_->setCurrentIndex(k);   // "low" = 2026-11-18 전 저장 이름
 }
 
 void ExplorePanel::save(rviz_common::Config config) const {

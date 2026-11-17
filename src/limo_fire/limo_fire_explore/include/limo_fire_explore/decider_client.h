@@ -1,4 +1,4 @@
-// 위층 판단 모델 요청을 로봇 안의 llama-server 로 보내는 것 (low_rl upper:=decider — scripts/low_decider.h 의 Transport).
+// 위층 판단 모델 요청을 로봇 안의 llama-server 로 보내는 것 (/explore/explorer 위층 — scripts/low_decider.h 의 Transport).
 // 스레드 없음: send 는 줄에 넣고 비차단 연결만 시작하고, poll (노드가 걸음마다 부름)이 비차단 소켓을 한 단계씩 진행한다
 // (연결 → HTTP/1.1 POST 보내기 → 답 받기 → 해석, 연결마다 닫음). 라이다 콜백은 막지 않고, 노드는 한 스레드로 돈다.
 // 로봇에는 libcurl 개발 헤더가 없어서 POSIX 소켓으로 직접 쓴다 (localhost · 평문 HTTP 만 — url 은 http://호스트:포트).
@@ -23,7 +23,7 @@
 
 #include "low_decider.h"
 
-namespace limo_fire_rl {
+namespace limo_fire_explore {
 
 class DeciderClient : public lxd::Transport {
  public:
@@ -243,4 +243,4 @@ class DeciderClient : public lxd::Transport {
   Clock::time_point t0_, t_end_;
 };
 
-}  // namespace limo_fire_rl
+}  // namespace limo_fire_explore

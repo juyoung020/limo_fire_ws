@@ -1,6 +1,6 @@
 // 탐사 시뮬 환경: 첫 지도 만들기(탐사) 한 판의 물리·센서·지도·판 끝 전부. 환경 하나 = 스레드 블록 하나(kThreads),
 // 커널 한 번 = 행동 하나(substeps × dt, 0.1 s). GPU 커널(src/env_kernel.cu)과 CPU 참조판(src/env_ref.cpp)이 이 단계 함수들을 같이 불러
-// 비트까지 같은 값을 낸다(tools/env_verify). 블록 안 합치기는 정수만(순서와 무관) — 결정적. 실물 노드(limo_fire_rl RobotEnv)도 센서 몫만 실물 값으로 바꿔 같은 함수를 부른다.
+// 비트까지 같은 값을 낸다(tools/env_verify). 블록 안 합치기는 정수만(순서와 무관) — 결정적. 실물 노드(limo_fire_explore RobotEnv)도 센서 몫만 실물 값으로 바꿔 같은 함수를 부른다.
 // 지금 탐사 구성이 쓰는 길: 계층형(kActPath) + 아래층 걸음 길(EnvCfg::low_rl — 걸음 하나 0.1 s, 목표는 호스트 위층이 LowCmd 로, low_rl.h) + 합친 탐사(low_explore).
 // 판 끝 코드·끝 조건은 mdp/episode.h. 그만둔 강화학습의 보상·커리큘럼은 2026-11-17 에 걷어냄 (archive/rl/train/explore/mdp).
 //
@@ -783,7 +783,7 @@ DEV void physics_step(const EnvBatch& b, EnvState& e) {
 // ---------- 라이다 + 지도 ----------
 
 // 스레드 0: 이번 장의 지도 쪽 준비 — 지도 자세(e.x + e.ex …)의 라이다 위치·방향, 펴기 각속도 w, 건드린 범위·각도 칸 비우기.
-// 시뮬은 scan_begin 이 부르고, 실물 노드(limo_fire_rl)는 /scan 마다 Cartographer 자세·자이로 ω 로 같은 함수를 부른다
+// 시뮬은 scan_begin 이 부르고, 실물 노드(limo_fire_explore)는 /scan 마다 Cartographer 자세·자이로 ω 로 같은 함수를 부른다
 DEV void scan_begin_map(const EnvCfg& c, const EnvState& e, float w, Shared& sh) {
   const float pth = e.th + e.eth;
   float ps, pc;
@@ -914,7 +914,7 @@ DEV float scan_beam_mark(const EnvBatch& b, const EnvState& e, int env, Shared& 
 }
 
 // 빔 j 의 지도 쪽 (세기 inten 은 시뮬 모델 값 · 실물은 /scan intensities): 관측 각도 칸, 지도 자세로 펴서 지나간 칸·맞은 칸 표시,
-// ray 가 있으면(시뮬) 끝점이 떨어진 벽 면 칸 표시(덮음 — 정답 격자). 실물 노드(limo_fire_rl)는 ray = nullptr 로 같은 함수를 부른다.
+// ray 가 있으면(시뮬) 끝점이 떨어진 벽 면 칸 표시(덮음 — 정답 격자). 실물 노드(limo_fire_explore)는 ray = nullptr 로 같은 함수를 부른다.
 // 빔 각도·시각 = ROS LaserScan 과 같은 격자: −fov/2 + j·inc, j · scan_time / n_rev (실물은 fov = −2·angle_min, scan_time / n_rev = time_increment)
 DEV void scan_beam_map(const EnvBatch& b, const EnvState& e, int env, Shared& sh, int j, float r, float inten, const BeamRay* ray) {
   const EnvCfg& c = b.cfg;

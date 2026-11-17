@@ -3,7 +3,7 @@
 | 파일 | 내용 |
 |---|---|
 | `frontier_run.cpp` | 프론티어 탐사 기준선(nav2 · fast)을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) |
-| `combine_run.cpp` | 두 층을 한 판에서 합쳐 탐사를 끝까지: 위층(slot0 · fuel) + 아래층 규칙 추종기(A* + 경로 추종 — 실물 노드 `low_rl` 과 같은 길). 막힘 신호(`LowRl::stall`)를 받아 그 칸을 한동안 피하고 다시 고른다. 빌드는 이 폴더 `CMakeLists.txt`, 옵션은 아래 "combine_run — 돌리기 · 옵션" |
+| `combine_run.cpp` | 두 층을 한 판에서 합쳐 탐사를 끝까지: 위층(slot0 · fuel) + 아래층 규칙 추종기(A* + 경로 추종 — 실물 노드 `explorer` 과 같은 길). 막힘 신호(`LowRl::stall`)를 받아 그 칸을 한동안 피하고 다시 고른다. 빌드는 이 폴더 `CMakeLists.txt`, 옵션은 아래 "combine_run — 돌리기 · 옵션" |
 | `fuel_upper.h` · `low_explore_ctl.h` · `low_decider.h` | 위층 규칙(fuel · slot0 · 판단 모델)과 목표 넘기기 — 시뮬 도구와 실물 노드가 같이 씀 |
 | `cand_rules.h` | 정답 지도를 다 아는 순회(`combine_run --gt-bound` — 시뮬 전용 진단) |
 | `decider.h` · `decider.cpp` | 판단 모델 요청에 넣는 로봇 지도 사진(PNG · 후보 꼬리표 · 지나온 길 · 지난 목표)과 data URI — `low_decider.h` 가 씀 (요청 본문 · 보내기는 `low_decider.h` 와 노드 쪽) |
@@ -81,7 +81,7 @@
    시야 밖에서 안 지워지는 표시(Nav2 VoxelLayer 꼴)가 쌓인 것으로 보인다 — 빠르게 돌 때 깊이 영상과 자세의 시각 차로 번진 몫은 확인 못 함(녹화에 깊이 시각이 없음).
    시뮬은 판 중간 목표 없음이 0 (시험 4 장면 × 씨앗 4 · 5, 결정 2844 개: 판 시작 3 s 안 25 · 닫힌 뒤 100 — 같은 표를 `low_explore_check --log` 로).
 
-고침 (시뮬·실물 같은 코드 — `fuel_upper.h` · `low_explore_ctl.h` · `combine_run.cpp`, 노드 기본은 `limo_fire_rl/config/low_rl.yaml`):
+고침 (시뮬·실물 같은 코드 — `fuel_upper.h` · `low_explore_ctl.h` · `combine_run.cpp`, 노드 기본은 `limo_fire_explore/config/explorer.yaml`):
 - 붙들기 `--fuel-hyst 0.2` (위 표의 "+ 붙들기 0.2"). FUEL 은 1.5 s 마다 다시 짜되(저자 저장소 `algorithm.xml` `fsm/thresh_replan3 1.5`) 속도 어긋남 벌점(식 3·4)으로 이어 가고,
   덮였거나(`isFrontierCovered`) 궤적 끝이면 바로 다시 짠다. 여기서는 지금 목표 덩어리가 사라졌거나(덮임)·목표 칸이 못 가게 됐거나·통과·막힘이면 바로, 아니면 새 순회가 20 % 넘게 좋을 때만 바꾼다.
 - 시점 자격 `--fuel-vp-min 0.75 --fuel-vp-clear 0.21` (FUEL `frontier/min_candidate_dist 0.75` · `min_candidate_clearance 0.21`): 로봇에서 0.75 m 안 시점은 안 쓰고(가장 가까운 칸도),
@@ -132,7 +132,7 @@
 
 ## 후보 뽑기 (`cand_view.h`, 위층 cand · 판단 모델이 고르는 ≤ 8 곳)
 
-로봇 지도 한 장 → 목표 후보 ≤ 8 개 (판단 모델 요청에는 앞 6 개 — `lxd::Params::max_cands`). 시뮬(`combine_run` · `low_explore_check`)과 실물 노드(`low_rl_node`)가 같은 함수
+로봇 지도 한 장 → 목표 후보 ≤ 8 개 (판단 모델 요청에는 앞 6 개 — `lxd::Params::max_cands`). 시뮬(`combine_run` · `low_explore_check`)과 실물 노드(`explorer_node.cpp`)가 같은 함수
 `cand::build` 를 부르고, 정수 · 정해진 차례만 써서 같은 지도면 비트까지 같은 결과다. `build` 는 아래 일곱 단계를 차례로
 부르는 짧은 함수이고, 각 단계는 `detail::Run` 의 함수 하나다. 상수는 `cand::Opt` 한 곳에 단위 · 출처(FUEL · TARE 논문,
 잰 값, 잠정)와 함께 있다.
@@ -165,7 +165,7 @@
 
 ## combine_run — 돌리기 · 옵션 (위층 slot0 · fuel)
 
-GPU 시뮬로 장면마다 판을 많이 돌려 두 층 합친 탐사를 잰다. 위층은 slot0(기준선)과 fuel 두 가지, 아래층은 늘 규칙 추종기(실물 노드 `low_rl` 과 같은 길).
+GPU 시뮬로 장면마다 판을 많이 돌려 두 층 합친 탐사를 잰다. 위층은 slot0(기준선)과 fuel 두 가지, 아래층은 늘 규칙 추종기(실물 노드 `explorer` 과 같은 길).
 판단 모델 위층은 여기서 안 돈다 — 실물 노드와 같은 코드(`low_decider.h`)로 `sim/tools/low_explore_check --upper decider` 와 `upper_lora/rollout/dec_rollout` 이 돌린다.
 
 ```bash
@@ -215,7 +215,7 @@ T=train/explore/scenes
 그리고 그것들만 쓰던 `decider.h` 의 요청 본문 · libcurl 동시 요청(`Client`) · 장면 카메라 그림 · 녹화(`Video`) · 점유 격자 끝 선언 채점(`grid_open_frontier`),
 `cand_rules.h` 의 후보 고르기 규칙(`choose` — `gt_tour` 만 남김).
 
-모델 · 서버 준비(진짜 서버로 `low_explore_check --dec-url` 등을 돌릴 때 — 실물 로봇 쪽은 [limo_fire_rl README](../../../src/limo_fire/limo_fire_rl/README.md) "판단 모델"):
+모델 · 서버 준비(진짜 서버로 `low_explore_check --dec-url` 등을 돌릴 때 — 실물 로봇 쪽은 [limo_fire_explore README](../../../src/limo_fire/limo_fire_explore/README.md) "판단 모델"):
 - **모델 가중치는 저장소에 넣지 않는다.** LiquidAI d1-3B 의 GGUF 두 파일을 각자 받는다: <https://huggingface.co/LiquidAI/d1-3B-GGUF> 의
   `d1-3B-Q8_0.gguf`(2.9 GB) · `mmproj-d1-3B-Q8_0.gguf`(0.6 GB, 사진 입력용). 이 PC 는 `~/models/decision/d1-3b/` 에 뒀다.
 - **라이선스**: LFM Open License v1.0 (받은 폴더의 `LICENSE`). 쓰기 전에 본문을 직접 읽는다 — 조건을 여기 옮겨 적지 않는다.

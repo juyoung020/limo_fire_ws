@@ -1,6 +1,6 @@
 # mdp — 탐사 과제 정의 (관측 · 판 끝 · 프론티어 · 닫힘)
 
-시뮬(`sim/`)과 실물 노드(`limo_fire_rl` `RobotEnv`)가 같은 헤더를 그대로 부른다 — 같은 입력이면 비트까지 같다.
+시뮬(`sim/`)과 실물 노드(`limo_fire_explore` `RobotEnv`)가 같은 헤더를 그대로 부른다 — 같은 입력이면 비트까지 같다.
 값은 코드 안에 둔다 (바꾸면 다시 컴파일).
 
 > 탐사 강화학습은 2026-11-16 에 그만뒀다. 보상·커리큘럼·정책 관측·그래프 모드와 그때 이 README 전체(학습 기록·측정 표)는
@@ -9,7 +9,7 @@
 
 | 파일 | 내용 |
 |---|---|
-| `frontier.h` | 지도 칸 종류(모름 · 막힘 · 갈 수 있음)·프론티어·닫힘 규칙·프론티어 덩어리 요약(`reach_summary`)·계층형 후보(`cand_pick`) — 호스트·장치 공용, CPU == GPU 비트 같음 (`baselines/frontier/tools/frontier_check`, `sim/tools/env_verify`). 프론티어 기준선·실물 `explore_frontier` 노드도 같이 씀 |
+| `frontier.h` | 지도 칸 종류(모름 · 막힘 · 갈 수 있음)·프론티어·닫힘 규칙·프론티어 덩어리 요약(`reach_summary`)·계층형 후보(`cand_pick`) — 호스트·장치 공용, CPU == GPU 비트 같음 (`baselines/frontier/tools/frontier_check`, `sim/tools/env_verify`). 프론티어 기준선·실물 `frontier_explorer` 노드도 같이 씀 |
 | `observations.h` | 깊이 관측(깊이 카메라 장애물 층의 입력)·계층형 후보 칸 만들기. 강화학습 정책 관측(지도 그림 · 라이다 1D · 숫자 · 후보 특징)은 2026-11-18 지움 |
 | `obs_layout.h` | 깊이·라이다 각도 칸·계층형 후보 수 크기, 행동 3 칸(v, vy, ω)과 한도(`mdp::act`) |
 | `episode.h` | 판 끝 코드와 끝 조건 (안전 시간 · 진행 없음) |

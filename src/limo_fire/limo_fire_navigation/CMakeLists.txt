@@ -33,7 +33,7 @@ add_executable(nav_benchmark src/nav_benchmark_node.cpp)
 ament_target_dependencies(nav_benchmark rclcpp rclcpp_action geometry_msgs nav2_msgs std_srvs tf2 tf2_ros tf2_geometry_msgs yaml_cpp_vendor)
 target_link_libraries(nav_benchmark yaml-cpp)
 
-# "○○ 로 가": 물체 지도에서 물체를 찾아 옆 설 자리로 (Nav2 또는 탐사 노드 low_rl ~/goto)
+# "○○ 로 가": 물체 지도에서 물체를 찾아 옆 설 자리로 (Nav2 또는 탐사 노드 explorer ~/goto)
 find_package(vision_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(rviz_2d_overlay_msgs REQUIRED)

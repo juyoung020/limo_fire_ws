@@ -1,5 +1,5 @@
 // 지시 일 감독 (판단 모델이 물체 후보를 골랐을 때 · ~/goto): 설 자리로 가기 → 닿으면 물체 쪽으로 돌아 섬 → 끝, 못 가면 실패를 알리고 그 물체를 잠시 뺌,
-// 한 지시에서 실패가 잇따르거나 시간이 넘으면 포기. 실물 노드(low_rl)와 시뮬(low_explore_check --dec-fake obj)이 같은 코드 — 입력은 시각 · 지도 자세 ·
+// 한 지시에서 실패가 잇따르거나 시간이 넘으면 포기. 실물 노드(/explore/explorer)와 시뮬(low_explore_check --dec-fake obj)이 같은 코드 — 입력은 시각 · 지도 자세 ·
 // 아래층 상태(경로 없음), 출력은 sim::LowCmd 와 사건.
 //
 //  - 감: LowCmd{설 자리 칸, follow 1}. 설 자리에서 arrive_m 안이면 닿음 → 바라보기: LowCmd{−1, 1, face = 물체 칸} (아래층 hier_path.h path_idle_w 가 돎),
@@ -19,7 +19,7 @@
 namespace tsk {
 
 struct Params {
-  float arrive_m = 0.4f;        // 설 자리 닿음 (m) — low_rl goto_arrive_m
+  float arrive_m = 0.4f;        // 설 자리 닿음 (m) — 실물 노드 explorer 의 goto_arrive_m
   float arrive_far_m = 1.0f;    // 아래층 경로가 끝났으면(설 자리가 막혀 계획기가 둘레 허용 칸으로 바꿈) 이 안이면 닿음으로 (m)
   float face_tol = 0.15f;       // 바라보기 끝 남은 각 (rad) — env.yaml action.path.face_tol 과 같게
   float face_timeout_s = 5.f;   // 바라보기 시간 한도 (s)

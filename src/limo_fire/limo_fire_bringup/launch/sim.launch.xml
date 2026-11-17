@@ -15,8 +15,8 @@
   <arg name="slam" default="false" description="true: 저장 지도·AMCL 대신 Cartographer 로 지도를 만들며 주행"/>
   <arg name="nav" default="true" description="Nav2 를 띄운다"/>
   <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/sim/$(var world).yaml" description="slam:=false 일 때 쓰는 지도"/>
-  <arg name="explore" default="$(var slam)" description="프론티어 탐사 노드를 멈춘 채(idle) 띄운다 — RViz 탐사 패널 버튼·/explore_frontier/enable 로 켬. 기본은 slam 과 같음"/>
-  <arg name="perception" default="false" description="YOLO 탐지 + 물체 지도 (limo_fire_perception yolo.launch.xml)"/>
+  <arg name="explore" default="$(var slam)" description="프론티어 탐사 노드를 멈춘 채(idle) 띄운다 — RViz 탐사 패널 버튼·/explore/frontier_explorer/enable 로 켬. 기본은 slam 과 같음"/>
+  <arg name="perception" default="false" description="YOLO 탐지 + 물체 지도 (limo_fire_perception perception.launch.xml)"/>
   <arg name="bt" default="false" description="임무 BT(limo_fire_bt bt.launch.xml sim:=true)를 같이 띄운다. 순찰점은 월드 데이터 파일 world_dir/world.yaml"/>
   <arg name="rviz" default="true"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
@@ -52,13 +52,13 @@
   </group>
 
   <group if="$(var explore)">
-    <include file="$(find-pkg-share limo_fire_rl)/launch/explore_frontier.launch.xml">
+    <include file="$(find-pkg-share limo_fire_explore)/launch/frontier_explorer.launch.xml">
       <arg name="use_sim_time" value="true"/>
     </include>
   </group>
 
   <group if="$(var perception)">
-    <include file="$(find-pkg-share limo_fire_perception)/launch/yolo.launch.xml">
+    <include file="$(find-pkg-share limo_fire_perception)/launch/perception.launch.xml">
       <arg name="use_sim_time" value="true"/>
       <arg name="rviz" value="false"/>
       <arg name="config" value="yolo_fire.yaml"/>

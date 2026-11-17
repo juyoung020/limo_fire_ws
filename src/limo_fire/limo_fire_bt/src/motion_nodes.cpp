@@ -262,7 +262,7 @@ public:
   {
     return {InputPort<MapPoint>("location"), InputPort<double>("safe_distance_m", 2.0, ""),
       InputPort<std::string>("action_name", "/navigate_to_pose", ""),
-      InputPort<std::string>("detections_topic", "/yolo_detector/detections", ""), InputPort<double>("min_score", 0.5, "")};
+      InputPort<std::string>("detections_topic", "/perception/detections", ""), InputPort<double>("min_score", 0.5, "")};
   }
   NodeStatus onStart() override
   {
@@ -392,7 +392,7 @@ private:
   bool smoke_on_ = false;
 };
 
-// 프론티어 탐사 노드(limo_fire_rl explore_frontier)를 켜고 state 가 done 이 될 때까지. 멈추면 끈다.
+// 프론티어 탐사 노드(limo_fire_explore frontier_explorer)를 켜고 state 가 done 이 될 때까지. 멈추면 끈다.
 // survivors = 탐사하며 지도에 올라간 사람 수
 class ExploreFrontiers : public RosAction
 {
@@ -400,8 +400,8 @@ public:
   using RosAction::RosAction;
   static PortsList providedPorts()
   {
-    return {InputPort<std::string>("explorer", "/explore_frontier", "탐사 노드 이름 (~/enable, ~/state)"),
-      InputPort<std::string>("objects_topic", "/object_mapper/objects", ""),
+    return {InputPort<std::string>("explorer", "/explore/frontier_explorer", "탐사 노드 이름 (~/enable, ~/state)"),
+      InputPort<std::string>("objects_topic", "/perception/objects", ""),
       OutputPort<int>("survivors")};
   }
   NodeStatus onStart() override

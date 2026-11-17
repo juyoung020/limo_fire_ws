@@ -1,4 +1,4 @@
-// env.yaml 읽기 (load_env_cfg · load_people_cfg) — CUDA 없이 빌드되는 호스트 코드. 학습 환경(env_host.cpp)과 실물 노드(limo_fire_rl)가 같이 쓴다
+// env.yaml 읽기 (load_env_cfg · load_people_cfg) — CUDA 없이 빌드되는 호스트 코드. 학습 환경(env_host.cpp)과 실물 노드(limo_fire_explore)가 같이 쓴다
 #include "env_cfg.h"
 
 #include <yaml-cpp/yaml.h>

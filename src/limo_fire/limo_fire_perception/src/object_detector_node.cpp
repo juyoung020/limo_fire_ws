@@ -4,10 +4,10 @@
 //
 // 영상은 실행기(executor) 콜백이 아니라 작업 스레드 하나가 WaitSet 으로 직접 받고 추론까지 한다:
 //   결과 기다림(CPU 잠듦) → 다음 영상이 와 있으면 GPU 에 먼저 걸고 → 앞 장 결과 발행 (GPU 와 겹침)
-// 그래서 한 스레드 컨테이너에서 다른 노드(object_mapper 등) 콜백이 길어져도 영상 받기가 밀리지 않는다.
+// 그래서 한 스레드 컨테이너에서 다른 노드(object_map 등) 콜백이 길어져도 영상 받기가 밀리지 않는다.
 // 밀리면 오래된 영상은 버린다 (늦은 탐지보다 최신 탐지). 받은 영상 메시지는 몇 개를 돌려 써서 장마다 큰 할당을 하지 않는다
 // 결과 영상(~/image)은 구독자가 있을 때만 만들고, vis_release_s 초 동안 없으면 그 GPU 버퍼·그래프를 푼다
-// 컴포넌트라 카메라 드라이버·object_mapper 와 한 프로세스에 올리면 영상·탐지·마스크를 복사 없이 주고받는다
+// 컴포넌트라 카메라 드라이버·object_map 과 한 프로세스에 올리면 영상·탐지·마스크를 복사 없이 주고받는다
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -27,11 +27,11 @@
 namespace limo_fire_perception
 {
 
-class YoloDetectorNode : public rclcpp::Node
+class ObjectDetectorNode : public rclcpp::Node
 {
 public:
-  explicit YoloDetectorNode(const rclcpp::NodeOptions & options)
-  : Node("yolo_detector", options)
+  explicit ObjectDetectorNode(const rclcpp::NodeOptions & options)
+  : Node("object_detector", options)
   {
     // 절대 경로가 아니면 이 패키지 설치 폴더의 models/ 에서 찾는다 (엔진을 src/…/models 에 두고 colcon build)
     auto engine = declare_parameter<std::string>("engine_path");
@@ -55,13 +55,13 @@ public:
       engine.c_str(), yolo_->input_width(), yolo_->input_height(),
       yolo_->uint8_input() ? "uint8 RGB(전처리 엔진 안)" : "float", class_names_.size(), yolo_->activation_bytes() / 1048576.0);
 
-    det_pub_ = create_publisher<vision_msgs::msg::Detection2DArray>("~/detections", 10);
+    det_pub_ = create_publisher<vision_msgs::msg::Detection2DArray>("detections", 10);
     if (yolo_->has_masks()) {
-      mask_pub_ = create_publisher<sensor_msgs::msg::Image>("~/mask", 10);
+      mask_pub_ = create_publisher<sensor_msgs::msg::Image>("mask", 10);
       RCLCPP_INFO(get_logger(), "분할 모델: 물체 마스크를 ~/mask 로 냄");
     }
     // 신뢰(RELIABLE) 발행이면 RViz·rqt 의 신뢰/최선 구독 둘 다 받는다
-    img_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", rclcpp::QoS(1));
+    img_pub_ = create_publisher<sensor_msgs::msg::Image>("detection_image", rclcpp::QoS(1));
     // 카메라 드라이버(실물 Orbbec, Webots 플러그인) 둘 다 받도록 SensorData(BEST_EFFORT).
     // 실행기에 안 올리는 콜백 그룹에 두고 작업 스레드가 WaitSet 으로 꺼낸다 (카메라는 다른 프로세스라 프로세스 안 전달은 끔)
     rclcpp::SubscriptionOptions so;
@@ -73,7 +73,7 @@ public:
     worker_ = std::thread([this] {run();});
   }
 
-  ~YoloDetectorNode() override
+  ~ObjectDetectorNode() override
   {
     stop_ = true;   // 작업 스레드는 WaitSet 을 100 ms 마다 깨어 본다
     if (worker_.joinable()) {worker_.join();}
@@ -227,7 +227,7 @@ private:
       frames_ = 0;
     }
 
-    // 마스크를 탐지보다 먼저 낸다 (object_mapper 가 탐지를 받을 때 같은 시각 마스크가 이미 와 있게).
+    // 마스크를 탐지보다 먼저 낸다 (object_map 이 탐지를 받을 때 같은 시각 마스크가 이미 와 있게).
     // 물체가 없으면 쓸 곳이 없으니 내지 않는다
     if (mask_pub_ && !res.ids.empty() && !dets.empty()) {
       auto out = std::make_unique<sensor_msgs::msg::Image>();
@@ -329,4 +329,4 @@ private:
 
 }  // namespace limo_fire_perception
 
-RCLCPP_COMPONENTS_REGISTER_NODE(limo_fire_perception::YoloDetectorNode)
+RCLCPP_COMPONENTS_REGISTER_NODE(limo_fire_perception::ObjectDetectorNode)

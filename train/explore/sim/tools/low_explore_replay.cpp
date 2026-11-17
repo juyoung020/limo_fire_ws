@@ -1,10 +1,10 @@
-// 실물 합친 탐사 노드(limo_fire_rl low_rl) 녹화를 RobotEnv 합친 탐사 모드 + 위층(scripts/low_explore_ctl.h)으로 다시 돌린다 (GPU·ROS 없이).
-// 노드가 부르는 차례 그대로 (low_rl_node.cpp on_scan): 'R' reset → ['S' step → 판 끝 → 위층 걸음 뒤] → 'D' 깊이 → [결정 차례면 위층 결정 → set_cmd] → 'A' set_slot · low_prepare · low_act.
+// 실물 합친 탐사 노드(limo_fire_explore explorer) 녹화를 RobotEnv 합친 탐사 모드 + 위층(scripts/low_explore_ctl.h)으로 다시 돌린다 (GPU·ROS 없이).
+// 노드가 부르는 차례 그대로 (explorer_node.cpp on_scan): 'R' reset → ['S' step → 판 끝 → 위층 걸음 뒤] → 'D' 깊이 → [결정 차례면 위층 결정 → set_cmd] → 'A' set_slot · low_prepare · low_act.
 // 아래층은 규칙 추종기 (2026-11-16 RL 을 뺀 뒤의 노드 — 행동 칸 = 위층 Ctl::slot()). 녹화 꼴은 sim/tools/low_node_rec.h (판 1 · 2 모두 읽음).
 // 행동은 녹화 값을 쓰므로 궤적·지도는 녹화 그대로이고, 위층만 다시 결정한다. 녹화와 같은 위층 설정이면 다시 낸 아래층 명령이 녹화 명령과 비트까지 같아야 한다.
 // 다른 위층 설정(--upper · --fuel-*)이면 명령은 다르지만(목표가 다름) 지도·궤적은 녹화 그대로 — "그 자리에서 이 위층이면 무엇을 골랐나" 를 본다.
 //   low_explore_replay 녹화.bin [--upper fuel|slot0] [--fuel-* …] [--log 결정.tsv] [--pgm 접두사 --pgm-every N] [--depth-stat]
-//   fuel 기본 = 지금 실물 노드 기본(config/low_rl.yaml). 옛 설정으로 녹화한 것을 비트로 다시 내려면 그때 값을 준다 (2026-11-16 앞: --fuel-hyst 0 --fuel-vp-min 0 --fuel-vp-clear 0)
+//   fuel 기본 = 지금 실물 노드 기본(config/explorer.yaml). 옛 설정으로 녹화한 것을 비트로 다시 내려면 그때 값을 준다 (2026-11-16 앞: --fuel-hyst 0 --fuel-vp-min 0 --fuel-vp-clear 0)
 //   (RL 을 빼기 전 판으로 1116_fuel_rl_1 659 / 659 · 1116_slot0_1 --upper slot0 86 / 86 비트 같음). 노드가 close_lidar 로 돌았으면 녹화 머리 hc 의 low_explore 2 를 그대로 이어받는다.
 //   --pgm: 결정마다(--pgm-every N 째마다) 로봇 지도 그림 PPM (모름 회색 · 막힘 검정 · 닫힘 쪽 번진 칸 연두 · 깊이 층 주황 · 번진 곳 프론티어 빨강 · 밖 파랑 · 목표 초록)
 //   --depth-stat: 깊이 카메라 층이 표시하는 점의 (거리, 높이) 표 — 바닥이 장애물로 찍히는지
@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-#include "limo_fire_rl/robot_env.h"
+#include "limo_fire_explore/robot_env.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
 #include "cand_quality.h"
@@ -32,7 +32,7 @@ struct Clos {
   mdp::SearchResult r;
   long n_front_all = 0;
 };
-Clos closure(const limo_fire_rl::RobotEnv& rb, float rad, bool use_cam = true) {
+Clos closure(const limo_fire_explore::RobotEnv& rb, float rad, bool use_cam = true) {
   const sim::MapDev& md = rb.map();
   const sim::EnvCfg& c = rb.cfg();
   const sim::EnvState& s = rb.state();
@@ -55,7 +55,7 @@ Clos closure(const limo_fire_rl::RobotEnv& rb, float rad, bool use_cam = true) {
 }
 // 로봇 지도 그림 PPM (closure 바로 뒤에 — 그 번짐 결과를 씀): 모름 회색 · 막힘 검정 · 빈 흰색 · 번진 칸(닫힘 쪽) 연두 · 깊이 카메라 층 막힘 주황 ·
 // 번진 곳 프론티어 칸 빨강 · 번진 곳 밖 프론티어 칸 파랑 · 로봇 자홍 · 목표 초록 십자. 위가 +y
-void write_ppm(const std::string& path, const limo_fire_rl::RobotEnv& rb, int tgt) {
+void write_ppm(const std::string& path, const limo_fire_explore::RobotEnv& rb, int tgt) {
   const sim::MapDev& md = rb.map();
   const sim::EnvCfg& c = rb.cfg();
   const int gw = md.gw, gh = md.gh;
@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
   int cand_every = 10;   // 깊이 카메라 층이 표시하는 점(띠 0.03~0.25 m 안)의 높이·거리 표 — 바닥이 장애물로 찍히는지
   long dh[6][8] = {};        // [거리 0.5 m 칸 0~3 m][높이 칸 띠 8]
   bool use_fuel = true;
-  fu::Opt fo;   // 실물 노드 기본 (config/low_rl.yaml)
+  fu::Opt fo;   // 실물 노드 기본 (config/explorer.yaml)
   fo.time = fo.global = fo.vp = true;
   fo.v_eff = 0.981f;
   fo.w_eff = 3.232f;
@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
       else throw std::runtime_error("모르는 인자 " + a);
     }
     lowrec::Reader rd(argv[1]);
-    limo_fire_rl::RobotEnv robot(rd.hc);
+    limo_fire_explore::RobotEnv robot(rd.hc);
     const sim::EnvCfg& c = robot.cfg();
     lxc::Params lp = lxc::Params::from_cfg(c);
     lp.fuel = fo;
@@ -158,8 +158,8 @@ int main(int argc, char** argv) {
     FILE* lf = logp.empty() ? nullptr : std::fopen(logp.c_str(), "w");
     if (lf) std::fprintf(lf, "t_s\tstep\tx\ty\tth\tcause\tcmd_why\ttgt\ttx\tty\tchanged\tjump_m\trobot_tgt_m\tn_clu\tn_node\tcur\tpick\tbest_first\tbest\tcur_cost\tno_goal_why\tn_block\tn_front_reach\tn_front_all\tn_block_nocam\tclosed\n");
     std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE);
-    limo_fire_rl::Proprio p;
-    limo_fire_rl::Scan sc;
+    limo_fire_explore::Proprio p;
+    limo_fire_explore::Scan sc;
     long n_act = 0, d_cmd = 0, n_dec = 0, n_chg = 0, n_nogoal = 0, n_slot = 0, nog_why[6] = {0, 0, 0, 0, 0, 0}, nog_steps = 0, n_steps = 0;
     long cause_n[6] = {0, 0, 0, 0, 0, 0};
     double jump_sum = 0;

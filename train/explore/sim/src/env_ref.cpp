@@ -101,7 +101,7 @@ void set_cpu_threads(int n) { g_cpu_threads = std::max(1, n); }
 void set_cpu_tap(CpuTap* t) { g_tap = t; }
 
 void hier_plan_cpu(const EnvBatch& b, EnvState& e, int env, int slot) { plan_cpu(b, e, env, slot); }
-// 깊이 카메라 장애물 층 갱신 — include/obs_ref.h camlayer_ref (실물 노드 limo_fire_rl 도 같은 함수)
+// 깊이 카메라 장애물 층 갱신 — include/obs_ref.h camlayer_ref (실물 노드 limo_fire_explore 도 같은 함수)
 void hier_camlayer_cpu(const EnvBatch& b, const EnvState& e, int env) {
   if (b.cldep)   // 층 전용 깊이를 이 상태로 그림 (GPU env_camlayer_kernel 과 같은 함수) — 실물은 RobotEnv::set_layer_depth 로 영상에서
     for (int i = 0, np = cam_npix(b.cfg); i < np; ++i) mdp::obsgen::cam_layer_depth(b, e, env, i);

@@ -47,7 +47,7 @@ RosContext::RosContext(rclcpp::Node::SharedPtr node)
   history_s_ = node_->declare_parameter<double>("detection_history_s", 15.0);
   // 탐지 좌표(컬러 영상) → 방향. 깊이를 못 믿을 때 대략 위치에 쓴다
   node_->declare_parameter<std::string>("camera_info_topic", "/camera/color/camera_info");
-  // 탐지 상자 거리: 정렬된 깊이 영상에서 상자 가운데 box_shrink 부분의 하위 percentile 값 (object_mapper 와 같은 방식)
+  // 탐지 상자 거리: 정렬된 깊이 영상에서 상자 가운데 box_shrink 부분의 하위 percentile 값 (object_map 과 같은 방식)
   node_->declare_parameter<std::string>("depth.topic", "/camera/depth/image_raw");
   node_->declare_parameter<double>("depth.box_shrink", 0.5);
   node_->declare_parameter<double>("depth.percentile", 0.3);
@@ -246,7 +246,7 @@ std::optional<double> RosContext::box_depth(const vision_msgs::msg::BoundingBox2
     }
   }
   if (vals.size() < 5) {return std::nullopt;}
-  // 하위 percentile: 불 뒤의 벽이 섞여도 앞쪽(불)을 고른다 (object_mapper 와 같은 방식)
+  // 하위 percentile: 불 뒤의 벽이 섞여도 앞쪽(불)을 고른다 (object_map 과 같은 방식)
   const auto k = static_cast<size_t>(param<double>("depth.percentile") * (vals.size() - 1));
   std::nth_element(vals.begin(), vals.begin() + k, vals.end());
   return vals[k];

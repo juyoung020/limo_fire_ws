@@ -19,10 +19,10 @@
     /odometry/filtered         nav_msgs/Odometry            30 Hz   EKF              -> Nav2
     /rc_state                  sensor_msgs/Joy              40 Hz   limo_fire_base   (SWB 위 = 오토 모드여야 /cmd_vel 을 받음)
     /limo_status               limo_msgs/LimoStatus          2 Hz   limo_fire_base
-    /camera/color/image_raw    sensor_msgs/Image (640x480)  30 Hz   Orbbec           -> yolo_detector
-    /camera/depth/image_raw    sensor_msgs/Image (16UC1)    30 Hz   Orbbec           -> object_mapper
-    /yolo_detector/detections  vision_msgs/Detection2DArray 매 장  yolo_detector    (fire, smoke, fire_extinguisher, exit_sign, person, door, stairs)
-    /object_mapper/objects     vision_msgs/Detection3DArray          object_mapper   (지도 frame 의 물체 위치·크기, min_hits 넘은 것만)
+    /camera/color/image_raw    sensor_msgs/Image (640x480)  30 Hz   Orbbec           -> object_detector
+    /camera/depth/image_raw    sensor_msgs/Image (16UC1)    30 Hz   Orbbec           -> object_map
+    /perception/detections  vision_msgs/Detection2DArray 매 장  object_detector    (fire, smoke, fire_extinguisher, exit_sign, person, door, stairs)
+    /perception/objects     vision_msgs/Detection3DArray          object_map   (지도 frame 의 물체 위치·크기, min_hits 넘은 것만)
     /cmd_vel                   geometry_msgs/Twist                  limo_fire_base 가 구독
 
   월드·실물 구성에 따라 있는 토픽
@@ -81,10 +81,10 @@
         <IsTopicAlive topic="/odom"               min_hz="35" window_s="1.0" _onFailure="fail_reason:='ODOM_TOPIC_LOST'"/>
         <IsTopicAlive topic="/imu"                min_hz="70" window_s="1.0" _onFailure="fail_reason:='IMU_TOPIC_LOST'"/>
         <IsTopicAlive topic="/odometry/filtered"  min_hz="20" window_s="1.0" _onFailure="fail_reason:='EKF_TOPIC_LOST'"/>
-        <!-- 감지: 컬러 영상 -> yolo_detector (탐지는 영상 한 장마다 발행) -->
+        <!-- 감지: 컬러 영상 -> object_detector (탐지는 영상 한 장마다 발행) -->
         <IsTopicAlive topic="/camera/color/image_raw"   min_hz="20" window_s="1.0" _onFailure="fail_reason:='CAMERA_TOPIC_LOST'"/>
-        <IsTopicAlive topic="/yolo_detector/detections" min_hz="10" window_s="1.0" _onFailure="fail_reason:='DETECTOR_TOPIC_LOST'"/>
-        <!-- 위치: object_mapper 는 깊이 영상으로 3D 를 잰다 -->
+        <IsTopicAlive topic="/perception/detections" min_hz="10" window_s="1.0" _onFailure="fail_reason:='DETECTOR_TOPIC_LOST'"/>
+        <!-- 위치: object_map 는 깊이 영상으로 3D 를 잰다 -->
         <IsTopicAlive topic="/camera/depth/image_raw"   min_hz="20" window_s="1.0" _onFailure="fail_reason:='DEPTH_TOPIC_LOST'"/>
         <!-- 섀시: 리모컨 SWB 위(오토)여야 /cmd_vel 을 받는다 -->
         <IsAutoMode rc_topic="/rc_state" _onFailure="fail_reason:='RC_NOT_AUTO_MODE'"/>
@@ -102,7 +102,7 @@
 
   <!-- ================================================================ -->
   <!-- 깊이가 컬러에 정렬돼 있는지 (sensor_topics.md 주의 1). -->
-  <!-- 정렬 = frame_id camera_color_optical_frame, 640x480. 아니면 object_mapper 위치를 믿지 않고 -->
+  <!-- 정렬 = frame_id camera_color_optical_frame, 640x480. 아니면 object_map 위치를 믿지 않고 -->
   <!-- 로봇 위치 + 카메라 방향으로 대략 위치를 잡는다 (depth_aligned=false) -->
   <!-- ================================================================ -->
   <BehaviorTree ID="CheckDepthAlignment">
@@ -153,17 +153,17 @@
     </Sequence>
   </BehaviorTree>
 
-  <!-- 불 또는 연기 감지: yolo_detector 탐지(class, score) + object_mapper 지도 위치 -->
+  <!-- 불 또는 연기 감지: object_detector 탐지(class, score) + object_map 지도 위치 -->
   <!-- 이미 처리한 사건 자리(3 m 안)의 불은 처리 뒤 300 s 동안 순찰을 멈추지 않는다 (같은 불 앞에서 감시만 되풀이하지 않게).
        300 s 가 지나도 보이면 다시 멈춰 감시한다. 다른 자리의 불은 바로 멈춘다 -->
   <BehaviorTree ID="DetectHazard">
     <Sequence>
       <Fallback name="IsHazardDetected">
-        <IsFireDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
-                        objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
+        <IsFireDetected detections_topic="/perception/detections" min_score="0.5" min_hits="5"
+                        objects_topic="/perception/objects" use_depth="{depth_aligned}"
                         location="{fire_location}" size="{fire_size}"/>
-        <IsSmokeDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
-                         objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
+        <IsSmokeDetected detections_topic="/perception/detections" min_score="0.5" min_hits="5"
+                         objects_topic="/perception/objects" use_depth="{depth_aligned}"
                          location="{fire_location}"/>
       </Fallback>
       <Inverter>
@@ -174,7 +174,7 @@
 
   <!-- ================================================================ -->
   <!-- 같은 화재인지 판별. 새 화재일 때만 "고급 모드 실패 이력"을 초기화 -->
-  <!-- radius_m 3.0 은 object_mapper merge_radius(fire 0.8 m)보다 넓게: 번진 불도 같은 사건 -->
+  <!-- radius_m 3.0 은 object_map merge_radius(fire 0.8 m)보다 넓게: 번진 불도 같은 사건 -->
   <!-- ================================================================ -->
   <BehaviorTree ID="IncidentManager">
     <Sequence>
@@ -213,9 +213,9 @@
         </Fallback>
       </ForceSuccess>
       <ForceSuccess>
-        <!-- 지도 위치(map frame) + 탐지 영상(/yolo_detector/image) 한 장 저장 -->
+        <!-- 지도 위치(map frame) + 탐지 영상(/perception/detection_image) 한 장 저장 -->
         <RecordFireLocation incident="{incident_id}" location="{fire_location}" map_frame="map"
-                            image_topic="/yolo_detector/image"/>
+                            image_topic="/perception/detection_image"/>
       </ForceSuccess>
     </Sequence>
   </BehaviorTree>
@@ -241,8 +241,8 @@
     <Fallback name="SelectMode" _onFailure="fail_reason:='NO_ELIGIBLE_ADVANCED_MODE'">
       <!-- 우선순위 1: 연기 (인명 대피가 최우선). 연기 속에서는 초음파로 장애물을 본다 -->
       <Sequence name="SmokeEntry">
-        <IsSmokeDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
-                         objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
+        <IsSmokeDetected detections_topic="/perception/detections" min_score="0.5" min_hits="5"
+                         objects_topic="/perception/objects" use_depth="{depth_aligned}"
                          location="{fire_location}"/>
         <ScriptCondition code="smoke_failed == false"/>
         <IsTopicAlive topic="/ultrasonic/front_left" min_hz="5" window_s="1.0"/>
@@ -250,8 +250,8 @@
       </Sequence>
       <!-- 우선순위 2: 작은 불 진압. 펌프 서비스와 노즐 서보 상태가 있어야 한다 -->
       <Sequence name="WaterEntry">
-        <IsFireDetected detections_topic="/yolo_detector/detections" min_score="0.5" min_hits="5"
-                        objects_topic="/object_mapper/objects" use_depth="{depth_aligned}"
+        <IsFireDetected detections_topic="/perception/detections" min_score="0.5" min_hits="5"
+                        objects_topic="/perception/objects" use_depth="{depth_aligned}"
                         location="{fire_location}" size="{fire_size}"/>
         <IsSmallFire size="{fire_size}" max_size="0.3"/>
         <!-- 깊이가 정렬돼야 불 위치(조준점)를 믿을 수 있다 -->
@@ -297,7 +297,7 @@
             <IsTopicAlive topic="/thermal/image_raw" min_hz="2" window_s="2.0"/>
             <IsTemperatureDropped target="{fire_location}" thermal_topic="/thermal/image_raw" min_drop_c="10"/>
           </Sequence>
-          <IsFireGone detections_topic="/yolo_detector/detections" target="{fire_location}"
+          <IsFireGone detections_topic="/perception/detections" target="{fire_location}"
                       min_score="0.35" hold_s="5.0"/>
         </Fallback>
         <ForceSuccess>
@@ -330,7 +330,7 @@
                 <IsTopicAlive topic="/radar/people" min_hz="5" window_s="1.0"/>
                 <TrackPeopleRadar radar_topic="/radar/people" people="{detected_people}"/>
               </Sequence>
-              <TrackPeopleCamera detections_topic="/yolo_detector/detections" objects_topic="/object_mapper/objects"
+              <TrackPeopleCamera detections_topic="/perception/detections" objects_topic="/perception/objects"
                                  min_score="0.5" people="{detected_people}"/>
             </Fallback>
             <SweepSmokeZone zone="{fire_location}" ultrasonic_topic="/ultrasonic/front_left" radius_m="1.5" points="4"
@@ -353,7 +353,7 @@
 
   <!-- ================================================================ -->
   <!-- 프론티어 탐사 모드. 실패 조건: LOCALIZATION_UNSTABLE / EXPLORATION_TIMEOUT / EXPLORATION_FAILED -->
-  <!-- 요구조자: YOLO person + object_mapper 위치 -->
+  <!-- 요구조자: YOLO person + object_map 위치 -->
   <!-- ================================================================ -->
   <BehaviorTree ID="FrontierMode">
     <Fallback name="FrontierMode_OrFail">
@@ -365,8 +365,8 @@
           <IsTopicAlive topic="/scan" min_hz="7" window_s="2.0" _onFailure="fail_reason:='LIDAR_TOPIC_LOST'"/>
           <IsWithinTimeLimit start_time="{frontier_start}" limit_sec="300"
                              _onFailure="fail_reason:='EXPLORATION_TIMEOUT'"/>
-          <ExploreFrontiers explorer="/explore_frontier"
-                            objects_topic="/object_mapper/objects"
+          <ExploreFrontiers explorer="/explore/frontier_explorer"
+                            objects_topic="/perception/objects"
                             survivors="{survivors}" _onFailure="fail_reason:='EXPLORATION_FAILED'"/>
         </ReactiveSequence>
         <ForceSuccess>
@@ -383,7 +383,7 @@
 
   <!-- ================================================================ -->
   <!-- [베이직] 복귀: 실패 사유를 포함해 관리자 알림 -> 위치 기록 -> 안전거리 감시 후 순찰 재개 -->
-  <!-- 안전거리 2.0 m = object_mapper fire_zone_radius(1.0 m) 의 2 배, 카메라 max_depth 5 m 안 -->
+  <!-- 안전거리 2.0 m = object_map fire_zone_radius(1.0 m) 의 2 배, 카메라 max_depth 5 m 안 -->
   <!-- ================================================================ -->
   <BehaviorTree ID="BasicFallback">
     <ForceSuccess>
@@ -397,12 +397,12 @@
         </ForceSuccess>
         <ForceSuccess>
           <RecordFireLocation incident="{incident_id}" location="{fire_location}" map_frame="map"
-                              image_topic="/yolo_detector/image"/>
+                              image_topic="/perception/detection_image"/>
         </ForceSuccess>
         <ForceSuccess>
           <Timeout msec="60000">
             <MonitorFromSafeDistance location="{fire_location}" safe_distance_m="2.0"
-                                     action_name="/navigate_to_pose" detections_topic="/yolo_detector/detections"/>
+                                     action_name="/navigate_to_pose" detections_topic="/perception/detections"/>
           </Timeout>
         </ForceSuccess>
       </Sequence>
@@ -426,8 +426,8 @@
     </Action>
     <Action ID="ExploreFrontiers">
       <output_port name="survivors" type="int"/>
-      <input_port name="objects_topic" type="std::string" default="/object_mapper/objects"/>
-      <input_port name="explorer" type="std::string" default="/explore_frontier">탐사 노드 이름 (~/enable, ~/state)</input_port>
+      <input_port name="objects_topic" type="std::string" default="/perception/objects"/>
+      <input_port name="explorer" type="std::string" default="/explore/frontier_explorer">탐사 노드 이름 (~/enable, ~/state)</input_port>
     </Action>
     <Action ID="GetNextWaypoint">
       <output_port name="goal" type="limo_fire_bt::Pose2"/>
@@ -455,14 +455,14 @@
       <output_port name="location" type="limo_fire_bt::MapPoint"/>
       <input_port name="min_hits" type="int" default="5"/>
       <input_port name="min_score" type="double" default="0.500000"/>
-      <input_port name="objects_topic" type="std::string" default="/object_mapper/objects">vision_msgs/Detection3DArray, 지도 위 물체</input_port>
-      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections">vision_msgs/Detection2DArray</input_port>
+      <input_port name="objects_topic" type="std::string" default="/perception/objects">vision_msgs/Detection3DArray, 지도 위 물체</input_port>
+      <input_port name="detections_topic" type="std::string" default="/perception/detections">vision_msgs/Detection2DArray</input_port>
     </Condition>
     <Condition ID="IsFireGone">
       <input_port name="hold_s" type="double" default="5.000000"/>
       <input_port name="min_score" type="double" default="0.350000"/>
       <input_port name="target" type="limo_fire_bt::MapPoint"/>
-      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections"/>
+      <input_port name="detections_topic" type="std::string" default="/perception/detections"/>
     </Condition>
     <Condition ID="IsKnownHazard">
       <input_port name="recheck_s" type="double">처리 뒤 이 시간이 지나면 같은 자리 불도 다시 멈춰 감시</input_port>
@@ -492,8 +492,8 @@
       <output_port name="location" type="limo_fire_bt::MapPoint"/>
       <input_port name="min_hits" type="int" default="5"/>
       <input_port name="min_score" type="double" default="0.500000"/>
-      <input_port name="objects_topic" type="std::string" default="/object_mapper/objects">vision_msgs/Detection3DArray, 지도 위 물체</input_port>
-      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections">vision_msgs/Detection2DArray</input_port>
+      <input_port name="objects_topic" type="std::string" default="/perception/objects">vision_msgs/Detection3DArray, 지도 위 물체</input_port>
+      <input_port name="detections_topic" type="std::string" default="/perception/detections">vision_msgs/Detection2DArray</input_port>
     </Condition>
     <Condition ID="IsSurvivorSearchRequested"/>
     <Condition ID="IsTemperatureDropped">
@@ -522,7 +522,7 @@
     </Action>
     <Action ID="MonitorFromSafeDistance">
       <input_port name="min_score" type="double" default="0.500000"/>
-      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections"/>
+      <input_port name="detections_topic" type="std::string" default="/perception/detections"/>
       <input_port name="action_name" type="std::string" default="/navigate_to_pose"/>
       <input_port name="safe_distance_m" type="double" default="2.000000"/>
       <input_port name="location" type="limo_fire_bt::MapPoint"/>
@@ -542,7 +542,7 @@
     </Action>
     <Action ID="PlayEvacuationGuidance"/>
     <Action ID="RecordFireLocation">
-      <input_port name="image_topic" type="std::string" default="/yolo_detector/image"/>
+      <input_port name="image_topic" type="std::string" default="/perception/detection_image"/>
       <input_port name="map_frame" type="std::string" default="map"/>
       <input_port name="location" type="limo_fire_bt::MapPoint"/>
       <input_port name="incident" type="int"/>
@@ -573,8 +573,8 @@
     <Action ID="TrackPeopleCamera">
       <output_port name="people" type="int"/>
       <input_port name="min_score" type="double" default="0.500000"/>
-      <input_port name="objects_topic" type="std::string" default="/object_mapper/objects"/>
-      <input_port name="detections_topic" type="std::string" default="/yolo_detector/detections">class person</input_port>
+      <input_port name="objects_topic" type="std::string" default="/perception/objects"/>
+      <input_port name="detections_topic" type="std::string" default="/perception/detections">class person</input_port>
     </Action>
     <Action ID="TrackPeopleRadar">
       <output_port name="people" type="int"/>

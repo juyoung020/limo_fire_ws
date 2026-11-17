@@ -1,19 +1,19 @@
-// 합친 탐사 실물 노드 (limo_fire_rl/README "합친 탐사 low_rl"): 위층 판단 모델이 로봇 자기 지도에서 목표를 고르고, 아래층 규칙 추종기
+// 합친 탐사 실물 노드 /explore/explorer (limo_fire_explore/README "합친 탐사 — explorer"): 위층 판단 모델이 로봇 자기 지도에서 목표를 고르고, 아래층 규칙 추종기
 // (로봇 지도 A* plan_ref + path_step_* 추종기 — RobotEnv::low_act 계층형 가지)가 몬다. 2026-11-16 아래층 강화학습을 그만둠 (archive/rl/README.md).
 // /scan 한 장 = 시뮬 걸음 하나(0.1 s). 시뮬 low_explore_check --upper decider 와 같은 코드·같은 값 (판단 모델이 못 답할 때 대신 고르는 규칙은 --upper cand):
 //   관측·지도·판 끝      RobotEnv 합친 탐사 모드 (sim 헤더 그대로 — env_ref.cpp step_env + low_prepare_env, combine_run 설정)
 //   위층 결정·목표 넘기기  scripts/low_explore_ctl.h (combine_run 의 환경 하나 몫을 옮긴 것, 규칙 가지)
 // 걸음 차례 (장 k): step(감각, 장 k) → 판 끝·닿음 → 위층 걸음 뒤 → 깊이 → [결정 차례면 위층 결정 → set_cmd] → set_slot · low_prepare → low_act → 명령
 // 명령을 0 으로 만드는 멈춤 조건:
-//   꺼짐(~/enable false · 처음) · 리모컨이 오토가 아님(/rc_state buttons[rc_button] ≠ rc_auto_value, 또는 rc_timeout 넘게 안 옴 — 꺼짐으로 바뀜, 다시 오토가 돼도
-//   ~/enable true 를 따로 불러야 감) · 입력 끊김(라이다·TF·오도메트리 input_timeout 넘게 — 0, 돌아오면 이어 감) · 닿음(시뮬 contact.h sense_step 정의 —
+//   꺼짐(enable false · 처음) · 리모컨이 오토가 아님(/rc_state buttons[rc_button] ≠ rc_auto_value, 또는 rc_timeout 넘게 안 옴 — 꺼짐으로 바뀜, 다시 오토가 돼도
+//   enable true 를 따로 불러야 감) · 입력 끊김(라이다·TF·오도메트리 input_timeout 넘게 — 0, 돌아오면 이어 감) · 닿음(시뮬 contact.h sense_step 정의 —
 //   멈추고 꺼짐, contact_resume_s > 0 이면 그만큼 뒤 저절로 켬) · 끝(지도 닫힘 + 진척 없음 10 s · 진척 없음 · 시간 — 시뮬 판 끝 규칙).
 // 위층 목표가 없는 걸음(판 시작·프론티어 없음)은 시뮬과 같게 규칙 추종기의 제자리 회전.
-// dry_run:=true (기본): /cmd_vel 발행자를 아예 안 만들고 같은 명령을 ~/cmd_debug 에만.
+// dry_run:=true (기본): /cmd_vel 발행자를 아예 안 만들고 같은 명령을 cmd_debug 에만.
 // 위층: 로봇 안 llama-server 판단 모델 (scripts/low_decider.h — 사건 때 비동기 요청, 기다리는 동안 지금 목표로 몰고, 답이 오면 바꿈). 후보는 scripts/cand_view.h,
-//   답이 없거나 잇따라 틀리면 규칙(Ctl::cand_pick — 후보 0 번, 지금 목표 붙듦)이 대신. ~/candidates 에 후보 그림 (결정마다).
+//   답이 없거나 잇따라 틀리면 규칙(Ctl::cand_pick — 후보 0 번, 지금 목표 붙듦)이 대신. candidates 에 후보 그림 (결정마다).
 //   fuel · slot0 · cand 기준선 위층은 시뮬 도구(low_explore_check · combine_run)에만 남음 (2026-11-18 노드에서 뺌).
-//   지시(~/instruction)가 있으면 물체 지도의 물체 · 보이는 사람도 후보 — 물체로 가기(scripts/task_sup.h) · 사람 따라가기(scripts/obj_follow.h)는 노드가 목표를 쥠.
+//   지시(instruction)가 있으면 물체 지도의 물체 · 보이는 사람도 후보 — 물체로 가기(scripts/task_sup.h) · 사람 따라가기(scripts/obj_follow.h)는 노드가 목표를 쥠.
 #include <chrono>
 #include <deque>
 #include <cmath>
@@ -43,20 +43,20 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <rviz_2d_overlay_msgs/msg/overlay_text.hpp>
 
-#include "limo_fire_rl/decider_client.h"
-#include "limo_fire_rl/rc_watch.h"
-#include "limo_fire_rl/robot_env.h"
+#include "limo_fire_explore/decider_client.h"
+#include "limo_fire_explore/rc_watch.h"
+#include "limo_fire_explore/robot_env.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
 #include "obj_follow.h"
 #include "task_sup.h"
 
-namespace limo_fire_rl {
+namespace limo_fire_explore {
 
-class LowRlNode : public rclcpp::Node {
+class ExplorerNode : public rclcpp::Node {
  public:
-  LowRlNode() : Node("low_rl") {
-    env_yaml_ = declare_parameter<std::string>("env_yaml", LIMO_FIRE_RL_ENV_YAML);
+  ExplorerNode() : Node("explorer") {
+    env_yaml_ = declare_parameter<std::string>("env_yaml", LIMO_FIRE_EXPLORE_ENV_YAML);
     dry_run_ = declare_parameter<bool>("dry_run", true);
     enabled_ = declare_parameter<bool>("enabled", false);
     map_frame_ = declare_parameter<std::string>("map_frame", "map");
@@ -153,7 +153,7 @@ class LowRlNode : public rclcpp::Node {
                 "멈춤 %d 걸음 가속 %.1f m/s² · 최고 속도 %.2f m/s%s — %s",
                 lp_.decide_steps,
                 lp_.bl_r, lp_.bl_steps * dt(), c.con_mask, c.con_stall, c.con_acc, max_speed_, max_speed_ < c.act_v_fwd ? " (시뮬 한도보다 낮춤)" : "",
-                dry_run_ ? "dry run: /cmd_vel 안 냄, ~/cmd_debug 에만" : "실제 주행: /cmd_vel 냄");
+                dry_run_ ? "dry run: /cmd_vel 안 냄, /explore/cmd_debug 에만" : "실제 주행: /cmd_vel 냄");
     if (!record_.empty()) rec_ = std::make_unique<lowrec::Writer>(record_, hc_);
 
     tf_buf_ = std::make_shared<tf2_ros::Buffer>(get_clock());
@@ -170,13 +170,13 @@ class LowRlNode : public rclcpp::Node {
     rc_topic_ = rc_topic;
     subscribe_rc();
     if (!dry_run_) pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>(cmd_topic, 10);   // dry run 이면 발행자를 아예 안 만듦
-    pub_cmd_ = create_publisher<geometry_msgs::msg::TwistStamped>("~/cmd_debug", 10);
-    pub_status_ = create_publisher<std_msgs::msg::String>("~/status", 10);
-    pub_state_ = create_publisher<std_msgs::msg::String>("~/state", rclcpp::QoS(1).transient_local());
-    pub_done_ = create_publisher<std_msgs::msg::Bool>("~/done", rclcpp::QoS(1).transient_local());
-    pub_goal_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/goal_marker", 10);
-    pub_cand_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/candidates", 10);
-    pub_dec_img_ = create_publisher<sensor_msgs::msg::Image>("~/decider_image", rclcpp::QoS(1).transient_local());   // 판단 모델에 마지막으로 보낸 지도 그림 (보기만)
+    pub_cmd_ = create_publisher<geometry_msgs::msg::TwistStamped>("cmd_debug", 10);
+    pub_status_ = create_publisher<std_msgs::msg::String>("status", 10);
+    pub_state_ = create_publisher<std_msgs::msg::String>("state", rclcpp::QoS(1).transient_local());
+    pub_done_ = create_publisher<std_msgs::msg::Bool>("done", rclcpp::QoS(1).transient_local());
+    pub_goal_ = create_publisher<visualization_msgs::msg::MarkerArray>("goal_marker", 10);
+    pub_cand_ = create_publisher<visualization_msgs::msg::MarkerArray>("candidates", 10);
+    pub_dec_img_ = create_publisher<sensor_msgs::msg::Image>("decider_image", rclcpp::QoS(1).transient_local());   // 판단 모델에 마지막으로 보낸 지도 그림 (보기만)
     publish_dec_placeholder();   // 첫 요청 전에는 회색 판 (RViz 가 "No Image" 로 비지 않게)
     // 지시 글 (limo_fire_navigation object_goto 가 넘김 — 판단 모델 글에 넣음) · 판단 모델이 물체 후보를 고르면 그 설 자리로 가기
     goto_resume_ = declare_parameter<bool>("goto_resume", false);   // 도착하면 멈춤 (true = 탐사 이어 감)
@@ -196,15 +196,15 @@ class LowRlNode : public rclcpp::Node {
       fails_ = tsk::Fails(tp);
       instr_ = tsk::Instr(tp);
     }
-    pub_goto_status_ = create_publisher<std_msgs::msg::String>("~/goto_status", rclcpp::QoS(1).transient_local());
+    pub_goto_status_ = create_publisher<std_msgs::msg::String>("goto_status", rclcpp::QoS(1).transient_local());
     // 지시의 클래스 힌트 (선택 — object_goto 가 별칭·클래스 이름에서 풀어 줌). 물체 후보는 모든 클래스에서 오고, 힌트 클래스가 앞 칸에 들어갈 뿐
     obj_stale_s_ = declare_parameter<double>("decider_obj_stale_s", 600.0);   // 이보다 오래 안 본 물체는 물체 후보에서 뺌 (s)
-    sub_target_ = create_subscription<std_msgs::msg::String>("~/target_class", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
+    sub_target_ = create_subscription<std_msgs::msg::String>("target_class", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
       target_class_ = m->data;
       if (dec_up_) dec_up_->set_class_hint(target_class_);
       obj_dirty_ = true;
     });
-    sub_instr_ = create_subscription<std_msgs::msg::String>("~/instruction", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
+    sub_instr_ = create_subscription<std_msgs::msg::String>("instruction", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
       instruction_ = m->data;
       end_follow("");   // 지시가 바뀌거나 지워지면 따라가기도 끝 (판단 모델이 새로 고름)
       end_goto();
@@ -221,19 +221,19 @@ class LowRlNode : public rclcpp::Node {
       if (dec_up_) dec_up_->set_instruction(instruction_);
       obj_dirty_ = true;   // 다음 걸음에 물체 후보를 새로 채움 (판단 모델이 "new instruction" 으로 바로 물을 때 같이 들어가게)
     });
-    // 물체 지도 (limo_fire_perception object_mapper): 지시가 있을 때 판단 모델 글에 아는 물체를 넣음
-    sub_objects_ = create_subscription<vision_msgs::msg::Detection3DArray>("/object_mapper/objects", rclcpp::QoS(1).transient_local(),
+    // 물체 지도 (limo_fire_perception object_map): 지시가 있을 때 판단 모델 글에 아는 물체를 넣음
+    sub_objects_ = create_subscription<vision_msgs::msg::Detection3DArray>("/perception/objects", rclcpp::QoS(1).transient_local(),
       [this](vision_msgs::msg::Detection3DArray::ConstSharedPtr m) { objects_ = m; });
-    pub_cand_txt_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>("~/candidates_text", rclcpp::QoS(1).transient_local());
-    srv_enable_ = create_service<std_srvs::srv::SetBool>("~/enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
+    pub_cand_txt_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>("candidates_text", rclcpp::QoS(1).transient_local());
+    srv_enable_ = create_service<std_srvs::srv::SetBool>("enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
     watchdog_ = create_wall_timer(std::chrono::milliseconds(50), [this] { check_inputs(); });
     tf_retry_ = create_wall_timer(std::chrono::milliseconds(5), [this] { try_scans(); });   // 장 시각 TF 를 기다리는 장 (막지 않고 5 ms 마다)
     if (enabled_ && require_rc_) {   // 켠 채로 띄워도 리모컨 오토를 한 번 본 뒤에만
       enabled_ = false;
-      RCLCPP_WARN(get_logger(), "enabled:=true 지만 리모컨 오토를 아직 못 봄 — ~/enable true 로 켤 것");
+      RCLCPP_WARN(get_logger(), "enabled:=true 지만 리모컨 오토를 아직 못 봄 — /explore/enable true 로 켤 것");
     }
-    set_state(enabled_ ? "running" : "idle", enabled_ ? "켬" : "꺼짐 — ~/enable true (RViz 탐사 패널) 로 켬");
+    set_state(enabled_ ? "running" : "idle", enabled_ ? "켬" : "꺼짐 — /explore/enable true (RViz 탐사 패널) 로 켬");
     std_msgs::msg::Bool d;
     d.data = false;
     pub_done_->publish(d);
@@ -242,7 +242,7 @@ class LowRlNode : public rclcpp::Node {
  private:
   double dt() const { return (double)env_->cfg().substeps * env_->cfg().dt; }
 
-  // ---- 상태 (RViz 탐사 패널: ~/state running 이면 켜짐, ~/done, ~/status)
+  // ---- 상태 (RViz 탐사 패널: state running 이면 켜짐, done, status)
   void set_state(const std::string& st, const std::string& why) {
     if (st != state_ || why != why_) RCLCPP_INFO(get_logger(), "상태 %s — %s", st.c_str(), why.c_str());
     state_ = st;
@@ -287,9 +287,9 @@ class LowRlNode : public rclcpp::Node {
       ctl_->force_redo();   // 다시 켜면 바로 위층 결정 (지도·피하는 칸은 그대로)
       set_state("running", "켬");
       r->success = true;
-      r->message = dry_run_ ? "켬 (dry run — ~/cmd_debug 에만)" : "켬 — 주행";
+      r->message = dry_run_ ? "켬 (dry run — /explore/cmd_debug 에만)" : "켬 — 주행";
     } else {
-      stop("idle", "꺼짐 (~/enable false)", true);
+      stop("idle", "꺼짐 (/explore/enable false)", true);
       r->success = true;
       r->message = "멈춤";
     }
@@ -302,10 +302,10 @@ class LowRlNode : public rclcpp::Node {
   }
   // /rc_state 구독 (best effort — rc_watch.h). 다시 구독할 때도 이것
   void subscribe_rc() {
-    sub_rc_ = create_subscription<sensor_msgs::msg::Joy>(rc_topic_, limo_fire_rl::rc_qos(), [this](sensor_msgs::msg::Joy::ConstSharedPtr m) { on_rc(m); });
+    sub_rc_ = create_subscription<sensor_msgs::msg::Joy>(rc_topic_, limo_fire_explore::rc_qos(), [this](sensor_msgs::msg::Joy::ConstSharedPtr m) { on_rc(m); });
     rc_watch_.subscribed(std::chrono::steady_clock::now());
   }
-  // 리모컨 받기 상태 한 줄 (~/status · 켜기 거절 글)
+  // 리모컨 받기 상태 한 줄 (status · 켜기 거절 글)
   std::string rc_info() const {
     char b[160];
     const double age = rc_watch_.age_s(std::chrono::steady_clock::now());
@@ -318,7 +318,7 @@ class LowRlNode : public rclcpp::Node {
     rc_ = m;
     rc_watch_.got(std::chrono::steady_clock::now());
     rc_auto_ok_ = rc_auto_now();
-    if (!rc_auto_ok_ && require_rc_ && enabled_) stop("paused", "리모컨이 오토가 아님 (SWB) — 다시 오토로 바꾸고 ~/enable true", true);
+    if (!rc_auto_ok_ && require_rc_ && enabled_) stop("paused", "리모컨이 오토가 아님 (SWB) — 다시 오토로 바꾸고 /explore/enable true", true);
   }
 
   // 20 Hz: 입력 끊김 · 리모컨 끊김 · 닿음 뒤 저절로 켜기
@@ -328,7 +328,7 @@ class LowRlNode : public rclcpp::Node {
       RCLCPP_WARN(get_logger(), "/rc_state 발행자는 있는데 %.1f s 넘게 못 받음 — 구독을 새로 만듦 (%s)", rc_resub_s_, rc_info().c_str());
       subscribe_rc();
     }
-    if (require_rc_ && enabled_ && !rc_auto_now()) stop("paused", "/rc_state 가 안 옴(" + std::to_string((int)std::lround(rc_timeout_ * 1000)) + " ms 넘게) 또는 오토 아님 — ~/enable true 로 다시", true);
+    if (require_rc_ && enabled_ && !rc_auto_now()) stop("paused", "/rc_state 가 안 옴(" + std::to_string((int)std::lround(rc_timeout_ * 1000)) + " ms 넘게) 또는 오토 아님 — /explore/enable true 로 다시", true);
     const bool stale = (last_scan_t_.nanoseconds() == 0 || (t - last_scan_t_).seconds() > input_timeout_) ||
                        (last_tf_t_.nanoseconds() == 0 || (t - last_tf_t_).seconds() > input_timeout_) ||
                        (odom_t_.nanoseconds() == 0 || (t - odom_t_).seconds() > input_timeout_);
@@ -450,7 +450,7 @@ class LowRlNode : public rclcpp::Node {
         contact_t_ = now().seconds();
         char b[200];
         std::snprintf(b, sizeof b, "닿음 (신호 %d: 라이다 1 · 깊이 2 · 멈춤 4 · 지도 8 · 사람 16 · 바퀴·자이로 32 · 가속 64, 가속 %.1f m/s²) — %s", e.s_kind, e.a_h,
-                      contact_resume_s_ > 0.0 ? "멈춤, 잠시 뒤 저절로 켬" : "멈춤, ~/enable true 로 다시");
+                      contact_resume_s_ > 0.0 ? "멈춤, 잠시 뒤 저절로 켬" : "멈춤, /explore/enable true 로 다시");
         stop("paused", b, true);
       }
       // 물체로 가기 (task_sup.h): 닿으면 물체 쪽으로 돌아 선 뒤 끝 (goto_resume 이면 탐사 이어 감, 아니면 멈춤), 못 가면 그 물체를 잠시 빼고 다시 물음
@@ -570,7 +570,7 @@ class LowRlNode : public rclcpp::Node {
           publish_dec_png(dec_cli_->last_png());
         }
         dec_ms = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
-        if (env_->state().step % lp_.decide_steps == 0) publish_cands();   // ~/candidates: 판단 모델이 마지막으로 만든 후보 목록 그대로 (따로 안 만듦)
+        if (env_->state().step % lp_.decide_steps == 0) publish_cands();   // candidates: 판단 모델이 마지막으로 만든 후보 목록 그대로 (따로 안 만듦)
       } else if (env_->low_cmd().follow != 0) {
         env_->set_cmd(sim::LowCmd{-1, 0});
       }
@@ -624,7 +624,7 @@ class LowRlNode : public rclcpp::Node {
     }
   }
 
-  // ~/candidates (map 틀, 결정마다): DELETEALL 뒤 후보마다 구(시점) · 글(판단 모델 글자 · 번호 · 넓이/시간) · 시점→덩어리 대표 칸 선 · 덩어리 프론티어 칸(작은 상자),
+  // candidates (map 틀, 결정마다): DELETEALL 뒤 후보마다 구(시점) · 글(판단 모델 글자 · 번호 · 넓이/시간) · 시점→덩어리 대표 칸 선 · 덩어리 프론티어 칸(작은 상자),
   // 색 = 보통 초록 · 지금 목표 파랑 · 실패 기억(이 번호 포기 또는 1 m 안 실패 자리) 주황 · 쉬는 덩어리 회색, 판단 모델 마지막 답 시간 글, 로봇 자취(최근 60 s, 오래될수록 옅음)
   void publish_cands() {
     const cand::Out& o = ctl_->cands();
@@ -753,7 +753,7 @@ class LowRlNode : public rclcpp::Node {
     }
   }
 
-  // 물체 지도의 마지막으로 본 뒤 초: object_mapper 가 낸 때 값(covariance[35]) + 그 뒤 지난 시간 (~/objects 는 10 Hz 로 늘 다시 나오므로 덧셈은 0.1 s 안팎)
+  // 물체 지도의 마지막으로 본 뒤 초: 물체 지도(/perception/object_map)가 낸 때 값(covariance[35]) + 그 뒤 지난 시간 (/perception/objects 는 10 Hz 로 늘 다시 나오므로 덧셈은 0.1 s 안팎)
   double seen_s_of(const vision_msgs::msg::Detection3D& d) const {
     const double age = objects_ ? std::max(0.0, (now() - rclcpp::Time(objects_->header.stamp, get_clock()->get_clock_type())).seconds()) : 0.0;
     return d.results[0].pose.covariance[35] + (objects_ && objects_->header.stamp.sec > 0 ? age : 0.0);
@@ -778,7 +778,7 @@ class LowRlNode : public rclcpp::Node {
     return ob;
   }
   bool is_follow_class(const std::string& c) const { for (const auto& f : follow_classes_) if (f == c) return true; return false; }
-  // 따라가기 입력: 물체 지도의 따라갈 클래스 항목 (사람은 object_mapper 가 최신 측정으로 옮김)
+  // 따라가기 입력: 물체 지도의 따라갈 클래스 항목 (사람은 object_map 이 최신 측정으로 옮김)
   std::vector<ofl::Person> persons() const {
     std::vector<ofl::Person> v;
     if (!objects_) return v;
@@ -824,7 +824,7 @@ class LowRlNode : public rclcpp::Node {
     if (o.reask) dec_up_->ask("followed person moved");
     if (env_->state().step % lp_.decide_steps == 0) publish_follow();
   }
-  // RViz ~/candidates (ns follow): 따라가는 사람 (주황 원기둥 + 글 — 모드 · 거리), 없으면 지움
+  // RViz candidates (ns follow): 따라가는 사람 (주황 원기둥 + 글 — 모드 · 거리), 없으면 지움
   void publish_follow() {
     visualization_msgs::msg::MarkerArray ma;
     for (int k = 0; k < 2; ++k) {
@@ -871,7 +871,7 @@ class LowRlNode : public rclcpp::Node {
     for (size_t i = 0; i < v.size() && i < 10; ++i) out.push_back(v[i].second);
     return out;
   }
-  // 판단 모델 요청의 물체 후보 글자 (A … — 프론티어 후보보다 앞 글자) 를 ~/candidates 에 (ns cand_obj): 흰 바탕 원 + 글자 + 물체 이름
+  // 판단 모델 요청의 물체 후보 글자 (A … — 프론티어 후보보다 앞 글자) 를 candidates 에 (ns cand_obj): 흰 바탕 원 + 글자 + 물체 이름
   void publish_object_cands() {
     visualization_msgs::msg::MarkerArray ma;
     visualization_msgs::msg::Marker del;
@@ -1008,14 +1008,14 @@ class LowRlNode : public rclcpp::Node {
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_depth_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr sub_info_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_rc_;
-  limo_fire_rl::RcWatch rc_watch_;
+  limo_fire_explore::RcWatch rc_watch_;
   std::string rc_topic_;
   double rc_resub_s_ = 2.0;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pub_cmd_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_status_, pub_state_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_dec_img_;
-  // 판단 모델에 보낸 PNG 를 rgb8 로 풀어 ~/decider_image 로 (보기만 — 요청에는 손대지 않음)
+  // 판단 모델에 보낸 PNG 를 rgb8 로 풀어 decider_image 로 (보기만 — 요청에는 손대지 않음)
   void publish_dec_png(const std::vector<uint8_t>& png) {
     png_image pi{};
     pi.version = PNG_IMAGE_VERSION;
@@ -1077,15 +1077,15 @@ class LowRlNode : public rclcpp::Node {
   std::chrono::steady_clock::time_point head_t_;
 };
 
-}  // namespace limo_fire_rl
+}  // namespace limo_fire_explore
 
 int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
   int rc = 0;
   try {
-    rclcpp::spin(std::make_shared<limo_fire_rl::LowRlNode>());
+    rclcpp::spin(std::make_shared<limo_fire_explore::ExplorerNode>());
   } catch (const std::exception& ex) {
-    std::fprintf(stderr, "low_rl: %s\n", ex.what());
+    std::fprintf(stderr, "explorer: %s\n", ex.what());
     rc = 1;
   }
   rclcpp::shutdown();

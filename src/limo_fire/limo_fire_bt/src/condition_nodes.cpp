@@ -83,7 +83,7 @@ public:
 };
 
 // 불·연기 감지. 탐지가 hit_window_s 안에 min_hits 장 이상이면 SUCCESS, 위치·크기를 낸다.
-// 위치: use_depth 면 물체 지도(object_mapper ~/objects)에서 로봇에 가장 가까운 같은 종류,
+// 위치: use_depth 면 물체 지도(/perception/objects)에서 로봇에 가장 가까운 같은 종류,
 //       아니거나 지도에 아직 없으면 카메라 방향으로 approx_distance_m 앞 (대략)
 class IsHazardDetected : public RosCondition
 {
@@ -95,8 +95,8 @@ public:
   static PortsList ports(bool with_size)
   {
     PortsList p{
-      InputPort<std::string>("detections_topic", "/yolo_detector/detections", "vision_msgs/Detection2DArray"),
-      InputPort<std::string>("objects_topic", "/object_mapper/objects", "vision_msgs/Detection3DArray, 지도 위 물체"),
+      InputPort<std::string>("detections_topic", "/perception/detections", "vision_msgs/Detection2DArray"),
+      InputPort<std::string>("objects_topic", "/perception/objects", "vision_msgs/Detection3DArray, 지도 위 물체"),
       InputPort<double>("min_score", 0.5, ""), InputPort<int>("min_hits", 5, ""),
       InputPort<bool>("use_depth", false, "false 면 로봇 위치 + 방향으로 대략 위치"),
       OutputPort<MapPoint>("location")};
@@ -175,7 +175,7 @@ public:
   using RosCondition::RosCondition;
   static PortsList providedPorts()
   {
-    return {InputPort<std::string>("detections_topic", "/yolo_detector/detections", ""),
+    return {InputPort<std::string>("detections_topic", "/perception/detections", ""),
       InputPort<MapPoint>("target"), InputPort<double>("min_score", 0.35, ""), InputPort<double>("hold_s", 5.0, "")};
   }
   NodeStatus tick() override

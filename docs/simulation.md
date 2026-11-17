@@ -13,7 +13,7 @@ flowchart LR
   D[description.launch.xml<br/>우리 URDF → TF<br/>platform real · webots]
   M[mapping.launch.xml<br/>Cartographer]
   N[navigation.launch.xml<br/>AMCL + Nav2]
-  Y[yolo.launch.xml<br/>YOLO + 물체 지도]
+  Y[perception.launch.xml<br/>YOLO + 물체 지도]
   V[viewer.launch.xml<br/>RViz 운용 화면]
   R --> D
   S --> D
@@ -60,7 +60,7 @@ WeGo 값으로 시작했지만 덕트호스 미로에서 막혀 바꿨다. **모
   - **2D Pose Estimate**: 로봇 위치를 다시 잡는다 (AMCL)
   - **2D Goal Pose**: 누르고 끌어 목표와 방향을 준다 (Nav2)
 - 도구를 쓴 뒤 지도를 움직이려면 Move Camera 로 돌아간다.
-- 물체 아이콘·이름표는 화면 각도(`object_mapper` `view_angle`)에 맞춰 놓인다. RViz 위에서 보기 Angle 을 바꾸면 같이 바꾼다.
+- 물체 아이콘·이름표는 화면 각도(`object_map` `view_angle`)에 맞춰 놓인다. RViz 위에서 보기 Angle 을 바꾸면 같이 바꾼다.
 - 화면 갱신은 10 fps. 모니터 출력을 끈 Jetson 에서는 RViz 가 쉬지 않고 다시 그려 CPU 를 106 % 썼다(10 fps 로 76 %).
 
 ## 알려진 것

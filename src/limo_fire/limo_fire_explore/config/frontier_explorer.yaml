@@ -1,6 +1,6 @@
-# 프론티어 탐사 노드 (src/explore_frontier_node.cpp). explore_lite 값(주기·진척 시간·비용·최소 크기·블랙리스트)은 탐사 기준선 설정
+# 프론티어 탐사 노드 (src/frontier_explorer_node.cpp). explore_lite 값(주기·진척 시간·비용·최소 크기·블랙리스트)은 탐사 기준선 설정
 # train/explore/baselines/frontier/config/frontier.yaml, 로봇 반경은 nav2_params.yaml global_costmap robot_radius 를 그대로 읽는다 — 여기에는 ROS 쪽만
-explore_frontier:
+/explore/frontier_explorer:  # 노드 /explore/frontier_explorer (frontier_explorer.launch.xml)
   ros__parameters:
     enabled: false            # 띄우면 멈춘 채 기다림. RViz 탐사 패널 버튼 또는 ~/enable 서비스로 켬
     map_topic: /map           # Cartographer (mapping.launch.xml)

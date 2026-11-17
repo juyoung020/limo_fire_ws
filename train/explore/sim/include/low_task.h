@@ -7,7 +7,7 @@
 //      호스트가 done 을 본 뒤 읽는다 (Env::get_low).
 //  (2) 목표 넣기 (EnvCfg::low_task — 합친 탐사 low_explore 와 같이만): 호스트(위층)가 환경마다 LowCmd 를 넣는다 (Env::set_low_cmd).
 //      follow = 0 이면 후보 번호 행동(계층형 그대로), follow = 1 이면 행동 칸이 목표 칸 target 하나.
-//  (3) 합친 탐사 (EnvCfg::low_explore — 도구 scripts/combine_run.cpp · 실물 노드 limo_fire_rl low_rl): 위층이 고른 칸을 아래층 규칙 추종기가 몰아 탐사를 끝까지 한다.
+//  (3) 합친 탐사 (EnvCfg::low_explore — 도구 scripts/combine_run.cpp · 실물 노드 limo_fire_explore explorer): 위층이 고른 칸을 아래층 규칙 추종기가 몰아 탐사를 끝까지 한다.
 //      판 끝은 탐사 규칙(닫힘 성공·진행 없음·닿음·안전 시간)만. 통과·경로 끝이 목표 밖은 LowEp 에 적기만(reached·off·hold),
 //      정체는 막힘 신호(LowRl::stall)만 세우고 기준점을 새로 잡는다 (low_step.h low_finish).
 //  (옛 단독 과제 — 목표 수·시간·정체로 판을 끝내던 아래층 RL 학습 판 — 은 2026-11-17 에 걷어냄, archive/rl)

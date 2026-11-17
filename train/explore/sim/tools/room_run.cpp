@@ -1,5 +1,5 @@
-// 실물 방 재현: 실물 합친 탐사 노드(limo_fire_rl low_rl — 위층 fuel/slot0 + 아래층 규칙 추종기)를 시뮬(CPU 참조판, 환경 하나) 안에서 노드와 같은 차례로 돌리고
-// 노드와 같은 꼴(lowrec — low_rl record:=)로 녹화한다. 실물 녹화와 같은 도구(node_stats)로 견주려고.
+// 실물 방 재현: 실물 합친 탐사 노드(limo_fire_explore explorer — 위층 fuel/slot0 + 아래층 규칙 추종기)를 시뮬(CPU 참조판, 환경 하나) 안에서 노드와 같은 차례로 돌리고
+// 노드와 같은 꼴(lowrec — 실물 노드 explorer 의 record:=)로 녹화한다. 실물 녹화와 같은 도구(node_stats)로 견주려고.
 //   --follow 걸음.csv th tx ty [--follow-ahead 3]: 위층 대신 실물 궤적을 따라감 — node_stats --csv 의 (t, x, y)를 장면 좌표로 (회전 th · 이동 tx ty) 옮겨
 //     결정마다 실물이 ahead 초 뒤 있던 자리를 목표로 (규칙 추종기 · 목표 칸 그대로, fuel 과 같은 길). 판단 모델처럼 다시 못 내는 위층의 실물 주행과 아래층·센서·지도를 견줄 때.
 //     실물 시작 자세도 그 표 첫 줄에서 (--start 가 없으면)
@@ -17,15 +17,15 @@
 #include <vector>
 
 #include "env_api.h"
-#include "limo_fire_rl/robot_env.h"
+#include "limo_fire_explore/robot_env.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
 
 namespace {
 struct Tap : sim::CpuTap {
-  limo_fire_rl::RobotEnv* robot = nullptr;
+  limo_fire_explore::RobotEnv* robot = nullptr;
   lowrec::Writer* rec = nullptr;
-  limo_fire_rl::Scan sc;
+  limo_fire_explore::Scan sc;
   bool have = false;
   void scan(int, const sim::EnvState& e, const sim::Shared& sh, const std::vector<float>& r, const std::vector<float>& inten) override {
     sc.ranges = r;
@@ -43,7 +43,7 @@ struct Tap : sim::CpuTap {
   }
   void step_end(int, const sim::EnvState& e) override {
     if (!have) throw std::runtime_error("걸음에 라이다 장이 없음");
-    limo_fire_rl::Proprio p;
+    limo_fire_explore::Proprio p;
     p.wheel_v = e.drive.wv;
     p.wheel_vy = e.drive.wvy;
     p.wheel_w = e.drive.ww;
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
   uint64_t seed = 1;
   bool use_fuel = true;
   fu::Opt fo;
-  fo.time = fo.global = fo.vp = true;   // 노드 기본 (config/low_rl.yaml)
+  fo.time = fo.global = fo.vp = true;   // 노드 기본 (config/explorer.yaml)
   fo.v_eff = 0.981f;
   fo.w_eff = 3.232f;
   fo.t0 = 0.10f;
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
       cpu.set_state(0, e);
       cpu.get_state(st);
     }
-    limo_fire_rl::RobotEnv robot(hc);
+    limo_fire_explore::RobotEnv robot(hc);
     std::unique_ptr<lowrec::Writer> rec;
     if (!rec_path.empty()) rec.reset(new lowrec::Writer(rec_path, hc));
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
@@ -168,10 +168,10 @@ int main(int argc, char** argv) {
     {
       const sim::EnvState& e = st[0];
       const sim::World& w = worlds[0];
-      limo_fire_rl::Proprio p0;
+      limo_fire_explore::Proprio p0;
       p0.wheel_v = e.drive.wv; p0.wheel_vy = e.drive.wvy; p0.wheel_w = e.drive.ww; p0.gyro_z = e.gyro;
       for (int i = 0; i < 7; ++i) p0.imu[i] = e.imu.out[i];
-      const limo_fire_rl::RobotEnv::Window win{w.ox, w.oy, w.gw, w.gh};
+      const limo_fire_explore::RobotEnv::Window win{w.ox, w.oy, w.gw, w.gh};
       robot.reset(e.x0, e.y0, e.th0, p0, e.noise.fov, &win);
       if (rec) rec->reset(e.x0, e.y0, e.th0, p0, e.noise.fov, win);
       rw.gw = w.gw; rw.gh = w.gh; rw.ox = w.ox; rw.oy = w.oy;

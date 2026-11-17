@@ -1,6 +1,6 @@
 <!-- mapping.launch.xml 이 켜져 있을 때 지금 지도를 저장 (대시보드 "맵 저장" = WeGo save_map.sh 와 같은 일)
      WeGo 처럼 src 와 install 두 곳에 저장해서, 다시 빌드하지 않아도 navigation.launch.xml 이 새 지도를 연다
-     물체 지도(object_mapper)가 떠 있으면 그것도 옆에 <이름>_objects.txt 로 저장한다
+     물체 지도(object_map)가 떠 있으면 그것도 옆에 <이름>_objects.txt 로 저장한다
      ros2 launch limo_fire_bringup save_map.launch.xml [name:=map] -->
 <launch>
   <arg name="name" default="map" description="파일 이름 (확장자 없이). navigation.launch.xml 기본값은 map"/>
@@ -15,7 +15,7 @@
   <node pkg="nav2_map_server" exec="map_saver_cli" name="map_saver_share" output="screen" args="-f $(var share_dir)/$(var name)">
     <param name="save_map_timeout" value="$(var timeout)"/>
   </node>
-  <!-- 물체 지도(limo_fire_perception object_mapper)도 같은 이름으로 옆에 저장: <이름>_objects.txt. object_mapper 가 안 떠 있으면 아무 일도 없음 -->
-  <executable cmd="timeout 5 ros2 topic pub --once -w 1 /object_mapper/save_to std_msgs/msg/String &quot;{data: '$(var src_dir)/$(var name)_objects.txt'}&quot;" output="screen"/>
-  <executable cmd="timeout 5 ros2 topic pub --once -w 1 /object_mapper/save_to std_msgs/msg/String &quot;{data: '$(var share_dir)/$(var name)_objects.txt'}&quot;" output="screen"/>
+  <!-- 물체 지도(limo_fire_perception object_map)도 같은 이름으로 옆에 저장: <이름>_objects.txt. object_map 이 안 떠 있으면 아무 일도 없음 -->
+  <executable cmd="timeout 5 ros2 topic pub --once -w 1 /perception/save_objects_to std_msgs/msg/String &quot;{data: '$(var src_dir)/$(var name)_objects.txt'}&quot;" output="screen"/>
+  <executable cmd="timeout 5 ros2 topic pub --once -w 1 /perception/save_objects_to std_msgs/msg/String &quot;{data: '$(var share_dir)/$(var name)_objects.txt'}&quot;" output="screen"/>
 </launch>

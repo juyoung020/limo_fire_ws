@@ -167,7 +167,7 @@ public:
   static PortsList providedPorts()
   {
     return {InputPort<int>("incident"), InputPort<MapPoint>("location"), InputPort<std::string>("map_frame", "map", ""),
-      InputPort<std::string>("image_topic", "/yolo_detector/image", "")};
+      InputPort<std::string>("image_topic", "/perception/detection_image", "")};
   }
   NodeStatus tick() override
   {

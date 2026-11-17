@@ -49,7 +49,7 @@ struct BoxFix
   bool measured = false;   // true: 깊이로 잼, false: 고정 거리로 대신
 };
 
-// 탐지 하나 (지도 위 물체 목록 /object_mapper/objects 에서)
+// 탐지 하나 (지도 위 물체 목록 /perception/objects 에서)
 struct MapObject
 {
   std::string cls;
@@ -90,7 +90,7 @@ public:
   // class_name 이 min_score 이상으로 마지막에 찍힌 뒤 지난 시간 (s). 탐지 토픽이 hold 동안 안 들어왔으면 nullopt
   std::optional<double> since_last_detection(const std::string & topic, const std::string & class_name,
     double min_score);
-  // 지도 위 물체 목록 (object_mapper ~/objects)
+  // 지도 위 물체 목록 (/perception/objects)
   std::vector<MapObject> objects(const std::string & topic, const std::string & class_name, double min_score);
 
   // ---- 위치 ----

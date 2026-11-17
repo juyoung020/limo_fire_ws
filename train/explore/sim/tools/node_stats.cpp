@@ -2,7 +2,7 @@
 // 실물·시뮬이 같은 잣대로 견줄 값을 낸다: 지도 자란 넓이 · 프론티어 칸(로봇 발밑 포함) · 후보 · 목표 차례 · 정책 명령 분포(v≈0 몫·ω 부호 바뀜) · 명령 대 바퀴·자이로 ·
 // 라이다 빔(유효 몫 · 앞/옆/뒤) · 끝 시각. 궤적은 녹화 그대로 — 다시 낸 아래층 명령이 녹화 명령과 비트 같으면 위층 결정도 노드와 같다는 뜻.
 //   node_stats <녹화.bin> [--upper fuel|slot0] [--csv 걸음.csv] [--label 이름]
-// 노드 차례 (src/limo_fire/limo_fire_rl/src/low_rl_node.cpp on_scan): R 또는 S(step · 판 끝 · after_step) → D(set_depth → 위층 결정) → A(set_slot · low_prepare · low_act)
+// 노드 차례 (src/limo_fire/limo_fire_explore/src/explorer_node.cpp on_scan): R 또는 S(step · 판 끝 · after_step) → D(set_depth → 위층 결정) → A(set_slot · low_prepare · low_act)
 // 다른 점: 노드는 다시 켤 때(paused → running) 위층을 바로 다시 결정(force_redo)하는데 녹화에는 켠 때가 없다 — 멈췄던 녹화는 그 결정 때만 다를 수 있음(명령 비교로 드러남).
 #include <algorithm>
 #include <cmath>
@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "frontier.h"
-#include "limo_fire_rl/robot_env.h"
+#include "limo_fire_explore/robot_env.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
 
@@ -53,9 +53,9 @@ int main(int argc, char** argv) {
   if (upper != "fuel" && upper != "slot0") { std::fprintf(stderr, "--upper 는 fuel · slot0\n"); return 2; }
   try {
     lowrec::Reader rd(argv[1]);
-    limo_fire_rl::RobotEnv robot(rd.hc);
+    limo_fire_explore::RobotEnv robot(rd.hc);
     const sim::EnvCfg& c = robot.cfg();
-    // 위층 값: 노드 기본 (config/low_rl.yaml — fuel 시간·전역·시점, v 0.981 · ω 3.232 · t0 0.10)
+    // 위층 값: 노드 기본 (config/explorer.yaml — fuel 시간·전역·시점, v 0.981 · ω 3.232 · t0 0.10)
     lxc::Params lp = lxc::Params::from_cfg(c);
     lp.fuel.time = lp.fuel.global = lp.fuel.vp = true;
     lp.fuel.v_eff = 0.981f;
@@ -66,8 +66,8 @@ int main(int argc, char** argv) {
     fu::Work work;
     sim::World w;
     std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE);
-    limo_fire_rl::Proprio p{};
-    limo_fire_rl::Scan s;
+    limo_fire_explore::Proprio p{};
+    limo_fire_explore::Scan s;
     std::vector<Row> rows;
     Row cur{};
     long d_cmd = 0, n_act = 0;

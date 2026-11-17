@@ -1,7 +1,7 @@
-# COCO 80 종 분할 모델 (Ultralytics 공식 YOLO26s-seg) — 첫 실물 시험용 기본 (yolo.launch.xml config:=yolo_coco.yaml).
+# COCO 80 종 분할 모델 (Ultralytics 공식 YOLO26s-seg) — 첫 실물 시험용 기본 (perception.launch.xml config:=yolo_coco.yaml).
 # 우리 화재 7 종 모델로 바꾸려면 config:=yolo_fire.yaml (같은 노드·같은 물체 지도, 설정만 다름). 엔진 만들기는 README "COCO 80 종 분할 엔진"
 # 이름은 Ultralytics coco.yaml 순서 (띄어쓰기는 _ 로)
-yolo_detector:
+/perception/object_detector:   # 노드 /perception/object_detector (perception.launch.xml)
   ros__parameters:
     engine_path: yolo26s_seg_coco_u8_480.engine   # 파일 이름만 쓰면 설치된 models/ 에서 (src/…/limo_fire_perception/models 에 두고 빌드)
     conf_threshold: 0.40
@@ -10,12 +10,12 @@ yolo_detector:
     vis_release_s: 5.0    # s, 결과 영상 구독자가 이만큼 없으면 그 GPU 버퍼·그래프를 풂
     class_names: [person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, traffic_light, fire_hydrant, stop_sign, parking_meter, bench, bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe, backpack, umbrella, handbag, tie, suitcase, frisbee, skis, snowboard, sports_ball, kite, baseball_bat, baseball_glove, skateboard, surfboard, tennis_racket, bottle, wine_glass, cup, fork, knife, spoon, bowl, banana, apple, sandwich, orange, broccoli, carrot, hot_dog, pizza, donut, cake, chair, couch, potted_plant, bed, dining_table, toilet, tv, laptop, mouse, remote, keyboard, cell_phone, microwave, oven, toaster, sink, refrigerator, book, clock, vase, scissors, teddy_bear, hair_drier, toothbrush]
 
-object_mapper:
+/perception/object_map:        # 노드 /perception/object_map
   ros__parameters:
-    detections_topic: /yolo_detector/detections
+    detections_topic: /perception/detections
     depth_topic: /camera/depth/image_raw
     camera_info_topic: /camera/depth/camera_info
-    mask_topic: /yolo_detector/mask   # 분할 모델의 물체 번호 영상. 없으면 상자로 잰다
+    mask_topic: /perception/mask   # 분할 모델의 물체 번호 영상. 없으면 상자로 잰다
     map_frame: map
     min_score: 0.5       # 이보다 낮은 탐지는 지도에 안 넣음
     min_depth: 0.2       # m

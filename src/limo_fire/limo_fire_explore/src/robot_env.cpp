@@ -1,11 +1,11 @@
 // 실물 쪽 탐사 환경 — robot_env.h 설명
-#include "limo_fire_rl/robot_env.h"
+#include "limo_fire_explore/robot_env.h"
 
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
 
-namespace limo_fire_rl {
+namespace limo_fire_explore {
 
 RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
   keep_.use_cache = true;   // 걸음 사이 프론티어 칸 판정 기억 (set_frontier_cache)
@@ -55,7 +55,7 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
     b_.cpts = cpts_.data();
     if (layer_n() > 0) { cldep_.assign((size_t)layer_n(), 0); b_.cldep = cldep_.data(); }   // 층 전용 깊이 (set_layer_depth)
   }
-  // 아래층 걸음 길 (env_host.cpp 가 low_rl 일 때 잡는 칸)
+  // 아래층 걸음 길 (env_host.cpp 가 cfg.low_rl 일 때 잡는 칸)
   lowrl_.assign(1, sim::LowRl{});
   sim::lowrl_clear(lowrl_[0]);
   lowrl_[0].stall = 0;
@@ -249,4 +249,4 @@ void RobotEnv::low_prepare() {
   }
 }
 
-}  // namespace limo_fire_rl
+}  // namespace limo_fire_explore

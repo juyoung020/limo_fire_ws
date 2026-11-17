@@ -1,4 +1,4 @@
-// 계층형·아래층 경로 계획의 CPU 판 (sim/src/env_ref.cpp 참조판 · 실물 노드 limo_fire_rl RobotEnv 가 같은 함수 — 2026-11-16 env_ref.cpp 에서 옮김, 식 그대로).
+// 계층형·아래층 경로 계획의 CPU 판 (sim/src/env_ref.cpp 참조판 · 실물 노드 limo_fire_explore RobotEnv 가 같은 함수 — 2026-11-16 env_ref.cpp 에서 옮김, 식 그대로).
 // GPU env_plan_kernel 과 같은 규칙·같은 경로. obs_ref.h 뒤에 포함 (hier_path.h 함수들을 씀)
 #pragma once
 #include <algorithm>

@@ -11,7 +11,7 @@
 | 워크스페이스·규칙 | 됨 | 루트, [CLAUDE.md](../CLAUDE.md) |
 | 시뮬레이터 역할 나누기 | 됨 | [README](../README.md#시뮬레이션) |
 | 맵 52,032 개 + 소방 시설 배치 | 됨 | `train/maps` |
-| 탐사 (GPU 시뮬·프론티어 기준선·위층 판단 모델 + 아래층 A*) | 됨 — 실물 확정 구성(2026-11-16). 강화학습은 그만둠 | `train/explore`, `limo_fire_rl`, [archive/rl](../archive/rl/README.md) |
+| 탐사 (GPU 시뮬·프론티어 기준선·위층 판단 모델 + 아래층 A*) | 됨 — 실물 확정 구성(2026-11-16). 강화학습은 그만둠 | `train/explore`, `limo_fire_explore`, [archive/rl](../archive/rl/README.md) |
 | LIMO Pro 기본 URDF·TF | 됨 — 센서 모듈은 배치 정해지면 | `src/limo_fire/limo_fire_description` |
 | YOLO 데이터 모으기 | 공개 데이터·크롤링 됨, 직접 찍기 남음 | `train/detect/data` |
 | 자동 라벨러 (SAM 3, C++/CUDA) | 됨 — 6.8 만 장 라벨, YOLO 데이터셋(8:1:1) 만듦 | `train/detect/teacher`, `tools/yolods` |

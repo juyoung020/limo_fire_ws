@@ -1,11 +1,11 @@
-<!-- 카메라 영상에서 YOLO 탐지 (실물·Webots 공용). 결과: /yolo_detector/detections, 상자 그린 영상: /yolo_detector/image
-     mapper:=true 면 탐지 + 깊이로 물체를 지도(map)에 올린다 → RViz MarkerArray /object_mapper/markers
+<!-- 인식 모듈 (실물·Webots 공용): 카메라 영상에서 YOLO 탐지 /perception/object_detector + 물체 지도 /perception/object_map. 결과: /perception/detections, 상자 그린 영상: /perception/detection_image
+     mapper:=true 면 탐지 + 깊이로 물체를 지도(map)에 올린다 → RViz MarkerArray /perception/markers
      rviz:=true 면 운용 화면(limo_fire_description viewer.launch.xml: 지도 + 물체 + 탐지 영상 + Nav2)
      두 노드는 컴포넌트로 한 프로세스(한 스레드 컨테이너)에 올리고 프로세스 안 전달(intra-process)로 탐지·마스크를 복사 없이 넘긴다.
-     yolo_detector 는 영상을 자기 작업 스레드에서 직접 받고, object_mapper 는 TF 를 기다리며 막지 않아 한 스레드로 충분하다 (README "스레드·메모리")
+     object_detector 는 영상을 자기 작업 스레드에서 직접 받고, object_map 는 TF 를 기다리며 막지 않아 한 스레드로 충분하다 (README "스레드·메모리")
      new_container:=false container:=<이름> 이면 이미 있는 컨테이너에 올린다
      모델은 config 로 고른다: yolo_coco.yaml(COCO 80 종 분할, 기본) · yolo_fire.yaml(우리 화재 7 종 분할). objects_file 이 있으면 켤 때 그 물체 지도를 읽는다
-     ros2 launch limo_fire_perception yolo.launch.xml [config:=yolo_coco.yaml|yolo_fire.yaml] [mapper:=true] [rviz:=true] [objects_file:=…]
+     ros2 launch limo_fire_perception perception.launch.xml [config:=yolo_coco.yaml|yolo_fire.yaml] [mapper:=true] [rviz:=true] [objects_file:=…]
      navigation.launch.xml 처럼 운용 화면을 이미 띄운 launch 와 같이 켤 때는 rviz:=false -->
 <launch>
   <arg name="config" default="yolo_coco.yaml" description="모델 설정: yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
@@ -15,7 +15,7 @@
   <arg name="use_sim_time" default="false"/>
   <arg name="new_container" default="true" description="false 면 container 로 준 이미 있는 컨테이너에 올린다"/>
   <arg name="container" default="/perception_container"/>
-  <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음 · ~/save 로 씀). 저장 지도 옆 &lt;이름&gt;_objects.txt"/>
+  <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음 · /perception/save_objects 로 씀). 저장 지도 옆 &lt;이름&gt;_objects.txt"/>
 
   <!-- CUDA 커널을 쓸 때만 올림(지연 로딩): GPU·CPU 메모리를 줄인다. CUDA 12.2+ 는 기본이지만 환경에 따라 꺼져 있을 수 있어 못 박음 -->
   <set_env name="CUDA_MODULE_LOADING" value="LAZY"/>
@@ -25,7 +25,7 @@
   </node_container>
 
   <load_composable_node target="$(var container)">
-    <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::YoloDetectorNode" name="yolo_detector" namespace="">
+    <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectDetectorNode" name="object_detector" namespace="perception">
       <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
       <param from="$(var params_override)"/>
       <param name="use_sim_time" value="$(var use_sim_time)"/>
@@ -35,7 +35,7 @@
   <!-- load_composable_node 는 if 를 무시하므로 group 으로 조건을 건다 -->
   <group if="$(var mapper)">
     <load_composable_node target="$(var container)">
-      <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectMapperNode" name="object_mapper" namespace="">
+      <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectMapNode" name="object_map" namespace="perception">
         <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
         <param name="objects_file" value="$(var objects_file)"/>
         <param name="use_sim_time" value="$(var use_sim_time)"/>

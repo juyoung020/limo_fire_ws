@@ -1,17 +1,17 @@
-// 실물 합친 탐사 노드(위층 + 아래층 규칙 추종기 — limo_fire_rl low_rl) == CPU 시뮬 합친 탐사 (combine_run --upper fuel|slot0 와 같은 설정 — 판단 모델 위층 --upper decider 는 이 도구 · dec_rollout 에만).
+// 실물 합친 탐사 노드(위층 + 아래층 규칙 추종기 — limo_fire_explore explorer) == CPU 시뮬 합친 탐사 (combine_run --upper fuel|slot0 와 같은 설정 — 판단 모델 위층 --upper decider 는 이 도구 · dec_rollout 에만).
 // 실물 노드의 위층은 판단 모델(decider)과 그 대신 고르는 규칙(cand) 뿐 — fuel · slot0 은 시뮬 기준선 (같은 Ctl 코드라 비교는 그대로 뜻이 있음).
 // 시뮬(환경 하나, CPU 참조판)과 RobotEnv(합친 탐사 모드)가 각자 자기 상태로 위층 결정(scripts/low_explore_ctl.h — combine_run 의 환경 하나 몫)을 하고,
 // 걸음마다 시뮬 라이다 장·감각·깊이를 RobotEnv 에 넣어 두 쪽의 위층 명령(목표 칸·follow)·준비 뒤 경로(목표 칸·경로 점)·명령(v, ω)·판 끝을 비트 비교한다.
 // 아래층은 두 쪽 다 규칙 추종기 (준비 단계 행동 칸 = 위층 Ctl::slot() — combine_run 의 act[0], RobotEnv::low_act 계층형 가지). 관측 설정은 env.yaml 그대로.
 //   low_explore_check <장면.scene> … [--steps 1500] [--seed 1] [--people 0] [--upper fuel|slot0|decider] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
 //   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 기준선, 실물 노드에는 없음)
-//   fuel 기본 = 실물 노드가 fuel 을 갖던 때의 config/low_rl.yaml (시간 + 전역 + 시점, 붙들기 0.2, 시점 자격 0.75 m · 0.21 m). --fuel-hyst · --fuel-vp-min · --fuel-vp-clear · --fuel-first 로 바꿈
+//   fuel 기본 = 실물 노드가 fuel 을 갖던 때의 config/explorer.yaml (시간 + 전역 + 시점, 붙들기 0.2, 시점 자격 0.75 m · 0.21 m). --fuel-hyst · --fuel-vp-min · --fuel-vp-clear · --fuel-first 로 바꿈
 //   --contact-log 파일: 판이 닿음(2)으로 끝나면 몸통 8 cm 안 막힌 칸(정답 격자)이 라이다 높이 형상인지 · 로봇 지도·깊이 층이 알았는지 · 그 형상 물체·높이 · 마지막 2 s 자취,
 //     진행 없음(6)으로 끝나면 마지막 65 s 를 1 s 마다 (자세·목표·경로·시계·닫힘·지나온 거리). LOW_CHECK_NNEW=파일: 걸음마다 새로 안 칸·새 막힘·속도·경로·계획 단계·검사 멈춤
 //   --log 파일: 시뮬 쪽 결정마다 한 줄 (판·시각·목표·바뀜·뜀·목표 없음 까닭·닫힘) — 실물 녹화 low_explore_replay --log 와 같은 꼴로 견줌
 //   --upper decider [--dec-period 3.0] [--dec-latency 2.6] [--dec-input both] [--dec-cand 1] [--dec-hint 1] [--dec-mem-image 1] [--dec-image A|B] [--dec-log-k 8]: 실물 노드 위층 (scripts/low_decider.h) — 판단 모델 대신 정해진 가짜 응답기
 //     (요청 본문의 FNV 해시로 글자를 고르고 --dec-latency 초 뒤 걸음에 답을 냄). 두 쪽 요청 본문도 비트 비교. 시뮬이 판단 모델 답을 몇 걸음 뒤에 받는 것과 같은 길
-//     --dec-url http://127.0.0.1:8171: 가짜 대신 진짜 llama-server (실물 노드와 같은 비차단 소켓 limo_fire_rl/decider_client.h). 시뮬 시계는 답을 기다리는 동안 멈추고,
+//     --dec-url http://127.0.0.1:8171: 가짜 대신 진짜 llama-server (실물 노드와 같은 비차단 소켓 limo_fire_explore/decider_client.h). 시뮬 시계는 답을 기다리는 동안 멈추고,
 //     답은 --dec-latency 초 뒤 걸음에 줌 (실물 답 시간을 시뮬 걸음으로). 실물 쪽은 같은 답을 같은 차례로 받음 — 판단 모델 위층을 시뮬에서 실물과 같은 코드로 평가
 // 지도 자세 오차는 끈다 (실물 노드는 지도 자세를 그대로 받으므로). 판이 끝나면 둘 다 새 판 (위층 기억도 비움).
 #include <chrono>
@@ -24,8 +24,8 @@
 #include <vector>
 
 #include "env_api.h"
-#include "limo_fire_rl/decider_client.h"
-#include "limo_fire_rl/robot_env.h"
+#include "limo_fire_explore/decider_client.h"
+#include "limo_fire_explore/robot_env.h"
 #include "coverage.h"
 #include "low_decider.h"
 #include "obj_follow.h"
@@ -65,7 +65,7 @@ struct FakeModel : lxd::Transport {
   struct P { int ready; lxd::Answer a; std::string body; };
   std::vector<P> q;
   std::vector<std::string> sent;   // 보낸 본문 (두 쪽 비교)
-  limo_fire_rl::DeciderClient* real = nullptr;   // 진짜 서버 (시뮬 쪽만 — 답을 기다림)
+  limo_fire_explore::DeciderClient* real = nullptr;   // 진짜 서버 (시뮬 쪽만 — 답을 기다림)
   std::vector<lxd::Answer>* log = nullptr;       // 진짜 답 기록 (시뮬 쪽이 씀, 실물 쪽이 같은 차례로 읽음)
   size_t replay = 0;
   FILE* blog = nullptr;   // DEC_BODY_LOG=파일: 시뮬 쪽 요청마다 "걸음 본문해시 까닭" 한 줄 (빌드 사이 요청 비교)
@@ -118,8 +118,8 @@ struct FakeModel : lxd::Transport {
 };
 void write_text(const std::string& p, const std::string& t) { std::FILE* f = std::fopen(p.c_str(), "wb"); if (f) { std::fwrite(t.data(), 1, t.size(), f); std::fclose(f); } }
 struct Tap : sim::CpuTap {
-  limo_fire_rl::RobotEnv* robot = nullptr;
-  limo_fire_rl::Scan sc;
+  limo_fire_explore::RobotEnv* robot = nullptr;
+  limo_fire_explore::Scan sc;
   bool have = false;
   void scan(int, const sim::EnvState& e, const sim::Shared& sh, const std::vector<float>& r, const std::vector<float>& inten) override {
     sc.ranges = r;
@@ -137,7 +137,7 @@ struct Tap : sim::CpuTap {
   }
   void step_end(int, const sim::EnvState& e) override {
     if (!have) throw std::runtime_error("걸음에 라이다 장이 없음");
-    limo_fire_rl::Proprio p;
+    limo_fire_explore::Proprio p;
     p.wheel_v = e.drive.wv;
     p.wheel_vy = e.drive.wvy;
     p.wheel_w = e.drive.ww;
@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
     else if (a == "--instr-limit") tsp.instr_limit_s = std::stof(nx());  // 지시 시간 한도 (s)
     else if (a == "--obj-move") { if (std::sscanf(nx().c_str(), "%d,%f,%f", &obj_move_step, &obj_move_dx, &obj_move_dy) != 3) throw std::runtime_error("--obj-move 걸음,dx,dy"); }                 // 시뮬 사람을 물체 지도 사람처럼(카메라 시야·가림) 판단 모델 follow 후보로, 고르면 obj_follow.h 로 따라감 (--people 과 같이)
     else if (a == "--follow-fov") follow_fov = std::stof(nx()); // 카메라 가로 화각 (rad) — docs/hardware.md 컬러 66.4°
-    else if (a == "--follow-range") follow_range = std::stof(nx());   // 사람 보는 거리 (m) — object_mapper max_depth 5.0
+    else if (a == "--follow-range") follow_range = std::stof(nx());   // 사람 보는 거리 (m) — 물체 지도(object_map) max_depth 5.0
     else if (a == "--dec-instr") dec_instr = nx();
     else if (a == "--dec-obj") dec_objs.push_back(nx());
     else if (a == "--dec-class-hint") dec_hint_cls = nx();          // 지시의 클래스 힌트 (Params::class_hint — 그 클래스 물체가 물체 후보 칸 앞)
@@ -304,14 +304,14 @@ int main(int argc, char** argv) {
     cpu.reset();
     std::vector<sim::EnvState> st;
     cpu.get_state(st);
-    limo_fire_rl::RobotEnv robot(hc);
+    limo_fire_explore::RobotEnv robot(hc);
     const int AW = mdp::act::DIM, K = mdp::hier::K;
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
     lp.use_cand = use_cand || use_dec;
     if (node_obs) robot.set_obs(!lp.use_cand);
-    robot.set_frontier_cache(fc_on, fc_check);   // low_rl_node 와 같은 규칙 (obs_all false)
+    robot.set_frontier_cache(fc_on, fc_check);   // 실물 노드(explorer_node.cpp)와 같은 규칙 (obs_all false)
     lp.cand = co;
     lp.cand_commit = cand_commit;
     lxc::Ctl cs(lp), cr(lp);
@@ -369,11 +369,11 @@ int main(int argc, char** argv) {
     std::vector<std::vector<float>> l_cov;   // 덮음 값들, 1 s 마다 (판 끝까지)
     covm::Coverage cov;
     int cov_map = -1;
-    std::unique_ptr<limo_fire_rl::DeciderClient> real;
+    std::unique_ptr<limo_fire_explore::DeciderClient> real;
     std::vector<lxd::Answer> real_log;
     double real_ms = 0, real_max = 0;
     if (use_dec && !dec_url.empty()) {
-      real = std::make_unique<limo_fire_rl::DeciderClient>(dec_url, 60000);
+      real = std::make_unique<limo_fire_explore::DeciderClient>(dec_url, 60000);
       ms.real = real.get();
       ms.log = mr.log = &real_log;
     }
@@ -421,10 +421,10 @@ int main(int argc, char** argv) {
       const sim::EnvState& e = st[0];
       st_ep_map = e.map;
       const sim::World& w = worlds[(size_t)e.map];
-      limo_fire_rl::Proprio p0;
+      limo_fire_explore::Proprio p0;
       p0.wheel_v = e.drive.wv; p0.wheel_vy = e.drive.wvy; p0.wheel_w = e.drive.ww; p0.gyro_z = e.gyro;
       for (int i = 0; i < 7; ++i) p0.imu[i] = e.imu.out[i];
-      const limo_fire_rl::RobotEnv::Window win{w.ox, w.oy, w.gw, w.gh};
+      const limo_fire_explore::RobotEnv::Window win{w.ox, w.oy, w.gw, w.gh};
       robot.reset(e.x0, e.y0, e.th0, p0, e.noise.fov, &win);
       rw.gw = w.gw; rw.gh = w.gh; rw.ox = w.ox; rw.oy = w.oy;
       if (use_cand) {   // 후보 모드 목표 끝 셈 (판마다 Ctl 이 새로 — 그 전에 더함)
@@ -537,7 +537,7 @@ int main(int argc, char** argv) {
           lxd::Params::Obj pk_s, pk_r;
           const bool gs = us.take_object_pick(&pk_s), gr = ur.take_object_pick(&pk_r);
           if (gs != gr || (gs && (pk_s.oid != pk_r.oid || pk_s.follow != pk_r.follow))) ++f_diff;
-          if (goto_on) {   // 물체로 가기 (task_sup.h — 노드 low_rl_node.cpp 와 같은 차례)
+          if (goto_on) {   // 물체로 가기 (task_sup.h — 노드 explorer_node.cpp 와 같은 차례)
             const sim::EnvState& e = st[0];
             const sim::EnvState& er = robot.state();
             if (gs_.active() && (ch_s || ch_r)) { gs_.cancel(); gr_.cancel(); us.set_external(false); ur.set_external(false); }

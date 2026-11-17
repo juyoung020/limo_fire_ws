@@ -9,7 +9,7 @@
 
 namespace sim {
 
-// load_people_cfg 는 src/env_cfg.cpp (설정 읽기는 CUDA 없이 — 실물 노드 limo_fire_rl 도 씀)
+// load_people_cfg 는 src/env_cfg.cpp (설정 읽기는 CUDA 없이 — 실물 노드 limo_fire_explore 도 씀)
 
 // 막힌 칸까지 거리: 갈 수 있는 바닥 칸에서 R 칸 창 안을 다 본다(사람 반지름 + 칸 대각 ≈ 0.37 m 만 가리면 되므로 창 0.6 m 면 충분,
 // 창 안에 없으면 창 거리 + 1 칸). 맵 밖은 막힘으로

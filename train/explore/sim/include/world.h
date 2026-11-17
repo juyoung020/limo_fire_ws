@@ -1,4 +1,4 @@
-// 맵 하나 (장면 + 칸 격자 + 시작 칸) — env_api.h 에서 떼어 냄 (2026-11-16): CUDA 없이 쓰는 호스트 코드(scripts/fuel_upper.h · 실물 노드 limo_fire_rl)가 포함
+// 맵 하나 (장면 + 칸 격자 + 시작 칸) — env_api.h 에서 떼어 냄 (2026-11-16): CUDA 없이 쓰는 호스트 코드(scripts/fuel_upper.h · 실물 노드 limo_fire_explore)가 포함
 #pragma once
 #include <cstdint>
 #include <string>

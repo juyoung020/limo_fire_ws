@@ -1,5 +1,5 @@
-// 위층 판단 모델(scripts/low_decider.h — 실물 노드 low_rl upper:=decider · 시뮬 low_explore_check · 라벨 dec_rollout)에 보내는 로봇 지도 사진.
-// 요청 본문(JSON)과 보내기는 low_decider.h 와 Transport(실물 limo_fire_rl/decider_client.h) 쪽에 있다 — 여기는 사진(PNG)과 data URI 만.
+// 위층 판단 모델(scripts/low_decider.h — 실물 노드 /explore/explorer · 시뮬 low_explore_check · 라벨 dec_rollout)에 보내는 로봇 지도 사진.
+// 요청 본문(JSON)과 보내기는 low_decider.h 와 Transport(실물 limo_fire_explore/decider_client.h) 쪽에 있다 — 여기는 사진(PNG)과 data URI 만.
 // (combine_run --upper decider 의 옛 요청 꼴 · 카메라 그림 · libcurl 동시 요청 · 녹화 · 끝 선언 채점은 2026-11-18 지움)
 #pragma once
 #include <cstdint>

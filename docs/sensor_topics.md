@@ -1,7 +1,7 @@
 # 센서 토픽 — 누가 내고 누가 읽나
 
-실물 LIMO Pro 의 센서가 어떤 토픽으로 나오고, 우리 노드(EKF·Cartographer·Nav2·YOLO·object_mapper)가 그중 무엇을 읽는지 한 곳에 모은다. 센서 자체의 사양(해상도 근거, 노이즈, 장착 위치)은 [hardware.md](hardware.md) 에 있다.
-우리 노드(합친 탐사 `low_rl`·물체 지도·`object_goto`)가 서로 주고받는 토픽, QoS, 상태 글의 뜻, 스레드 구성은 [runtime_io.md](runtime_io.md) 에 모았다.
+실물 LIMO Pro 의 센서가 어떤 토픽으로 나오고, 우리 노드(EKF·Cartographer·Nav2·YOLO·object_map)가 그중 무엇을 읽는지 한 곳에 모은다. 센서 자체의 사양(해상도 근거, 노이즈, 장착 위치)은 [hardware.md](hardware.md) 에 있다.
+우리 노드(합친 탐사 `explorer`·물체 지도·`object_goto`)가 서로 주고받는 토픽, QoS, 상태 글의 뜻, 스레드 구성은 [runtime_io.md](runtime_io.md) 에 모았다.
 
 **조사 방법 (2026-10-28)**
 - 코드: 드라이버 소스(`src/external/wego_limo_pro`)와 우리 launch·config(`src/limo_fire`)에서 발행·구독 토픽 이름을 찾았다.
@@ -14,21 +14,21 @@
 
 | 센서 | 토픽 | 타입 | 주기 (실측) | frame_id | 발행 노드 | 읽는 노드 |
 |---|---|---|---|---|---|---|
-| 라이다 | `/scan` | `sensor_msgs/LaserScan` | 10.0 Hz | `laser_link` | `/ydlidar_ros2_driver_node` | Cartographer, AMCL, 전역·지역 costmap, `low_rl` |
-| IMU | `/imu` | `sensor_msgs/Imu` | 99.9 Hz | `imu_link` | `/limo/limo_fire_base` | EKF, Cartographer, `low_rl` |
-| 바퀴 오도메트리 | `/odom` | `nav_msgs/Odometry` | 49.9 Hz | `odom` → `base_link` | `/limo/limo_fire_base` | EKF, `low_rl` |
+| 라이다 | `/scan` | `sensor_msgs/LaserScan` | 10.0 Hz | `laser_link` | `/ydlidar_ros2_driver_node` | Cartographer, AMCL, 전역·지역 costmap, `explorer` |
+| IMU | `/imu` | `sensor_msgs/Imu` | 99.9 Hz | `imu_link` | `/limo/limo_fire_base` | EKF, Cartographer, `explorer` |
+| 바퀴 오도메트리 | `/odom` | `nav_msgs/Odometry` | 49.9 Hz | `odom` → `base_link` | `/limo/limo_fire_base` | EKF, `explorer` |
 | 융합 오도메트리 | `/odometry/filtered` | `nav_msgs/Odometry` | 30.0 Hz (bag) | `odom` → `base_link` | `/ekf_filter_node_odom` | Cartographer, Nav2(bt_navigator·controller·velocity_smoother) |
 | 베이스 상태 | `/limo_status` | `limo_msgs/LimoStatus` | 2.0 Hz | — | `/limo/limo_fire_base` | 녹화 |
-| 리모컨 | `/rc_state` | `sensor_msgs/Joy` (axes 오른 가로·세로, 왼 세로·가로, 다이얼 −1~1 · buttons SWA~SWD) | 40 Hz | — | `/limo/limo_fire_base` | `low_rl` (`buttons[1]` = SWB, 2 = 오토), 녹화 |
+| 리모컨 | `/rc_state` | `sensor_msgs/Joy` (axes 오른 가로·세로, 왼 세로·가로, 다이얼 −1~1 · buttons SWA~SWD) | 40 Hz | — | `/limo/limo_fire_base` | `explorer` (`buttons[1]` = SWB, 2 = 오토), 녹화 |
 | 모터 1~4 | `/motor_states` | `sensor_msgs/JointState` (velocity rad/s, effort A, position = 엔코더 펄스 원값) | 20 Hz | — | `/limo/limo_fire_base` | 녹화 |
 | 바퀴 거리 | `/wheel_odometry` | `sensor_msgs/JointState` (left_wheel·right_wheel 누적 m) | 50 Hz | — | `/limo/limo_fire_base` | 녹화 |
-| 컬러 영상 | `/camera/color/image_raw` | `sensor_msgs/Image` (rgb8, 640×480) | 29.4~29.7 Hz | `camera_color_optical_frame` | `/camera/camera` | `yolo_detector` |
+| 컬러 영상 | `/camera/color/image_raw` | `sensor_msgs/Image` (rgb8, 640×480) | 29.4~29.7 Hz | `camera_color_optical_frame` | `/camera/camera` | `object_detector` |
 | 컬러 내부 파라미터 | `/camera/color/camera_info` | `sensor_msgs/CameraInfo` | 29.9 Hz | `camera_color_optical_frame` | `/camera/camera` | 없음 |
-| 깊이 영상 | `/camera/depth/image_raw` | `sensor_msgs/Image` (16UC1, mm) | 28.4~29.9 Hz | [주의 1](#주의-1-깊이가-컬러에-정렬되지-않게-바뀐다) | `/camera/camera` | `object_mapper`, `low_rl` |
-| 깊이 내부 파라미터 | `/camera/depth/camera_info` | `sensor_msgs/CameraInfo` | 30.2 Hz | 위와 같음 | `/camera/camera` | `object_mapper`, `low_rl` |
+| 깊이 영상 | `/camera/depth/image_raw` | `sensor_msgs/Image` (16UC1, mm) | 28.4~29.9 Hz | [주의 1](#주의-1-깊이가-컬러에-정렬되지-않게-바뀐다) | `/camera/camera` | `object_map`, `explorer` |
+| 깊이 내부 파라미터 | `/camera/depth/camera_info` | `sensor_msgs/CameraInfo` | 30.2 Hz | 위와 같음 | `/camera/camera` | `object_map`, `explorer` |
 
 로봇이 받는 쪽: `/cmd_vel` (`geometry_msgs/Twist`) 은 `limo_fire_base` 가 구독한다. Nav2 에서는 controller → `cmd_vel_nav` → velocity_smoother → `/cmd_vel` 순으로 들어온다.
-합친 탐사(`explore_fuel_rl.launch.xml`)에서는 Nav2 없이 `low_rl` 이 `dry_run:=false` 일 때 바로 `/cmd_vel` 을 낸다 — 흐름은 [runtime_io.md](runtime_io.md#한눈에--데이터-흐름).
+합친 탐사(`explore.launch.xml`)에서는 Nav2 없이 `explorer` 이 `dry_run:=false` 일 때 바로 `/cmd_vel` 을 낸다 — 흐름은 [runtime_io.md](runtime_io.md#한눈에--데이터-흐름).
 
 ## 데이터 흐름
 
@@ -47,15 +47,15 @@ flowchart LR
   YD -- "/scan 10 Hz" --> CG
   YD -- "/scan" --> AMCL["AMCL"]
   YD -- "/scan" --> CM["costmap 전역·지역"]
-  OB -- "/camera/color/image_raw 30 Hz" --> YOLO["yolo_detector"]
-  OB -- "/camera/depth/image_raw<br>/camera/depth/camera_info" --> OM["object_mapper"]
-  YOLO -- "/yolo_detector/detections<br>/yolo_detector/mask" --> OM
+  OB -- "/camera/color/image_raw 30 Hz" --> YOLO["object_detector"]
+  OB -- "/camera/depth/image_raw<br>/camera/depth/camera_info" --> OM["object_map"]
+  YOLO -- "/perception/detections<br>/perception/mask" --> OM
   NAV -- "/cmd_vel" --> LB
 ```
 
 - 맵을 만들 때(`mapping.launch.xml`)는 Cartographer, 주행할 때(`navigation.launch.xml`)는 AMCL + Nav2 가 붙는다. 둘을 같이 띄우지 않는다.
 - TF `odom → base_link` 는 EKF 만 낸다(`limo_fire_base` 의 `pub_odom_tf: false`).
-- 이 그림은 Nav2 주행 기준이다. 합친 탐사(Cartographer + `low_rl`, Nav2 없음)의 흐름은 [runtime_io.md](runtime_io.md#한눈에--데이터-흐름).
+- 이 그림은 Nav2 주행 기준이다. 합친 탐사(Cartographer + `explorer`, Nav2 없음)의 흐름은 [runtime_io.md](runtime_io.md#한눈에--데이터-흐름).
 
 ## 센서별 자세히
 
@@ -105,7 +105,7 @@ Cartographer 는 `/imu` 를 직접 받고(`use_imu_data = true`, `tracking_frame
 |---|---|---|
 | 노드 | 컴포넌트 `orbbec_camera::OBCameraNodeDriver`, 이름 `camera`, 네임스페이스 `/camera` → `/camera/camera` | `robot.launch.xml` |
 | 토픽 이름 | `<스트림>/image_raw`, `<스트림>/camera_info` (상대 이름). 스트림 이름은 `color`, `depth`, `ir` | `orbbec_camera/src/ob_camera_node.cpp:44-46, 1102-1111` |
-| QoS | 영상 RELIABLE (`color_qos: default`). 우리 구독자는 SensorData(BEST_EFFORT) 로 받는다 — 서로 맞는다 | `ros2 topic info -v`, `yolo_detector_node.cpp:66` |
+| QoS | 영상 RELIABLE (`color_qos: default`). 우리 구독자는 SensorData(BEST_EFFORT) 로 받는다 — 서로 맞는다 | `ros2 topic info -v`, `object_detector_node.cpp:66` |
 | image_transport | 영상마다 `/compressed`, `/compressedDepth`, `/theora` 가 같이 생긴다 | 실측 |
 | 그 밖에 | `/camera/depth_to_color` (`orbbec_camera_msgs/Extrinsics`, transient_local), `/camera/depth_filter_status` | 실측 |
 | TF | 드라이버가 `camera_link` 아래 `camera_color_frame`·`camera_depth_frame` 과 각 `_optical_frame` 을 낸다(`publish_tf: true`) | `config/orbbec_dabai_dc1.yaml` |
@@ -123,10 +123,10 @@ Cartographer 는 `/imu` 를 직접 받고(`use_imu_data = true`, `tracking_frame
 
 | 노드 | 파라미터 | 토픽 |
 |---|---|---|
-| `yolo_detector` | `image_topic` | `/camera/color/image_raw` |
-| `object_mapper` | `depth_topic` | `/camera/depth/image_raw` |
-| `object_mapper` | `camera_info_topic` | `/camera/depth/camera_info` |
-| `object_mapper` | `detections_topic`, `mask_topic` | `/yolo_detector/detections`, `/yolo_detector/mask` |
+| `object_detector` | `image_topic` | `/camera/color/image_raw` |
+| `object_map` | `depth_topic` | `/camera/depth/image_raw` |
+| `object_map` | `camera_info_topic` | `/camera/depth/camera_info` |
+| `object_map` | `detections_topic`, `mask_topic` | `/perception/detections`, `/perception/mask` |
 
 ## 주의할 것
 
@@ -142,7 +142,7 @@ Cartographer 는 `/imu` 를 직접 받고(`use_imu_data = true`, `tracking_frame
 | `/camera/depth/image_raw` | 640×480, `camera_color_optical_frame` | **640×400, `camera_depth_optical_frame`** |
 | `/camera/depth/camera_info` fx, cx | 489.39, 321.47 (컬러와 같음) | **478.02, 323.44** |
 
-`object_mapper` 는 탐지 좌표(컬러 640×480 기준)를 깊이 영상에 그대로 대고(`object_mapper_node.cpp:249-251`), 깊이의 `camera_info` 로 3D 를 계산한다. 그래서 다시 빌드하면:
+`object_map` 는 탐지 좌표(컬러 640×480 기준)를 깊이 영상에 그대로 대고(`object_map_node.cpp:249-251`), 깊이의 `camera_info` 로 3D 를 계산한다. 그래서 다시 빌드하면:
 - 상자가 깊이 영상에서 엉뚱한 줄을 읽는다(세로 480 → 400, 시차 약 3 cm 도 안 맞춤).
 - 마스크(640×480)가 `camera_info`(640×400)와 크기가 달라서 마스크 측정이 조용히 꺼지고 상자 측정만 쓴다(`:266`).
 

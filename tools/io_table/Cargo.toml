@@ -1,0 +1,7 @@
+[package]
+name = "io_table"
+version = "0.1.0"
+edition = "2021"
+description = "실행 중인 우리 노드의 입출력(ros2 node info)을 docs/runtime_io.md 의 생성 칸과 견주거나(check) 새로 쓴다(write) — 표가 코드와 어긋나지 않게"
+
+[dependencies]

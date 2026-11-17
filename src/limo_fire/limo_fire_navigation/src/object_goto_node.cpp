@@ -1,6 +1,6 @@
-// "○○ 로 가" — 물체 지도(limo_fire_perception object_mapper ~/objects)에서 물체를 찾아 그 옆 설 자리로 간다.
+// "○○ 로 가" — 물체 지도(limo_fire_perception /perception/objects)에서 물체를 찾아 그 옆 설 자리로 간다.
 //
-//   ros2 topic pub --once /object_goto/goal std_msgs/msg/String "{data: '소화기'}"     # 지시 글 (탐사 모드는 판단 모델이 읽음)
+//   ros2 topic pub --once /explore/object_goto/goal std_msgs/msg/String "{data: '소화기'}"     # 지시 글 (탐사 모드는 판단 모델이 읽음)
 //
 // 찾기: 글이 class 이름(영문, '_' 대신 띄어쓰기도)이나 aliases 의 한글 이름이면(또는 글 안에 들어 있으면) 그 클래스.
 //   같은 클래스가 여럿이면 로봇에서 가장 가까운 것. 그 밖의 자유 글은 탐사 모드에서 판단 모델이 직접 읽는다.
@@ -9,8 +9,8 @@
 // 가는 길 (mode):
 //   nav2 — 저장 지도 위 주행(navigation.launch.xml: map_server + AMCL + Nav2): 설 자리로 NavigateToPose 액션. 지도에 없으면 물체 지도가 바뀔 때마다
 //          다시 찾아 나타나는 즉시 그리로 간다
-//   explore — 탐사 중(explore_fuel_rl.launch.xml: Cartographer + low_rl, Nav2 없음): 지시 글(~/instruction)과 풀어 낸 클래스(~/target_class)만 low_rl 에 넘기고,
-//             판단 모델이 후보 목록(그 물체 옆 설 자리 + 프론티어)에서 고른다 (low_decider.h 물체 후보 — 설 자리·가기는 low_rl 이 함). 클래스는 힌트일 뿐
+//   explore — 탐사 중(explore.launch.xml: Cartographer + explorer, Nav2 없음): 지시 글(/explore/instruction)과 풀어 낸 클래스(/explore/target_class)만 explorer 에 넘기고,
+//             판단 모델이 후보 목록(그 물체 옆 설 자리 + 프론티어)에서 고른다 (low_decider.h 물체 후보 — 설 자리·가기는 explorer 가 함). 클래스는 힌트일 뿐
 // 빈 글을 주면 지시를 지움.
 // 상태: ~/status (std_msgs/String, 한글 한 줄)
 #include <algorithm>
@@ -63,7 +63,7 @@ class ObjectGoto : public rclcpp::Node {
     stand_band_ = declare_parameter<double>("stand_band", 0.6);
     robot_radius_ = declare_parameter<double>("robot_radius", 0.25);
     occ_threshold_ = declare_parameter<int>("occupied_threshold", 50);
-    // "한글=영문클래스" (영문은 object_mapper class_names 이름)
+    // "한글=영문클래스" (영문은 object_map class_names 이름)
     for (const auto & a : declare_parameter<std::vector<std::string>>("aliases", std::vector<std::string>{})) {
       const auto eq = a.find('=');
       if (eq != std::string::npos) {aliases_.push_back({a.substr(0, eq), a.substr(eq + 1)});}
@@ -73,17 +73,17 @@ class ObjectGoto : public rclcpp::Node {
     // RViz: 지금 지시·고른 물체(흰 고리 + "GOAL 이름")·설 자리, 왼쪽 아래 글상자
     target_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/target", rclcpp::QoS(1).transient_local());
     overlay_pub_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>("~/overlay", rclcpp::QoS(1).transient_local());
-    explore_pub_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_topic", "/low_rl/instruction"), 10);
-    target_pub_cls_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_target_topic", "/low_rl/target_class"), 10);
+    explore_pub_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_topic", "/explore/instruction"), 10);
+    target_pub_cls_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_target_topic", "/explore/target_class"), 10);
     objects_sub_ = create_subscription<vision_msgs::msg::Detection3DArray>(
-      declare_parameter<std::string>("objects_topic", "/object_mapper/objects"), rclcpp::QoS(1).transient_local(),
+      declare_parameter<std::string>("objects_topic", "/perception/objects"), rclcpp::QoS(1).transient_local(),
       [this](vision_msgs::msg::Detection3DArray::ConstSharedPtr m) {
         const size_t before = objects_ ? objects_->detections.size() : 0;
         objects_ = m;
         if (searching_ && !done_ && m->detections.size() != before) {try_name();}   // 새 물체가 올라오면 바로 다시 찾음
       });
-    // 탐사 노드가 도착을 알리면(low_rl ~/goto_status "도착…") 이 목표는 끝 — 새 목표가 올 때까지 다시 찾지 않음
-    arrived_sub_ = create_subscription<std_msgs::msg::String>(declare_parameter<std::string>("explore_status_topic", "/low_rl/goto_status"), 10,
+    // 탐사 노드가 도착을 알리면(/explore/goto_status "도착…") 이 목표는 끝 — 새 목표가 올 때까지 다시 찾지 않음
+    arrived_sub_ = create_subscription<std_msgs::msg::String>(declare_parameter<std::string>("explore_status_topic", "/explore/goto_status"), 10,
       [this](std_msgs::msg::String::ConstSharedPtr m) {
         if (m->data.rfind("도착", 0) == 0 && !goal_text_.empty() && !done_) {
           done_ = true;
@@ -93,15 +93,15 @@ class ObjectGoto : public rclcpp::Node {
       });
     goal_sub_ = create_subscription<std_msgs::msg::String>("~/goal", 10,
       [this](std_msgs::msg::String::ConstSharedPtr m) {on_goal(m->data);});
-    if (mode_ == "nav2") {   // 저장 지도 주행만 지도·TF·Nav2 를 씀 (탐사 모드는 low_rl 이 설 자리를 고르고 감)
+    if (mode_ == "nav2") {   // 저장 지도 주행만 지도·TF·Nav2 를 씀 (탐사 모드는 explorer 가 설 자리를 고르고 감)
       tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
       tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
       map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
         declare_parameter<std::string>("map_topic", "/map"), rclcpp::QoS(1).transient_local().reliable(),
         [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr m) {map_ = m;});
-      nav_ = rclcpp_action::create_client<Nav>(this, declare_parameter<std::string>("nav_action", "navigate_to_pose"));
+      nav_ = rclcpp_action::create_client<Nav>(this, declare_parameter<std::string>("nav_action", "/navigate_to_pose"));
     }
-    say("대기 — /object_goto/goal 에 지시를 주세요 (예: 의자로 가 · 사람 따라가)");
+    say("대기 — /explore/object_goto/goal 에 지시를 주세요 (예: 의자로 가 · 사람 따라가)");
   }
 
  private:

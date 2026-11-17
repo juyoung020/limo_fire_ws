@@ -134,7 +134,7 @@ GPU 길: 기준 판 106 s 를 2.7 s, 갈래 600 판(요청 28 개 × 후보 × 4
 
 토큰마다 약 1.6 ms (Orin 프롬프트 처리) — 차이는 거의 글 길이에서 난다. 그림은 (px/32)² 토큰(288 → 81)이라 작게 줄여도 이득이 작다.
 images-last + checkpoint 패치는 바뀌지 않는 앞부분(템플릿 · 설명 글 · 힌트)을 다시 안 써 warm 에서 약 0.6 s 를 줄인다.
-그래서 기본을 v1 꼴로 바꿈 (`scripts/low_decider.h` Params: compact · px 288 · log_k 4 · cam 0 — 노드 `config/low_rl.yaml` · `low_explore_check` · `dec_rollout` 이 같은 값):
+그래서 기본을 v1 꼴로 바꿈 (`scripts/low_decider.h` Params: compact · px 288 · log_k 4 · cam 0 — 노드 `config/explorer.yaml` · `low_explore_check` · `dec_rollout` 이 같은 값):
 최근 목표 목록은 지도 사진의 ✓ · × 표시와 결정 기록이 같은 것을 말해 뺐고, 카메라 2 × 2 는 라벨 시뮬에 실물 카메라가 없어 v1 학습에서 빠짐(카메라 판은 v2 — 라벨에 키프레임 자세가 있음).
 서버는 `LLAMA_DECISION_IMAGES_LAST=1` 로 띄우고(노드 README), 학습 캐시(`d1_cache`)도 같은 값으로 만든다.
 로봇 스크립트: 라벨 상태를 꼴마다 다시 그려 올리고 서버 설정마다 띄워 재고 PID 로 끔 (결과 로봇 `~/decider_test/lat_results/lat_fmt*_1117.tsv`).

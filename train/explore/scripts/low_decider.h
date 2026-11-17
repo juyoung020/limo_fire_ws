@@ -1,4 +1,4 @@
-// 합친 탐사의 위층을 판단 모델(llama-server /v1/systemone, zero-shot)에 맡기는 길 — 느린 주기 · 비동기. 실물 노드(limo_fire_rl low_rl upper:=decider)와
+// 합친 탐사의 위층을 판단 모델(llama-server /v1/systemone, zero-shot)에 맡기는 길 — 느린 주기 · 비동기. 실물 노드(limo_fire_explore explorer upper:=decider)와
 // 시뮬(low_explore_check --upper decider --dec-period · --dec-latency, dec_rollout)이 같은 코드로 돈다 (sim = real).
 //
 // 요청 (render_cand): 후보 = scripts/cand_view.h (Ctl::build_cands — 서는 자리, 안정 번호), 글자 A … = 후보 차례(지시가 있으면 물체 후보가 앞 글자),
@@ -9,7 +9,7 @@
 //   3. 지금 목표가 죽었으면: 답이 오는 중이면 (지연 어림 + hold_extra) 걸음까지 기다리고, 아니면 바로 묻고, 답 실패가 fail_max 번 잇따르면 규칙(cand_pick)이 바로 대신
 //      — 그 밖의 1 s 결정 차례에는 목표를 바꾸지 않는다 (판단 모델 답이 올 때만 바꿈 — fuel 의 매초 목표 바뀜을 피함)
 //   4. 묻는 때: event (기본 — 다가감 · 실패 · 후보 크게 바뀜 · 최대 간격) 또는 periodic (period_steps 마다 — 시뮬 비교용)
-// 보내기·받기는 Transport 가 맡는다: 실물 = 비차단 소켓 HTTP — poll 이 한 단계씩 (limo_fire_rl/decider_client.h, 스레드 없음), 시뮬 = 정해진 걸음 뒤에 답을 내놓는 줄 (low_explore_check · dec_rollout).
+// 보내기·받기는 Transport 가 맡는다: 실물 = 비차단 소켓 HTTP — poll 이 한 단계씩 (limo_fire_explore/decider_client.h, 스레드 없음), 시뮬 = 정해진 걸음 뒤에 답을 내놓는 줄 (low_explore_check · dec_rollout).
 #pragma once
 #include <algorithm>
 #include <cmath>

@@ -99,6 +99,7 @@
 
 ### Changed
 
+- 탐사·인식 노드·토픽·launch 이름이 바뀜 (/explore/…, /perception/…, 패키지 limo_fire_explore) — 옛→새 표는 conventions 문서
 - 인식이 한 스레드로 돌고 메모리를 덜 씀, 지도 위 사람·동물은 실시간으로 움직이고 떠나면 몇 초 안에 사라짐
 - 탐사 로봇이 제자리에서 돈 뒤 달리지 않고 돌며 달림 (큰 방향 차만 제자리 회전, 더 빠른 회전) — `curved_follow: false` 로 옛 동작
 - 로봇 탐사 노드가 프론티어 찾기의 칸 판정을 걸음 사이에 기억해 바뀐 칸 둘레만 다시 셈 (결과 그대로, 점검 옵션 `frontier_check_every`)

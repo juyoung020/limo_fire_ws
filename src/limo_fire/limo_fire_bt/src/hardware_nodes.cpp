@@ -225,8 +225,8 @@ public:
   using RosAction::RosAction;
   static PortsList providedPorts()
   {
-    return {InputPort<std::string>("detections_topic", "/yolo_detector/detections", "class person"),
-      InputPort<std::string>("objects_topic", "/object_mapper/objects", ""),
+    return {InputPort<std::string>("detections_topic", "/perception/detections", "class person"),
+      InputPort<std::string>("objects_topic", "/perception/objects", ""),
       InputPort<double>("min_score", 0.5, ""), OutputPort<int>("people")};
   }
   NodeStatus onStart() override {return onRunning();}

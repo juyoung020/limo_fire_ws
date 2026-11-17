@@ -171,7 +171,7 @@ void StatusOverlay::update()
 
   rviz_2d_overlay_msgs::msg::OverlayText o;
   o.action = rviz_2d_overlay_msgs::msg::OverlayText::ADD;
-  // 물체 현황판(/object_mapper/summary)이 왼쪽 위라 겹치지 않게 왼쪽 아래
+  // 물체 현황판(/perception/summary)이 왼쪽 위라 겹치지 않게 왼쪽 아래
   o.horizontal_alignment = rviz_2d_overlay_msgs::msg::OverlayText::LEFT;
   o.vertical_alignment = rviz_2d_overlay_msgs::msg::OverlayText::BOTTOM;
   o.horizontal_distance = 12;

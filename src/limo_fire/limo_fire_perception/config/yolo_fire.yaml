@@ -1,6 +1,6 @@
 # 우리 YOLO26s-seg (train/detect, 7 클래스, 탐지 + 분할). 엔진은 이 기기에서 trtexec 로 만든다 (README)
 # 입력 480x640 uint8 RGB(전처리를 엔진 안에 넣음). 이전 엔진(float 640x640, yolo26s_seg_fire.engine · 상자만 내는 yolo26s_fire.engine)도 그대로 돈다
-yolo_detector:
+/perception/object_detector:   # 노드 /perception/object_detector (perception.launch.xml)
   ros__parameters:
     engine_path: /home/wego/limo_fire_ws/src/limo_fire/limo_fire_perception/models/yolo26s_seg_fire_u8_480.engine
     conf_threshold: 0.35
@@ -9,13 +9,13 @@ yolo_detector:
     vis_release_s: 5.0    # s, 결과 영상 구독자가 이만큼 없으면 그 GPU 버퍼·그래프를 풂
     class_names: [fire, smoke, fire_extinguisher, exit_sign, person, door, stairs]
 
-# 탐지 → 지도 위 물체 (object_mapper). 깊이는 컬러에 정렬된 영상
-object_mapper:
+# 탐지 → 지도 위 물체 (object_map). 깊이는 컬러에 정렬된 영상
+/perception/object_map:        # 노드 /perception/object_map
   ros__parameters:
-    detections_topic: /yolo_detector/detections
+    detections_topic: /perception/detections
     depth_topic: /camera/depth/image_raw
     camera_info_topic: /camera/depth/camera_info
-    mask_topic: /yolo_detector/mask   # 분할 모델의 물체 번호 영상. 없으면 상자로 잰다
+    mask_topic: /perception/mask   # 분할 모델의 물체 번호 영상. 없으면 상자로 잰다
     map_frame: map
     min_score: 0.5       # 이보다 낮은 탐지는 지도에 안 넣음
     min_depth: 0.2       # m

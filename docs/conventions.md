@@ -21,7 +21,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 │       ├── limo_fire_navigation/    Nav2 파라미터·지도·연기 모드
 │       ├── limo_fire_sim/           Webots 우리 판: 드라이버 설정, 인식 벤치마크 정답 카메라 플러그인(C++)
 │       ├── limo_fire_bt/            BT 플러그인 + 트리 XML
-│       ├── limo_fire_rl/            탐사 노드: 합친 탐사(판단 모델 + A*) · 프론티어 탐사
+│       ├── limo_fire_explore/       탐사 노드: 합친 탐사(판단 모델 + A*) · 프론티어 탐사 (2026-11-18 전 이름 limo_fire_rl)
 │       ├── limo_fire_rviz/          운용 화면 RViz 패널 플러그인 (탐사 켜기·끄기)
 │       └── limo_fire_report/        웹 앱(rosbridge)·음성 안내
 ├── sim/                       Isaac Sim 확장·USD, Webots 월드, maps/, 독립 MuJoCo 데모  [COLCON_IGNORE]
@@ -33,6 +33,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 ├── hardware/wiring/           추가 장치 회로도(KiCad)·배선(WireViz)·배선판 납땜 그림 [COLCON_IGNORE]
 ├── hardware/mounts/           센서·전장 고정대 출력 파일(STL)·그림 [COLCON_IGNORE]
 ├── tools/repo_check/          커밋·푸시 전 규칙 검사(Rust) — Claude Code 훅이 씀 [COLCON_IGNORE]
+├── tools/io_table/            실행 중인 노드 입출력(ros2 node info) ↔ docs/runtime_io.md 생성 칸 견주기·새로 쓰기(Rust) [COLCON_IGNORE]
 ├── tools/sensor_view/         ESP32 시험 코드(firmware/sensor_check) 화면: 열화상·레이더 (C++/Qt5) [COLCON_IGNORE]
 ├── docs/                      문서
 ├── refs/                      참고 자료                    [COLCON_IGNORE]
@@ -40,9 +41,50 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 ```
 
 - 패키지는 역할마다 하나, 이름은 `limo_fire_<역할>`. 새 패키지는 위 목록에 맞춰 만들고, 목록에 없는 역할이면 이 목록부터 고친다.
-- 지금 있는 패키지는 description·bringup·base·navigation·perception·sim·esp32_bridge·bt·rl·rviz 다. 나머지는 만들 때 위 이름을 쓴다.
+- 지금 있는 패키지는 description·bringup·base·navigation·perception·sim·esp32_bridge·bt·explore·rviz 다 (explore 는 2026-11-18 rl 에서 이름을 바꿈 — 강화학습을 그만둬서). 나머지는 만들 때 위 이름을 쓴다.
 - 패키지 안: `include/<패키지명>/`, `src/`, `launch/`, `config/`, `test/` (ROS 2 기본 배치).
 - 실행 파일·파라미터를 바꾸고 싶은 외부 패키지는 고치지 말고 `limo_fire_bringup` 에 우리 판을 만든다. 코드(플러그인)가 필요한 Webots 쪽 우리 판은 `limo_fire_sim`.
+
+## 이름 (노드·토픽·서비스·launch) — 2026-11-18
+
+누가 봐도 무엇인지 알게 이름 짓고, 모듈 하나 = 이름공간 하나로 묶는다. ROS 2 규칙을 따른다:
+토픽·서비스 이름은 글자·숫자·`_`·`/` 만, 숫자로 시작하지 않고 `__`·끝 `/` 금지, `~/` 는 "노드 이름 아래"
+([ROS 2 design "Topic and Service name mapping"](https://design.ros2.org/articles/topic_and_service_names.html)).
+패키지 이름은 소문자·숫자·`_` 만, 글자로 시작 ([REP 144](https://reps.openrobotics.org/rep-0144/)).
+
+- **snake_case, 하는 일을 말하는 이름.** 그만둔 방식·옛 실험 이름(rl · fuel · low · hier · slot0 · yolo …)은 노드·토픽·launch 이름에 쓰지 않는다.
+- **모듈 이름공간**: 모듈의 주 노드는 이름공간을 쓰고 토픽은 이름공간 바로 아래(`/explore/status`). 같은 이름공간의 다른 노드는 자기 이름 아래(`~/` → `/explore/frontier_explorer/state`).
+- **센서·드라이버·표준 토픽은 그대로**: `/scan` `/odom` `/imu` `/camera/*` `/cmd_vel` `/map` `/tf` `/tf_static` `/rc_state`.
+- **팀원 모듈 이름은 그 사람이 정한다** (임무 BT `/mission/*`, 연기 모드, ESP32 다리) — 우리 이름을 바꿀 때는 그쪽의 참조만 고친다.
+- **launch 파일 = 띄우는 것의 이름**: `robot.launch.xml`(로봇 센서·섀시) · `explore.launch.xml`(탐사 한 벌) · `perception.launch.xml`(인식) · `navigation.launch.xml`(Nav2).
+  노드 하나만 띄우는 launch 는 노드 이름(`explorer.launch.xml` · `frontier_explorer.launch.xml`). 설정 파일도 노드 이름(`config/explorer.yaml`).
+
+| 모듈 (패키지) | 노드 | 주요 입출력 | launch |
+|---|---|---|---|
+| 탐사 (`limo_fire_explore`) | `/explore/explorer` | `/explore/status` `/explore/state` `/explore/done` `/explore/goal_marker` `/explore/candidates` `/explore/decider_image` `/explore/instruction` `/explore/target_class` `/explore/goto_status`, 서비스 `/explore/enable` | `explore.launch.xml` · `explorer.launch.xml` |
+| 탐사 (`limo_fire_explore`) | `/explore/frontier_explorer` | `/explore/frontier_explorer/{state,status,done,frontiers}`, 서비스 `…/enable` | `frontier_explorer.launch.xml` |
+| 탐사 (`limo_fire_navigation`) | `/explore/object_goto` | `/explore/explore/object_goto/{goal,status,target,overlay}` | `explore.launch.xml perception:=true` |
+| 인식 (`limo_fire_perception`) | `/perception/object_detector` | `/perception/detections` `/perception/mask` `/perception/detection_image` | `perception.launch.xml` |
+| 인식 (`limo_fire_perception`) | `/perception/object_map` | `/perception/objects` `/perception/markers` `/perception/summary`, 서비스 `/perception/{clear,save,load}_objects`, 토픽 `/perception/save_objects_to` | `perception.launch.xml` |
+
+옛 이름 → 새 이름 표 (2026-11-18 바꿈):
+
+| 옛 | 새 |
+|---|---|
+| 패키지 `limo_fire_rl` | `limo_fire_explore` |
+| 노드 `/low_rl` (실행 파일 `low_rl`) | `/explore/explorer` (`explorer`) |
+| 토픽·서비스 `/low_rl/<이름>` | `/explore/<이름>` (같은 끝 이름: status · state · done · enable · goal_marker · candidates · candidates_text · decider_image · instruction · target_class · goto_status · cmd_debug) |
+| 노드 `/explore_frontier` | `/explore/frontier_explorer` (토픽·서비스 `/explore_frontier/x` → `/explore/frontier_explorer/x`) |
+| 노드 `/object_goto` | `/explore/object_goto` (`/object_goto/x` → `/explore/object_goto/x`) |
+| 노드 `/yolo_detector` | `/perception/object_detector` |
+| `/yolo_detector/detections` · `/mask` · `/image` | `/perception/detections` · `/perception/mask` · `/perception/detection_image` |
+| 노드 `/object_mapper` | `/perception/object_map` |
+| `/object_mapper/objects` · `/markers` · `/summary` | `/perception/objects` · `/perception/markers` · `/perception/summary` |
+| 서비스 `/object_mapper/clear` · `/save` · `/load`, 토픽 `/object_mapper/save_to` | `/perception/clear_objects` · `/perception/save_objects` · `/perception/load_objects`, `/perception/save_objects_to` |
+| launch `explore_fuel_rl.launch.xml` · `low_rl.launch.xml` · `explore_frontier.launch.xml` | `explore.launch.xml` · `explorer.launch.xml` · `frontier_explorer.launch.xml` |
+| launch `yolo.launch.xml` (limo_fire_perception) | `perception.launch.xml` |
+| 설정 `low_rl.yaml` · `explore_frontier.yaml` | `explorer.yaml` · `frontier_explorer.yaml` |
+| RViz `explore_fuel_rl.rviz` | `explore.rviz` |
 
 ## 언어
 

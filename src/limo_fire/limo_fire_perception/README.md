@@ -3,18 +3,18 @@
 카메라 영상에서 불·연기·소화기·유도등·사람·문·계단을 찾는 C++ TensorRT YOLO 노드. 실물 Orbbec 카메라와 Webots 시뮬 카메라에 똑같이 쓴다.
 
 ```bash
-ros2 launch limo_fire_perception yolo.launch.xml          # 탐지 + 물체 지도 + 운용 화면 (이미 화면을 띄웠으면 rviz:=false)
+ros2 launch limo_fire_perception perception.launch.xml          # 탐지 + 물체 지도 + 운용 화면 (이미 화면을 띄웠으면 rviz:=false)
 ```
 
-- `yolo_detector`·`object_mapper` 는 컴포넌트(`limo_fire_perception::YoloDetectorNode`, `::ObjectMapperNode`). 같은 이름의 실행 파일도 있다
+- `object_detector`·`object_map` 는 컴포넌트(`limo_fire_perception::ObjectDetectorNode`, `::ObjectMapNode`). 같은 이름의 실행 파일도 있다
 - 기본은 둘을 한 스레드 컨테이너 `/perception_container` 한 프로세스에 올리고 프로세스 안 전달(intra-process)로 탐지·마스크를 복사 없이 넘긴다.
   예전에 한 스레드 컨테이너가 5 초에 18~20 장을 버린 까닭은 매퍼가 콜백 안에서 TF 를 최대 0.2 s 기다린 것 — 이제 기다리지 않고, YOLO 는 영상을 자기 작업 스레드에서 직접 받는다 (아래 "스레드·메모리")
 - 카메라 드라이버(Orbbec) 컨테이너에는 올리지 않는다: 드라이버가 transient_local 발행자를 만들어 프로세스 안 전달을 켤 수 없고
   (켜면 rclcpp 가 노드 생성을 거부), 같은 프로세스여도 직렬화는 그대로라 이득이 작은데 YOLO 가 죽으면 카메라도 같이 죽는다
 
 - 입력: `/camera/color/image_raw` (rgb8·bgr8·rgba8·bgra8, 크기 무관)
-- 출력: `/yolo_detector/detections` (`vision_msgs/Detection2DArray`), 상자 그린 영상 `/yolo_detector/image` (rgb8)
-- 분할(-seg) 엔진이면 물체 번호 영상 `/yolo_detector/mask` (mono8, 값 = `detections` 안 순서 + 1, 0 = 배경, 겹치면 상자가 작은 물체가 위)도 같은 시각으로 낸다 (물체가 있는 장만). 마스크는 앞 64 개 물체까지.
+- 출력: `/perception/detections` (`vision_msgs/Detection2DArray`), 상자 그린 영상 `/perception/detection_image` (rgb8)
+- 분할(-seg) 엔진이면 물체 번호 영상 `/perception/mask` (mono8, 값 = `detections` 안 순서 + 1, 0 = 배경, 겹치면 상자가 작은 물체가 위)도 같은 시각으로 낸다 (물체가 있는 장만). 마스크는 앞 64 개 물체까지.
   탐지 영상에는 마스크를 반투명하게 칠한다 (GPU, 구독자가 있을 때만)
 - 파라미터: `config/yolo_fire.yaml` (엔진 경로·문턱·클래스 이름)
 - 출력 형식을 알아서 구분: YOLO26 end2end `[1, 300, 6]`(NMS 없음), YOLO26-seg end2end `[1, 300, 38]` + 원형 마스크 `[1, 32, ph, pw]`, YOLOv8/11 raw `[1, 4+클래스, 앵커]`(+NMS)
@@ -126,20 +126,20 @@ PY
 - trtexec FP16 GPU 시간 중앙값 10.4 ms (Webots 와 같이 돌 때), 노드 전체(전처리 포함) 약 34 ms
 - 시뮬 방에서 제자리 회전: 계단 84 % · 소화기 88 % · 문 84 % · 유도등 86 % 검출. 반쯤 잘린 사람, 작은 불(사진 판)은 못 잡음
 
-## 지도에 물체 올리기 (`object_mapper`)
+## 지도에 물체 올리기 (`object_map`)
 
-탐지 상자 + 컬러에 정렬된 깊이 영상 + TF(`map ← camera_color_optical_frame`) → 물체의 지도 좌표 → `/object_mapper/markers` (MarkerArray, 클래스별 색 기둥 + 이름).
-분할 모델이면 같은 시각의 `/yolo_detector/mask` 에서 그 물체 픽셀만 골라, 픽셀 무게중심 방향 + 그 픽셀 깊이의 가운데 값으로 위치를 잰다(배경·뒤 벽이 안 섞임). 불은 마스크 픽셀 수로 앞면 넓이(m²)도 재서 현황판에 보인다.
+탐지 상자 + 컬러에 정렬된 깊이 영상 + TF(`map ← camera_color_optical_frame`) → 물체의 지도 좌표 → `/perception/markers` (MarkerArray, 클래스별 색 기둥 + 이름).
+분할 모델이면 같은 시각의 `/perception/mask` 에서 그 물체 픽셀만 골라, 픽셀 무게중심 방향 + 그 픽셀 깊이의 가운데 값으로 위치를 잰다(배경·뒤 벽이 안 섞임). 불은 마스크 픽셀 수로 앞면 넓이(m²)도 재서 현황판에 보인다.
 마스크가 없으면(탐지 전용 엔진) 상자 가운데 50 % 깊이의 하위 30 % 값을 거리로 쓴다(얇은 소화기 뒤 벽 무시). 같은 클래스가 0.8 m 안이면 같은 물체로 합치며, 5 번 이상 본 것만 올린다. 값은 `config/yolo_fire.yaml`.
 `map` 프레임이 있어야 하므로 SLAM(Cartographer) 또는 AMCL 과 같이 돌린다.
-다른 노드가 읽는 물체 목록은 `/object_mapper/objects` (`vision_msgs/Detection3DArray`, map frame, 지도에 올라간 것만): `id` 는 `fire-1` 꼴, 결과 클래스·최고 점수, 위치, `bbox.size.y` = 앞면 넓이의 제곱근(m, 모르면 0). 임무 BT([limo_fire_bt](../limo_fire_bt/README.md))가 불 위치·크기·사람 수를 여기서 읽는다. 마커는 표시용이라 읽지 않는다.
+다른 노드가 읽는 물체 목록은 `/perception/objects` (`vision_msgs/Detection3DArray`, map frame, 지도에 올라간 것만): `id` 는 `fire-1` 꼴, 결과 클래스·최고 점수, 위치, `bbox.size.y` = 앞면 넓이의 제곱근(m, 모르면 0). 임무 BT([limo_fire_bt](../limo_fire_bt/README.md))가 불 위치·크기·사람 수를 여기서 읽는다. 마커는 표시용이라 읽지 않는다.
 
 운용 화면 (`limo_fire_description` 의 `viewer.launch.xml` · `rviz/limo_fire.rviz`, 지도 만들기·Nav2 와 같은 화면):
 - 왼쪽: YOLO 탐지 영상. 오른쪽: 지도 + 물체 + 로봇(축) + Nav2 경로(전역·지역), costmap 은 Displays 에서 켠다
 - 도구: 2D Pose Estimate, 2D Goal Pose(Nav2 목표). (Publish Point 로 아이콘을 눌러 물체 사진을 보던 기능은 2026-11-18 지움)
-- 왼쪽 위 현황판(`/object_mapper/summary`, `rviz_2d_overlay_plugins`): 화재 경고, 종류별 개수, 로봇에서 가장 가까운 것과 거리
+- 왼쪽 위 현황판(`/perception/summary`, `rviz_2d_overlay_plugins`): 화재 경고, 종류별 개수, 로봇에서 가장 가까운 것과 거리
 - 물체마다 원형 아이콘 배지(`icons/`, Material Symbols) + 번호 라벨(`EXT-1` …). 불은 위험 반경(`fire_zone_radius`)이 깜빡인다
-- 표시 켜고 끄기: 메뉴 Panels → Displays. 지도 물체 모두 지우기: `ros2 service call /object_mapper/clear std_srvs/srv/Trigger`
+- 표시 켜고 끄기: 메뉴 Panels → Displays. 지도 물체 모두 지우기: `ros2 service call /perception/clear_objects std_srvs/srv/Trigger`
 - 필요한 apt 패키지: `ros-humble-rviz-2d-overlay-plugins`, `ros-humble-nav2-rviz-plugins`
 
 ```bash
@@ -183,27 +183,27 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
 
 ## 모델 고르기(COCO 80 종 · 화재 7 종) · 지도 위 물체 모양 · 물체 지도 파일 (2026-11-17)
 
-모델은 설정 파일로 고른다: `yolo.launch.xml config:=yolo_coco.yaml`(기본, Ultralytics 공식 YOLO26s-seg COCO 80 종 — 의자·컵·노트북 …) ·
+모델은 설정 파일로 고른다: `perception.launch.xml config:=yolo_coco.yaml`(기본, Ultralytics 공식 YOLO26s-seg COCO 80 종 — 의자·컵·노트북 …) ·
 `config:=yolo_fire.yaml`(우리 화재 7 종 분할). 노드·물체 지도·표시는 같고 엔진 경로·클래스 이름·색(`class_colors`)만 다르다.
 
 - **물체 모양(발자국)**: 분할 모델이면 물체 마스크 픽셀(`footprint_stride` 칸마다)의 깊이로 3D 점을 만들어 지도 칸(`cell_size` 0.05 m)에 내린다.
-  물체 깊이 가운데 값 ± 0.5 m 밖(배경)은 버리고, 여러 장에서 본 칸을 쌓아 `footprint_min_count` 번 넘게 본 칸만 클래스 색으로 칠한다 (`/object_mapper/markers`, CUBE_LIST).
+  물체 깊이 가운데 값 ± 0.5 m 밖(배경)은 버리고, 여러 장에서 본 칸을 쌓아 `footprint_min_count` 번 넘게 본 칸만 클래스 색으로 칠한다 (`/perception/markers`, CUBE_LIST).
   이름표는 마스크 무게중심(가운데 점)에 둔다. 상자만 내는 엔진이면 잰 너비 지름의 원.
-- **밑점**: 마스크 3D 점 가운데 가장 낮은 10 % 의 평균(map). `/object_mapper/objects` 의 `results[0].pose` 에 담는다 (불이면 불 밑동). `bbox.center` 는 가운데 점, `bbox.size.x` 는 너비(m).
+- **밑점**: 마스크 3D 점 가운데 가장 낮은 10 % 의 평균(map). `/perception/objects` 의 `results[0].pose` 에 담는다 (불이면 불 밑동). `bbox.center` 는 가운데 점, `bbox.size.x` 는 너비(m).
   깊이가 비는 픽셀(불꽃은 깊이가 자주 빔)은 버리고, 남은 점이 10 개 안 되면 밑점을 갱신하지 않는다.
 - **지도 갱신 (없어진 물체 빼기)**: 지도에 올라간 물체가 이 장에서 보여야 하는데(카메라 시야 가장자리 10 % 안쪽 · 3 m 안 · 그 픽셀 깊이가 물체보다 0.3 m 넘게 앞이 아님)
   못 잡으면 못 본 수를 늘리고 다시 보면 0, `neg_misses`(20) 번이면 지도에서 뺀다(마커·목록·저장에서 빠지고, 같은 자리 탐지는 새 물체로). 사람·동물(`dynamic_classes`)은
   `dynamic_ttl` 안 보이면 뺀다. 1116_fuel_rl_1 녹화 재생: 8 이면 의자 하나가 잘못 빠졌고 20 이면 의자 5 개가 남고 떠난 사람 2 명만 빠짐. 옮긴 물체 다시 등록은 아직 실물로 못 봄.
 - **사람·동물은 실시간** (`dynamic_*`): 위치·발자국은 가장 최근 장 것(평균·누적 안 함 — 예전엔 걷는 사람을 0.6 m 쯤 늦게 따라가고 지나온 자리가 발자국으로 남았다),
   같은 사람 찾기는 merge 반경 + 1.5 m/s × 못 본 시간(2 m 까지), 시야 안에서 5 장 못 보면 · 3 s 못 보면 뺌, 그 안에 다시 보이면 같은 번호로 살림.
-  `/object_mapper/objects`·마커는 10 Hz (벽시계 타이머). 1116_fuel_rl_1 결정적 재생(사람 측정 111·110 번): 측정 다음 0.1 s 표시에서 가장 가까운 사람까지 중앙 0.06 → 0.04 m · 90 % 0.27 → 0.17 m,
+  `/perception/objects`·마커는 10 Hz (벽시계 타이머). 1116_fuel_rl_1 결정적 재생(사람 측정 111·110 번): 측정 다음 0.1 s 표시에서 가장 가까운 사람까지 중앙 0.06 → 0.04 m · 90 % 0.27 → 0.17 m,
   사람 발자국 칸 최대 269 → 57, 떠난 사람 마커는 마지막으로 본 뒤 10.1 → 3.1 s 에 지워짐, 지운 뒤 RViz 에 남는 마커 0 (DELETE 를 RViz 처럼 쌓아 확인).
 - **옮긴 정지 물체** (`move_dist`·`move_frames`): 처음 자리에서 max(0.5 m, 너비/2) 넘게 떨어진 측정이 10 장 이어지면 그 자리로 옮기고 발자국을 새로 쌓는다
   (예전엔 반경 안 이동은 평균으로 천천히 끌려가고 옛 자리 발자국이 남음). 반경 밖 이동은 위 지도 갱신(옛 자리 빼기 + 새 물체). 1116 재생에서 0.5 m 는 잘못 옮김 0 (0.4 m 는 붙은 의자 1 개를 잘못 옮김) — 실제로 옮긴 녹화로는 아직 못 봄.
 - **물체 지도 파일**: 한 줄에 물체 하나 — 클래스 · 번호 · 가운데 x y z · 방향 · 본 횟수 · 최고 점수 · 넓이 · 너비 · 마지막 본 시각 · 발자국 칸(`gx,gy,횟수`). map 좌표.
   `objects_file` 이 있으면 켤 때 읽고(저장한 지도로 다시 돌 때), `~/save` 는 그 파일에, `~/save_to`(std_msgs/String 경로)는 준 경로에 쓴다.
   `limo_fire_bringup save_map.launch.xml` 이 지도와 같은 이름으로 `<이름>_objects.txt` 를 옆에 저장한다. 다시 돌 때 `objects_file:=…/<이름>_objects.txt`.
-- 탐사 중 보기: `ros2 launch limo_fire_rl explore_fuel_rl.launch.xml … perception:=true [perception_config:=yolo_coco.yaml]` — 탐사 RViz 가 같은 `/object_mapper/markers` 를 그린다.
+- 탐사 중 보기: `ros2 launch limo_fire_explore explore.launch.xml … perception:=true [perception_config:=yolo_coco.yaml]` — 탐사 RViz 가 같은 `/perception/markers` 를 그린다.
 
 ### COCO 80 종 분할 엔진 만들기 (로봇에서 한 번)
 
@@ -255,16 +255,16 @@ PY
 
 로봇에서 판단 모델(llama-server d1-3B, 약 4.1 GB + 요청 버퍼)이 인식 + RViz 와 같이 돌 때 GPU 메모리 부족(NvMap error 12)으로 죽어 인식 쪽을 줄였다.
 
-- **한 스레드**: 컨테이너는 `component_container`(실행기 스레드 1). `yolo_detector` 는 영상 구독을 실행기에 올리지 않고 작업 스레드가 WaitSet 으로 직접 꺼낸다
+- **한 스레드**: 컨테이너는 `component_container`(실행기 스레드 1). `object_detector` 는 영상 구독을 실행기에 올리지 않고 작업 스레드가 WaitSet 으로 직접 꺼낸다
   (GPU 를 기다리는 스레드 하나는 그대로) — 다른 콜백이 길어도 영상 받기가 안 밀린다. 받기 메시지는 몇 개를 돌려 써서 장마다 921 KB 할당이 없다.
-  `object_mapper` 는 받기 콜백에서 일하지 않는다(예전엔 콜백 안에서 처리 + TF 를 최대 0.2 s 기다림 — 1116 실시간 재생에서 2500 장 중 71 번 33 ms 넘게, 최대 232 ms 막음):
+  `object_map` 는 받기 콜백에서 일하지 않는다(예전엔 콜백 안에서 처리 + TF 를 최대 0.2 s 기다림 — 1116 실시간 재생에서 2500 장 중 71 번 33 ms 넘게, 최대 232 ms 막음):
   탐지·깊이 짝은 작업 줄(`max_pending` 10 장, 넘치면 가장 오래된 장을 버려 최신 쪽만 남김)에 넣기만 하고, `process_period`(20 ms, 노드 시계) 타이머가
   그 시각 TF 가 있는 장부터 처리한다(`tf_wait` 지나도 없으면 버림). 물체의 "마지막 본 시각"은 처리한 때가 아니라 받은 때. TF 리스너도 따로 스레드 없이 이 노드 콜백.
   깊이 영상(다른 프로세스 → 역직렬화)은 받기 메시지를 돌려 쓰는 메모리 전략으로 받아 장마다 영상 버퍼를 새로 할당하지 않는다.
-- **재기**: `object_mapper` 가 `stats_period`(10 s)마다 한 줄 — 탐지·깊이 받은 수, 짝(ApproximateTime, `max_sync_dt` 0.05 s) 수와 짝 못 지은 탐지 비율,
+- **재기**: `object_map` 가 `stats_period`(10 s)마다 한 줄 — 탐지·깊이 받은 수, 짝(ApproximateTime, `max_sync_dt` 0.05 s) 수와 짝 못 지은 탐지 비율,
   줄 지연(받음 → 처리 시작, 평균·최대), 장당 처리 시간, 탐지 시각부터 처리 끝까지 나이, 버린 장(TF 없음·줄 넘침).
 - **보는 쪽이 있을 때만**: 결과 영상(GPU 덧칠 + 상자)은 `~/image` 구독자가 있을 때만 만들고, 그 GPU 버퍼(장치 1 장 + 고정 메모리 2 장 = 2.8 MB)와 결과 영상 그래프 2 개는
-  처음 필요할 때 만들어 `vis_release_s`(5 s) 동안 구독자가 없으면 푼다. 예전엔 `object_mapper` 가 대표 사진용으로 늘 구독해서 매 장 만들었다 —
+  처음 필요할 때 만들어 `vis_release_s`(5 s) 동안 구독자가 없으면 푼다. 예전엔 `object_map` 가 대표 사진용으로 늘 구독해서 매 장 만들었다 —
   대표 사진(누른 물체 사진 `~/selected`)은 2026-11-18 지워 매퍼는 결과 영상을 구독하지 않는다.
 - **물체 지도 픽셀 반복**: 마스크를 상자 안에서 한 번만 훑어 위치·거리·밑동·발자국이 같이 쓰고(예전 세 번), 물체가 없는 줄은 SIMD 로 건너뛰며(분기 없는 OR 모음 — 컴파일러가 NEON·SSE 로),
   깊이 열 번호는 표로, 점마다 나누던 것은 역수 곱, 작업 버퍼는 다시 쓴다. 빌드 종류를 안 주면 Release(예전엔 colcon 기본이라 -O0), Orin 이면 `-mcpu=cortex-a78ae`.

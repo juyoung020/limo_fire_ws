@@ -17,8 +17,8 @@
 | # | 질문 | 제안 | 까닭 |
 |---|---|---|---|
 | D1 | spec.md 는 "Nav2 BT(BehaviorTree.CPP v3) 플러그인"인데 트리는 v4 형식이다 | 따로 도는 임무 노드 + v4, 주행은 `navigate_to_pose` 호출. 정해지면 spec.md 를 고친다 | 임무 트리와 주행 트리가 나뉘고, Script·`_onFailure` 와 Groot2 모니터를 쓴다. 로봇 Jetson(Humble)에 4.x 가 있는지는 **아직 확인 안 함**. 안 되면 v3 형식으로 옮긴다 |
-| D2 | 불 위치를 어떻게 받나 | **정함**: object_mapper `~/objects` (`vision_msgs/Detection3DArray`) 를 더해 BT 가 읽는다 | 마커는 표시용이라 형식이 바뀌면 BT 가 깨진다 |
-| D3 | 시뮬에서 불을 어떻게 "보게" 하나 | **정함**: `limo_fire_bt_sim.yaml` 이 `/yolo_detector/detections` 를 `/gt/detections` 로 바꿔 읽음 | 시뮬 불·연기는 YOLO 가 거의 못 잡는다(simulation.md). 정답 카메라가 같은 타입 `vision_msgs/Detection2DArray` 를 낸다. 점수·클래스 값이 BT 문턱과 맞는지는 확인 필요 |
+| D2 | 불 위치를 어떻게 받나 | **정함**: `/perception/objects` (`vision_msgs/Detection3DArray`) 를 더해 BT 가 읽는다 | 마커는 표시용이라 형식이 바뀌면 BT 가 깨진다 |
+| D3 | 시뮬에서 불을 어떻게 "보게" 하나 | **정함**: `limo_fire_bt_sim.yaml` 이 `/perception/detections` 를 `/gt/detections` 로 바꿔 읽음 | 시뮬 불·연기는 YOLO 가 거의 못 잡는다(simulation.md). 정답 카메라가 같은 타입 `vision_msgs/Detection2DArray` 를 낸다. 점수·클래스 값이 BT 문턱과 맞는지는 확인 필요 |
 
 ## 3. 시뮬에서 그대로는 안 되는 것
 
@@ -29,7 +29,7 @@
 | 융합 오도메트리 | `/odometry/filtered` | 없음, `/odom` 만 (`nav2_sim.yaml`) | 토픽을 설정으로 |
 | 리모컨 오토 모드 | `/rc_state` | 없음 | 시뮬에서 검사 끄기 |
 | 컬러·깊이 주기 | 약 30 Hz, 문턱 20 | 약 20 장/초 | 시뮬 문턱 낮추기, 시뮬 시계로 잴지 정하기 |
-| 탐지 입력 | `/yolo_detector/detections` | YOLO 는 불을 거의 못 봄 | D3 |
+| 탐지 입력 | `/perception/detections` | YOLO 는 불을 거의 못 봄 | D3 |
 | 초음파 | esp32_bridge | 월드 `LimoFire ultrasonic TRUE` 일 때만 | 연기 시나리오용 월드 사본 |
 | 펌프·서보·열화상·레이더 | 부품 대기 | 없음 | 물 모드는 가짜 노드 필요 |
 | 순찰점 | 미정 | 월드 yaml `patrol` | `LoadPatrolRoute` 입력을 지도 파일 대신 순찰점 파일로 |

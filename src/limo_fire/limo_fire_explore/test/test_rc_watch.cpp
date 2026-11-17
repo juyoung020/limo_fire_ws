@@ -1,4 +1,4 @@
-// low_rl 리모컨 받기 (include/limo_fire_rl/rc_watch.h) 시험: 다시 구독 판단 · QoS 가 RELIABLE/BEST_EFFORT 발행자와 맞는지 ·
+// explorer 리모컨 받기 (include/limo_fire_explore/rc_watch.h) 시험: 다시 구독 판단 · QoS 가 RELIABLE/BEST_EFFORT 발행자와 맞는지 ·
 // 받는 노드를 여러 번 새로 만들어도(노드 다시 띄우기) 받는지
 #include <gtest/gtest.h>
 
@@ -10,9 +10,9 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joy.hpp>
 
-#include "limo_fire_rl/rc_watch.h"
+#include "limo_fire_explore/rc_watch.h"
 
-using limo_fire_rl::RcWatch;
+using limo_fire_explore::RcWatch;
 using clk = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 
@@ -50,7 +50,7 @@ int receive_rounds(const rclcpp::QoS& pub_qos, int rounds) {
   for (int r = 0; r < rounds; ++r) {
     auto sn = std::make_shared<rclcpp::Node>("rc_sub_test");
     std::atomic<int> got{0};
-    auto sub = sn->create_subscription<sensor_msgs::msg::Joy>("/rc_state_test", limo_fire_rl::rc_qos(),
+    auto sub = sn->create_subscription<sensor_msgs::msg::Joy>("/rc_state_test", limo_fire_explore::rc_qos(),
                                                               [&](sensor_msgs::msg::Joy::ConstSharedPtr m) { got += m->buttons.size() > 1 && m->buttons[1] == 2; });
     rclcpp::executors::SingleThreadedExecutor ex;
     ex.add_node(sn);

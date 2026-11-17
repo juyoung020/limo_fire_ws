@@ -1,4 +1,4 @@
-// 합친 탐사(위층 fuel · slot0 · 판단 모델 + 아래층 규칙 추종기)의 위층 결정·목표 넘기기 — 로봇 하나 몫. 실물 노드(limo_fire_rl low_rl)와
+// 합친 탐사(위층 fuel · slot0 · 판단 모델 + 아래층 규칙 추종기)의 위층 결정·목표 넘기기 — 로봇 하나 몫. 실물 노드(limo_fire_explore explorer)와
 // 그 확인 도구(sim/tools/low_explore_check · low_explore_replay · room_run)가 같은 코드로 돌린다. combine_run.cpp 의 환경 하나 몫을 그대로 옮긴 것:
 //   피하는 칸 고리 kBl 8 · 반경 rec_bl_r · rec_bl_steps 걸음 (combine_run Avoid · avoided · avoid_add)
 //   결정할 때: 걸음 % decide_steps == 0 또는 redo · 피하지 않는 후보 차례
