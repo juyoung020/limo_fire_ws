@@ -1,9 +1,8 @@
 // TensorRT 로 YOLO 를 돌린다. ROS 에 의존하지 않는다.
 // 전처리·출력 해석·마스크·결과 영상 칠하기를 전부 GPU 에서 하고, 한 장 처리를 CUDA 그래프 하나로 묶어 한 번에 띄운다.
 // 입력: uint8 RGB [1, H, W, 3] (전처리를 그래프에 넣은 엔진, 권장) 또는 float [1, 3, H, W] (/255 RGB, 기존 엔진)
-// 출력 두 가지를 알아서 구분한다:
-//   end2end (YOLO26, NMS 없음): [1, N, 6] = x1 y1 x2 y2 score class   (입력 픽셀 좌표) → GPU 에서 해석
-//   raw (YOLOv8/11):           [1, 4 + 클래스 수, 앵커 수] = cx cy w h + 클래스별 점수 → CPU 에서 NMS
+// 출력: end2end (YOLO26, NMS 없음) [1, N, 6] = x1 y1 x2 y2 score class (입력 픽셀 좌표) → GPU 에서 해석.
+//   NMS 가 밖에 필요한 raw 출력(YOLOv8/11)은 2026-11-17 에 뺐다 (쓰는 설정이 없음 — 다시 쓰려면 커밋 2e3b589 의 decode_raw)
 // 분할(-seg) end2end 는 [1, N, 6 + 32] (마스크 계수) + 원형 마스크 [1, 32, ph, pw] (fp32·fp16) 로 물체 번호 영상을 GPU 에서 만든다.
 // 그래프 안 조건 노드로 물체가 있을 때만 마스크 커널을 돌린다.
 // (원형 가지를 엔진 둘로 나눠 건너뛰는 것도 쟀지만, 탐지 있는 장이 0.5 ms 느려져 한 엔진으로 둔다 — README)
@@ -50,7 +49,7 @@ class TrtYolo
 public:
   static constexpr int kSlots = 2;
 
-  TrtYolo(const std::string & engine_path, float conf_threshold, float nms_iou);
+  TrtYolo(const std::string & engine_path, float conf_threshold);
   ~TrtYolo();
   TrtYolo(const TrtYolo &) = delete;
   TrtYolo & operator=(const TrtYolo &) = delete;
@@ -67,8 +66,6 @@ public:
 
   int input_width() const {return in_w_;}
   int input_height() const {return in_h_;}
-  bool end2end() const {return end2end_;}
-  int num_classes() const {return num_classes_;}
   bool has_masks() const {return nm_ > 0;}
   bool uint8_input() const {return in_u8_;}
   // 결과 영상 버퍼·그래프가 있는지 / 푼다 (모든 슬롯이 collect 된 뒤에만 — 아니면 false). 이전 결과의 vis 보기는 무효
@@ -94,7 +91,6 @@ private:
   void enqueue_masks(void * stream);
   void enqueue_back(Slot & s, bool vis);
   gpu::Letterbox letterbox_params() const;
-  std::vector<Detection> decode_raw(const float * out) const;
 
   class Logger : public nvinfer1::ILogger
   {
@@ -111,10 +107,8 @@ private:
   std::string in_name_, out_name_, proto_name_;
   int in_w_ = 640, in_h_ = 640;
   bool in_u8_ = false;
-  // 출력 모양: end2end 이면 [N, 6 (+nm)], raw 이면 [4 + 클래스, 앵커]
-  bool end2end_ = false;
+  // 출력 모양 [N, 6 (+nm)]
   int out_rows_ = 0, out_cols_ = 0;
-  int num_classes_ = 0;
   int nm_ = 0, ph_ = 0, pw_ = 0;
   bool proto_half_ = false;
   size_t out_elems_ = 0;
@@ -144,7 +138,6 @@ private:
   double mem_engine_mb_ = 0, mem_context_mb_ = 0, mem_buffers_mb_ = 0, mem_vis_mb_ = 0;
 
   float conf_;
-  float nms_iou_;
 };
 
 }  // namespace limo_fire_perception

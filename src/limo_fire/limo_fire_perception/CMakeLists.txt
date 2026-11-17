@@ -40,7 +40,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(rviz_2d_overlay_msgs REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc dnn)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(CUDAToolkit REQUIRED)
 
 # TensorRT (JetPack: /usr/include/aarch64-linux-gnu, /usr/lib/aarch64-linux-gnu)
@@ -54,7 +54,7 @@ add_library(trt_yolo STATIC src/trt_yolo.cpp src/trt_yolo_kernels.cu)
 set_target_properties(trt_yolo PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(trt_yolo PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> ${TENSORRT_INCLUDE_DIR})
-target_link_libraries(trt_yolo PUBLIC ${NVINFER_LIB} CUDA::cudart opencv_core opencv_imgproc opencv_dnn)
+target_link_libraries(trt_yolo PUBLIC ${NVINFER_LIB} CUDA::cudart opencv_core opencv_imgproc)
 
 # 노드는 컴포넌트(공유 라이브러리)로 만든다: 카메라 드라이버·서로와 한 프로세스에 올리면 메시지를 복사 없이 주고받는다.
 # 같은 이름의 실행 파일(yolo_detector, object_mapper)도 함께 만들어져 따로 띄울 수도 있다

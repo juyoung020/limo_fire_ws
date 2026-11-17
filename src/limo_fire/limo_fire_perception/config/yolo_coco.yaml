@@ -5,7 +5,6 @@ yolo_detector:
   ros__parameters:
     engine_path: yolo26s_seg_coco_u8_480.engine   # 파일 이름만 쓰면 설치된 models/ 에서 (src/…/limo_fire_perception/models 에 두고 빌드)
     conf_threshold: 0.40
-    nms_iou: 0.5
     image_topic: /camera/color/image_raw
     publish_image: true   # 결과 영상(~/image)은 구독자가 있을 때만 만든다
     vis_release_s: 5.0    # s, 결과 영상 구독자가 이만큼 없으면 그 GPU 버퍼·그래프를 풂

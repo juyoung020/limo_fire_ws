@@ -39,26 +39,21 @@ public:
       engine = ament_index_cpp::get_package_share_directory("limo_fire_perception") + "/models/" + engine;
     }
     const auto conf = declare_parameter<double>("conf_threshold", 0.35);
-    const auto iou = declare_parameter<double>("nms_iou", 0.5);
     class_names_ = declare_parameter<std::vector<std::string>>("class_names");
     publish_image_ = declare_parameter<bool>("publish_image", true);
     vis_release_ = std::chrono::duration<double>(declare_parameter<double>("vis_release_s", 5.0));
     const auto image_topic = declare_parameter<std::string>("image_topic", "/camera/color/image_raw");
 
-    yolo_ = std::make_unique<TrtYolo>(engine, static_cast<float>(conf), static_cast<float>(iou));
+    yolo_ = std::make_unique<TrtYolo>(engine, static_cast<float>(conf));
     std::vector<cv::Vec3b> colors;
     for (int c = 0; c < 7; ++c) {
       const cv::Scalar s = color_of(c);
       colors.emplace_back(s[0], s[1], s[2]);
     }
     yolo_->set_class_colors(colors);
-    RCLCPP_INFO(get_logger(), "엔진 %s: 입력 %dx%d %s, 출력 %s, 클래스 이름 %zu 개, TensorRT 작업 메모리 %.1f MB",
+    RCLCPP_INFO(get_logger(), "엔진 %s: 입력 %dx%d %s, 출력 end2end(NMS 없음), 클래스 이름 %zu 개, TensorRT 작업 메모리 %.1f MB",
       engine.c_str(), yolo_->input_width(), yolo_->input_height(),
-      yolo_->uint8_input() ? "uint8 RGB(전처리 엔진 안)" : "float",
-      yolo_->end2end() ? "end2end(NMS 없음)" : "raw(+NMS)", class_names_.size(), yolo_->activation_bytes() / 1048576.0);
-    if (!yolo_->end2end() && yolo_->num_classes() != static_cast<int>(class_names_.size())) {
-      RCLCPP_WARN(get_logger(), "모델 클래스 %d 개 != class_names %zu 개", yolo_->num_classes(), class_names_.size());
-    }
+      yolo_->uint8_input() ? "uint8 RGB(전처리 엔진 안)" : "float", class_names_.size(), yolo_->activation_bytes() / 1048576.0);
 
     det_pub_ = create_publisher<vision_msgs::msg::Detection2DArray>("~/detections", 10);
     if (yolo_->has_masks()) {

@@ -186,7 +186,6 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
 
 모델은 설정 파일로 고른다: `yolo.launch.xml config:=yolo_coco.yaml`(기본, Ultralytics 공식 YOLO26s-seg COCO 80 종 — 의자·컵·노트북 …) ·
 `config:=yolo_fire.yaml`(우리 화재 7 종 분할). 노드·물체 지도·표시는 같고 엔진 경로·클래스 이름·색(`class_colors`)만 다르다.
-다른 탐지기를 같은 물체 지도에 더 붙일 수도 있다 (`extra_detections_topics` · `extra_class_names` — 기본은 비움).
 
 - **물체 모양(발자국)**: 분할 모델이면 물체 마스크 픽셀(`footprint_stride` 칸마다)의 깊이로 3D 점을 만들어 지도 칸(`cell_size` 0.05 m)에 내린다.
   물체 깊이 가운데 값 ± 0.5 m 밖(배경)은 버리고, 여러 장에서 본 칸을 쌓아 `footprint_min_count` 번 넘게 본 칸만 클래스 색으로 칠한다 (`/object_mapper/markers`, CUBE_LIST).
@@ -234,14 +233,13 @@ PY
 
 `config/yolo_coco.yaml` 의 `engine_path` 는 파일 이름만 쓴다 — `models/` 의 엔진이 `colcon build` 때 설치 폴더로 복사되고 노드가 거기서 찾는다.
 
-## 바닥 광선 거리 (가상 깊이, `~/instances`)
+## 바닥 광선 거리 (가상 깊이)
 
 불꽃처럼 깊이 카메라가 비거나 틀리는 물체를 위해, 마스크 밑동(맨 아래 5 % 줄의 가운데 열) 픽셀을 지나는 카메라 광선이 바닥면(base_link 높이 − 0.145 m, `limo_pro_base.xacro`)과 만나는 거리를 잰다.
 `prefer_floor_classes`(기본 fire · smoke)는 마스크 깊이와 `fuse_tol_m + fuse_tol_frac × 거리` 넘게 다르면 바닥 광선 거리를, 다른 클래스는 마스크 깊이를 쓰고, 마스크 깊이가 없으면 바닥 광선 거리를 쓴다.
-물체마다 `~/instances`(그 장, Detection3DArray): `id` = "클래스|쓴 출처(mask·box·floor)|mask 거리|floor 거리", `bbox.center` = 쓴 자리, `results[0].pose` = 밑점, `bbox.size.x`·`z` = 너비·높이(마스크 크기 × 거리).
 바닥면은 지금 고정(로봇 높이) — 깊이로 바닥면을 맞추는 일(바닥 위 낮은 물체 작업)이 끝나면 그 면으로 바꿀 자리.
 
-1116_fuel_rl_1 녹화(실험실, 바닥에 선 의자 · 사람)에서 마스크 깊이와 견준 바닥 광선 거리 (`depth_check_csv`, 61 개):
+1116_fuel_rl_1 녹화(실험실, 바닥에 선 의자 · 사람)에서 마스크 깊이와 견준 바닥 광선 거리 (61 개 — 그때 잰 장마다 출력 `~/instances`·`depth_check_csv` 는 2026-11-17 지움, 다시 재려면 커밋 2e3b589):
 
 | 마스크 깊이 | 수 | 바닥 광선 − 마스크 (가운데) | 차 크기 (가운데) |
 |---|---|---|---|
@@ -289,7 +287,7 @@ PY
 가짜 YOLO 는 TensorRT 대신 11 ms 잠자고 상자·마스크 하나를 내는 대역 — 실행기·영상 받기 구조만 본다. 옛 판 RSS 가 큰 것은 결과·원본 영상을 늘 구독해 10 장씩 들고 있던 몫이 크다.
 NEON: `row_has`·깊이 열 표 반복은 x86 GCC 11 `-O3` 에서 "loop vectorized using 16 byte vectors" 를 확인했고, aarch64 는 이 PC 에 교차 컴파일러가 없어 못 봄(같은 GCC 자동 벡터화라 NEON 16 바이트가 기대값).
 
-Orin 메모리 어림 (기본: yolo_coco + 매퍼, search 끔, 로봇에서 RViz 안 켬):
+Orin 메모리 어림 (기본: yolo_coco + 매퍼, 로봇에서 RViz 안 켬):
 - GPU(NvMap): 결과 영상 버퍼 2.8 MB + 그래프 2 개(어림 1~4 MB) ≈ **4~7 MB** 덜 씀. 엔진 가중치(~21 MB)·TensorRT 작업 메모리·CUDA 문맥은 그대로 —
   켤 때 로그 `GPU 메모리(대략): 엔진 … 실행 문맥 … (TensorRT 작업 메모리 …)` 로 잰다. 지연 로딩은 CUDA 12.2+ 리눅스(535 드라이버~)에서 이미 기본이라([CUDA 12.2 릴리스 노트](https://docs.nvidia.com/cuda/archive/12.2.0/cuda-toolkit-release-notes/index.html)) JetPack 6 에선 보통 그대로 — 환경에서 EAGER 로 꺼져 있던 경우만 준다(TensorRT 가 `CUDA lazy loading is not enabled` 경고를 냈었는지 로봇에서 확인).
 - CPU(RSS 436 MB 였음): 매퍼 영상 줄 18 MB + 스레드(멀티 → 한 스레드 컨테이너·TF 스레드) ≈ **20~35 MB** 덜 씀

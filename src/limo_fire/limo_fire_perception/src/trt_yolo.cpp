@@ -10,7 +10,6 @@
 #include <iostream>
 #include <stdexcept>
 
-#include <opencv2/dnn.hpp>
 
 #include "trt_yolo_kernels.cuh"
 
@@ -63,7 +62,6 @@ struct TrtYolo::Slot
   gpu::DetBlock * h_block = nullptr;
   uint8_t * h_ids = nullptr;
   uint8_t * h_vis = nullptr;
-  float * h_out = nullptr;
   cudaEvent_t done = nullptr;
   cudaGraphExec_t exec[2] = {nullptr, nullptr};
   bool busy = false;
@@ -77,8 +75,8 @@ void TrtYolo::Logger::log(Severity severity, const char * msg) noexcept
   }
 }
 
-TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nms_iou)
-: conf_(conf_threshold), nms_iou_(nms_iou)
+TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold)
+: conf_(conf_threshold)
 {
   // GPU 를 기다리는 동안 CPU 가 바쁜 대기로 코어 하나를 태우지 않고 잠들게 (컨텍스트 만들기 전에만 먹힌다)
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
@@ -159,16 +157,11 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
       throw std::runtime_error("마스크 계수는 32 개까지");
     }
   }
-  if (out_dims.d[2] == 6 + nm_) {
-    end2end_ = true;
-    out_rows_ = out_dims.d[1];
-    out_cols_ = 6 + nm_;
-  } else {
-    end2end_ = false;
-    out_rows_ = out_dims.d[1];   // 4 + 클래스 수
-    out_cols_ = out_dims.d[2];   // 앵커 수
-    num_classes_ = out_rows_ - 4;
+  if (out_dims.d[2] != 6 + nm_) {
+    throw std::runtime_error("출력은 end2end [1, N, 6 (+ 마스크 계수)] 여야 함 (YOLO26 — NMS 가 밖에 필요한 YOLOv8/11 raw 출력은 안 씀)");
   }
+  out_rows_ = out_dims.d[1];
+  out_cols_ = 6 + nm_;
   out_elems_ = volume(out_dims);
 
   check_cuda(cudaStreamCreateWithFlags(reinterpret_cast<cudaStream_t *>(&stream_), cudaStreamNonBlocking),
@@ -264,7 +257,6 @@ void TrtYolo::release_image_buffers()
     free_host(s->h_block);
     free_host(s->h_ids);
     free_host(s->h_vis);
-    free_host(s->h_out);
   }
   free_device(d_img_);
   free_device(d_ids_);
@@ -304,12 +296,8 @@ void TrtYolo::configure(int img_w, int img_h)
   }
   for (auto & s : slots_) {
     check_cuda(cudaMallocHost(&s->h_img, img_bytes), "cudaMallocHost img");
-    if (end2end_) {
-      check_cuda(cudaMallocHost(&s->h_block, sizeof(gpu::DetBlock)), "cudaMallocHost dets");
-      s->h_block->count = 0;
-    } else {
-      check_cuda(cudaMallocHost(&s->h_out, out_elems_ * sizeof(float)), "cudaMallocHost out");
-    }
+    check_cuda(cudaMallocHost(&s->h_block, sizeof(gpu::DetBlock)), "cudaMallocHost dets");
+    s->h_block->count = 0;
     if (has_masks()) {
       check_cuda(cudaMallocHost(&s->h_ids, ids_bytes), "cudaMallocHost ids");
     }
@@ -325,7 +313,7 @@ void TrtYolo::configure(int img_w, int img_h)
 
   graph_mode_ = 0;
   for (int mode : {2, 1}) {
-    if (mode == 2 && !(end2end_ && has_masks())) {
+    if (mode == 2 && !has_masks()) {
       continue;
     }
     bool ok = true;
@@ -472,16 +460,12 @@ void TrtYolo::enqueue_front(Slot & s, bool set_cond, unsigned long long cond)
   if (!context_->enqueueV3(st)) {
     throw std::runtime_error("enqueueV3 실패");
   }
-  if (end2end_) {
-    auto * block = static_cast<gpu::DetBlock *>(d_block_);
-    gpu::decode_end2end(static_cast<const float *>(d_out_), out_rows_, out_cols_, conf_, lb, ph_, pw_, block,
-      set_cond, cond, st);
-    check_cuda(cudaMemcpyAsync(s.h_block, block, sizeof(gpu::DetBlock), cudaMemcpyDeviceToHost, st), "D2H dets");
-    if (has_masks()) {
-      check_cuda(cudaMemsetAsync(d_ids_, 0, static_cast<size_t>(img_w_) * img_h_, st), "memset ids");
-    }
-  } else {
-    check_cuda(cudaMemcpyAsync(s.h_out, d_out_, out_elems_ * sizeof(float), cudaMemcpyDeviceToHost, st), "D2H");
+  auto * block = static_cast<gpu::DetBlock *>(d_block_);
+  gpu::decode_end2end(static_cast<const float *>(d_out_), out_rows_, out_cols_, conf_, lb, ph_, pw_, block,
+    set_cond, cond, st);
+  check_cuda(cudaMemcpyAsync(s.h_block, block, sizeof(gpu::DetBlock), cudaMemcpyDeviceToHost, st), "D2H dets");
+  if (has_masks()) {
+    check_cuda(cudaMemsetAsync(d_ids_, 0, static_cast<size_t>(img_w_) * img_h_, st), "memset ids");
   }
   check_cuda(cudaGetLastError(), "kernel launch");
 }
@@ -560,10 +544,6 @@ YoloResult TrtYolo::collect(int slot)
   s.busy = false;
 
   YoloResult r;
-  if (!end2end_) {
-    r.dets = decode_raw(s.h_out);
-    return r;
-  }
   const gpu::DetBlock & b = *s.h_block;
   r.dets.reserve(b.count);
   for (int k = 0; k < b.count; ++k) {
@@ -578,48 +558,6 @@ YoloResult TrtYolo::collect(int slot)
     }
   }
   return r;
-}
-
-std::vector<Detection> TrtYolo::decode_raw(const float * out) const
-{
-  const auto unletterbox = [this](float x1, float y1, float x2, float y2) {
-      x1 = std::clamp((x1 - lb_pad_x_) / lb_scale_, 0.0f, static_cast<float>(img_w_));
-      x2 = std::clamp((x2 - lb_pad_x_) / lb_scale_, 0.0f, static_cast<float>(img_w_));
-      y1 = std::clamp((y1 - lb_pad_y_) / lb_scale_, 0.0f, static_cast<float>(img_h_));
-      y2 = std::clamp((y2 - lb_pad_y_) / lb_scale_, 0.0f, static_cast<float>(img_h_));
-      return cv::Rect2f(x1, y1, x2 - x1, y2 - y1);
-    };
-  std::vector<cv::Rect> boxes;
-  std::vector<cv::Rect2f> boxes_f;
-  std::vector<float> scores;
-  std::vector<int> classes;
-  const int n = out_cols_;
-  for (int a = 0; a < n; ++a) {
-    int best = 0;
-    float best_s = 0.0f;
-    for (int c = 0; c < num_classes_; ++c) {
-      const float s = out[static_cast<size_t>(4 + c) * n + a];
-      if (s > best_s) {best_s = s; best = c;}
-    }
-    if (best_s < conf_) {
-      continue;
-    }
-    const float cx = out[a], cy = out[n + a], w = out[2 * n + a], h = out[3 * n + a];
-    boxes_f.push_back(unletterbox(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2));
-    boxes.emplace_back(boxes_f.back());
-    scores.push_back(best_s);
-    classes.push_back(best);
-  }
-  std::vector<int> keep;
-  cv::dnn::NMSBoxesBatched(boxes, scores, classes, conf_, nms_iou_, keep);
-  std::vector<Detection> dets;
-  for (int i : keep) {
-    const cv::Rect2f & b = boxes_f[i];
-    const cv::Point tl(static_cast<int>(std::ceil(b.x)), static_cast<int>(std::ceil(b.y)));
-    const cv::Point br(static_cast<int>(std::ceil(b.br().x)), static_cast<int>(std::ceil(b.br().y)));
-    dets.push_back({b, scores[i], classes[i], cv::Rect(tl, br)});
-  }
-  return dets;
 }
 
 }  // namespace limo_fire_perception
