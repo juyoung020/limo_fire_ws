@@ -55,7 +55,7 @@ rclcpp_components_register_node(yolo_detector_component
 # 탐지 상자 + 깊이 → 지도 위 물체 위치 (TensorRT·OpenCV 안 씀)
 add_library(object_mapper_component SHARED src/object_mapper_node.cpp)
 ament_target_dependencies(object_mapper_component rclcpp rclcpp_components sensor_msgs vision_msgs
-  visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs)
+  visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs ament_index_cpp)
 rclcpp_components_register_node(object_mapper_component
   PLUGIN "limo_fire_perception::ObjectMapperNode" EXECUTABLE object_mapper)
 
