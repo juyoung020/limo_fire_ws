@@ -153,7 +153,9 @@ int main(int argc, char** argv) {
   std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
   bool dec_fake_a = false;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
   std::string dec_instr;   // --dec-instr "글": 판단 모델 물체 찾기 지시 (실물 노드 ~/instruction) — 요청 본문 비트 비교 확인용
-  std::vector<std::string> dec_objs;   // --dec-obj "클래스,x,y" (여러 번): 지시가 있을 때 물체 후보 (실물 노드는 물체 지도에서) — 요청 비트 비교 확인용
+  std::vector<std::string> dec_objs;
+  std::string dec_hint_cls;
+  bool dec_obj_always = false;   // --dec-obj "클래스,x,y" (여러 번): 지시가 있을 때 물체 후보 (실물 노드는 물체 지도에서) — 요청 비트 비교 확인용
   int max_ep = 0;
   bool close_lidar = false;
   bool cand_on = false, open_scene = false;
@@ -219,6 +221,8 @@ int main(int argc, char** argv) {
     else if (a == "--dec-fake") dec_fake_a = nx() == "A";
     else if (a == "--dec-instr") dec_instr = nx();
     else if (a == "--dec-obj") dec_objs.push_back(nx());
+    else if (a == "--dec-class-hint") dec_hint_cls = nx();          // 지시의 클래스 힌트 (Params::class_hint — 그 클래스 물체가 물체 후보 칸 앞)
+    else if (a == "--dec-obj-always") dec_obj_always = true;  // 지시 없어도 물체 후보 (Params::obj_always)
     else if (a == "--max-ep") max_ep = std::stoi(nx());
     else if (a == "--fuel-v") fo.v_eff = std::stof(nx());
     else if (a == "--fuel-w") fo.w_eff = std::stof(nx());
@@ -287,6 +291,7 @@ int main(int argc, char** argv) {
     dp.period_steps = std::max(1, (int)std::lround(dec_period / dt));
     dp.mode = dec_mode;
     dp.hold_extra = dec_hold;
+    dp.obj_always = dec_obj_always;
     dp.ask_lead_s = dec_lead;
     dp.compact = dec_compact; dp.px = dec_px; dp.mem_fields = dec_memf; dp.max_cands = dec_max; dp.order = dec_order;
     dp.input = dec::input_of(dec_input);
@@ -295,6 +300,7 @@ int main(int argc, char** argv) {
     if (use_dec && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("--dec-input text · image · both");
     lxd::Upper us(dp), ur(dp);
     if (!dec_instr.empty()) { us.set_instruction(dec_instr); ur.set_instruction(dec_instr); }
+    us.set_class_hint(dec_hint_cls); ur.set_class_hint(dec_hint_cls);
     if (!dec_objs.empty()) {
       std::vector<lxd::Params::Obj> ob;
       for (const auto& t : dec_objs) {
@@ -303,6 +309,7 @@ int main(int argc, char** argv) {
         if (std::sscanf(t.c_str(), "%63[^,],%f,%f", cls, &o.x, &o.y) != 3) throw std::runtime_error("--dec-obj 클래스,x,y");
         o.cls = cls;
         o.oid = o.cls + "-" + std::to_string(ob.size() + 1);
+        o.match = !dec_hint_cls.empty() && o.cls == dec_hint_cls ? 1.f : 0.f;
         ob.push_back(o);
       }
       us.set_objects(ob);

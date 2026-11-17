@@ -159,11 +159,16 @@ ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가�
 - 없으면: 글을 `/low_rl/instruction` 으로 넘겨 판단 모델 요청에 지시(`instruction`)와 아는 물체 10 개(`known_objects`, 거리 · 방향)를 넣고 질문을 "빨리 찾기" 로 바꾼다 — 물체 찾기 모드.
   물체 지도에 그 클래스가 올라오는 즉시 그리로 간다. 지시가 없으면 요청 본문은 예전과 바이트까지 같다 (`low_explore_check --dec-instr` 로 지시가 있을 때도 시뮬 == 실물 비트 확인).
 - RViz: 고른 물체에 흰 고리 + "GOAL 이름", 설 자리 초록 원, 왼쪽 아래 글상자(`/object_goto/overlay`).
-- **판단 모델이 고름 (기본)**: object_goto 는 지시 글과 풀어 낸 클래스(`/low_rl/target_class`)만 넘기고(`direct: false`), 판단 모델 요청의 후보 목록 앞 칸에
-  그 클래스 물체의 설 자리가 물체 후보(`kind: object`, `object` 클래스 · `match` · `len` 길 m · `bear` · `seen_s`)로 들어가 프론티어 후보와 섞인다 (합쳐 6 개, 물체 후보는 반까지).
+- **판단 모델이 고름 (기본)**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다 — object_goto 는 지시 글(`/low_rl/instruction`)과 선택적 클래스 힌트
+  (`/low_rl/target_class` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 설명 검색 1 위)만 넘긴다(`direct: false`). 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
+  물체 지도의 **모든 클래스** 물체 설 자리가 물체 후보(`kind: object` — `object` 클래스 · `oid` 지도 번호 · `len` 길 m · `bear` · `dist` 직선 m · `seen_s` · `vis` 지금 보임)로 들어가
+  프론티어 후보와 섞인다(합쳐 6 개). 칸보다 많으면 힌트 클래스 먼저, 한 무리 안에선 길 거리 순으로 고르게 벌려(가장 가까운 것·가장 먼 것 늘 포함 — "가장 먼 의자" 같은 지시). 
+  글에는 지시 원문(`instruction`) · 힌트(`class_hint`) · 아는 물체 10 개(`known_objects`: "chair-3 chair 4.1 m front-left seen 2 s visible") · 후보 종류 설명(`candidate_kinds`)이 들어가고
+  질문은 "지시를 가장 잘 따르는 후보 (탐사 지시거나 후보에 없으면 가장 빨리 지도를 넓히는 곳)". 지시가 바뀌면 하던 물체로 가기를 그만두고 바로 다시 묻는다.
   설 자리는 이번 결정의 후보 뽑기 BFS(계획 몸통 반경 · 깊이 층 — 프론티어 후보와 같은 잣대)가 닿은 칸 중 물체에 가까운 0.6~1.2 m 고리부터. 오래(600 s) 안 본 물체는 뺀다.
   지도 그림에서 물체 후보는 하늘색 네모, 프론티어 후보는 노란 점. 판단 모델이 물체 후보를 고르면 그 설 자리로 가서 물체를 바라보고 멈춘다. RViz ~/candidates 에 물체 후보 글자(ns cand_obj).
-  지시가 없으면 요청 본문은 예전과 바이트까지 같다 (low_explore_check lat 기록 비교). `low_explore_check --dec-instr 글 --dec-obj 클래스,x,y` 로 지시·물체 후보가 있을 때도 시뮬 == 실물 비트.
+  지시가 없으면 요청 본문은 예전과 바이트까지 같다(`decider_obj_always: false` 기본 — 켜면 지시 없어도 물체 후보). 확인: `low_explore_check --dec-instr 글 --dec-class-hint 클래스 --dec-obj 클래스,x,y`
+  (·`--dec-obj-always`) 로 시뮬 == 실물 비트, 지시 없을 때 요청(DEC_BODY_LOG 걸음·본문 해시) 앞 커밋과 같음.
 - 설명 글 검색(SigLIP2, "빨간 컵" 같은 글)은 다음 단계 — 지금은 클래스 이름·별칭만.
 
 ### 깊이 카메라 층을 볼 것

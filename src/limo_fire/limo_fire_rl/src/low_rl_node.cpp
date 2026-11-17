@@ -148,8 +148,13 @@ class LowRlNode : public rclcpp::Node {
       dp.mode = dec_mode_s == "event" ? 1 : 0;   // periodic (decider_period 마다) · event (목표에 다가감 · 실패 · 후보 크게 바뀜 · 최대 간격 — scripts/low_decider.h)
       dp.hold_extra = (int)declare_parameter<int>("decider_hold_extra", dp.hold_extra);      // 목표가 죽었는데 답이 오는 중이면 (지연 어림 + 이것) 걸음까지 기다림 (−1 = 바로 규칙)
       dp.ask_lead_s = (float)declare_parameter<double>("decider_ask_lead_s", dp.ask_lead_s);  // event: 남은 시간 ≤ 답 지연 + 이것 (s) 이면 미리 물음 (−1 = 끔)
+      dp.obj_max = (int)declare_parameter<int>("decider_obj_max", dp.obj_max);              // 물체 후보 칸 (따라가기 포함, 합쳐 decider_max_cands)
+      dp.obj_always = declare_parameter<bool>("decider_obj_always", dp.obj_always);          // 지시 없어도 물체 후보 (끄면 지시 없는 탐사 요청이 예전과 바이트 같음)
+      dp.vis_s = (float)declare_parameter<double>("decider_vis_s", dp.vis_s);               // 이 안에 본 물체 = 지금 보임
       dp.timeout_steps = std::max(1, (int)std::lround(dec_timeout / dt()));
       dec_up_ = std::make_unique<lxd::Upper>(dp);
+      dec_obj_always_ = dp.obj_always;
+      dec_vis_s_ = dp.vis_s;
       dp_cand_ = dp.cand;
       dp_cam_ = dp.cam;
       dec_cli_ = std::make_unique<DeciderClient>(dec_url, (int)std::lround(dec_timeout * 1000.0));
@@ -213,9 +218,13 @@ class LowRlNode : public rclcpp::Node {
       std::snprintf(b, sizeof b, "가는 중: %s (%.2f, %.2f)%s", goto_label_.c_str(), goto_x_, goto_y_, running() ? "" : " — 탐사가 꺼져 있어 켜야 움직임");
       say_goto(b);
     });
-    // 지시에 맞는 물체 클래스 (object_goto 가 이름·별칭에서 풀어 줌, 빈 글 = 클래스 모름 — 물체 후보 없음)
+    // 지시의 클래스 힌트 (선택 — object_goto 가 별칭·설명 검색에서 풀어 줌). 물체 후보는 모든 클래스에서 오고, 힌트 클래스가 앞 칸에 들어갈 뿐
     obj_stale_s_ = declare_parameter<double>("decider_obj_stale_s", 600.0);   // 이보다 오래 안 본 물체는 물체 후보에서 뺌 (s)
-    sub_target_ = create_subscription<std_msgs::msg::String>("~/target_class", 10, [this](std_msgs::msg::String::ConstSharedPtr m) { target_class_ = m->data; });
+    sub_target_ = create_subscription<std_msgs::msg::String>("~/target_class", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
+      target_class_ = m->data;
+      if (dec_up_) dec_up_->set_class_hint(target_class_);
+      obj_dirty_ = true;
+    });
     sub_instr_ = create_subscription<std_msgs::msg::String>("~/instruction", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
       instruction_ = m->data;
       if (instruction_.empty()) {
@@ -225,8 +234,11 @@ class LowRlNode : public rclcpp::Node {
         target_class_.clear();
         if (dec_up_) dec_up_->set_objects({});
         say_goto("지시 없음 — 보통 탐사");
-      } else if (!goto_active_) {
-        say_goto("지시: " + instruction_ + " — 판단 모델이 후보(지도에 있는 그 물체 옆 · 프론티어) 중에서 고름");
+      } else {   // 새 지시: 하던 물체로 가기는 그만두고 판단 모델이 새로 고름 (바로 물음 — Upper "new instruction")
+        goto_active_ = false;
+        facing_ = false;
+        face_valid_ = false;
+        say_goto("지시: " + instruction_ + " — 판단 모델이 후보(지도 물체 옆 · 프론티어) 중에서 고름");
       }
       if (dec_up_) dec_up_->set_instruction(instruction_);
       obj_dirty_ = true;   // 다음 걸음에 물체 후보를 새로 채움 (판단 모델이 "new instruction" 으로 바로 물을 때 같이 들어가게)
@@ -525,24 +537,10 @@ class LowRlNode : public rclcpp::Node {
         sim::LowCmd cmd;
         int why = 0;
         if (dp_cam_ > 0 && cam_.due(env_->state().step)) push_keyframe();
-        if (!instruction_.empty() && objects_ && (env_->state().step % lp_.decide_steps == 0 || obj_dirty_)) {
+        if ((!instruction_.empty() || dec_obj_always_) && objects_ && (env_->state().step % lp_.decide_steps == 0 || obj_dirty_)) {
           obj_dirty_ = false;
           dec_up_->set_known_objects(known_objects());
-          // 지시에 맞는 물체(클래스 = ~/target_class) → 판단 모델 후보 목록의 물체 후보 (설 자리는 Upper::object_spots 가 탐사 지도에서)
-          std::vector<lxd::Params::Obj> ob;
-          for (const auto& d : objects_->detections) {
-            if (d.results.empty() || target_class_.empty() || d.results[0].hypothesis.class_id != target_class_) continue;
-            lxd::Params::Obj o;
-            o.oid = d.id;
-            o.cls = d.results[0].hypothesis.class_id;
-            o.x = (float)d.bbox.center.position.x;
-            o.y = (float)d.bbox.center.position.y;
-            o.match = 1.0f;
-            o.seen_s = (float)d.results[0].pose.covariance[35];   // object_mapper: 마지막으로 본 뒤 지난 초
-            if (o.seen_s > obj_stale_s_) continue;                // 오래 안 본 물체는 후보에서 뺌
-            ob.push_back(o);
-          }
-          dec_up_->set_objects(ob);
+          dec_up_->set_objects(map_objects());   // 지도 물체 모두 (설 자리는 Upper::object_spots 가 탐사 지도에서, 칸 고르기는 Upper::pick_objects)
         }
         if (dec_up_->step(v, env_->obs_1d() + mdp::obs::POLICY_1D, *ctl_, *dec_cli_, &cmd, &why)) {
           env_->set_cmd(cmd);
@@ -809,7 +807,29 @@ class LowRlNode : public rclcpp::Node {
     cam_.push(std::move(fr));
   }
 
-  // 판단 모델 글에 넣을 아는 물체: 가까운 10 개 "cup 1.2 m front-left" (로봇 기준 거리 · 방향 8 칸)
+  // 물체 지도의 마지막으로 본 뒤 초: object_mapper 가 낸 때 값(covariance[35]) + 그 뒤 지난 시간 (지도는 바뀔 때만 다시 나옴)
+  double seen_s_of(const vision_msgs::msg::Detection3D& d) const {
+    const double age = objects_ ? std::max(0.0, (now() - rclcpp::Time(objects_->header.stamp, get_clock()->get_clock_type())).seconds()) : 0.0;
+    return d.results[0].pose.covariance[35] + (objects_ && objects_->header.stamp.sec > 0 ? age : 0.0);
+  }
+  // 판단 모델 물체 후보 재료: 지도 물체 모두 (obj_stale_s 넘게 안 본 것 빼고), class_hint 클래스면 match 1
+  std::vector<lxd::Params::Obj> map_objects() const {
+    std::vector<lxd::Params::Obj> ob;
+    for (const auto& d : objects_->detections) {
+      if (d.results.empty()) continue;
+      lxd::Params::Obj o;
+      o.oid = d.id;
+      o.cls = d.results[0].hypothesis.class_id;
+      o.x = (float)d.bbox.center.position.x;
+      o.y = (float)d.bbox.center.position.y;
+      o.match = !target_class_.empty() && o.cls == target_class_ ? 1.f : 0.f;
+      o.seen_s = (float)seen_s_of(d);
+      if (o.seen_s > obj_stale_s_) continue;
+      ob.push_back(o);
+    }
+    return ob;
+  }
+  // 판단 모델 글에 넣을 아는 물체: 가까운 10 개 "chair-3 chair 1.2 m front-left seen 4 s" (+ " visible" — 지금 보임)
   std::vector<std::string> known_objects() const {
     const sim::EnvState& s = env_->state();
     const double rx = s.x + s.ex, ry = s.y + s.ey, th = s.th + s.eth;
@@ -821,8 +841,9 @@ class LowRlNode : public rclcpp::Node {
       double a = std::atan2(dy, dx) - th;
       a = std::atan2(std::sin(a), std::cos(a));
       const int k = ((int)std::lround(a / (M_PI / 4)) + 8) % 8;
-      char b[96];
-      std::snprintf(b, sizeof b, "%s %.1f m %s", d.results[0].hypothesis.class_id.c_str(), dist, dirs[k]);
+      char b[160];
+      const double ss = seen_s_of(d);
+      std::snprintf(b, sizeof b, "%s %s %.1f m %s seen %.0f s%s", d.id.c_str(), d.results[0].hypothesis.class_id.c_str(), dist, dirs[k], ss, ss <= dec_vis_s_ ? " visible" : "");
       v.push_back({dist, b});
     }
     std::sort(v.begin(), v.end());
@@ -839,7 +860,7 @@ class LowRlNode : public rclcpp::Node {
     del.action = visualization_msgs::msg::Marker::DELETEALL;
     ma.markers.push_back(del);
     const auto& ob = dec_up_->last_objects();
-    for (size_t i = 0; i < ob.size() && !instruction_.empty(); ++i) {
+    for (size_t i = 0; i < ob.size() && (!instruction_.empty() || dec_obj_always_); ++i) {
       float x = 0.f, y = 0.f;
       if (!env_->cell_xy(ob[i].vp, &x, &y)) continue;
       for (int k = 0; k < 2; ++k) {
@@ -982,7 +1003,9 @@ class LowRlNode : public rclcpp::Node {
   double obj_stale_s_ = 600.0;
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
-  bool obj_dirty_ = false;   // 지시가 바뀌어 물체 후보를 이번 걸음에 새로 채울 것
+  bool obj_dirty_ = false;
+  bool dec_obj_always_ = false;   // decider_obj_always
+  double dec_vis_s_ = 1.0;        // decider_vis_s   // 지시가 바뀌어 물체 후보를 이번 걸음에 새로 채울 것
   bool goto_active_ = false, goto_resume_ = false, facing_ = false, face_valid_ = false;
   double face_x_ = 0.0, face_y_ = 0.0, face_tol_ = 0.15, face_timeout_s_ = 5.0, face_w_min_ = 0.4, facing_t0_ = 0.0;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_face_;

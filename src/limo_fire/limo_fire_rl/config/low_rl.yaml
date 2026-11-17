@@ -11,6 +11,10 @@ low_rl:
     decider_max_cands: 6      # 요청에 넣는 후보 수 상한 (0 = 다) — 시뮬 위층 비교에서 6 이 가장 빠름 (upper_lora/README), 라벨 굴리기(dec_rollout)와 같은 값
     decider_hold_extra: 5     # 걸음 — 목표가 죽었는데 답이 오는 중이면 (걸음으로 잰 답 지연 + 이것)까지 기다림, 규칙이 대신 안 고름 (−1 = 바로 대신)
     decider_ask_lead_s: 1.0   # s — event: 남은 길 / 0.98 m/s ≤ 답 지연 + 이것 이면 미리 물음 (닿기 전에 답, −1 = 끔 — 남은 1 m 만)
+    decider_obj_max: 3        # 지시가 있을 때 물체 후보 칸 (지도 물체 모든 클래스 + 지금 보이는 사람 따라가기, 힌트 클래스 먼저 · 많으면 가깝고 먼 것 고르게) — 프론티어는 남은 칸
+    decider_obj_always: false # true = 지시 없어도 물체 후보 (false 면 지시 없는 탐사 요청은 예전과 바이트 같음)
+    decider_vis_s: 1.0        # s — 이 안에 본 물체 = 지금 보임 (요청 vis)
+    decider_obj_stale_s: 600.0  # s — 이보다 오래 안 본 물체는 물체 후보에서 뺌
     decider_timeout: 8.0      # s, 이보다 늦은 답은 버림 (지금 목표 그대로)
     decider_input: both       # 지도 사진 + 후보 글 (combine_run --decider-input both). all(카메라 그림)은 시뮬 장면을 광선으로 칠한 그림이라 실물에 없음
     decider_px: 288           # 지도 사진 한 변 — 그림 약 81 토큰

@@ -12,7 +12,7 @@
 //   nav2 — 저장 지도 위 주행(navigation.launch.xml: map_server + AMCL + Nav2): NavigateToPose 액션
 //   explore — 탐사 중(explore_fuel_rl.launch.xml: Cartographer + low_rl, Nav2 없음): 지시 글(~/instruction)과 풀어 낸 클래스(~/target_class)만 low_rl 에 넘기고,
 //             판단 모델이 후보 목록(그 물체 옆 설 자리 + 프론티어)에서 고른다 (low_decider.h 물체 후보). direct: true 면 예전처럼 설 자리를 ~/goto 로 바로
-// 지도에 없으면: explore_topic(low_rl ~/instruction)에 글을 넘겨 탐사로 찾게 하고(판단 모델 글에 지시 + 아는 물체가 들어감),
+// (탐사 모드 클래스는 판단 모델 힌트일 뿐 — 글 전체나 글 안의 별칭·클래스 이름) 지도에 없으면: explore_topic(low_rl ~/instruction)에 글을 넘겨 탐사로 찾게 하고(판단 모델 글에 지시 + 아는 물체가 들어감),
 //   물체 지도가 바뀔 때마다(이름) · requery_s 마다(설명 검색) 다시 찾아 나타나는 즉시 그리로 간다. 빈 글을 주면 지시를 지움.
 // 상태: ~/status (std_msgs/String, 한글 한 줄)
 #include <algorithm>
@@ -166,18 +166,26 @@ class ObjectGoto : public rclcpp::Node {
     } catch (const tf2::TransformException &) {return std::nullopt;}
   }
 
-  // 글 → 클래스 이름 (별칭 · 클래스 이름 그대로). 없으면 빈 글
+  // 글 → 클래스 이름 (별칭 · 클래스 이름). 글 전체가 같으면 그것, 아니면 글 안에 든 가장 긴 별칭·클래스 이름 ("가장 먼 의자로 가서 멈춰" → chair,
+  // "사람 따라가" → person). 없으면 빈 글. 탐사 모드에선 판단 모델에 주는 힌트일 뿐 (무엇을 할지는 판단 모델이 지시 글을 보고 고름)
   std::string class_of(const std::string & text) const {
     const std::string t = norm(text);
-    for (const auto & a : aliases_) {
-      if (norm(a.first) == t) {return a.second;}
-    }
+    std::vector<std::pair<std::string, std::string>> names;   // (이름, 클래스)
+    for (const auto & a : aliases_) {names.emplace_back(norm(a.first), a.second);}
     if (objects_) {
       for (const auto & d : objects_->detections) {
-        if (!d.results.empty() && norm(d.results[0].hypothesis.class_id) == t) {return d.results[0].hypothesis.class_id;}
+        if (!d.results.empty()) {names.emplace_back(norm(d.results[0].hypothesis.class_id), d.results[0].hypothesis.class_id);}
       }
     }
-    return "";
+    for (const auto & n : names) {
+      if (n.first == t) {return n.second;}
+    }
+    std::string best;
+    size_t best_len = 0;
+    for (const auto & n : names) {
+      if (n.first.size() > best_len && t.find(n.first) != std::string::npos) {best = n.second; best_len = n.first.size();}
+    }
+    return best;
   }
 
   void on_goal(const std::string & text) {

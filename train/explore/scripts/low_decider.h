@@ -54,15 +54,21 @@ struct Params {
   int max_cands = 6;        // 후보 모드: 요청에 넣는 후보 수 상한 (0 = 다). 기본 6 — 위층 비교(upper_lora/README, 빌드 1f275bf)에서 AUC180 이 후보 다 보다 +0.026, 토큰도 적음
   int order = 0;            // 후보 모드 글자 차례: 0 = 후보 점수 순 (cand::build) · 1 = 길 거리 순            // 후보 모드 결정 기록: 최근 K 개 결정(언제 · 고른 번호의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 가장 최근)로 — 0 = 끔
   int image = 0;            // 후보 모드 사진 꼴: 0 = A (지금 지도 한 장) · 1 = B (2 × 2 칸: 지금 · 5 · 15 · 30 s 전, 같은 범위 — 토큰 수 같음, 칸마다 해상도 반)
-  // 물체 찾기 지시 (실물 노드 ~/instruction). 비면 글이 예전과 바이트까지 같음 — 차면 "instruction" · "known_objects" 칸을 넣고 질문을 "빨리 찾기"로
+  // 사용자 지시 (실물 노드 ~/instruction — 아무 글: "가장 먼 의자로", "사람 따라가", "탐사해", "TV 옆으로"). 비면 글이 예전과 바이트까지 같음 —
+  // 차면 지시를 그대로 "instruction" 칸에, 물체 후보(아래)·"known_objects" 를 넣고 질문을 "지시를 가장 잘 따르는 후보"로. 무엇을 할지는 판단 모델이 고름
   std::string instruction;
+  std::string class_hint;   // 선택: 지시에서 풀어 낸 클래스 (object_goto 별칭·설명 검색). 그 클래스 물체를 물체 후보 칸 앞에 — 비어도 됨 (모든 클래스가 후보)
+  int obj_max = 3;          // 물체 후보 칸 수 (따라가기 후보 포함, 합쳐 max_cands — 프론티어는 남은 칸)
+  bool obj_always = false;  // 지시가 없어도 물체 후보를 넣음 (기본 끔 — 지시 없는 탐사 요청은 예전과 바이트 같음)
+  float vis_s = 1.0f;       // 이 안에 본 물체 = 지금 보임 (vis)
   std::vector<std::string> known_objects;   // "cup 1.2 m ahead-left" 꼴 짧은 글 (노드가 물체 지도에서 만듦)
   // 물체 후보 (지시가 있을 때만): 지시에 맞는 지도 위 물체의 설 자리. 후보 목록 앞 칸에 들어가 프론티어 후보와 섞임 (합쳐 max_cands)
   struct Obj {
     std::string oid, cls;   // "chair-1" · "chair"
     float x = 0, y = 0;     // 물체 자리 (지도 m)
     float seen_s = 0;       // 마지막으로 본 뒤 (s)
-    float match = 1;        // 지시와 맞는 정도 (클래스 이름 = 1, 설명 글 검색이면 SigLIP2 점수)
+    float match = 0;        // 1 = class_hint 클래스 (물체 후보 칸 앞에)
+    bool follow = false;    // 따라가기 후보: 지금 보이는 사람 (노드가 실시간 탐지에서) — 고르면 노드가 그 사람을 약 1 m 뒤에서 따라감
     int vp = -1;            // 설 자리 칸 (build_cand 가 채움)
     float len_m = 0;        // 로봇에서 설 자리까지 길 (m, 빈 칸 BFS)
   };
@@ -287,13 +293,13 @@ class Upper {
   bool build_cand(const lxc::View& v, lxc::Ctl& ctl, Req* r) {
     const cand::Out& co = ctl.build_cands(v);
     const sim::EnvState& s = *v.s;
-    if (p_.instruction.empty() || p_.objects.empty()) {   // 지시 없음: 예전과 같은 요청 (바이트 같음)
+    if ((p_.instruction.empty() && !p_.obj_always) || p_.objects.empty()) {   // 지시 없음: 예전과 같은 요청 (바이트 같음)
       obj_req_.clear();
       if (co.c.size() < 2) return false;
       return render_cand(p_, co.c, ctl.cand_mem(), decs_, hist_, cam_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
     }
     Params P = p_;
-    P.objects = object_spots(v, co);
+    P.objects = pick_objects(object_spots(v, co), p_.obj_max);
     obj_req_ = P.objects;
     if (co.c.size() + P.objects.size() < 2) return false;
     return render_cand(P, co.c, ctl.cand_mem(), decs_, hist_, cam_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
@@ -327,7 +333,20 @@ class Upper {
       e.len_m = (bd % 1000000) * c.res;
       out.push_back(e);
     }
-    std::stable_sort(out.begin(), out.end(), [](const Params::Obj& a, const Params::Obj& b) { return a.match != b.match ? a.match > b.match : a.len_m < b.len_m; });
+    return out;
+  }
+  // 물체 후보 칸 고르기 (k 칸): 따라가기 후보(가까운 사람부터) → class_hint 클래스 → 나머지 가까운 것. 한 무리가 남은 칸보다 많으면 길 거리 순으로
+  // 고르게 벌려 뽑음 (가장 가까운 것과 가장 먼 것을 늘 넣음 — "가장 먼 의자" 같은 지시도 답이 후보 안에 있게)
+  static std::vector<Params::Obj> pick_objects(std::vector<Params::Obj> in, int k) {
+    std::vector<Params::Obj> out;
+    std::stable_sort(in.begin(), in.end(), [](const Params::Obj& a, const Params::Obj& b) { return a.len_m < b.len_m; });
+    for (int g = 0; g < 3 && (int)out.size() < k; ++g) {
+      std::vector<Params::Obj> grp;
+      for (const auto& o : in) if ((g == 0 && o.follow) || (g == 1 && !o.follow && o.match >= 1.f) || (g == 2 && !o.follow && o.match < 1.f)) grp.push_back(o);
+      const int room = k - (int)out.size(), n = (int)grp.size();
+      if (n <= room) { out.insert(out.end(), grp.begin(), grp.end()); continue; }
+      for (int i = 0; i < room; ++i) out.push_back(grp[(size_t)(room == 1 ? 0 : (int)std::lround((double)i * (n - 1) / (room - 1)))]);
+    }
     return out;
   }
   // 요청 본문 그리기 (후보 모드) — 노드·시뮬(build_cand)과 라벨 다시 그리기(upper_lora/rollout/req_render: 갈래 굴리기가 남긴 원시 상태)가 같은 함수를 씀.
@@ -350,7 +369,7 @@ class Upper {
     std::vector<int> cells;
     oj cl = oj::array();
     // 물체 후보 (지시가 있을 때만, build_cand 가 설 자리를 채움): 앞 글자들. 프론티어 후보는 남은 칸에 (합쳐 max_cands)
-    const size_t n_obj = P.instruction.empty() ? 0 : std::min(P.objects.size(), (size_t)(P.max_cands > 0 ? std::max(1, P.max_cands / 2) : 3));
+    const size_t n_obj = P.instruction.empty() && !P.obj_always ? 0 : std::min(P.objects.size(), (size_t)std::max(0, P.obj_max));
     for (size_t i = 0; i < n_obj; ++i) {
       const Params::Obj& ob = P.objects[i];
       dec::Cand d;
@@ -365,10 +384,11 @@ class Upper {
       const auto [dist, ang] = rel(ob.x, ob.y);
       oj o;
       o["id"] = std::string(1, d.key);
-      o["kind"] = "object";
+      o["kind"] = ob.follow ? "follow" : "object";
       o["object"] = ob.cls;
-      if (P.compact) { o["len"] = rnd(ob.len_m, 0.1); o["bear"] = ang; o["seen_s"] = rnd(ob.seen_s, 1.0); o["match"] = rnd(ob.match, 0.01); }
-      else { o["path_length_m"] = rnd(ob.len_m, 0.1); o["bearing_deg_left_positive"] = ang; o["distance_m"] = rnd(dist, 0.1); o["seconds_since_seen"] = rnd(ob.seen_s, 1.0); o["match"] = rnd(ob.match, 0.01); }
+      o["oid"] = ob.oid;
+      if (P.compact) { o["len"] = rnd(ob.len_m, 0.1); o["bear"] = ang; o["dist"] = rnd(dist, 0.1); o["seen_s"] = rnd(ob.seen_s, 1.0); o["vis"] = ob.seen_s <= P.vis_s; }
+      else { o["path_length_m"] = rnd(ob.len_m, 0.1); o["bearing_deg_left_positive"] = ang; o["distance_m"] = rnd(dist, 0.1); o["seconds_since_seen"] = rnd(ob.seen_s, 1.0); o["visible_now"] = ob.seen_s <= P.vis_s; }
       cl.push_back(o);
     }
     std::vector<size_t> ord;   // 글자 차례 → C 번호
@@ -474,8 +494,12 @@ class Upper {
       }
     }
     oj st;
-    st["task"] = "A small wheeled robot is exploring an unknown indoor floor. Its job is to map the whole floor in the shortest total time. It drives at about 1 m/s and "
-                 "turning around costs a few seconds. A frontier is the edge between mapped free space and unmapped space; each candidate is a spot from which a frontier can be seen.";
+    st["task"] = P.instruction.empty()
+                     ? "A small wheeled robot is exploring an unknown indoor floor. Its job is to map the whole floor in the shortest total time. It drives at about 1 m/s and "
+                       "turning around costs a few seconds. A frontier is the edge between mapped free space and unmapped space; each candidate is a spot from which a frontier can be seen."
+                     : "A small wheeled robot drives on an indoor floor that it maps as it goes, and carries out the user's instruction (field instruction, written by the user, "
+                       "any language). Exploring means mapping the whole floor in the shortest total time. It drives at about 1 m/s and turning around costs a few seconds. "
+                       "A frontier is the edge between mapped free space and unmapped space; a frontier candidate is a spot from which a frontier can be seen.";
     std::vector<uint8_t> png;
     if (P.input != dec::kText) {
       int kb[4] = {1 << 30, 1 << 30, -1, -1};
@@ -529,12 +553,12 @@ class Upper {
                                "inside_avoid_zone = near a spot the robot is currently avoiding after a failure; robot_was_here_before = the robot already stood near it.";
       // 짧은 꼴: 바뀌지 않는 글(힌트)을 바뀌는 후보 앞에 — 서버 앞부분 캐시(llama-server decision checkpoint · images-last 패치)가 더 길게 이어짐.
       // 최근 목표 목록은 빼고(지도 사진의 ✓ · × 표시와 결정 기록이 같은 것을 말함) 결정 기록만 — 로봇 Orin 에서 요청 하나 약 2 s 안 (upper_lora/README "요청 꼴과 지연")
-      if (P.compact && P.hint) st["hint"] = kHint;
+      if (P.compact && P.hint) st["hint"] = P.instruction.empty() ? std::string(kHint) : std::string("When exploring: ") + kHint;
       st["candidates"] = cl;
       if (!P.compact) st["recent_goals_newest_first"] = gl;
       if (P.log_k > 0) st["decision_log_newest_first"] = dl;
     }
-    if (P.hint && !(P.compact && P.input != dec::kImage)) st["hint"] = kHint;
+    if (P.hint && !(P.compact && P.input != dec::kImage)) st["hint"] = P.instruction.empty() ? std::string(kHint) : std::string("When exploring: ") + kHint;
     std::vector<uint8_t> cpng;
     if (P.cam > 0 && cam && P.input != dec::kText) {   // 둘째 사진: 후보별 지난 장면 (기하 검색)
       std::vector<dec::CamTile> tiles;
@@ -559,20 +583,26 @@ class Upper {
     }
     oj body;
     if (!P.instruction.empty()) {
-      st["instruction"] = n_obj > 0 ? "The user asked the robot to go to: \"" + P.instruction + "\". Candidates with kind = object are spots next to matching objects already on "
-                                          "the robot's object map (object = its class, match = how well it fits the request, 1 = same class); pick one of them to go there, or a "
-                                          "frontier candidate if none fits. On the map image object candidates are cyan squares (frontier candidates are yellow dots)."
-                                    : "The user asked the robot to find: \"" + P.instruction + "\". It is not on the robot's object map yet. Prefer candidates that are likely to reveal it soon.";
+      st["instruction"] = P.instruction;   // 사용자 글 그대로
+      if (!P.class_hint.empty()) st["class_hint"] = P.class_hint;
       st["known_objects"] = P.known_objects;
     }
+    if (!P.instruction.empty() || n_obj > 0)
+      st["candidate_kinds"] = n_obj > 0 ? std::string("kind = object: a spot next to an object on the robot's object map built from its camera (object = class, oid = map id, ") +
+                                              (P.compact ? "len = path m, bear = bearing deg left +, dist = straight-line m, seen_s = seconds since the camera last saw it, vis = seen right now"
+                                                         : "visible_now = seen by the camera right now") +
+                                              "); choosing it drives there, turns to the object and stops. kind = follow: a person seen right now; choosing it makes the robot keep "
+                                              "following that person at about 1 m. kind = frontier: a spot that maps unknown space (exploring). On the map image object and follow "
+                                              "candidates are cyan squares, frontier candidates yellow dots."
+                                        : "No object on the robot's object map is a candidate right now; all candidates are frontier spots (exploring).";
     body["state"] = st;
     if (!png.empty()) body["images"] = oj::array({dec::png_uri(png)});
     if (!cpng.empty()) body["images"].push_back(dec::png_uri(cpng));
     oj crit = oj::object();
     for (const auto& d : dc) crit[std::string(1, d.key)] = nullptr;
     body["questions"]["pick"] = oj{{"type", "choice"}, {"instructions", P.instruction.empty() ? "Which candidate spot should the robot drive to next so that the whole floor gets mapped in the least total time?"
-                                                                                               : n_obj > 0 ? "Which candidate should the robot drive to next to reach the requested object as soon as possible?"
-                                                                                               : "Which candidate spot should the robot drive to next to find the requested object as soon as possible?"},
+                                                                                               : "Which candidate best carries out the user's instruction next? If the instruction is to explore, or what it asks "
+                                                                                                 "for is not among the candidates, pick the spot that maps the floor (and so most likely reveals it) fastest."},
                                    {"criteria", crit}};
     r->body = body.dump();
     return true;
@@ -612,6 +642,7 @@ class Upper {
     wait_ = false;
   }
   void set_known_objects(const std::vector<std::string>& k) { p_.known_objects = k; }
+  void set_class_hint(const std::string& c) { p_.class_hint = c; }
   void set_objects(const std::vector<Params::Obj>& o) { p_.objects = o; }
   // 판단 모델이 물체 후보를 골랐으면 그 설 자리 (한 번 꺼내면 지움) — 노드는 ~/goto 처럼 그 자리로 감
   bool take_object_pick(Params::Obj* o) { if (!obj_pick_) return false; *o = obj_last_; obj_pick_ = false; return true; }
