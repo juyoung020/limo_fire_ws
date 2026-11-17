@@ -62,4 +62,12 @@ ament_target_dependencies(explore_frontier rclcpp rclcpp_action nav2_msgs nav_ms
 install(TARGETS explore_frontier low_rl DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config rviz DESTINATION share/${PROJECT_NAME})
 
+if(BUILD_TESTING)
+  # 리모컨 받기 시험 (rc_watch.h — 다시 구독 판단 · QoS 호환 · 받는 노드 다시 만들기): colcon test --packages-select limo_fire_rl
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_rc_watch test/test_rc_watch.cpp TIMEOUT 60)
+  target_include_directories(test_rc_watch PRIVATE include)
+  ament_target_dependencies(test_rc_watch rclcpp sensor_msgs)
+endif()
+
 ament_package()

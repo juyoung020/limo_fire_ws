@@ -45,6 +45,7 @@ struct Params {
   float ask_lead_s = 1.0f;  // event: 남은 길 / ask_v ≤ 답 지연(걸음으로 잰 것의 이동 평균) + 이것 이면 미리 물음 (approach_m 과 함께 — 먼저 닿는 쪽)
   float ask_v = 0.98f;      // m/s — 남은 길 → 남은 시간 (fuel · cand 가는 시간 v_eff 와 같은 잰 값)
   int delay0_steps = 20;    // 답 지연 첫 어림 (걸음 — 2 s, 로봇 Orin v1 꼴 1.5–2.2 s)
+  int fail_max = 3;         // 답 실패(시간 끝 · 꼴 틀림 · 후보 사라짐)가 이만큼 잇따르면 기다리지 않고 규칙이 바로 대신 (서버 꺼짐에 매달리지 않게) — 답이 하나 맞으면 0 으로
   int hold_extra = 5;       // 목표가 죽었는데 답이 오는 중이면 (보낸 뒤 지연 어림 + 이것) 걸음까지 기다림 — 규칙이 대신 고르지 않음. < 0 = 바로 대신 (옛 동작)
   float switch_ratio = 1.5f;
   int max_steps = 100;      // event 모드 최대 간격 (걸음 — 10 s)
@@ -142,11 +143,12 @@ class Upper {
       last_ms_ = a.ms;
       delay_ema_ = n_delay_ == 0 ? (double)(s.step - req_.step) : 0.7 * delay_ema_ + 0.3 * (double)(s.step - req_.step);   // 걸음으로 잰 답 지연
       ++n_delay_;
-      if (s.step - req_.step > p_.timeout_steps) { ++n_timeout_; continue; }
-      if (!a.ok) { ++n_fail_; last_err_ = a.err; continue; }
+      if (s.step - req_.step > p_.timeout_steps) { ++n_timeout_; ++streak_; continue; }
+      if (!a.ok) { ++n_fail_; ++streak_; last_err_ = a.err; if (streak_ < p_.fail_max) ask_ = "previous answer was invalid"; continue; }
       const int k = a.choice[0] - 'A';
-      if (k < 0 || k >= (int)req_.cells.size()) { ++n_fail_; last_err_ = "letter out of range"; continue; }
+      if (k < 0 || k >= (int)req_.cells.size()) { ++n_fail_; ++streak_; last_err_ = "letter out of range"; if (streak_ < p_.fail_max) ask_ = "previous answer was invalid"; continue; }
       ++n_ans_;
+      streak_ = 0;
       last_choice_ = a.choice;   // 그림용 (RViz ~/candidates): 마지막 답 글자 · 그 후보 번호 · 걸음
       last_pick_id_ = p_.cand ? req_.ids[(size_t)k] : -1;
       last_ans_step_ = s.step;
@@ -159,7 +161,7 @@ class Upper {
         ctl.build_cands(v);
         int idx = ctl.cand_index(req_.ids[(size_t)k]);
         if (idx < 0) idx = match_cand(v, ctl, req_.cells[(size_t)k]);
-        if (idx < 0) { ++n_nomatch_; continue; }
+        if (idx < 0) { ++n_nomatch_; ++streak_; if (streak_ < p_.fail_max) ask_ = "chosen candidate is gone"; continue; }   // 답의 후보가 사라짐 — 옛 자리로 안 가고 다시 물음
         { const cand::Cand& q = ctl.cands().c[(size_t)idx]; n_pick_failed_ += q.aborts > 0 || q.in_avoid; n_pick_top_ += idx == 0; }   // 평가 셈: 실패 기록 후보 · 규칙 1 순위
         { const int prev = ctl.cur_id(); *cmd = ctl.go_cand(v, idx, why); note_dec(v, ctl, prev, 0); }
         changed = true;
@@ -170,7 +172,7 @@ class Upper {
       *cmd = ctl.decide_slot(v, slot, why);
       changed = true;
     }
-    if (wait_ && s.step - req_.step > p_.timeout_steps) { wait_ = false; ++n_timeout_; }
+    if (wait_ && s.step - req_.step > p_.timeout_steps) { wait_ = false; ++n_timeout_; ++streak_; }
     if (ext_) {   // 목표를 밖(노드 — 사람 따라가기)이 쥠: 답만 받고, 목표 죽음·사건 물음은 안 함. 밖이 ask() 로 부탁한 물음만
       if (!wait_ && !ask_.empty() && ctl.due(s)) { const std::string w = ask_; ask_.clear(); send_req(v, F, ctl, tr, w); }
       return changed;
@@ -179,8 +181,10 @@ class Upper {
     const bool dead = !changed && !picked_obj && ctl.due(s) && (ctl.redo_pending() || !ctl.live(s));
     // 목표가 죽었는데 오는 답이 없으면 지금 묻고 (판 처음 포함), 답이 오는 중이면 보낸 뒤 지연 어림 + hold_extra 걸음까지 기다림: 목표는 판단 모델 답이 정함.
     // 그 사이 아래층은 지금 명령 그대로 (닿았으면 제자리 · 막혔으면 막힘 처리 그대로). 요청을 못 만들면 (후보 0 · 1 개) 바로 규칙
-    if (dead && !wait_ && p_.hold_extra >= 0) send_req(v, F, ctl, tr, last_send_ < 0 ? "start" : "goal failed or lost");
-    const bool hold = dead && p_.hold_extra >= 0 && wait_ && s.step - req_.step <= (int)(delay_ema() + 0.5) + p_.hold_extra;
+    // 답이 fail_max 번 잇따라 틀렸으면(서버 꺼짐 · 느림 · 꼴 틀림) 기다리지 않고 바로 규칙 — 요청은 사건 때 계속 보내 서버가 살아나면 다시 판단 모델로
+    const bool can_hold = p_.hold_extra >= 0 && streak_ < p_.fail_max;
+    if (dead && !wait_ && can_hold) send_req(v, F, ctl, tr, last_send_ < 0 ? "start" : "goal failed or lost");
+    const bool hold = dead && can_hold && wait_ && s.step - req_.step <= (int)(delay_ema() + 0.5) + p_.hold_extra;
     if (hold) ++n_hold_;
     if (dead && !hold) {   // 기다리지 않고 slot0 차례로 (combine_run 의 slot0 위층과 같은 고름)
       {   // 셈: 왜 목표가 죽었나 (끝난 목표의 까닭 cand::Why · 9 = 끝 기록 없이 경로·목표 칸 사라짐) · 답이 오는 중이었나
@@ -188,6 +192,11 @@ class Upper {
         if (p_.cand && ctl.redo_pending() && !ctl.cand_mem().goals.empty() && ctl.cand_mem().goals.back().end >= 0) w9 = ctl.cand_mem().goals.back().why;
         ++n_fb_why_[w9 >= 0 && w9 < 10 ? w9 : 9];
         n_fb_wait_ += wait_;
+      }
+      if (p_.cand && fallback_object(v, ctl)) {   // 지시가 있고 힌트 클래스 물체에 갈 수 있으면 규칙도 그리로 (가장 가까운 것 — 노드가 take_object_pick 으로 감)
+        ++n_fallback_;
+        ++n_fb_obj_;
+        return changed;
       }
       if (p_.cand) { ctl.build_cands(v); const int prev = ctl.cur_id(); *cmd = ctl.go_cand(v, -1, why); note_dec(v, ctl, prev, 1); }   // 후보 모드 규칙(cand_pick)
       else *cmd = ctl.decide_slot(v, -1, why);
@@ -206,6 +215,19 @@ class Upper {
     }
     if (!trig.empty()) send_req(v, F, ctl, tr, trig);
     return changed;
+  }
+  // 규칙 대신 고름의 지시 쪽: 지시 · 힌트 클래스가 있고 그 클래스 물체 설 자리가 있으면 길이 가장 짧은 것을 물체 답처럼 (따라가기 후보는 안 고름 — 판단 모델만)
+  bool fallback_object(const lxc::View& v, lxc::Ctl& ctl) {
+    if (p_.instruction.empty() || p_.class_hint.empty() || p_.objects.empty()) return false;
+    const cand::Out& co = ctl.build_cands(v);
+    const Params::Obj* best = nullptr;
+    const std::vector<Params::Obj> sp = object_spots(v, co);
+    for (const auto& o : sp)
+      if (!o.follow && o.match >= 1.f && (!best || o.len_m < best->len_m)) best = &o;
+    if (!best) return false;
+    obj_last_ = *best;
+    obj_pick_ = true;
+    return true;
   }
   // 요청 하나 만들어 보냄 (못 만들면 — 후보 0 · 1 개 — 안 보냄, wait_ 그대로 거짓)
   void send_req(const lxc::View& v, const float* F, lxc::Ctl& ctl, Transport& tr, const std::string& trig) {
@@ -667,7 +689,9 @@ class Upper {
   long n_fb_why(int k) const { return n_fb_why_[k]; }   // 규칙이 대신 고른 까닭별 수 (cand::Why · 9 = 경로·목표 칸 사라짐)
   long n_fb_wait() const { return n_fb_wait_; }         // 그중 답이 오는 중이던 수
   long n_src(int k) const { return n_src_[k]; }        // 후보 모드 결정 수: 0 판단 모델 답 · 1 규칙
-  long n_hold() const { return n_hold_; }               // 목표가 죽었지만 답을 기다린 걸음 수
+  long n_hold() const { return n_hold_; }
+  long n_fb_obj() const { return n_fb_obj_; }         // 규칙 대신 고름 중 지시 물체로 간 수
+  int streak() const { return streak_; }              // 잇따른 답 실패 수 (fail_max 넘으면 규칙이 바로 대신)               // 목표가 죽었지만 답을 기다린 걸음 수
   double delay_ema() const { return n_delay_ ? delay_ema_ : (double)p_.delay0_steps; }   // 답 지연 어림 (걸음)
   long n_late() const { return n_late_; }
   double last_ms() const { return last_ms_; }
@@ -698,6 +722,8 @@ class Upper {
   bool obj_pick_ = false;
   Req req_;
   bool wait_ = false, instr_new_ = false, ext_ = false;
+  int streak_ = 0;
+  long n_fb_obj_ = 0;
   std::string ask_;
   int last_send_ = -1;
   int approach_goal_ = -1, gone_id_ = -1, better_id_ = -1;

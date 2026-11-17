@@ -29,6 +29,13 @@ low_rl:
     follow_max_speed: 0.6     # m/s — 따라가는 동안 속도 한도
     follow_reask_m: 1.5       # m — 고른 뒤 사람이 이만큼 옮기면 판단 모델에 다시 물음 (계속 따라갈지)
     follow_clear: 0.25        # m — 설 자리 둘레 빈 칸 반경
+    # 지시 일 감독 (scripts/task_sup.h): 물체로 가기 · 바라보기 · 못 가면 실패 · 지시 시간 한도 (뒤로 물러나지 않음)
+    goto_stall_s: 10.0        # s — 이 동안 설 자리에 goto_stall_m 더 못 다가가면 못 감
+    goto_stall_m: 0.3
+    goto_nopath_s: 3.0        # s — 경로 없음이 이만큼 이어지면 못 감
+    goto_max_fail: 3          # 한 지시에서 못 감이 이만큼이면 멈추고 "못 감"
+    goto_fail_ttl_s: 120.0    # s — 못 간 물체(같은 번호 · 같은 클래스 0.5 m 안)를 후보에서 빼는 시간
+    instruction_limit_s: 300.0  # s — 지시 하나를 이만큼 못 끝내면 멈추고 "못 찾음" (0 = 끔)
     decider_timeout: 8.0      # s, 이보다 늦은 답은 버림 (지금 목표 그대로)
     decider_input: both       # 지도 사진 + 후보 글 (combine_run --decider-input both). all(카메라 그림)은 시뮬 장면을 광선으로 칠한 그림이라 실물에 없음
     decider_px: 288           # 지도 사진 한 변 — 그림 약 81 토큰
@@ -56,6 +63,7 @@ low_rl:
     rc_button: 1
     rc_auto_value: 2
     rc_timeout: 0.5           # s, /rc_state 가 이만큼 안 오면 오토 아님으로 (멈추고 꺼짐)
+    rc_resubscribe_s: 2.0     # s, /rc_state 발행자가 있는데 이만큼 못 받으면 구독을 새로 만듦 (구독은 best effort — RELIABLE 발행자와도 맞음, include/limo_fire_rl/rc_watch.h)
     require_rc: true          # false 는 시뮬·녹화에 /rc_state 가 없을 때만
     input_timeout: 0.3        # s, 라이다·TF·오도메트리 가 이만큼 없으면 명령 0 (돌아오면 이어 감)
     tf_timeout: 0.2           # s, 장 시각의 map → base_link 기다림 (막지 않음 — 장을 줄에 두고 5 ms 마다 다시 봄) — 잠정

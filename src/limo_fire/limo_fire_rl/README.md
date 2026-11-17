@@ -179,6 +179,24 @@ ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가�
   두 쪽 따라가기 명령·경로 비트 같음, 따라간 거리·모드·놓침·사람 닿음을 `FOLLOW` 줄로.
 - 설명 글 검색(SigLIP2, "빨간 컵" 같은 글)은 다음 단계 — 지금은 클래스 이름·별칭만.
 
+### 실패 상황 표 (판단 모델 · 지시 · 따라가기)
+
+정상 길만이 아니라 실패를 먼저 보고 짰다. 지시 일 감독은 `scripts/task_sup.h`, 따라가기는 `scripts/obj_follow.h`, 판단 모델 답 처리는 `scripts/low_decider.h` — 노드와 시뮬이 같은 코드.
+시뮬 확인은 `low_explore_check --upper decider --node-obs --dec-instr "의자로 가" --dec-class-hint chair --dec-obj … --goto` 에 아래 주입을 더해 bookstore · small-house × 씨앗 1 · 2 (1200 걸음),
+모든 판 시뮬 == 실물 비트 (2026-11-17, 결과는 GOTO · DECSRC · FOLLOW 줄).
+
+| 상황 | 하는 일 | 시뮬 주입 · 결과 |
+|---|---|---|
+| 판단 모델 서버 꺼짐 | 답 실패가 `fail_max`(3) 번 잇따르면 기다리지 않고 규칙이 바로 대신 — 지시 · 힌트 클래스 물체에 갈 수 있으면 가장 가까운 그 물체로, 아니면 탐사 규칙. 요청은 사건 때 계속 보내 살아나면 다시 판단 모델로. ~/status 에 실패 수 | `--dec-fake down`: 4 판 모두 규칙이 지시 물체로 가 닿음, 지시 없을 때도 탐사 이어 감(멈춤 없음) |
+| 답이 느림 (8 s 넘음) | 늦은 답은 버리고 같은 길 | `--dec-latency 9`: 4 판 중 3 판 닿음, 1 판은 못 감 1 번 뒤 닿음 |
+| 답 꼴이 틀림 · 없는 글자 | 바로 다시 물음(잇따라 3 번까지), 그 뒤 위와 같이 규칙 | `--dec-fake garbled` · `oor`: 8 판 중 6 판 닿음, 2 판(bookstore 씨앗 1 — 그 장면에서 갈 수 없는 의자 자리)은 못 감 3 번 뒤 포기 |
+| 답의 후보가 사라짐 · 옮김 | 옛 자리로 안 가고 다시 물음 ("chosen candidate is gone" · 물체는 지도에서 빠지거나 1 m 넘게 옮겼으면 "chosen object is gone or moved") | `--obj-move 15,3,0`: 4 판 모두 다시 물은 뒤 닿음 |
+| 설 자리에 못 감 (막힘 · 경로 없음) | `goto_stall_s` 동안 `goto_stall_m` 더 못 다가가거나 경로 없음 `goto_nopath_s` → 못 감: 뒤로 물러나지 않고 그 물체를 `goto_fail_ttl_s` 빼고 다시 물음, 한 지시에서 `goto_max_fail` 번이면 멈추고 "못 감" | `--goto-stall-s 1`: 3 판 못 감 3 번 → 포기, 1 판은 닿음 |
+| 지시한 물체가 끝내 없음 | 탐사하며 찾고 `instruction_limit_s` 넘으면 멈추고 "못 찾음". 다 탐사("대충 다 앎")했는데 지시가 남으면 판을 끝내지 않고 물체 후보로 다시 묻고, 맞는 물체도 없으면 "못 찾음" | `--instr-limit 30 --dec-obj chair,60,60`: 4 판 모두 30 s 에 포기. 다 탐사한 경우는 노드에만 (시뮬 판 끝은 시뮬 규칙) |
+| 지시 바뀜 · 지움 | 따라가기 · 물체로 가기를 바로 끝내고 새 지시로 바로 물음 (옛 지시 요청의 답은 버림) | `--instr-at 12:탐사해` · `--instr-at 12:`: 8 판 비트 같음 |
+| 사람을 놓침 · 가림 · 여러 명 | 같은 사람만(지도 번호 → 예측 자리 문), `follow_lost_s` 넘으면 마지막 자리 앞까지 간 뒤 천천히 돌며 찾고 `follow_search_s` 넘으면 멈추고 "놓침" | `--people 3 --follow --dec-fake follow`: 따라간 판에서 최소 거리 0.98 m, 따라가는 중 사람 닿음 0, 놓쳐 포기 1 번씩(2 판) |
+| 리모컨 상태가 안 옴 | best effort 구독(RELIABLE 발행자와 맞음), 나이는 steady 시계, 발행자가 있는데 `rc_resubscribe_s` 못 받으면 구독을 새로 만듦, 켜기 거절 · ~/status 에 나이 · 받은 수 · 발행자 수 | `colcon test --packages-select limo_fire_rl` (test_rc_watch: 다시 구독 판단 · RELIABLE/BEST_EFFORT 발행자 · 받는 노드 5 번 다시 만들기) |
+
 ### 깊이 카메라 층을 볼 것
 
 깊이 카메라 장애물 층(env.yaml `camera_obstacles`, 걸음 0.1 s 마다 갱신 — `update_every_step`)은 후보·닫힘에서 막힌 곳을 뺀다. 층 전용 촘촘한 깊이 격자(`layer_grid`)는 시뮬에서 끝 무렵 길이 더 막혀 기본 끔. 실물 깊이가 시뮬 모델과 다르면(정렬 꺼짐·카메라 숙임 바뀜)

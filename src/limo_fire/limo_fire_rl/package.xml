@@ -26,6 +26,7 @@
   <depend>yaml-cpp</depend>
   <depend>ament_index_cpp</depend>
   <exec_depend>limo_fire_navigation</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

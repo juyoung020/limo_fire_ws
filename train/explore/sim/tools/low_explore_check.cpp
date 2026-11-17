@@ -28,6 +28,7 @@
 #include "coverage.h"
 #include "low_decider.h"
 #include "obj_follow.h"
+#include "task_sup.h"
 #include "low_explore_ctl.h"
 #include "cand_view.h"
 #include "cand_quality.h"
@@ -58,6 +59,8 @@ struct FakeModel : lxd::Transport {
   int lat = 26, now = 0;
   bool first = false;   // --dec-fake A: 늘 글자 A (후보 0 번 = 규칙 1 순위) — 지연 · 주기만의 비용을 잼
   bool follow = false;  // --dec-fake follow: kind follow 후보가 있으면 그 첫 글자 (따라가기 시험), 없으면 해시
+  int fault = 0;        // --dec-fake down: 바로 실패(서버 꺼짐) · garbled: 지연 뒤 꼴 틀린 답 · oor: 없는 글자 'Z' · obj: kind object 첫 글자(없으면 해시)
+  bool obj = false;
   struct P { int ready; lxd::Answer a; std::string body; };
   std::vector<P> q;
   std::vector<std::string> sent;   // 보낸 본문 (두 쪽 비교)
@@ -91,13 +94,16 @@ struct FakeModel : lxd::Transport {
     for (unsigned char ch : r.body) { h ^= ch; h *= 1099511628211ull; }
     lxd::Answer a;
     a.id = r.id;
+    if (fault == 1) { a.ok = false; a.err = "connect: refused"; q.push_back({now, a, r.body}); sent.push_back(r.body); return; }
+    if (fault == 2) { a.ok = false; a.err = "answer shape"; q.push_back({now + lat, a, r.body}); sent.push_back(r.body); return; }
+    if (fault == 3) { a.ok = true; a.choice = "Z"; q.push_back({now + lat, a, r.body}); sent.push_back(r.body); return; }
     a.ok = true;
     a.choice = std::string(1, (char)('A' + (first ? 0 : (int)(h % (uint64_t)(r.cells.size())))));
-    if (follow) {
+    if (follow || obj) {
       const auto j = nlohmann::json::parse(r.body, nullptr, false);
       if (j.is_object() && j.contains("state") && j["state"].contains("candidates"))
         for (const auto& c : j["state"]["candidates"])
-          if (c.contains("kind") && c["kind"] == "follow") { a.choice = c["id"].get<std::string>(); break; }
+          if (c.contains("kind") && c["kind"] == (follow ? "follow" : "object")) { a.choice = c["id"].get<std::string>(); break; }
     }
     q.push_back({now + lat, a, r.body});
     sent.push_back(r.body);
@@ -159,7 +165,12 @@ int main(int argc, char** argv) {
   int dec_px = lxd::Params{}.px;
   std::string dec_input = "both", dec_url;
   std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
-  bool dec_fake_a = false, dec_fake_follow = false, follow_on = false;
+  bool dec_fake_a = false, dec_fake_follow = false, dec_fake_obj = false, follow_on = false, goto_on = false;
+  tsk::Params tsp;
+  int obj_move_step = -1, instr_at_step = -1;
+  std::string instr_at_text;
+  float obj_move_dx = 0.f, obj_move_dy = 0.f;
+  int dec_fault = 0;
   float follow_fov = 1.159f, follow_range = 5.0f;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
   std::string dec_instr;   // --dec-instr "글": 판단 모델 물체 찾기 지시 (실물 노드 ~/instruction) — 요청 본문 비트 비교 확인용
   std::vector<std::string> dec_objs;
@@ -227,8 +238,15 @@ int main(int argc, char** argv) {
     else if (a == "--ep-log") ep_log = nx();
     else if (a == "--contact-log") contact_log = nx();
     else if (a == "--lat-log") lat_log = nx();
-    else if (a == "--dec-fake") { const std::string f = nx(); dec_fake_a = f == "A"; dec_fake_follow = f == "follow"; }
-    else if (a == "--follow") follow_on = true;                 // 시뮬 사람을 물체 지도 사람처럼(카메라 시야·가림) 판단 모델 follow 후보로, 고르면 obj_follow.h 로 따라감 (--people 과 같이)
+    else if (a == "--dec-fake") { const std::string f = nx(); dec_fake_a = f == "A"; dec_fake_follow = f == "follow"; dec_fake_obj = f == "obj";
+                                  dec_fault = f == "down" ? 1 : f == "garbled" ? 2 : f == "oor" ? 3 : 0; }
+    else if (a == "--follow") follow_on = true;
+    else if (a == "--goto") goto_on = true;
+    else if (a == "--instr-at") { const std::string v = nx(); const size_t c = v.find(':'); if (c == std::string::npos) throw std::runtime_error("--instr-at 걸음:글");
+                                  instr_at_step = std::stoi(v.substr(0, c)); instr_at_text = v.substr(c + 1); }   // 시험: 이 걸음에 지시를 바꿈 (빈 글 = 지움)                     // 물체 답이면 노드처럼 그 설 자리로 감 (task_sup.h — 닿음 · 못 감 · 지시 포기를 셈)
+    else if (a == "--goto-stall-s") tsp.stall_s = std::stof(nx());     // 시험: 못 감 판정 시간 (작게 하면 실패 → 빼기 → 다시 물음 → 포기 길을 탐)
+    else if (a == "--instr-limit") tsp.instr_limit_s = std::stof(nx());  // 지시 시간 한도 (s)
+    else if (a == "--obj-move") { if (std::sscanf(nx().c_str(), "%d,%f,%f", &obj_move_step, &obj_move_dx, &obj_move_dy) != 3) throw std::runtime_error("--obj-move 걸음,dx,dy"); }                 // 시뮬 사람을 물체 지도 사람처럼(카메라 시야·가림) 판단 모델 follow 후보로, 고르면 obj_follow.h 로 따라감 (--people 과 같이)
     else if (a == "--follow-fov") follow_fov = std::stof(nx()); // 카메라 가로 화각 (rad) — docs/hardware.md 컬러 66.4°
     else if (a == "--follow-range") follow_range = std::stof(nx());   // 사람 보는 거리 (m) — object_mapper max_depth 5.0
     else if (a == "--dec-instr") dec_instr = nx();
@@ -311,7 +329,12 @@ int main(int argc, char** argv) {
     dp.cand = dec_cand; dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img; dp.log_k = dec_logk;
     if (use_dec && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("--dec-input text · image · both");
     lxd::Upper us(dp), ur(dp);
-    std::vector<lxd::Params::Obj> base_objs;   // --dec-obj (따라가기 시험은 결정마다 사람을 더해 다시 넣음)
+    std::vector<lxd::Params::Obj> base_objs, live_objs;   // --dec-obj (따라가기 시험은 결정마다 사람을 더해 다시 넣음) · 그중 못 간 것 뺀 지금 목록
+    tsk::Goto gs_(tsp), gr_(tsp);
+    tsk::Fails gfail_s(tsp);
+    tsk::Instr ins_s(tsp);
+    if (!dec_instr.empty()) ins_s.start(0.0);
+    long g_start = 0, g_arrive = 0, g_nofail = 0, g_gone = 0, g_moved = 0, g_giveup_fail = 0, g_giveup_time = 0, g_instr_change = 0;
     if (!dec_instr.empty()) { us.set_instruction(dec_instr); ur.set_instruction(dec_instr); }
     us.set_class_hint(dec_hint_cls); ur.set_class_hint(dec_hint_cls);
     if (!dec_objs.empty()) {
@@ -333,6 +356,8 @@ int main(int argc, char** argv) {
     ms.lat = mr.lat = std::max(0, (int)std::lround(dec_lat / dt));
     ms.first = mr.first = dec_fake_a;
     ms.follow = mr.follow = dec_fake_follow;
+    ms.obj = mr.obj = dec_fake_obj;
+    ms.fault = mr.fault = dec_fault;
     // 따라가기 (--follow): 두 쪽 따라가기 (같은 입력 → 같은 명령이어야), 사람별 마지막으로 본 때 · 자리, 셈
     ofl::Follower fs, fr;
     double ps_t[sim::kMaxPeople];
@@ -418,6 +443,7 @@ int main(int argc, char** argv) {
       fb_wait_all += us.n_fb_wait(); src_all[0] += us.n_src(0); src_all[1] += us.n_src(1); hold_all += us.n_hold();
       us.restart(); ur.restart();
       fs.stop(); fr.stop();
+      gs_.cancel(); gr_.cancel();
       for (int q = 0; q < sim::kMaxPeople; ++q) ps_t[q] = -1e9;
       prev_cell = -2;
       cs.set_geom(w.gw, hc.cfg.res); cr.set_geom(w.gw, hc.cfg.res);
@@ -438,6 +464,21 @@ int main(int argc, char** argv) {
         int why = 0;
         const long a0 = us.n_ans();
         std::vector<ofl::Person> persons;   // 따라가기: 지금 (마지막으로 본) 사람들 — 실물 노드의 물체 지도 사람 항목 자리
+        if (t == instr_at_step) {   // 노드 ~/instruction 콜백과 같은 차례: 따라가기·물체로 가기 끝 → 새 지시
+          fs.stop(); fr.stop(); gs_.cancel(); gr_.cancel(); us.set_external(false); ur.set_external(false);
+          us.set_instruction(instr_at_text); ur.set_instruction(instr_at_text);
+          if (instr_at_text.empty()) ins_s.stop(); else ins_s.start(t * dt);
+          ++g_instr_change;
+        }
+        if (goto_on && obj_move_step >= 0 && t == obj_move_step) {   // 시험: 물체를 옮김 (고른 뒤 지도에서 옮겨진 물체)
+          for (auto& o : base_objs) { o.x += obj_move_dx; o.y += obj_move_dy; }
+          ++g_moved;
+        }
+        if (goto_on && !follow_on && st[0].step % hc.cfg.decide_steps == 0) {   // 노드처럼 결정 차례마다 물체 후보 재료 (못 간 물체는 뺌)
+          live_objs.clear();
+          for (const auto& o : base_objs) if (!gfail_s.blocked(o.oid, o.cls, o.x, o.y, t * dt)) live_objs.push_back(o);
+          us.set_objects(live_objs); ur.set_objects(live_objs);
+        }
         if (follow_on) {
           const double tn = t * dt;
           const sim::EnvState& e = st[0];
@@ -492,11 +533,65 @@ int main(int argc, char** argv) {
         sim::LowCmd c2;
         const bool ch_r = ur.step(vr, robot.obs_1d() + mdp::obs::POLICY_1D, cr, mr, &c2);
         if (ch_r) robot.set_cmd(c2);
-        if (follow_on) {   // 실물 노드의 따라가기 가지와 같은 차례: 물체 답 꺼내기 → 프론티어 답이면 끝 → 따라가기 걸음 → 아래층 명령
+        if (follow_on || goto_on) {   // 실물 노드의 물체 답 가지와 같은 차례: 물체 답 꺼내기 → 프론티어 답이면 끝 → 따라가기 · 물체로 가기 걸음 → 아래층 명령
           const double tn = t * dt;
           lxd::Params::Obj pk_s, pk_r;
           const bool gs = us.take_object_pick(&pk_s), gr = ur.take_object_pick(&pk_r);
           if (gs != gr || (gs && (pk_s.oid != pk_r.oid || pk_s.follow != pk_r.follow))) ++f_diff;
+          if (goto_on) {   // 물체로 가기 (task_sup.h — 노드 low_rl_node.cpp 와 같은 차례)
+            const sim::EnvState& e = st[0];
+            const sim::EnvState& er = robot.state();
+            if (gs_.active() && (ch_s || ch_r)) { gs_.cancel(); gr_.cancel(); us.set_external(false); ur.set_external(false); }
+            if (gs && !pk_s.follow) {
+              const lxd::Params::Obj* cur = nullptr;
+              for (const auto& o : live_objs) if (o.oid == pk_s.oid) cur = &o;
+              if (!cur || std::hypot(cur->x - pk_s.x, cur->y - pk_s.y) > 1.0) { us.ask("chosen object is gone or moved"); ur.ask("chosen object is gone or moved"); ++g_gone; }
+              else {
+                const auto cxy = [&](int vp, const sim::World& ww, float res, float* x, float* y) { *x = ww.ox + (vp % ww.gw + 0.5f) * res; *y = ww.oy + (vp / ww.gw + 0.5f) * res; };
+                float sx, sy, rx2, ry2;
+                cxy(pk_s.vp, w, hc.cfg.res, &sx, &sy); cxy(pk_r.vp, rw, robot.cfg().res, &rx2, &ry2);
+                gs_.start(pk_s.oid, pk_s.oid, pk_s.cls, sx, sy, true, pk_s.x, pk_s.y, tn);
+                gr_.start(pk_r.oid, pk_r.oid, pk_r.cls, rx2, ry2, true, pk_r.x, pk_r.y, tn);
+                us.set_external(true); ur.set_external(true);
+                ++g_start;
+              }
+            }
+            if (gs_.active()) {
+              const tsk::Ev es = gs_.step(tn, e.x + e.ex, e.y + e.ey, e.th + e.eth, e.goal_cell >= 0 && e.p_n <= 0, tsk::path_end(e, w.ox, w.oy, hc.cfg.res, hc.cfg.goal_tol));
+              const tsk::Ev er2 = gr_.step(tn, er.x + er.ex, er.y + er.ey, er.th + er.eth, er.goal_cell >= 0 && er.p_n <= 0,
+                                           tsk::path_end(er, rw.ox, rw.oy, robot.cfg().res, robot.cfg().goal_tol));
+              if (es != er2) ++f_diff;
+              if (std::getenv("GOTO_TRACE") && t % 5 == 0)
+                std::printf("  걸음 %d 감 %s 설 자리 (%.2f, %.2f) 로봇 (%.2f, %.2f) 거리 %.2f 목표 칸 %d 경로 %d/%d v %.2f 사건 %d\n", t, gs_.oid().c_str(), gs_.gx(), gs_.gy(), e.x + e.ex, e.y + e.ey,
+                            std::hypot(gs_.gx() - e.x - e.ex, gs_.gy() - e.y - e.ey), e.goal_cell, e.p_i, e.p_n, e.v, (int)es);
+              if (es == tsk::kArrived) {   // 노드: 도착 → 멈춤 (goto_resume false). 여기선 지시를 지우고 탐사를 이어 감 (셈만)
+                ++g_arrive;
+                ins_s.stop();
+                us.set_external(false); ur.set_external(false); us.set_instruction(""); ur.set_instruction("");
+                cpu.set_low_cmd(std::vector<sim::LowCmd>{sim::LowCmd{-1, 1}}); robot.set_cmd(sim::LowCmd{-1, 1});
+              } else if (es == tsk::kFailed) {
+                ++g_nofail;
+                gfail_s.add(gs_.oid(), gs_.cls(), gs_.fx(), gs_.fy(), tn);
+                ins_s.failed();
+                us.set_external(false); ur.set_external(false);
+                us.ask("could not reach " + gs_.oid()); ur.ask("could not reach " + gs_.oid());
+                cpu.set_low_cmd(std::vector<sim::LowCmd>{sim::LowCmd{-1, 1}}); robot.set_cmd(sim::LowCmd{-1, 1});
+              } else {
+                const auto cell_of = [](const sim::World& ww, float res) { return [&ww, res](float x, float y) {
+                  const int cx = (int)std::floor((x - ww.ox) / res), cy = (int)std::floor((y - ww.oy) / res);
+                  return cx < 0 || cy < 0 || cx >= ww.gw || cy >= ww.gh ? -1 : cy * ww.gw + cx; }; };
+                const sim::LowCmd ks = gs_.cmd(cell_of(w, hc.cfg.res)), kr = gr_.cmd(cell_of(rw, robot.cfg().res));
+                if (std::memcmp(&ks, &kr, sizeof ks) != 0) ++f_diff;
+                cpu.set_low_cmd(std::vector<sim::LowCmd>{ks}); robot.set_cmd(kr);
+              }
+            }
+            if (const char* g = ins_s.give_up(tn)) {   // 노드: 멈추고 "못 감 / 못 찾음". 여기선 지시를 지우고 셈
+              ++(std::strcmp(g, "could not reach") == 0 ? g_giveup_fail : g_giveup_time);
+              ins_s.stop();
+              gs_.cancel(); gr_.cancel();
+              us.set_external(false); ur.set_external(false); us.set_instruction(""); ur.set_instruction("");
+            }
+          }
           if (fs.active() && (ch_s || ch_r)) { fs.stop(); fr.stop(); us.set_external(false); ur.set_external(false); }   // 판단 모델이 프론티어를 고름
           if (gs && pk_s.follow) {
             fs.start(pk_s.oid, pk_s.x, pk_s.y, tn); fr.start(pk_r.oid, pk_r.x, pk_r.y, tn);
@@ -628,8 +723,9 @@ int main(int argc, char** argv) {
       if (cs.cmd().target != cr.cmd().target || cs.cmd().follow != cr.cmd().follow || cs.slot() != cr.slot()) { ++d_dec; if (first_bad < 0) first_bad = t; }
       // 준비 단계 (시뮬 Env::low_prepare · 실물 low_prepare) — 목표 없음이면 행동 칸 −1 (combine_run.cpp:1144-1146)
       std::fill(act.begin(), act.end(), 0.f);
-      act[0] = (float)cs.slot();   // combine_run 규칙: 결정 때 정한 행동 칸 (다음 결정까지 그대로)
-      robot.set_slot(cr.slot());
+      const bool ext_goal = fs.active() || gs_.active();   // 따라가기 · 물체로 가기: 목표 칸은 밖이 줌 — 행동 칸 0 (low_follow 의 목표 칸 하나, 노드와 같음)
+      act[0] = ext_goal ? 0.f : (float)cs.slot();   // combine_run 규칙: 결정 때 정한 행동 칸 (다음 결정까지 그대로)
+      robot.set_slot(ext_goal ? 0 : cr.slot());
       cpu.low_prepare(act.data());
       cpu.get_obs(img, o1d);
       robot.set_depth(img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE);
@@ -865,6 +961,10 @@ int main(int argc, char** argv) {
     if (use_dec)
       std::printf("판단 모델: 주기 %d 걸음 · 지연 %d 걸음 · 보냄 %ld · 답 적용 %ld · 후보 안 맞음 %ld · slot0 대신 %ld · 본문 다름 %ld | ", dp.period_steps, ms.lat, n_sent_all + us.n_sent(), n_ans,
                   n_nomatch_all + us.n_nomatch(), n_fb_all + us.n_fallback(), d_body);
+    if (goto_on)
+      std::fprintf(stderr, "GOTO 감 %ld · 닿음 %ld · 못 감 %ld · 고른 물체 사라짐·옮김 %ld (옮김 주입 %ld) · 포기(못 감 %ld · 시간 %ld) · 규칙이 지시 물체로 %ld · 잇따른 실패 끝 %d · 지시 바뀜 %ld · 새 지시 물음 %ld · 두 쪽 다름 %ld\n",
+                   g_start, g_arrive, g_nofail, g_gone, g_moved, g_giveup_fail, g_giveup_time, us.n_fb_obj(), us.streak(), g_instr_change,
+                   us.trigger_counts().count("new instruction") ? us.trigger_counts().at("new instruction") : 0L, f_diff);
     if (follow_on)
       std::fprintf(stderr, "FOLLOW 시작 %ld · 걸음 %ld (몲 %ld 섬 %ld 찾음 %ld) · 포기 %ld · 다시 물음 %ld · 참 거리 평균 %.2f 최소 %.2f m · 0.6~1.8 m 몫 %.2f · 0.6 m 안 %ld 걸음 · 사람 닿음 %ld (따라가는 중 %ld) · 두 쪽 다름 %ld\n",
                    f_start, f_steps, f_mode[1], f_mode[2], f_mode[3], f_giveup, f_reask, f_near ? f_dsum / f_near : 0.0, f_dmin < 1e8 ? f_dmin : -1.0, f_near ? (double)f_band / f_near : 0.0, f_close, f_hit, f_hit_f, f_diff);

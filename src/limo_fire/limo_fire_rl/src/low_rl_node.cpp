@@ -43,10 +43,12 @@
 #include <rviz_2d_overlay_msgs/msg/overlay_text.hpp>
 
 #include "limo_fire_rl/decider_client.h"
+#include "limo_fire_rl/rc_watch.h"
 #include "limo_fire_rl/robot_env.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
 #include "obj_follow.h"
+#include "task_sup.h"
 
 namespace limo_fire_rl {
 
@@ -66,6 +68,7 @@ class LowRlNode : public rclcpp::Node {
     rc_button_ = (int)declare_parameter<int>("rc_button", 1);
     rc_auto_ = (int)declare_parameter<int>("rc_auto_value", 2);
     require_rc_ = declare_parameter<bool>("require_rc", true);
+    rc_resub_s_ = declare_parameter<double>("rc_resubscribe_s", 2.0);   // 발행자가 있는데 이만큼 못 받으면 /rc_state 구독을 새로 만듦 (rc_watch.h)
     contact_resume_s_ = declare_parameter<double>("contact_resume_s", 0.0);
     max_speed_ = declare_parameter<double>("max_speed", -1.0);
     record_ = declare_parameter<std::string>("record", "");
@@ -203,7 +206,8 @@ class LowRlNode : public rclcpp::Node {
       sub_cinfo_ = create_subscription<sensor_msgs::msg::CameraInfo>(color_info_topic, sensor, [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr m) { cinfo_ = m; });
       dec_up_->set_cam(&cam_);
     }
-    sub_rc_ = create_subscription<sensor_msgs::msg::Joy>(rc_topic, 20, [this](sensor_msgs::msg::Joy::ConstSharedPtr m) { on_rc(m); });
+    rc_topic_ = rc_topic;
+    subscribe_rc();
     if (!dry_run_) pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>(cmd_topic, 10);   // dry run 이면 발행자를 아예 안 만듦
     pub_cmd_ = create_publisher<geometry_msgs::msg::TwistStamped>("~/cmd_debug", 10);
     pub_status_ = create_publisher<std_msgs::msg::String>("~/status", 10);
@@ -215,25 +219,37 @@ class LowRlNode : public rclcpp::Node {
     publish_dec_placeholder();   // 첫 요청 전에는 회색 판 (RViz 가 "No Image" 로 비지 않게)
     // 물체로 가기 (limo_fire_navigation object_goto 가 탐사 모드에서 설 자리를 줌) · 지시 글 (판단 모델 글에 넣음 — 물체 찾기 모드)
     goto_resume_ = declare_parameter<bool>("goto_resume", false);   // 도착하면 멈춤 (true = 탐사 이어 감)
-    goto_arrive_m_ = declare_parameter<double>("goto_arrive_m", 0.4);
+    {   // 지시 일 감독 (scripts/task_sup.h — 시뮬 low_explore_check 와 같은 코드): 설 자리로 가기 · 바라보기 · 못 가면 실패 · 지시 시간 한도
+      tsk::Params tp;
+      tp.arrive_m = (float)declare_parameter<double>("goto_arrive_m", tp.arrive_m);
+      tp.arrive_far_m = (float)declare_parameter<double>("goto_arrive_far_m", tp.arrive_far_m);
+      tp.face_tol = (float)declare_parameter<double>("goto_face_tol", tp.face_tol);
+      tp.face_timeout_s = (float)declare_parameter<double>("goto_face_timeout_s", tp.face_timeout_s);
+      tp.stall_s = (float)declare_parameter<double>("goto_stall_s", tp.stall_s);
+      tp.stall_m = (float)declare_parameter<double>("goto_stall_m", tp.stall_m);
+      tp.nopath_s = (float)declare_parameter<double>("goto_nopath_s", tp.nopath_s);
+      tp.max_fail = (int)declare_parameter<int>("goto_max_fail", tp.max_fail);
+      tp.fail_ttl_s = (float)declare_parameter<double>("goto_fail_ttl_s", tp.fail_ttl_s);
+      tp.instr_limit_s = (float)declare_parameter<double>("instruction_limit_s", tp.instr_limit_s);
+      goto_ = tsk::Goto(tp);
+      fails_ = tsk::Fails(tp);
+      instr_ = tsk::Instr(tp);
+    }
     pub_goto_status_ = create_publisher<std_msgs::msg::String>("~/goto_status", rclcpp::QoS(1).transient_local());
     // 설 자리에 닿은 뒤 바라볼 물체 자리 (object_goto 가 ~/goto 바로 앞에 줌). 없으면 돌지 않고 끝
-    face_tol_ = declare_parameter<double>("goto_face_tol", 0.15);
-    face_timeout_s_ = declare_parameter<double>("goto_face_timeout_s", 5.0);
-    face_w_min_ = declare_parameter<double>("goto_face_w_min", 0.4);
     sub_face_ = create_subscription<geometry_msgs::msg::PointStamped>("~/goto_face", 10, [this](geometry_msgs::msg::PointStamped::ConstSharedPtr m) {
       face_x_ = m->point.x;
       face_y_ = m->point.y;
       face_valid_ = true;
     });
     sub_goto_ = create_subscription<geometry_msgs::msg::PointStamped>("~/goto", 10, [this](geometry_msgs::msg::PointStamped::ConstSharedPtr m) {
-      facing_ = false;
-      goto_x_ = m->point.x;
-      goto_y_ = m->point.y;
-      goto_active_ = true;
-      goto_label_ = instruction_.empty() ? "지정 자리" : instruction_;
+      end_follow("");
+      const std::string label = instruction_.empty() ? "지정 자리" : instruction_;
+      goto_.start(label, "", "", (float)m->point.x, (float)m->point.y, face_valid_, (float)face_x_, (float)face_y_, now().seconds());
+      face_valid_ = false;
+      if (dec_up_) dec_up_->set_external(true);
       char b[160];
-      std::snprintf(b, sizeof b, "가는 중: %s (%.2f, %.2f)%s", goto_label_.c_str(), goto_x_, goto_y_, running() ? "" : " — 탐사가 꺼져 있어 켜야 움직임");
+      std::snprintf(b, sizeof b, "가는 중: %s (%.2f, %.2f)%s", label.c_str(), m->point.x, m->point.y, running() ? "" : " — 탐사가 꺼져 있어 켜야 움직임");
       say_goto(b);
     });
     // 지시의 클래스 힌트 (선택 — object_goto 가 별칭·설명 검색에서 풀어 줌). 물체 후보는 모든 클래스에서 오고, 힌트 클래스가 앞 칸에 들어갈 뿐
@@ -246,17 +262,16 @@ class LowRlNode : public rclcpp::Node {
     sub_instr_ = create_subscription<std_msgs::msg::String>("~/instruction", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
       instruction_ = m->data;
       end_follow("");   // 지시가 바뀌거나 지워지면 따라가기도 끝 (판단 모델이 새로 고름)
+      end_goto();
+      face_valid_ = false;
+      fails_.clear();
       if (instruction_.empty()) {
-        goto_active_ = false;
-        facing_ = false;
-        face_valid_ = false;
+        instr_.stop();
         target_class_.clear();
         if (dec_up_) dec_up_->set_objects({});
         say_goto("지시 없음 — 보통 탐사");
       } else {   // 새 지시: 하던 물체로 가기는 그만두고 판단 모델이 새로 고름 (바로 물음 — Upper "new instruction")
-        goto_active_ = false;
-        facing_ = false;
-        face_valid_ = false;
+        instr_.start(now().seconds());
         say_goto("지시: " + instruction_ + " — 판단 모델이 후보(지도 물체 옆 · 프론티어) 중에서 고름");
       }
       if (dec_up_) dec_up_->set_instruction(instruction_);
@@ -311,7 +326,12 @@ class LowRlNode : public rclcpp::Node {
 
   void on_enable(bool on, std_srvs::srv::SetBool::Response* r) {
     if (on) {
-      if (require_rc_ && !rc_auto_now()) { r->success = false; r->message = "리모컨이 오토(SWB 위)가 아니거나 /rc_state 가 안 옴 — 켜지 않음"; return; }
+      if (require_rc_ && !rc_auto_now()) {
+        r->success = false;
+        r->message = "리모컨이 오토(SWB 위)가 아니거나 /rc_state 가 안 옴 — 켜지 않음 · " + rc_info();
+        RCLCPP_WARN(get_logger(), "%s", r->message.c_str());
+        return;
+      }
       if (finished_) {   // 끝난 뒤 다시 켜면 새 판: 다음 장에서 지금 자리로 판 시작
         finished_ = false;
         started_ = false;
@@ -334,12 +354,26 @@ class LowRlNode : public rclcpp::Node {
 
   bool rc_auto_now() const {
     if (!rc_) return false;
-    if ((now() - rc_t_).seconds() > rc_timeout_) return false;
+    if (rc_watch_.age_s(std::chrono::steady_clock::now()) > rc_timeout_) return false;
     return (int)rc_->buttons.size() > rc_button_ && rc_->buttons[rc_button_] == rc_auto_;
+  }
+  // /rc_state 구독 (best effort — rc_watch.h). 다시 구독할 때도 이것
+  void subscribe_rc() {
+    sub_rc_ = create_subscription<sensor_msgs::msg::Joy>(rc_topic_, limo_fire_rl::rc_qos(), [this](sensor_msgs::msg::Joy::ConstSharedPtr m) { on_rc(m); });
+    rc_watch_.subscribed(std::chrono::steady_clock::now());
+  }
+  // 리모컨 받기 상태 한 줄 (~/status · 켜기 거절 글)
+  std::string rc_info() const {
+    char b[160];
+    const double age = rc_watch_.age_s(std::chrono::steady_clock::now());
+    std::snprintf(b, sizeof b, "리모컨 %s (마지막 %s 전, 받음 %ld, 발행자 %zu, 다시 구독 %d, buttons[%d]=%d)", rc_auto_now() ? "오토" : "오토 아님",
+                  age > 1e8 ? "없음" : (std::to_string((int)std::lround(age * 1000)) + " ms").c_str(), rc_watch_.count(), sub_rc_ ? sub_rc_->get_publisher_count() : (size_t)0,
+                  rc_watch_.resubs(), rc_button_, rc_ && (int)rc_->buttons.size() > rc_button_ ? rc_->buttons[rc_button_] : -1);
+    return b;
   }
   void on_rc(const sensor_msgs::msg::Joy::ConstSharedPtr& m) {
     rc_ = m;
-    rc_t_ = now();
+    rc_watch_.got(std::chrono::steady_clock::now());
     rc_auto_ok_ = rc_auto_now();
     if (!rc_auto_ok_ && require_rc_ && enabled_) stop("paused", "리모컨이 오토가 아님 (SWB) — 다시 오토로 바꾸고 ~/enable true", true);
   }
@@ -347,6 +381,10 @@ class LowRlNode : public rclcpp::Node {
   // 20 Hz: 입력 끊김 · 리모컨 끊김 · 닿음 뒤 저절로 켜기
   void check_inputs() {
     const rclcpp::Time t = now();
+    if (sub_rc_ && rc_watch_.want_resub(std::chrono::steady_clock::now(), sub_rc_->get_publisher_count(), rc_resub_s_)) {
+      RCLCPP_WARN(get_logger(), "/rc_state 발행자는 있는데 %.1f s 넘게 못 받음 — 구독을 새로 만듦 (%s)", rc_resub_s_, rc_info().c_str());
+      subscribe_rc();
+    }
     if (require_rc_ && enabled_ && !rc_auto_now()) stop("paused", "/rc_state 가 안 옴(" + std::to_string((int)std::lround(rc_timeout_ * 1000)) + " ms 넘게) 또는 오토 아님 — ~/enable true 로 다시", true);
     const bool stale = (last_scan_t_.nanoseconds() == 0 || (t - last_scan_t_).seconds() > input_timeout_) ||
                        (last_tf_t_.nanoseconds() == 0 || (t - last_tf_t_).seconds() > input_timeout_) ||
@@ -473,22 +511,30 @@ class LowRlNode : public rclcpp::Node {
                       contact_resume_s_ > 0.0 ? "멈춤, 잠시 뒤 저절로 켬" : "멈춤, ~/enable true 로 다시");
         stop("paused", b, true);
       }
-      // 물체로 가기 (~/goto): 도착하면 상태를 알리고, goto_resume 이면 탐사를 이어 감 (아니면 멈춤)
-      if (goto_active_ && running()) {
-        const double gx = e.x + e.ex - goto_x_, gy = e.y + e.ey - goto_y_;
-        if (std::hypot(gx, gy) <= goto_arrive_m_) {
-          goto_active_ = false;
-          env_->set_cmd(sim::LowCmd{-1, 0});
-          if (face_valid_) { facing_ = true; facing_t0_ = now().seconds(); }   // 물체 쪽으로 제자리 돌기 뒤 끝
-          else finish_goto();
+      // 물체로 가기 (task_sup.h): 닿으면 물체 쪽으로 돌아 선 뒤 끝 (goto_resume 이면 탐사 이어 감, 아니면 멈춤), 못 가면 그 물체를 잠시 빼고 다시 물음
+      if (goto_.active() && running()) {
+        const tsk::Ev ev = goto_.step(now().seconds(), e.x + e.ex, e.y + e.ey, e.th + e.eth, e.goal_cell >= 0 && e.p_n <= 0,
+                                      tsk::path_end(e, world_.ox, world_.oy, env_->cfg().res, env_->cfg().goal_tol));
+        if (ev == tsk::kArrived) finish_goto();
+        else if (ev == tsk::kFailed) fail_goto();
+      }
+      if (instr_.active() && running()) {   // 지시 감독: 실패가 잇따르거나 시간이 넘으면 멈추고 알림
+        if (const char* g = instr_.give_up(now().seconds())) {
+          end_follow("");
+          end_goto();
+          instr_.stop();
+          say_goto(std::string(std::strcmp(g, "could not reach") == 0 ? "못 감: " : "못 찾음: ") + instruction_ + " — " + g);
+          stop("paused", std::string("지시를 끝내지 못함 (") + g + ")", true);
         }
       }
-      if (facing_ && running()) {   // 물체를 봄: 남은 각 < face_tol 또는 face_timeout 이면 끝
-        const double err = face_err(e);
-        if (std::fabs(err) < face_tol_ || now().seconds() - facing_t0_ > face_timeout_s_) { facing_ = false; finish_goto(); }
-      }
       // 판 끝 (시뮬 finish_step 의 합친 탐사 규칙 — combine_run.cpp:1270). 물체로 가는 중이면 끝내지 않음
-      if (goto_active_ || facing_ || follower_.active()) {
+      if (goto_.active() || follower_.active()) {
+      } else if (ctl_->rough_done(e.step) && instr_.active()) {   // 지시가 남았는데 "대충 다 앎": 판을 끝내지 않고 물체 후보로 (판단 모델에 물음), 물체도 없으면 못 찾음
+        if (!dec_up_ || !objects_ || map_objects().empty()) {
+          instr_.stop();
+          say_goto("못 찾음: " + instruction_ + " — 다 탐사했는데 지도에 맞는 물체가 없음");
+          stop("paused", "지시를 끝내지 못함 (다 탐사함)", true);
+        } else if (!dec_up_->waiting() && e.step % lp_.decide_steps == 0) dec_up_->ask("exploration is done but the instruction is not");
       } else if (ctl_->rough_done(e.step)) {   // 후보 모드 "대충 다 앎" 끝 (Ctl::rough_done — low_explore_check 끝 코드 11 과 같은 판정)
         finished_ = true;
         stop("done", "끝: 대충 다 앎 (후보 0 · 남은 덩어리는 대충 아는 곳 안 구멍뿐 10 s)", true);
@@ -497,7 +543,7 @@ class LowRlNode : public rclcpp::Node {
         pub_done_->publish(d);
         return;
       }
-      const int dn = (goto_active_ || facing_ || follower_.active()) ? 0 : env_->done();
+      const int dn = (goto_.active() || follower_.active() || instr_.active()) ? 0 : env_->done();
       if (dn == mdp::cur::kDeclareOk || dn == mdp::cur::kNoProgress || dn == mdp::cur::kTruncated) {
         finished_ = true;
         stop("done", dn == mdp::cur::kDeclareOk ? "끝: 지도 닫힘 + 진척 없음 10 s (시뮬 성공 판정)" : dn == mdp::cur::kNoProgress ? "끝: 지도 진척 없음 (시뮬 실패 판정)" : "끝: 시간 한도",
@@ -530,13 +576,8 @@ class LowRlNode : public rclcpp::Node {
     // 위층
     const auto t1 = clk::now();
     double dec_ms = -1.0;
-    if (facing_ && running()) {   // 도착 뒤 물체 쪽으로 도는 중: 위층 안 부름
-    } else if (goto_active_ && running()) {   // 물체로 가기: 위층 대신 그 설 자리를 목표로 (아래층 A* 는 같음)
-      const int cell = goto_cell();
-      if (cell >= 0 && (env_->low_cmd().target != cell || env_->low_cmd().follow != 1)) {
-        env_->set_cmd(sim::LowCmd{cell, 1});
-        publish_goal(cell);
-      }
+    if (goto_.active() && running() && !dec_up_) {   // 물체로 가기 (판단 모델 위층이 아닐 때): 위층 대신 그 설 자리 (아래층 A* 는 같음)
+      apply_goto_cmd();
     } else if (ctl_upper()) {
       if (running() && ctl_->due(env_->state())) {
         const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur(), env_->reach_keep()};
@@ -571,6 +612,7 @@ class LowRlNode : public rclcpp::Node {
         lxd::Params::Obj pick;
         const bool picked = dec_up_->take_object_pick(&pick);
         if (follower_.active() && stepped_change) end_follow("판단 모델이 따라가기 대신 탐사 자리를 고름");
+        if (goto_.active() && stepped_change) { end_goto(); say_goto("판단 모델이 물체 대신 탐사 자리를 고름"); }
         if (picked && pick.follow) {   // 판단 모델이 따라가기 후보를 고름 → 그 사람을 따라감 (목표는 노드가 쥠 — 판단 모델은 답만 받고, 사람이 많이 옮기면 다시 물음)
           end_follow("");
           follower_.start(pick.oid, pick.x, pick.y, now().seconds());
@@ -581,22 +623,22 @@ class LowRlNode : public rclcpp::Node {
           say_goto(b);
         } else if (picked) end_follow("");
         if (follower_.active()) follow_step();
-        if (picked && !pick.follow) {   // 판단 모델이 물체 후보를 고름 → 그 설 자리로 (~/goto 와 같은 길), 닿으면 물체를 바라보고 멈춤
+        if (picked && !pick.follow) {   // 판단 모델(또는 지시 쪽 규칙)이 물체 후보를 고름 → 그 설 자리로, 닿으면 물체를 바라보고 멈춤
           float gx = 0.f, gy = 0.f;
-          if (env_->cell_xy(pick.vp, &gx, &gy)) {
-            goto_x_ = gx;
-            goto_y_ = gy;
-            face_x_ = pick.x;
-            face_y_ = pick.y;
-            face_valid_ = true;
-            facing_ = false;
-            goto_active_ = true;
-            goto_label_ = pick.oid;
+          const auto* d = find_object(pick.oid);
+          if (!d || std::hypot(d->bbox.center.position.x - pick.x, d->bbox.center.position.y - pick.y) > 1.0) {   // 요청 뒤 물체가 지도에서 빠지거나 옮김 → 옛 자리로 안 가고 다시 물음
+            say_goto("고른 물체가 지도에서 빠지거나 옮김: " + pick.oid + " — 다시 물음");
+            dec_up_->ask("chosen object is gone or moved");
+          } else if (env_->cell_xy(pick.vp, &gx, &gy)) {
+            goto_.start(pick.oid, pick.oid, pick.cls, gx, gy, true, pick.x, pick.y, now().seconds());
+            dec_up_->set_external(true);
             char b[160];
-            std::snprintf(b, sizeof b, "판단 모델이 물체 후보를 고름: %s — 설 자리 (%.2f, %.2f) 로", pick.oid.c_str(), gx, gy);
+            std::snprintf(b, sizeof b, "물체 후보를 고름: %s — 설 자리 (%.2f, %.2f) 로%s", pick.oid.c_str(), gx, gy, dec_up_->n_fb_obj() > fb_obj_seen_ ? " (판단 모델 대신 규칙)" : "");
+            fb_obj_seen_ = dec_up_->n_fb_obj();
             say_goto(b);
           }
         }
+        if (goto_.active()) apply_goto_cmd();
         if (dec_cli_->n_png() != n_png_pub_ && !dec_cli_->last_png().empty()) {   // 새 요청을 보냈으면 그 지도 그림을 RViz 로
           n_png_pub_ = dec_cli_->n_png();
           publish_dec_png(dec_cli_->last_png());
@@ -611,7 +653,8 @@ class LowRlNode : public rclcpp::Node {
       }
     }
     const auto t2 = clk::now();
-    env_->set_slot(ctl_->slot());   // 규칙 추종기: 경로 계획 후보 (combine_run 의 act[0] — 다음 결정까지 그대로)
+    // 규칙 추종기: 경로 계획 후보 (combine_run 의 act[0] — 다음 결정까지 그대로). 따라가기 · 물체로 가기는 목표 칸을 노드가 줌 — 행동 칸 0 (low_follow 의 그 칸)
+    env_->set_slot(follower_.active() || goto_.active() ? 0 : ctl_->slot());
     env_->low_prepare();
     const auto t3 = clk::now();
     float v = 0.f, w = 0.f;
@@ -622,12 +665,6 @@ class LowRlNode : public rclcpp::Node {
       const sim::LowCmd& lc = env_->low_cmd();
       if (lc.follow != 0) env_->cell_xy(lc.target, &gx, &gy);
       rec_->act(v, w, gx, gy);
-    }
-    if (facing_ && running()) {   // 도착 뒤 물체 쪽으로 제자리 돌기 (아래층 대신): ω = 비례, 최소 face_w_min (바퀴 마찰), 최대 1 rad/s
-      const double err = face_err(env_->state());
-      const double ww = std::clamp(2.0 * err, -1.0, 1.0);
-      v = 0.f;
-      w = (float)(std::fabs(ww) < face_w_min_ ? std::copysign(face_w_min_, err) : ww);
     }
     if (!running() || stale_) { v = 0.f; w = 0.f; }
     if (std::fabs(v) > max_speed_) v = v > 0.f ? (float)max_speed_ : -(float)max_speed_;   // max_speed (기본 = 시뮬 한도라 안 자름)
@@ -651,6 +688,7 @@ class LowRlNode : public rclcpp::Node {
                     state_.c_str(), why_.c_str(), rc_auto_now() ? "오토" : "오토 아님", env_->steps(), lc.target, why_dec_ == 2 ? " (목표 없음)" : why_dec_ == 1 ? " (slot0)" : "", v, w,
                     ctl_->n_dec(), ctl_->n_reach(), ctl_->n_stall(), sum_step_ / n_, sum_obs_ / n_, n_dec_ ? sum_dec_ / n_dec_ : 0.0, max_dec_);
       st.data = buf;
+      st.data += " · " + rc_info();
       if (dec_up_) {
         char b2[300];
         std::snprintf(b2, sizeof b2, " · 판단 모델: 보냄 %ld 답 %ld (마지막 %.0f ms) 시간 끝 %ld 실패 %ld%s%s 후보 안 맞음 %ld slot0 대신 %ld%s", dec_up_->n_sent(), dec_up_->n_ans(), dec_up_->last_ms(),
@@ -857,6 +895,7 @@ class LowRlNode : public rclcpp::Node {
       o.match = !target_class_.empty() && o.cls == target_class_ ? 1.f : 0.f;
       o.seen_s = (float)seen_s_of(d);
       if (o.seen_s > obj_stale_s_) continue;
+      if (fails_.blocked(o.oid, o.cls, o.x, o.y, now().seconds())) continue;   // 못 간 물체는 잠시 뺌 (task_sup.h Fails)
       ob.push_back(o);
       if (is_follow_class(o.cls) && o.seen_s <= dec_vis_s_) { o.follow = true; ob.push_back(o); }   // 지금 보이는 사람: 따라가기 후보도
     }
@@ -985,21 +1024,54 @@ class LowRlNode : public rclcpp::Node {
     }
     pub_cand_->publish(ma);
   }
-  // ~/goto 의 지도 좌표 → 탐사 지도 칸 (창 밖이면 −1)
-  int goto_cell() const {
+  // 지도 좌표 → 탐사 지도 칸 (창 밖이면 −1)
+  int xy_cell(float x, float y) const {
     const float res = env_->cfg().res;
-    const int cx = (int)std::floor((goto_x_ - world_.ox) / res), cy = (int)std::floor((goto_y_ - world_.oy) / res);
+    const int cx = (int)std::floor((x - world_.ox) / res), cy = (int)std::floor((y - world_.oy) / res);
     if (cx < 0 || cy < 0 || cx >= world_.gw || cy >= world_.gh) return -1;
     return cy * world_.gw + cx;
   }
-  // 로봇 방향과 물체 쪽 방향의 차 (rad, −π~π)
-  double face_err(const sim::EnvState& e) const {
-    const double a = std::atan2(face_y_ - (e.y + e.ey), face_x_ - (e.x + e.ex)) - (e.th + e.eth);
-    return std::atan2(std::sin(a), std::cos(a));
+  const vision_msgs::msg::Detection3D* find_object(const std::string& oid) const {
+    if (!objects_) return nullptr;
+    for (const auto& d : objects_->detections) if (d.id == oid && !d.results.empty()) return &d;
+    return nullptr;
+  }
+  // 물체로 가기 명령 (task_sup.h — 가는 중 설 자리 · 닿으면 물체 쪽으로 돌기)
+  void apply_goto_cmd() {
+    const sim::LowCmd c = goto_.cmd([this](float x, float y) { return xy_cell(x, y); });
+    const sim::LowCmd& cur = env_->low_cmd();
+    if (c.target != cur.target || c.follow != cur.follow || c.face != cur.face) {
+      env_->set_cmd(c);
+      publish_goal(c.target);
+    }
+  }
+  void end_goto() {
+    if (!goto_.active()) return;
+    goto_.cancel();
+    env_->set_cmd(sim::LowCmd{-1, 0});
+    if (dec_up_) dec_up_->set_external(false);
   }
   void finish_goto() {
-    say_goto("도착: " + goto_label_ + (goto_resume_ ? " — 탐사를 이어 감" : " — 멈춤"));
+    if (dec_up_) dec_up_->set_external(false);
+    env_->set_cmd(sim::LowCmd{-1, 0});
+    instr_.stop();
+    say_goto("도착: " + goto_.label() + (goto_resume_ ? " — 탐사를 이어 감" : " — 멈춤"));
     if (!goto_resume_) stop("paused", "물체에 도착 (goto_resume false)", true);
+  }
+  // 못 감 (막힘 · 경로 없음 — 뒤로 물러나지 않음): 그 물체를 잠시 후보에서 빼고 판단 모델에 다시 물음
+  void fail_goto() {
+    const double t = now().seconds();
+    if (!goto_.oid().empty()) fails_.add(goto_.oid(), goto_.cls(), goto_.fx(), goto_.fy(), t);
+    instr_.failed();
+    if (dec_up_) {
+      dec_up_->set_external(false);
+      dec_up_->ask("could not reach " + (goto_.oid().empty() ? std::string("the spot") : goto_.oid()));
+    }
+    env_->set_cmd(sim::LowCmd{-1, 1});   // 목표 없음 — 다음 답까지 제자리
+    char b[200];
+    std::snprintf(b, sizeof b, "못 감: %s (%s) — 그 물체를 %.0f s 빼고 다시 물음 (이 지시 실패 %d/%d)", goto_.label().c_str(), goto_.why(), goto_.params().fail_ttl_s,
+                  instr_.fails(), goto_.params().max_fail);
+    say_goto(b);
   }
   void say_goto(const std::string& s) {
     std_msgs::msg::String m;
@@ -1063,13 +1135,16 @@ class LowRlNode : public rclcpp::Node {
   double cam_base_h_ = 0.147;
   int dp_cam_ = 0;
   sensor_msgs::msg::Joy::ConstSharedPtr rc_;
-  rclcpp::Time last_scan_t_{0, 0, RCL_ROS_TIME}, last_tf_t_{0, 0, RCL_ROS_TIME}, odom_t_{0, 0, RCL_ROS_TIME}, rc_t_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_scan_t_{0, 0, RCL_ROS_TIME}, last_tf_t_{0, 0, RCL_ROS_TIME}, odom_t_{0, 0, RCL_ROS_TIME};
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_scan_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_depth_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr sub_info_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_rc_;
+  limo_fire_rl::RcWatch rc_watch_;
+  std::string rc_topic_;
+  double rc_resub_s_ = 2.0;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pub_cmd_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_status_, pub_state_;
@@ -1114,11 +1189,14 @@ class LowRlNode : public rclcpp::Node {
   std::vector<std::string> follow_classes_;
   bool dec_obj_always_ = false;   // decider_obj_always
   double dec_vis_s_ = 1.0;        // decider_vis_s   // 지시가 바뀌어 물체 후보를 이번 걸음에 새로 채울 것
-  bool goto_active_ = false, goto_resume_ = false, facing_ = false, face_valid_ = false;
-  double face_x_ = 0.0, face_y_ = 0.0, face_tol_ = 0.15, face_timeout_s_ = 5.0, face_w_min_ = 0.4, facing_t0_ = 0.0;
+  bool goto_resume_ = false, face_valid_ = false;
+  tsk::Goto goto_;
+  tsk::Fails fails_;
+  tsk::Instr instr_;
+  long fb_obj_seen_ = 0;
+  double face_x_ = 0.0, face_y_ = 0.0;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_face_;
-  double goto_x_ = 0.0, goto_y_ = 0.0, goto_arrive_m_ = 0.4;
-  std::string goto_label_, instruction_;
+  std::string instruction_;
   long n_png_pub_ = 0;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_done_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_goal_, pub_cand_;
