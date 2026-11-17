@@ -1,0 +1,26 @@
+# /smoke_mode/set 켜고 끄기 (저장 지도 + AMCL 위에서)
+## 켜기 전 /smoke_mode/active
+data: false
+---
+## set true
+
+## 켠 뒤 /smoke_mode/active, /speed_limit
+data: true
+---
+header:
+  stamp:
+    sec: 47
+    nanosec: 100000000
+  frame_id: map
+percentage: false
+speed_limit: 0.13
+---
+## 켠 동안 /scan_localization (AMCL 입력) hz:
+## set false
+
+## 끈 뒤 /smoke_mode/active
+data: false
+---
+## (다시) set true / false 의 응답
+std_srvs.srv.SetBool_Response(success=True, message='연기 모드 켬')
+std_srvs.srv.SetBool_Response(success=True, message='평상시로 돌아옴')

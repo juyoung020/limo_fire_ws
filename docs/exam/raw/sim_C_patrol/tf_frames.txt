@@ -1,0 +1,20 @@
+# /tf 받은 변환: 벽시계 12 s 동안 (부모 -> 자식): 개수, 벽시계 Hz, stamp 기준(시뮬 시각) Hz, 같은 stamp 중복 수
+base_link -> front_left_wheel_link: 64, 5.3 Hz, stamp 12.7 Hz, dup 0
+base_link -> front_right_wheel_link: 64, 5.3 Hz, stamp 12.7 Hz, dup 0
+base_link -> rear_left_wheel_link: 64, 5.3 Hz, stamp 12.7 Hz, dup 0
+base_link -> rear_right_wheel_link: 64, 5.3 Hz, stamp 12.7 Hz, dup 0
+camera_color_frame -> camera_color_optical_frame: 51, 4.2 Hz, stamp 10.0 Hz, dup 0
+camera_depth_frame -> camera_depth_optical_frame: 51, 4.2 Hz, stamp 10.0 Hz, dup 0
+camera_ir_frame -> camera_ir_optical_frame: 51, 4.2 Hz, stamp 10.0 Hz, dup 0
+camera_link -> camera_color_frame: 51, 4.2 Hz, stamp 10.0 Hz, dup 0
+camera_link -> camera_depth_frame: 51, 4.2 Hz, stamp 10.0 Hz, dup 0
+camera_link -> camera_ir_frame: 51, 4.2 Hz, stamp 10.0 Hz, dup 0
+map -> odom: 235, 19.6 Hz, stamp 45.9 Hz, dup 150
+odom -> base_link: 255, 21.2 Hz, stamp 50.0 Hz, dup 0
+# /tf_static (부모 -> 자식)
+base_link -> camera_link
+base_link -> imu_link
+base_link -> inertial_link
+base_link -> laser_link
+base_link -> ultrasonic_front_left_link
+base_link -> ultrasonic_front_right_link

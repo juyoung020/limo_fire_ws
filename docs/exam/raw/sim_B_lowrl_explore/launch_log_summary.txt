@@ -1,0 +1,27 @@
+# sim B low_rl·object_goto 로그 요약 (원본 runB.log)
+[INFO] [webots-1]: process started with pid [1510122]
+[INFO] [ros2_supervisor.py-2]: process started with pid [1510124]
+[INFO] [webots_controller_LIMO-3]: process started with pid [1510126]
+[INFO] [spawner-4]: process started with pid [1510128]
+[INFO] [spawner-5]: process started with pid [1510132]
+[INFO] [robot_state_publisher-6]: process started with pid [1510134]
+[INFO] [cartographer_node-7]: process started with pid [1510136]
+[INFO] [cartographer_occupancy_grid_node-8]: process started with pid [1510138]
+[INFO] [low_rl-1]: process started with pid [1510521]
+
+## low_rl 상태 바뀜
+[low_rl-1] [INFO] [1794930698.598763573] [low_rl]: 아래층 규칙 추종기 (A* + path_step) · 위층 slot0 (fuel 시간 1 전역 1 시점 1 v 0.981 ω 3.232 t0 0.10) · 결정 10 걸음 · 피하기 0.50 m 10 s · 닿음 마스크 71 멈춤 2 걸음 가속 15.0 m/s² · 최고 속도 1.00 m/s — 실제 주행: /cmd_vel 냄
+[low_rl-1] [INFO] [1794930698.610380987] [low_rl]: 상태 idle — 꺼짐 — ~/enable true (RViz 탐사 패널) 로 켬
+[low_rl-1] [INFO] [1794930705.342947129] [low_rl]: 상태 running — 켬
+[low_rl-1] [INFO] [1794930735.011233085] [low_rl]: 상태 paused — 닿음 (신호 4: 라이다 1 · 깊이 2 · 멈춤 4 · 지도 8 · 사람 16 · 바퀴·자이로 32 · 가속 64, 가속 0.0 m/s²) — 멈춤, ~/enable true 로 다시
+[low_rl-1] [INFO] [1794930978.678190273] [low_rl]: 상태 running — 켬
+[low_rl-1] [INFO] [1794930992.853132394] [low_rl]: 상태 paused — 닿음 (신호 4: 라이다 1 · 깊이 2 · 멈춤 4 · 지도 8 · 사람 16 · 바퀴·자이로 32 · 가속 64, 가속 0.0 m/s²) — 멈춤, ~/enable true 로 다시
+
+## TF 장 시각 못 얻어 건너뛴 장: 9 번 (예)
+[low_rl-1] [WARN] [1794930732.660747766] [low_rl]: TF map → base_link (장 시각) 없음: Lookup would require extrapolation into the future.  Requested time 25.100000 but the latest data is at time 24.900000, when looking up transform from frame [base_link] to frame [map] — 이 장 건너뜀
+[low_rl-1] [WARN] [1794930750.945955966] [low_rl]: TF map → base_link (장 시각) 없음: Lookup would require extrapolation into the future.  Requested time 30.600000 but the latest data is at time 30.560000, when looking up transform from frame [base_link] to frame [map] — 이 장 건너뜀
+
+## 마지막 ~/status 3 줄
+[low_rl-1] [INFO] [1794930707.511369748] [low_rl]: running (켬) · 리모컨 오토 아님 · 걸음 9 · 목표 칸 -1 (목표 없음) · 명령 v 0.00 ω 1.80 · 결정 1 통과 0 막힘 0 · 평균 ms: 걸음 0.86 관측 0.30 위층 0.0 (최대 0.0) · 리모컨 오토 아님 (마지막 없음 전, 받음 0, 발행자 0, 다시 구독 0, buttons[1]=-1)
+[low_rl-1] [INFO] [1794930734.733824899] [low_rl]: running (켬) · 리모컨 오토 아님 · 걸음 109 · 목표 칸 -1 (slot0) · 명령 v 0.00 ω 0.00 · 결정 11 통과 0 막힘 0 · 평균 ms: 걸음 0.49 관측 0.44 위층 0.0 (최대 0.0) · 리모컨 오토 아님 (마지막 없음 전, 받음 0, 발행자 0, 다시 구독 0, buttons[1]=-1)
+[low_rl-1] [INFO] [1794930980.933131929] [low_rl]: running (켬) · 리모컨 오토 아님 · 걸음 119 · 목표 칸 -1 (slot0) · 명령 v -0.05 ω 0.00 · 결정 12 통과 0 막힘 0 · 평균 ms: 걸음 0.49 관측 0.43 위층 0.0 (최대 0.0) · 리모컨 오토 아님 (마지막 없음 전, 받음 0, 발행자 0, 다시 구독 0, buttons[1]=-1)

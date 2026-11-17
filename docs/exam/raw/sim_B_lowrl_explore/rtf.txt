@@ -1,0 +1,1 @@
+sim clock sec: 77 -> 81 over ~10 s wall (+~1 s CLI)

@@ -1,0 +1,18 @@
+
+Files:             mapping_1026_1900_0.db3
+Bag size:          108.7 MiB
+Storage id:        sqlite3
+Duration:          199.797394916s
+Start:             Oct 26 2026 19:00:32.388080372 (1793008832.388080372)
+End:               Oct 26 2026 19:03:52.185475288 (1793009032.185475288)
+Messages:          94383
+Topic information: Topic: /trajectory_node_list | Type: visualization_msgs/msg/MarkerArray | Count: 6623 | Serialization Format: cdr
+                   Topic: /submap_list | Type: cartographer_ros_msgs/msg/SubmapList | Count: 663 | Serialization Format: cdr
+                   Topic: /imu | Type: sensor_msgs/msg/Imu | Count: 19960 | Serialization Format: cdr
+                   Topic: /odom | Type: nav_msgs/msg/Odometry | Count: 9981 | Serialization Format: cdr
+                   Topic: /map | Type: nav_msgs/msg/OccupancyGrid | Count: 203 | Serialization Format: cdr
+                   Topic: /odometry/filtered | Type: nav_msgs/msg/Odometry | Count: 5990 | Serialization Format: cdr
+                   Topic: /tf_static | Type: tf2_msgs/msg/TFMessage | Count: 4 | Serialization Format: cdr
+                   Topic: /scan | Type: sensor_msgs/msg/LaserScan | Count: 2004 | Serialization Format: cdr
+                   Topic: /tf | Type: tf2_msgs/msg/TFMessage | Count: 48955 | Serialization Format: cdr
+

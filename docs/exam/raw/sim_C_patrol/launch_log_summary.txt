@@ -1,0 +1,35 @@
+# sim C launch 로그: 프로세스 시작·적재·활성 줄 + WARN/ERROR 종류별 횟수
+[INFO] [webots-1]: process started with pid [1518462]
+[INFO] [ros2_supervisor.py-2]: process started with pid [1518464]
+[INFO] [webots_controller_LIMO-3]: process started with pid [1518466]
+[INFO] [spawner-4]: process started with pid [1518469]
+[INFO] [spawner-5]: process started with pid [1518473]
+[INFO] [robot_state_publisher-6]: process started with pid [1518476]
+[INFO] [component_container_isolated-7]: process started with pid [1518478]
+[INFO] [smoke_mode-8]: process started with pid [1518480]
+[INFO] [object_goto-9]: process started with pid [1518483]
+[smoke_mode-8] [INFO] [1794931055.213183506] [smoke_mode]: 연기 모드 준비 (map → odom 발행: 예)
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/controller_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/smoother_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/planner_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/behavior_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/bt_navigator' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/waypoint_follower' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/velocity_smoother' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/lifecycle_manager_navigation' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/map_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/amcl' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/lifecycle_manager_localization' in container 'nav2_container'
+[smoke_mode-8] [INFO] [1794931055.397662242] [smoke_mode]: 저장 지도 받음 188 × 136, 0.05 m/칸
+[component_container_isolated-7] [INFO] [1794931055.601572511] [lifecycle_manager_localization]: Managed nodes are active
+[component_container_isolated-7] [INFO] [1794931065.271546931] [lifecycle_manager_navigation]: Managed nodes are active
+[smoke_mode-8] [WARN] [1794931129.540424027] [smoke_mode]: 연기 모드 켬: 라이다·카메라를 쓰지 않고 바퀴 + IMU 로만 움직임, 속도 한도 0.13 m/s
+[smoke_mode-8] [WARN] [1794931139.385039208] [smoke_mode]: 평상시로 돌아옴: 연기 속 이동 0.0 m · 회전 0.0 rad, 추정 자세를 AMCL 에 넘김
+[smoke_mode-8] [WARN] [1794931148.005135339] [smoke_mode]: 연기 모드 켬: 라이다·카메라를 쓰지 않고 바퀴 + IMU 로만 움직임, 속도 한도 0.13 m/s
+[smoke_mode-8] [WARN] [1794931148.462765343] [smoke_mode]: 평상시로 돌아옴: 연기 속 이동 0.0 m · 회전 0.0 rad, 추정 자세를 AMCL 에 넘김
+
+      2 [smoke_mode-8] [WARN]  [smoke_mode]: 평상시로 돌아옴: 연기 속 이동 0.0 m · 회전 0.0 rad, 추정 자세를 AMCL 에 넘김
+      2 [smoke_mode-8] [WARN]  [smoke_mode]: 연기 모드 켬: 라이다·카메라를 쓰지 않고 바퀴 + IMU 로만 움직임, 속도 한도 0.13 m/s
+      1 [component_container_isolated-7] [WARN]  [lifecycle_manager_navigation.rclcpp]: failed to send response to /lifecycle_manager_navigation/list_parameters (timeout): client will not receive response, at
+      1 [component_container_isolated-7] [WARN]  [global_costmap.global_costmap.rclcpp]: failed to send response to /global_costmap/global_costmap/get_parameters (timeout): client will not receive response, a
+      1 [component_container_isolated-7] [WARN]  [controller_server]: No goal checker was specified in parameter 'current_goal_checker'. Server will use only plugin loaded general_goal_checker . This warning 

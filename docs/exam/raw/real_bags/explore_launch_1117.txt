@@ -1,0 +1,7 @@
+[INFO] [cartographer_node-1]: process started with pid [12211]
+[INFO] [cartographer_occupancy_grid_node-2]: process started with pid [12213]
+[INFO] [component_container_mt-3]: process started with pid [12215]
+[INFO] [object_goto-4]: process started with pid [12217]
+[INFO] [low_rl-5]: process started with pid [12219]
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/yolo_detector' in container '/perception_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/object_mapper' in container '/perception_container'

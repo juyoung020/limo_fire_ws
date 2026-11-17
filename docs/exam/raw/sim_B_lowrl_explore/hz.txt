@@ -1,0 +1,40 @@
+################ /scan
+average rate: 3.530
+	min: 0.272s max: 0.351s std dev: 0.01376s window: 29
+################ /odom
+average rate: 13.885
+	min: 0.001s max: 0.283s std dev: 0.07677s window: 100
+################ /imu
+average rate: 21.187
+	min: 0.000s max: 0.263s std dev: 0.07910s window: 100
+################ /camera/depth/image_raw
+average rate: 7.221
+	min: 0.006s max: 0.679s std dev: 0.15138s window: 59
+################ /camera/depth/camera_info
+average rate: 11.189
+	min: 0.006s max: 0.269s std dev: 0.07856s window: 85
+################ /map
+average rate: 0.894
+	min: 0.997s max: 1.829s std dev: 0.29005s window: 7
+################ /tf
+average rate: 26.879
+	min: 0.000s max: 0.256s std dev: 0.06429s window: 100
+################ /cmd_vel
+################ /low_rl/cmd_debug
+################ /low_rl/status
+################ /low_rl/candidates
+################ /low_rl/goal_marker
+################ /submap_list
+average rate: 3.333
+	min: 0.296s max: 0.304s std dev: 0.00138s window: 29
+################ /clock
+average rate: 33.119
+	min: 0.001s max: 0.141s std dev: 0.04918s window: 100
+################ /cmd_vel (다시 켠 뒤)
+average rate: 2.230
+	min: 0.050s max: 2.034s std dev: 0.43013s window: 19
+################ /low_rl/status (다시 켠 뒤)
+WARNING: topic [/low_rl/status] does not appear to be published yet
+################ /low_rl/candidates (다시 켠 뒤)
+################ /low_rl/cmd_debug (다시 켠 뒤)
+WARNING: topic [/low_rl/cmd_debug] does not appear to be published yet

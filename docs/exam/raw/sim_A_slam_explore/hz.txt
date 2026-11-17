@@ -1,0 +1,49 @@
+################ /scan
+average rate: 7.121
+	min: 0.095s max: 0.227s std dev: 0.03876s window: 61
+################ /odom
+average rate: 36.624
+	min: 0.002s max: 0.119s std dev: 0.03980s window: 100
+################ /imu
+average rate: 62.884
+	min: 0.000s max: 0.110s std dev: 0.03330s window: 100
+################ /joint_states
+average rate: 17.735
+	min: 0.003s max: 0.217s std dev: 0.05212s window: 100
+################ /camera/color/image_raw
+average rate: 5.201
+	min: 0.147s max: 0.395s std dev: 0.05324s window: 29
+################ /camera/depth/image_raw
+average rate: 13.645
+	min: 0.007s max: 0.238s std dev: 0.05940s window: 88
+################ /map
+average rate: 1.000
+	min: 0.998s max: 1.003s std dev: 0.00146s window: 8
+################ /tf
+average rate: 68.207
+	min: 0.000s max: 0.112s std dev: 0.02945s window: 100
+################ /cmd_vel
+################ /cmd_vel_nav
+################ /local_costmap/costmap
+average rate: 1.000
+	min: 0.994s max: 1.004s std dev: 0.00278s window: 7
+################ /global_costmap/costmap
+average rate: 0.250
+	min: 3.996s max: 4.000s std dev: 0.00229s window: 2
+################ /plan
+################ /explore_frontier/status
+################ /scan_obstacles
+average rate: 7.336
+	min: 0.095s max: 0.221s std dev: 0.04364s window: 65
+################ /scan_localization
+average rate: 7.411
+	min: 0.096s max: 0.214s std dev: 0.04066s window: 64
+################ /submap_list
+average rate: 3.333
+	min: 0.297s max: 0.303s std dev: 0.00146s window: 29
+################ /trajectory_node_list
+average rate: 33.378
+	min: 0.025s max: 0.035s std dev: 0.00154s window: 100
+################ /clock
+average rate: 77.089
+	min: 0.000s max: 0.084s std dev: 0.02555s window: 100

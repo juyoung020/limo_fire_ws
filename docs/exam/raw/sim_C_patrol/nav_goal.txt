@@ -1,0 +1,82 @@
+# 첫 순찰점 (월드 0.5, -2.0) = 지도 (3.8, 0.25) 로 NavigateToPose. 피드백은 처음 3 개와 마지막만
+Waiting for an action server to become available...
+Sending goal:
+     pose:
+  header:
+    stamp:
+      sec: 0
+      nanosec: 0
+    frame_id: map
+  pose:
+    position:
+      x: 3.8
+      y: 0.25
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+behavior_tree: ''
+
+Goal accepted with ID: 4e81a8969f394143b4d729e8d3f7f01d
+
+# 피드백 243 개 받음. 첫 피드백:
+Feedback:
+    current_pose:
+  header:
+    stamp:
+      sec: 9
+      nanosec: 380000000
+    frame_id: map
+  pose:
+    position:
+      x: 5.07873345111746e-09
+      y: -2.8691625000815053e-16
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: -2.432793102292494e-08
+      w: 0.9999999999999996
+navigation_time:
+  sec: 0
+  nanosec: 0
+estimated_time_remaining:
+  sec: 0
+  nanosec: 0
+number_of_recoveries: 0
+distance_remaining: 0.0
+# 마지막 피드백과 결과:
+distance_remaining: 0.27071067690849304
+
+Feedback:
+    current_pose:
+  header:
+    stamp:
+      sec: 25
+      nanosec: 300000000
+    frame_id: map
+  pose:
+    position:
+      x: 3.559291113828234
+      y: 0.19295223162598432
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.052473690467696885
+      w: 0.998622306885191
+navigation_time:
+  sec: 15
+  nanosec: 920000000
+estimated_time_remaining:
+  sec: 0
+  nanosec: 0
+number_of_recoveries: 0
+distance_remaining: 0.27071067690849304
+
+Result:
+    result: {}
+
+Goal finished with status: SUCCEEDED

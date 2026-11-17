@@ -1,0 +1,6 @@
+################ /cmd_vel (목표 주행 중)
+average rate: 20.000
+	min: 0.044s max: 0.056s std dev: 0.00127s window: 143
+################ /cmd_vel_nav (목표 주행 중)
+average rate: 20.001
+	min: 0.047s max: 0.053s std dev: 0.00104s window: 105

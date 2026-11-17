@@ -1,0 +1,36 @@
+[explore_frontier-12] [INFO] [1794930083.793079036] [explore_frontier]: 켬 — 프론티어 탐사 시작
+[explore_frontier-12] [INFO] [1794930083.824763155] [explore_frontier]: 새 목표 (4.81, 0.16)
+[explore_frontier-12] [INFO] [1794930090.421908289] [explore_frontier]: 새 목표 (5.03, 0.67)
+[explore_frontier-12] [INFO] [1794930096.622011333] [explore_frontier]: 새 목표 (5.01, -0.54)
+[explore_frontier-12] [INFO] [1794930104.023877811] [explore_frontier]: 새 목표 (5.75, -0.77)
+[explore_frontier-12] [WARN] [1794930104.029700592] [explore_frontier]: Nav2 가 목표 (5.75, -0.77) 포기 — 블랙리스트
+[explore_frontier-12] [INFO] [1794930104.221995116] [explore_frontier]: 새 목표 (6.05, 0.71)
+[explore_frontier-12] [INFO] [1794930111.425929500] [explore_frontier]: 새 목표 (6.10, 0.73)
+[explore_frontier-12] [INFO] [1794930119.624927994] [explore_frontier]: 새 목표 (6.40, 0.79)
+[explore_frontier-12] [INFO] [1794930134.223873627] [explore_frontier]: 새 목표 (6.45, 0.83)
+[explore_frontier-12] [INFO] [1794930141.226431186] [explore_frontier]: 새 목표 (6.83, 1.27)
+[explore_frontier-12] [INFO] [1794930147.427764666] [explore_frontier]: 새 목표 (0.54, 0.29)
+[explore_frontier-12] [INFO] [1794930154.424026952] [explore_frontier]: 새 목표 (5.36, 1.73)
+[explore_frontier-12] [INFO] [1794930166.826025980] [explore_frontier]: 새 목표 (1.21, 1.01)
+[explore_frontier-12] [INFO] [1794930174.025692991] [explore_frontier]: 새 목표 (1.19, 1.01)
+[explore_frontier-12] [INFO] [1794930181.824539725] [explore_frontier]: 새 목표 (0.96, 1.06)
+[explore_frontier-12] [INFO] [1794930190.024787797] [explore_frontier]: 새 목표 (1.31, 1.14)
+[explore_frontier-12] [INFO] [1794930196.427226255] [explore_frontier]: 새 목표 (1.33, 1.14)
+[explore_frontier-12] [INFO] [1794930203.628908770] [explore_frontier]: 새 목표 (1.35, 1.15)
+[explore_frontier-12] [INFO] [1794930233.625599938] [explore_frontier]: 새 목표 (1.93, 1.47)
+[explore_frontier-12] [INFO] [1794930323.627847066] [explore_frontier]: 새 목표 (1.84, 1.47)
+[explore_frontier-12] [INFO] [1794930329.629419442] [explore_frontier]: 새 목표 (0.02, 1.15)
+[explore_frontier-12] [INFO] [1794930342.628976740] [explore_frontier]: 새 목표 (-0.41, 1.04)
+[explore_frontier-12] [INFO] [1794930376.437093380] [explore_frontier]: 새 목표 (0.70, 2.81)
+[explore_frontier-12] [INFO] [1794930396.429205213] [explore_frontier]: 새 목표 (0.68, 2.81)
+[explore_frontier-12] [WARN] [1794930402.813764293] [explore_frontier]: Nav2 가 목표 (0.68, 2.81) 포기 — 블랙리스트
+[explore_frontier-12] [INFO] [1794930402.829310244] [explore_frontier]: 새 목표 (0.25, 1.12)
+[explore_frontier-12] [WARN] [1794930442.831503918] [explore_frontier]: Nav2 가 목표 (0.25, 1.12) 포기 — 블랙리스트
+[explore_frontier-12] [INFO] [1794930443.033054039] [explore_frontier]: 새 목표 (-1.10, 0.95)
+[explore_frontier-12] [INFO] [1794930450.432550207] [explore_frontier]: 새 목표 (2.93, 2.44)
+[explore_frontier-12] [WARN] [1794930500.836650421] [explore_frontier]: Nav2 가 목표 (2.93, 2.44) 포기 — 블랙리스트
+[explore_frontier-12] [INFO] [1794930501.030870672] [explore_frontier]: 새 목표 (-1.15, 0.93)
+[explore_frontier-12] [INFO] [1794930506.431097587] [explore_frontier]: 새 목표 (-1.16, 0.93)
+[explore_frontier-12] [INFO] [1794930542.030833781] [explore_frontier]: 새 목표 (-1.17, 0.93)
+[explore_frontier-12] [WARN] [1794930550.833652969] [explore_frontier]: Nav2 가 목표 (-1.17, 0.93) 포기 — 블랙리스트
+[explore_frontier-12] [INFO] [1794930551.031252144] [explore_frontier]: 탐사 끝 (all_blacklisted) — 214.9 s, 목표 29 · 도착 0 · 포기 5 · 블랙리스트 5, 지도 29.6 m² 앎

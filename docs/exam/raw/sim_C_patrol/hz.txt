@@ -1,0 +1,31 @@
+################ /scan
+average rate: 6.479
+	min: 0.146s max: 0.171s std dev: 0.00478s window: 57
+################ /odom
+average rate: 32.595
+	min: 0.001s max: 0.138s std dev: 0.05080s window: 100
+################ /imu
+average rate: 65.708
+	min: 0.001s max: 0.134s std dev: 0.03825s window: 100
+################ /map
+################ /tf
+average rate: 70.301
+	min: 0.000s max: 0.053s std dev: 0.01883s window: 100
+################ /amcl_pose
+################ /particle_cloud
+################ /scan_localization
+average rate: 6.456
+	min: 0.147s max: 0.175s std dev: 0.00529s window: 57
+################ /scan_obstacles
+average rate: 6.475
+	min: 0.145s max: 0.167s std dev: 0.00448s window: 57
+################ /local_costmap/costmap
+average rate: 1.000
+	min: 0.996s max: 1.004s std dev: 0.00200s window: 7
+################ /global_costmap/costmap
+################ /speed_limit
+average rate: 1.000
+	min: 0.996s max: 1.007s std dev: 0.00287s window: 8
+################ /clock
+average rate: 65.431
+	min: 0.001s max: 0.143s std dev: 0.03828s window: 100

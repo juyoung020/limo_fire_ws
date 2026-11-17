@@ -1,0 +1,2 @@
+2026-11-18T00:52:18+09:00
+ROS_DOMAIN_ID=93 RMW=default(rmw_fastrtps_cpp) ROS_DISTRO=humble

@@ -1,0 +1,56 @@
+# topic | type | publishers(node[R/BE,V/TL]) -> subscribers
+/Ros2Supervisor/remove_node | std_msgs/msg/String | - -> /Ros2Supervisor/Ros2Supervisor[R,V]
+/camera/color/camera_info | sensor_msgs/msg/CameraInfo | /camera/camera[R,V] -> -
+/camera/color/image_raw | sensor_msgs/msg/Image | /camera/camera[R,V] -> -
+/camera/color/image_raw/compressed | sensor_msgs/msg/CompressedImage | /camera/camera[R,V] -> -
+/camera/depth/camera_info | sensor_msgs/msg/CameraInfo | /camera/camera[R,V] -> /low_rl[BE,V]
+/camera/depth/image_raw | sensor_msgs/msg/Image | /camera/camera[R,V] -> /low_rl[BE,V]
+/camera/depth/image_raw/compressed | sensor_msgs/msg/CompressedImage | /camera/camera[R,V] -> -
+/camera/depth/image_raw/compressedDepth | sensor_msgs/msg/CompressedImage | /camera/camera[R,V] -> -
+/camera/depth/points | sensor_msgs/msg/PointCloud2 | /camera/camera[R,V] -> -
+/camera/depth_registered/points | sensor_msgs/msg/PointCloud2 | /camera/camera[R,V] -> -
+/camera/ir/camera_info | sensor_msgs/msg/CameraInfo | /camera/camera[R,V] -> -
+/camera/ir/image_raw | sensor_msgs/msg/Image | /camera/camera[R,V] -> -
+/camera/ir/image_raw/compressed | sensor_msgs/msg/CompressedImage | /camera/camera[R,V] -> -
+/clock | rosgraph_msgs/msg/Clock | /Ros2Supervisor/Ros2Supervisor[R,V] -> /LIMO[BE,V], /controller_manager[BE,V], /joint_state_broadcaster[BE,V], /diffdrive_controller[BE,V], /exam_tfcount[BE,V], /low_rl[BE,V], /object_goto[BE,V], /robot_state_publisher[BE,V], /cartographer_node[BE,V], /transform_listener_impl_6075ea0ba100[BE,V], /cartographer_occupancy_grid_node[BE,V]
+/cmd_vel | geometry_msgs/msg/Twist | /low_rl[R,V] -> /diffdrive_controller[BE,V]
+/constraint_list | visualization_msgs/msg/MarkerArray | /cartographer_node[R,V] -> -
+/diffdrive_controller/odom | nav_msgs/msg/Odometry | /diffdrive_controller[R,TL] -> -
+/diffdrive_controller/transition_event | lifecycle_msgs/msg/TransitionEvent | /diffdrive_controller[R,V] -> -
+/dynamic_joint_states | control_msgs/msg/DynamicJointState | /joint_state_broadcaster[R,TL] -> -
+/gt/detections | vision_msgs/msg/Detection2DArray | /LIMO[R,V] -> -
+/gt/mask | sensor_msgs/msg/Image | /LIMO[R,V] -> -
+/imu | sensor_msgs/msg/Imu | /limo/limo_base[R,V] -> /low_rl[R,V], /cartographer_node[BE,V]
+/joint_state_broadcaster/transition_event | lifecycle_msgs/msg/TransitionEvent | /joint_state_broadcaster[R,V] -> -
+/joint_states | sensor_msgs/msg/JointState | /joint_state_broadcaster[R,TL] -> /robot_state_publisher[BE,V]
+/landmark_poses_list | visualization_msgs/msg/MarkerArray | /cartographer_node[R,V] -> -
+/low_rl/candidates | visualization_msgs/msg/MarkerArray | /low_rl[R,V] -> -
+/low_rl/candidates_text | rviz_2d_overlay_msgs/msg/OverlayText | /low_rl[R,TL] -> -
+/low_rl/cmd_debug | geometry_msgs/msg/TwistStamped | /low_rl[R,V] -> -
+/low_rl/decider_image | sensor_msgs/msg/Image | /low_rl[R,TL] -> -
+/low_rl/done | std_msgs/msg/Bool | /low_rl[R,TL] -> -
+/low_rl/goal_marker | visualization_msgs/msg/MarkerArray | /low_rl[R,V] -> -
+/low_rl/goto_status | std_msgs/msg/String | /low_rl[R,TL] -> /object_goto[R,V]
+/low_rl/instruction | std_msgs/msg/String | /object_goto[R,V] -> /low_rl[R,V]
+/low_rl/state | std_msgs/msg/String | /low_rl[R,TL] -> -
+/low_rl/status | std_msgs/msg/String | /low_rl[R,V] -> -
+/low_rl/target_class | std_msgs/msg/String | /object_goto[R,V] -> /low_rl[R,V]
+/map | nav_msgs/msg/OccupancyGrid | /cartographer_occupancy_grid_node[R,TL] -> -
+/object_goto/goal | std_msgs/msg/String | - -> /object_goto[R,V]
+/object_goto/overlay | rviz_2d_overlay_msgs/msg/OverlayText | /object_goto[R,TL] -> -
+/object_goto/status | std_msgs/msg/String | /object_goto[R,TL] -> -
+/object_goto/target | visualization_msgs/msg/MarkerArray | /object_goto[R,TL] -> -
+/object_mapper/objects | vision_msgs/msg/Detection3DArray | - -> /low_rl[R,TL], /object_goto[R,TL]
+/odom | nav_msgs/msg/Odometry | /limo/limo_base[R,V] -> /low_rl[R,V], /cartographer_node[BE,V]
+/parameter_events | rcl_interfaces/msg/ParameterEvent | /LIMO[R,V], /controller_manager[R,V], /joint_state_broadcaster[R,V], /diffdrive_controller[R,V], /ydlidar_ros2_driver_node[R,V], /limo/limo_base[R,V], /camera/camera[R,V], /exam_tfcount[R,V], /low_rl[R,V], /object_goto[R,V], /_ros2cli_daemon_93_55929482192d4da5997559196adee69e[R,V], /Ros2Supervisor/Ros2Supervisor[R,V], /robot_state_publisher[R,V], /cartographer_node[R,V], /cartographer_occupancy_grid_node[R,V] -> /LIMO[R,V], /controller_manager[R,V], /joint_state_broadcaster[R,V], /diffdrive_controller[R,V], /low_rl[R,V], /object_goto[R,V], /robot_state_publisher[R,V], /robot_state_publisher[R,V], /cartographer_node[R,V], /transform_listener_impl_6075ea0ba100[R,V], /cartographer_occupancy_grid_node[R,V]
+/rc_state | sensor_msgs/msg/Joy | - -> /low_rl[BE,V]
+/remove_urdf_robot | std_msgs/msg/String | /LIMO[R,V] -> -
+/robot_description | std_msgs/msg/String | /robot_state_publisher[R,TL] -> -
+/rosout | rcl_interfaces/msg/Log | /LIMO[R,TL], /controller_manager[R,TL], /joint_state_broadcaster[R,TL], /diffdrive_controller[R,TL], /ydlidar_ros2_driver_node[R,TL], /limo/limo_base[R,TL], /camera/camera[R,TL], /exam_tfcount[R,TL], /low_rl[R,TL], /object_goto[R,TL], /_ros2cli_daemon_93_55929482192d4da5997559196adee69e[R,TL], /Ros2Supervisor/Ros2Supervisor[R,TL], /robot_state_publisher[R,TL], /cartographer_node[R,TL], /transform_listener_impl_6075ea0ba100[R,TL], /cartographer_occupancy_grid_node[R,TL] -> -
+/scan | sensor_msgs/msg/LaserScan | /ydlidar_ros2_driver_node[BE,V] -> /low_rl[BE,V], /cartographer_node[BE,V]
+/scan_matched_points2 | sensor_msgs/msg/PointCloud2 | /cartographer_node[R,V] -> -
+/sim/ground_truth | geometry_msgs/msg/PoseStamped | /LIMO[R,V] -> -
+/submap_list | cartographer_ros_msgs/msg/SubmapList | /cartographer_node[R,V] -> /cartographer_occupancy_grid_node[R,V]
+/tf | tf2_msgs/msg/TFMessage | /diffdrive_controller[R,TL], /limo/limo_base[R,V], /camera/camera[R,V], /robot_state_publisher[R,V], /cartographer_node[R,V] -> /exam_tfcount[R,V], /low_rl[R,V], /transform_listener_impl_6075ea0ba100[R,V]
+/tf_static | tf2_msgs/msg/TFMessage | /robot_state_publisher[R,TL] -> /exam_tfcount[R,TL], /low_rl[R,TL], /transform_listener_impl_6075ea0ba100[R,TL]
+/trajectory_node_list | visualization_msgs/msg/MarkerArray | /cartographer_node[R,V] -> -

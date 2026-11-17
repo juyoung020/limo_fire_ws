@@ -1,0 +1,61 @@
+# 실물 로봇 2026-11-17 robot.launch.xml 기동 로그 (원본 /home/juyoung/limo_upper_keep/real_1117/robot_run_1117/robot.log 421 줄 중 프로세스·노드 줄)
+[INFO] [limo_fire_base-4]: process started with pid [6859]
+[INFO] [ydlidar_ros2_driver_node-6]: process started with pid [6863]
+[INFO] [jetson_clocks-1]: process started with pid [6853]
+[INFO] [robot_state_publisher-2]: process started with pid [6855]
+[INFO] [joint_state_publisher-3]: process started with pid [6857]
+[INFO] [component_container-5]: process started with pid [6861]
+[INFO] [ekf_node-7]: process started with pid [6866]
+[ekf_node-7] [ERROR] [1794911078.177786278] [ekf_filter_node_odom]: Both odom0_differential and odom0_relative were set to true. Using differential mode.
+[INFO] [jetson_clocks-1]: process has finished cleanly [pid 6853]
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/camera/camera' in container '/camera/camera_container'
+[component_container-5] [ERROR] [1794911079.116470607] [camera.camera]: Failed to setup devices: Request failed, device response with unknown error!
+[component_container-5] [WARN] [1794911079.393696385] [camera.camera]: Publishing dynamic camera transforms (/tf) at 10 Hz
+[ydlidar_ros2_driver_node-6] [WARN] [1794911093.937267420] [ydlidar_ros2_driver_node]: New subscription discovered on topic '/scan', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY_QOS_POLICY
+[ydlidar_ros2_driver_node-6] [WARN] [1794911481.279328230] [ydlidar_ros2_driver_node]: New subscription discovered on topic '/scan', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY_QOS_POLICY
+[limo_fire_base-4] [WARN] [1794911618.370957668] [limo.limo_fire_base]: Invalid frame! Check sum failed! 
+[limo_fire_base-4] [WARN] [1794911952.067098186] [limo.limo_fire_base]: Invalid frame! Check sum failed! 
+[ydlidar_ros2_driver_node-6] [WARN] [1794912753.334072047] [ydlidar_ros2_driver_node]: New subscription discovered on topic '/scan', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY_QOS_POLICY
+[ydlidar_ros2_driver_node-6] [WARN] [1794913980.104060205] [ydlidar_ros2_driver_node]: New subscription discovered on topic '/scan', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY_QOS_POLICY
+[limo_fire_base-4] [WARN] [1794915337.583129940] [limo.limo_fire_base]: Invalid frame! Check sum failed! 
+[ydlidar_ros2_driver_node-6] [WARN] [1794915651.682740057] [ydlidar_ros2_driver_node]: New subscription discovered on topic '/scan', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY_QOS_POLICY
+[ekf_node-7] [ERROR] [1794915904.481270967] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.31801912199999998743seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916698.281894199] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.036530787000000002063seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916702.998073907] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.036876014999999998101seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916712.169165091] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.042694992000000001053seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916712.293735741] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.074028100999999998932seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916718.829160754] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.068263747999999999094seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916719.414196227] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.051621752999999999389seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916719.857291768] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.050228395000000002069seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916722.445753548] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.036223831999999997477seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916723.624370980] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.10997358599999999818seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916726.357865513] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.052813440000000003161seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916727.108335132] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.16132774399999999515seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916728.078115003] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.10876864899999999503seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916728.276060895] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.061617764999999997955seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916728.816348852] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.071594833999999996088seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916729.097823511] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.088104567999999994221seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916730.724423056] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.14473458299999999999seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916730.997726883] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.13043548199999999149seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916731.772038314] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.088948756000000003819seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916732.396872220] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.14991513900000000281seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916732.896940689] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.074543763999999998471seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916733.825798994] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.067846644999999997094seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916736.130110765] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.089987317999999996698seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916736.427565057] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.050654296000000001432seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916739.745486223] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.060741703000000001056seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916741.050619257] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.057503226999999997038seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916741.523387800] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.041348065000000003288seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916742.877807751] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.083850248000000002224seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916744.862622191] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.034647042000000002893seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916745.062602034] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.079303536999999993395seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916746.719400682] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.063205944000000000016seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916748.254038716] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.064287899999999995049seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916748.481905277] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.059729443999999999593seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916750.263725614] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.036141683000000000836seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916750.397912768] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.038057683000000001872seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916753.787400844] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.049180899999999999617seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916755.648238738] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.077076356999999998121seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916757.327077963] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.1176685559999999936seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916758.850686289] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.10388150399999999951seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.
+[ekf_node-7] [ERROR] [1794916761.292471750] [ekf_filter_node_odom]: Failed to meet update rate! Took 0.0516962480000000002seconds. Try decreasing the rate, limiting sensor output frequency, or limiting the number of sensors.

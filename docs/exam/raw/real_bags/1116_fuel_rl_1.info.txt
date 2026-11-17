@@ -1,0 +1,31 @@
+
+Files:             1116_fuel_rl_1_0.db3
+Bag size:          1.8 GiB
+Storage id:        sqlite3
+Duration:          92.456903528s
+Start:             Nov 16 2026 17:44:19.796324113 (1794818659.796324113)
+End:               Nov 16 2026 17:45:52.253227641 (1794818752.253227641)
+Messages:          51876
+Topic information: Topic: /scan | Type: sensor_msgs/msg/LaserScan | Count: 900 | Serialization Format: cdr
+                   Topic: /camera/color/camera_info | Type: sensor_msgs/msg/CameraInfo | Count: 2684 | Serialization Format: cdr
+                   Topic: /wheel_odometry | Type: sensor_msgs/msg/JointState | Count: 4488 | Serialization Format: cdr
+                   Topic: /camera/color/image_raw/compressed | Type: sensor_msgs/msg/CompressedImage | Count: 2687 | Serialization Format: cdr
+                   Topic: /odom | Type: nav_msgs/msg/Odometry | Count: 4490 | Serialization Format: cdr
+                   Topic: /imu | Type: sensor_msgs/msg/Imu | Count: 8981 | Serialization Format: cdr
+                   Topic: /tf_static | Type: tf2_msgs/msg/TFMessage | Count: 1 | Serialization Format: cdr
+                   Topic: /low_rl/status | Type: std_msgs/msg/String | Count: 39 | Serialization Format: cdr
+                   Topic: /motor_states | Type: sensor_msgs/msg/JointState | Count: 1796 | Serialization Format: cdr
+                   Topic: /limo_status | Type: limo_msgs/msg/LimoStatus | Count: 179 | Serialization Format: cdr
+                   Topic: /tf | Type: tf2_msgs/msg/TFMessage | Count: 9076 | Serialization Format: cdr
+                   Topic: /low_rl/goal_marker | Type: visualization_msgs/msg/MarkerArray | Count: 44 | Serialization Format: cdr
+                   Topic: /low_rl/cmd_debug | Type: geometry_msgs/msg/TwistStamped | Count: 391 | Serialization Format: cdr
+                   Topic: /trajectory_node_list | Type: visualization_msgs/msg/MarkerArray | Count: 3034 | Serialization Format: cdr
+                   Topic: /odometry/filtered | Type: nav_msgs/msg/Odometry | Count: 2693 | Serialization Format: cdr
+                   Topic: /low_rl/state | Type: std_msgs/msg/String | Count: 3 | Serialization Format: cdr
+                   Topic: /cmd_vel | Type: geometry_msgs/msg/Twist | Count: 391 | Serialization Format: cdr
+                   Topic: /map | Type: nav_msgs/msg/OccupancyGrid | Count: 101 | Serialization Format: cdr
+                   Topic: /camera/depth/camera_info | Type: sensor_msgs/msg/CameraInfo | Count: 2683 | Serialization Format: cdr
+                   Topic: /camera/depth/image_raw | Type: sensor_msgs/msg/Image | Count: 2698 | Serialization Format: cdr
+                   Topic: /joint_states | Type: sensor_msgs/msg/JointState | Count: 924 | Serialization Format: cdr
+                   Topic: /rc_state | Type: sensor_msgs/msg/Joy | Count: 3593 | Serialization Format: cdr
+

@@ -1,0 +1,1012 @@
+################ /LIMO
+/LIMO
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /gt/detections: vision_msgs/msg/Detection2DArray
+    /gt/mask: sensor_msgs/msg/Image
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /remove_urdf_robot: std_msgs/msg/String
+    /rosout: rcl_interfaces/msg/Log
+    /sim/ground_truth: geometry_msgs/msg/PoseStamped
+  Service Servers:
+    /LIMO/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /LIMO/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /LIMO/get_parameters: rcl_interfaces/srv/GetParameters
+    /LIMO/list_parameters: rcl_interfaces/srv/ListParameters
+    /LIMO/set_parameters: rcl_interfaces/srv/SetParameters
+    /LIMO/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /Ros2Supervisor/Ros2Supervisor
+/Ros2Supervisor/Ros2Supervisor
+  Subscribers:
+    /Ros2Supervisor/remove_node: std_msgs/msg/String
+  Publishers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /Ros2Supervisor/Ros2Supervisor/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /Ros2Supervisor/Ros2Supervisor/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /Ros2Supervisor/Ros2Supervisor/get_parameters: rcl_interfaces/srv/GetParameters
+    /Ros2Supervisor/Ros2Supervisor/list_parameters: rcl_interfaces/srv/ListParameters
+    /Ros2Supervisor/Ros2Supervisor/set_parameters: rcl_interfaces/srv/SetParameters
+    /Ros2Supervisor/Ros2Supervisor/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+    /Ros2Supervisor/animation_start_recording: webots_ros2_msgs/srv/SetString
+    /Ros2Supervisor/animation_stop_recording: webots_ros2_msgs/srv/GetBool
+    /Ros2Supervisor/spawn_node_from_string: webots_ros2_msgs/srv/SpawnNodeFromString
+    /Ros2Supervisor/spawn_urdf_robot: webots_ros2_msgs/srv/SpawnUrdfRobot
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /behavior_server
+/behavior_server
+  Subscribers:
+    /bond: bond/msg/Status
+    /clock: rosgraph_msgs/msg/Clock
+    /local_costmap/costmap_raw: nav2_msgs/msg/Costmap
+    /local_costmap/published_footprint: geometry_msgs/msg/PolygonStamped
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /behavior_server/transition_event: lifecycle_msgs/msg/TransitionEvent
+    /bond: bond/msg/Status
+    /cmd_vel: geometry_msgs/msg/Twist
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /behavior_server/change_state: lifecycle_msgs/srv/ChangeState
+    /behavior_server/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /behavior_server/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /behavior_server/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /behavior_server/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /behavior_server/get_parameters: rcl_interfaces/srv/GetParameters
+    /behavior_server/get_state: lifecycle_msgs/srv/GetState
+    /behavior_server/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /behavior_server/list_parameters: rcl_interfaces/srv/ListParameters
+    /behavior_server/set_parameters: rcl_interfaces/srv/SetParameters
+    /behavior_server/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+    /backup: nav2_msgs/action/BackUp
+    /drive_on_heading: nav2_msgs/action/DriveOnHeading
+    /spin: nav2_msgs/action/Spin
+    /wait: nav2_msgs/action/Wait
+  Action Clients:
+
+################ /bt_navigator
+/bt_navigator
+  Subscribers:
+    /bond: bond/msg/Status
+    /clock: rosgraph_msgs/msg/Clock
+    /goal_pose: geometry_msgs/msg/PoseStamped
+    /odom: nav_msgs/msg/Odometry
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /bond: bond/msg/Status
+    /bt_navigator/transition_event: lifecycle_msgs/msg/TransitionEvent
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /bt_navigator/change_state: lifecycle_msgs/srv/ChangeState
+    /bt_navigator/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /bt_navigator/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /bt_navigator/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /bt_navigator/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /bt_navigator/get_parameters: rcl_interfaces/srv/GetParameters
+    /bt_navigator/get_state: lifecycle_msgs/srv/GetState
+    /bt_navigator/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /bt_navigator/list_parameters: rcl_interfaces/srv/ListParameters
+    /bt_navigator/set_parameters: rcl_interfaces/srv/SetParameters
+    /bt_navigator/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+    /navigate_through_poses: nav2_msgs/action/NavigateThroughPoses
+    /navigate_to_pose: nav2_msgs/action/NavigateToPose
+  Action Clients:
+    /navigate_to_pose: nav2_msgs/action/NavigateToPose
+################ /bt_navigator_navigate_through_poses_rclcpp_node
+/bt_navigator_navigate_through_poses_rclcpp_node
+  Subscribers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /behavior_tree_log: nav2_msgs/msg/BehaviorTreeLog
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /bt_navigator_navigate_through_poses_rclcpp_node/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /bt_navigator_navigate_through_poses_rclcpp_node/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /bt_navigator_navigate_through_poses_rclcpp_node/get_parameters: rcl_interfaces/srv/GetParameters
+    /bt_navigator_navigate_through_poses_rclcpp_node/list_parameters: rcl_interfaces/srv/ListParameters
+    /bt_navigator_navigate_through_poses_rclcpp_node/set_parameters: rcl_interfaces/srv/SetParameters
+    /bt_navigator_navigate_through_poses_rclcpp_node/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+    /global_costmap/clear_entirely_global_costmap: nav2_msgs/srv/ClearEntireCostmap
+    /local_costmap/clear_entirely_local_costmap: nav2_msgs/srv/ClearEntireCostmap
+  Action Servers:
+
+  Action Clients:
+    /backup: nav2_msgs/action/BackUp
+    /compute_path_through_poses: nav2_msgs/action/ComputePathThroughPoses
+    /follow_path: nav2_msgs/action/FollowPath
+    /spin: nav2_msgs/action/Spin
+    /wait: nav2_msgs/action/Wait
+################ /bt_navigator_navigate_to_pose_rclcpp_node
+/bt_navigator_navigate_to_pose_rclcpp_node
+  Subscribers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /behavior_tree_log: nav2_msgs/msg/BehaviorTreeLog
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /bt_navigator_navigate_to_pose_rclcpp_node/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /bt_navigator_navigate_to_pose_rclcpp_node/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /bt_navigator_navigate_to_pose_rclcpp_node/get_parameters: rcl_interfaces/srv/GetParameters
+    /bt_navigator_navigate_to_pose_rclcpp_node/list_parameters: rcl_interfaces/srv/ListParameters
+    /bt_navigator_navigate_to_pose_rclcpp_node/set_parameters: rcl_interfaces/srv/SetParameters
+    /bt_navigator_navigate_to_pose_rclcpp_node/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+    /global_costmap/clear_entirely_global_costmap: nav2_msgs/srv/ClearEntireCostmap
+    /local_costmap/clear_entirely_local_costmap: nav2_msgs/srv/ClearEntireCostmap
+  Action Servers:
+
+  Action Clients:
+    /backup: nav2_msgs/action/BackUp
+    /compute_path_to_pose: nav2_msgs/action/ComputePathToPose
+    /follow_path: nav2_msgs/action/FollowPath
+    /spin: nav2_msgs/action/Spin
+    /wait: nav2_msgs/action/Wait
+################ /camera/camera
+/camera/camera
+  Subscribers:
+
+  Publishers:
+    /camera/color/camera_info: sensor_msgs/msg/CameraInfo
+    /camera/color/image_raw: sensor_msgs/msg/Image
+    /camera/color/image_raw/compressed: sensor_msgs/msg/CompressedImage
+    /camera/depth/camera_info: sensor_msgs/msg/CameraInfo
+    /camera/depth/image_raw: sensor_msgs/msg/Image
+    /camera/depth/image_raw/compressed: sensor_msgs/msg/CompressedImage
+    /camera/depth/image_raw/compressedDepth: sensor_msgs/msg/CompressedImage
+    /camera/depth/points: sensor_msgs/msg/PointCloud2
+    /camera/depth_registered/points: sensor_msgs/msg/PointCloud2
+    /camera/ir/camera_info: sensor_msgs/msg/CameraInfo
+    /camera/ir/image_raw: sensor_msgs/msg/Image
+    /camera/ir/image_raw/compressed: sensor_msgs/msg/CompressedImage
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /tf: tf2_msgs/msg/TFMessage
+  Service Servers:
+    /camera/camera/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /camera/camera/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /camera/camera/get_parameters: rcl_interfaces/srv/GetParameters
+    /camera/camera/list_parameters: rcl_interfaces/srv/ListParameters
+    /camera/camera/set_parameters: rcl_interfaces/srv/SetParameters
+    /camera/camera/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /cartographer_node
+/cartographer_node
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /imu: sensor_msgs/msg/Imu
+    /odom: nav_msgs/msg/Odometry
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /scan: sensor_msgs/msg/LaserScan
+  Publishers:
+    /constraint_list: visualization_msgs/msg/MarkerArray
+    /landmark_poses_list: visualization_msgs/msg/MarkerArray
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /scan_matched_points2: sensor_msgs/msg/PointCloud2
+    /submap_list: cartographer_ros_msgs/msg/SubmapList
+    /tf: tf2_msgs/msg/TFMessage
+    /trajectory_node_list: visualization_msgs/msg/MarkerArray
+  Service Servers:
+    /cartographer_node/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /cartographer_node/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /cartographer_node/get_parameters: rcl_interfaces/srv/GetParameters
+    /cartographer_node/list_parameters: rcl_interfaces/srv/ListParameters
+    /cartographer_node/set_parameters: rcl_interfaces/srv/SetParameters
+    /cartographer_node/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+    /finish_trajectory: cartographer_ros_msgs/srv/FinishTrajectory
+    /get_trajectory_states: cartographer_ros_msgs/srv/GetTrajectoryStates
+    /read_metrics: cartographer_ros_msgs/srv/ReadMetrics
+    /start_trajectory: cartographer_ros_msgs/srv/StartTrajectory
+    /submap_query: cartographer_ros_msgs/srv/SubmapQuery
+    /tf2_frames: tf2_msgs/srv/FrameGraph
+    /trajectory_query: cartographer_ros_msgs/srv/TrajectoryQuery
+    /write_state: cartographer_ros_msgs/srv/WriteState
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /cartographer_occupancy_grid_node
+/cartographer_occupancy_grid_node
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /submap_list: cartographer_ros_msgs/msg/SubmapList
+  Publishers:
+    /map: nav_msgs/msg/OccupancyGrid
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /cartographer_occupancy_grid_node/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /cartographer_occupancy_grid_node/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /cartographer_occupancy_grid_node/get_parameters: rcl_interfaces/srv/GetParameters
+    /cartographer_occupancy_grid_node/list_parameters: rcl_interfaces/srv/ListParameters
+    /cartographer_occupancy_grid_node/set_parameters: rcl_interfaces/srv/SetParameters
+    /cartographer_occupancy_grid_node/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+    /submap_query: cartographer_ros_msgs/srv/SubmapQuery
+  Action Servers:
+
+  Action Clients:
+
+################ /controller_manager
+/controller_manager
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /controller_manager/configure_controller: controller_manager_msgs/srv/ConfigureController
+    /controller_manager/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /controller_manager/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /controller_manager/get_parameters: rcl_interfaces/srv/GetParameters
+    /controller_manager/list_controller_types: controller_manager_msgs/srv/ListControllerTypes
+    /controller_manager/list_controllers: controller_manager_msgs/srv/ListControllers
+    /controller_manager/list_hardware_components: controller_manager_msgs/srv/ListHardwareComponents
+    /controller_manager/list_hardware_interfaces: controller_manager_msgs/srv/ListHardwareInterfaces
+    /controller_manager/list_parameters: rcl_interfaces/srv/ListParameters
+    /controller_manager/load_controller: controller_manager_msgs/srv/LoadController
+    /controller_manager/reload_controller_libraries: controller_manager_msgs/srv/ReloadControllerLibraries
+    /controller_manager/set_hardware_component_state: controller_manager_msgs/srv/SetHardwareComponentState
+    /controller_manager/set_parameters: rcl_interfaces/srv/SetParameters
+    /controller_manager/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+    /controller_manager/switch_controller: controller_manager_msgs/srv/SwitchController
+    /controller_manager/unload_controller: controller_manager_msgs/srv/UnloadController
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /controller_server
+/controller_server
+  Subscribers:
+    /bond: bond/msg/Status
+    /clock: rosgraph_msgs/msg/Clock
+    /odom: nav_msgs/msg/Odometry
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /speed_limit: nav2_msgs/msg/SpeedLimit
+  Publishers:
+    /bond: bond/msg/Status
+    /cmd_vel_nav: geometry_msgs/msg/Twist
+    /controller_server/transition_event: lifecycle_msgs/msg/TransitionEvent
+    /lookahead_collision_arc: nav_msgs/msg/Path
+    /lookahead_point: geometry_msgs/msg/PointStamped
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /received_global_plan: nav_msgs/msg/Path
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /controller_server/change_state: lifecycle_msgs/srv/ChangeState
+    /controller_server/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /controller_server/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /controller_server/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /controller_server/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /controller_server/get_parameters: rcl_interfaces/srv/GetParameters
+    /controller_server/get_state: lifecycle_msgs/srv/GetState
+    /controller_server/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /controller_server/list_parameters: rcl_interfaces/srv/ListParameters
+    /controller_server/set_parameters: rcl_interfaces/srv/SetParameters
+    /controller_server/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+    /follow_path: nav2_msgs/action/FollowPath
+  Action Clients:
+
+################ /diffdrive_controller
+/diffdrive_controller
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /cmd_vel: geometry_msgs/msg/Twist
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /diffdrive_controller/odom: nav_msgs/msg/Odometry
+    /diffdrive_controller/transition_event: lifecycle_msgs/msg/TransitionEvent
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /tf: tf2_msgs/msg/TFMessage
+  Service Servers:
+    /diffdrive_controller/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /diffdrive_controller/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /diffdrive_controller/get_parameters: rcl_interfaces/srv/GetParameters
+    /diffdrive_controller/list_parameters: rcl_interfaces/srv/ListParameters
+    /diffdrive_controller/set_parameters: rcl_interfaces/srv/SetParameters
+    /diffdrive_controller/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /explore_frontier
+/explore_frontier
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /map: nav_msgs/msg/OccupancyGrid
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /explore_frontier/done: std_msgs/msg/Bool
+    /explore_frontier/frontiers: visualization_msgs/msg/MarkerArray
+    /explore_frontier/state: std_msgs/msg/String
+    /explore_frontier/status: std_msgs/msg/String
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /explore_frontier/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /explore_frontier/enable: std_srvs/srv/SetBool
+    /explore_frontier/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /explore_frontier/get_parameters: rcl_interfaces/srv/GetParameters
+    /explore_frontier/list_parameters: rcl_interfaces/srv/ListParameters
+    /explore_frontier/set_parameters: rcl_interfaces/srv/SetParameters
+    /explore_frontier/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+    /navigate_to_pose: nav2_msgs/action/NavigateToPose
+    /spin: nav2_msgs/action/Spin
+################ /global_costmap/global_costmap
+/global_costmap/global_costmap
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /global_costmap/footprint: geometry_msgs/msg/Polygon
+    /map: nav_msgs/msg/OccupancyGrid
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /scan_obstacles: sensor_msgs/msg/LaserScan
+    /ultrasonic/front_left: sensor_msgs/msg/Range
+    /ultrasonic/front_right: sensor_msgs/msg/Range
+  Publishers:
+    /global_costmap/costmap: nav_msgs/msg/OccupancyGrid
+    /global_costmap/costmap_raw: nav2_msgs/msg/Costmap
+    /global_costmap/costmap_updates: map_msgs/msg/OccupancyGridUpdate
+    /global_costmap/global_costmap/transition_event: lifecycle_msgs/msg/TransitionEvent
+    /global_costmap/published_footprint: geometry_msgs/msg/PolygonStamped
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /global_costmap/clear_around_global_costmap: nav2_msgs/srv/ClearCostmapAroundRobot
+    /global_costmap/clear_entirely_global_costmap: nav2_msgs/srv/ClearEntireCostmap
+    /global_costmap/clear_except_global_costmap: nav2_msgs/srv/ClearCostmapExceptRegion
+    /global_costmap/get_costmap: nav2_msgs/srv/GetCostmap
+    /global_costmap/global_costmap/change_state: lifecycle_msgs/srv/ChangeState
+    /global_costmap/global_costmap/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /global_costmap/global_costmap/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /global_costmap/global_costmap/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /global_costmap/global_costmap/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /global_costmap/global_costmap/get_parameters: rcl_interfaces/srv/GetParameters
+    /global_costmap/global_costmap/get_state: lifecycle_msgs/srv/GetState
+    /global_costmap/global_costmap/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /global_costmap/global_costmap/list_parameters: rcl_interfaces/srv/ListParameters
+    /global_costmap/global_costmap/set_parameters: rcl_interfaces/srv/SetParameters
+    /global_costmap/global_costmap/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /joint_state_broadcaster
+/joint_state_broadcaster
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /dynamic_joint_states: control_msgs/msg/DynamicJointState
+    /joint_state_broadcaster/transition_event: lifecycle_msgs/msg/TransitionEvent
+    /joint_states: sensor_msgs/msg/JointState
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /joint_state_broadcaster/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /joint_state_broadcaster/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /joint_state_broadcaster/get_parameters: rcl_interfaces/srv/GetParameters
+    /joint_state_broadcaster/list_parameters: rcl_interfaces/srv/ListParameters
+    /joint_state_broadcaster/set_parameters: rcl_interfaces/srv/SetParameters
+    /joint_state_broadcaster/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /launch_ros_1285698
+/launch_ros_1285698
+  Subscribers:
+
+  Publishers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /launch_ros_1285698/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /launch_ros_1285698/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /launch_ros_1285698/get_parameters: rcl_interfaces/srv/GetParameters
+    /launch_ros_1285698/list_parameters: rcl_interfaces/srv/ListParameters
+    /launch_ros_1285698/set_parameters: rcl_interfaces/srv/SetParameters
+    /launch_ros_1285698/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /lifecycle_manager_navigation
+/lifecycle_manager_navigation
+  Subscribers:
+    /bond: bond/msg/Status
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /bond: bond/msg/Status
+    /diagnostics: diagnostic_msgs/msg/DiagnosticArray
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /lifecycle_manager_navigation/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /lifecycle_manager_navigation/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /lifecycle_manager_navigation/get_parameters: rcl_interfaces/srv/GetParameters
+    /lifecycle_manager_navigation/is_active: std_srvs/srv/Trigger
+    /lifecycle_manager_navigation/list_parameters: rcl_interfaces/srv/ListParameters
+    /lifecycle_manager_navigation/manage_nodes: nav2_msgs/srv/ManageLifecycleNodes
+    /lifecycle_manager_navigation/set_parameters: rcl_interfaces/srv/SetParameters
+    /lifecycle_manager_navigation/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+    /behavior_server/change_state: lifecycle_msgs/srv/ChangeState
+    /behavior_server/get_state: lifecycle_msgs/srv/GetState
+    /bt_navigator/change_state: lifecycle_msgs/srv/ChangeState
+    /bt_navigator/get_state: lifecycle_msgs/srv/GetState
+    /controller_server/change_state: lifecycle_msgs/srv/ChangeState
+    /controller_server/get_state: lifecycle_msgs/srv/GetState
+    /planner_server/change_state: lifecycle_msgs/srv/ChangeState
+    /planner_server/get_state: lifecycle_msgs/srv/GetState
+    /smoother_server/change_state: lifecycle_msgs/srv/ChangeState
+    /smoother_server/get_state: lifecycle_msgs/srv/GetState
+    /velocity_smoother/change_state: lifecycle_msgs/srv/ChangeState
+    /velocity_smoother/get_state: lifecycle_msgs/srv/GetState
+    /waypoint_follower/change_state: lifecycle_msgs/srv/ChangeState
+    /waypoint_follower/get_state: lifecycle_msgs/srv/GetState
+  Action Servers:
+
+  Action Clients:
+
+################ /limo_fire_rviz
+/limo_fire_rviz
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /explore_frontier/done: std_msgs/msg/Bool
+    /explore_frontier/frontiers: visualization_msgs/msg/MarkerArray
+    /explore_frontier/state: std_msgs/msg/String
+    /explore_frontier/status: std_msgs/msg/String
+    /local_costmap/published_footprint: geometry_msgs/msg/PolygonStamped
+    /local_plan: nav_msgs/msg/Path
+    /map: nav_msgs/msg/OccupancyGrid
+    /map_updates: map_msgs/msg/OccupancyGridUpdate
+    /mission/overlay: rviz_2d_overlay_msgs/msg/OverlayText
+    /object_mapper/markers: visualization_msgs/msg/MarkerArray
+    /object_mapper/selected: sensor_msgs/msg/Image
+    /object_mapper/summary: rviz_2d_overlay_msgs/msg/OverlayText
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /particle_cloud: nav2_msgs/msg/ParticleCloud
+    /plan: nav_msgs/msg/Path
+    /robot_description: std_msgs/msg/String
+    /scan: sensor_msgs/msg/LaserScan
+    /yolo_detector/image: sensor_msgs/msg/Image
+  Publishers:
+    /clicked_point: geometry_msgs/msg/PointStamped
+    /goal_pose: geometry_msgs/msg/PoseStamped
+    /initialpose: geometry_msgs/msg/PoseWithCovarianceStamped
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /limo_fire_rviz/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /limo_fire_rviz/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /limo_fire_rviz/get_parameters: rcl_interfaces/srv/GetParameters
+    /limo_fire_rviz/list_parameters: rcl_interfaces/srv/ListParameters
+    /limo_fire_rviz/set_parameters: rcl_interfaces/srv/SetParameters
+    /limo_fire_rviz/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+    /explore_frontier/enable: std_srvs/srv/SetBool
+  Action Servers:
+
+  Action Clients:
+
+################ /limo/limo_base
+/limo/limo_base
+  Subscribers:
+
+  Publishers:
+    /imu: sensor_msgs/msg/Imu
+    /odom: nav_msgs/msg/Odometry
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /tf: tf2_msgs/msg/TFMessage
+  Service Servers:
+    /limo/limo_base/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /limo/limo_base/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /limo/limo_base/get_parameters: rcl_interfaces/srv/GetParameters
+    /limo/limo_base/list_parameters: rcl_interfaces/srv/ListParameters
+    /limo/limo_base/set_parameters: rcl_interfaces/srv/SetParameters
+    /limo/limo_base/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /local_costmap/local_costmap
+/local_costmap/local_costmap
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /local_costmap/footprint: geometry_msgs/msg/Polygon
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /scan_obstacles: sensor_msgs/msg/LaserScan
+    /ultrasonic/front_left: sensor_msgs/msg/Range
+    /ultrasonic/front_right: sensor_msgs/msg/Range
+  Publishers:
+    /local_costmap/costmap: nav_msgs/msg/OccupancyGrid
+    /local_costmap/costmap_raw: nav2_msgs/msg/Costmap
+    /local_costmap/costmap_updates: map_msgs/msg/OccupancyGridUpdate
+    /local_costmap/local_costmap/transition_event: lifecycle_msgs/msg/TransitionEvent
+    /local_costmap/published_footprint: geometry_msgs/msg/PolygonStamped
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /local_costmap/clear_around_local_costmap: nav2_msgs/srv/ClearCostmapAroundRobot
+    /local_costmap/clear_entirely_local_costmap: nav2_msgs/srv/ClearEntireCostmap
+    /local_costmap/clear_except_local_costmap: nav2_msgs/srv/ClearCostmapExceptRegion
+    /local_costmap/get_costmap: nav2_msgs/srv/GetCostmap
+    /local_costmap/local_costmap/change_state: lifecycle_msgs/srv/ChangeState
+    /local_costmap/local_costmap/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /local_costmap/local_costmap/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /local_costmap/local_costmap/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /local_costmap/local_costmap/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /local_costmap/local_costmap/get_parameters: rcl_interfaces/srv/GetParameters
+    /local_costmap/local_costmap/get_state: lifecycle_msgs/srv/GetState
+    /local_costmap/local_costmap/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /local_costmap/local_costmap/list_parameters: rcl_interfaces/srv/ListParameters
+    /local_costmap/local_costmap/set_parameters: rcl_interfaces/srv/SetParameters
+    /local_costmap/local_costmap/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /nav2_container
+/nav2_container
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /object_goto
+/object_goto
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /low_rl/goto_status: std_msgs/msg/String
+    /map: nav_msgs/msg/OccupancyGrid
+    /object_goto/goal: std_msgs/msg/String
+    /object_mapper/objects: vision_msgs/msg/Detection3DArray
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /low_rl/instruction: std_msgs/msg/String
+    /low_rl/target_class: std_msgs/msg/String
+    /object_goto/overlay: rviz_2d_overlay_msgs/msg/OverlayText
+    /object_goto/status: std_msgs/msg/String
+    /object_goto/target: visualization_msgs/msg/MarkerArray
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+    /object_goto/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /object_goto/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /object_goto/get_parameters: rcl_interfaces/srv/GetParameters
+    /object_goto/list_parameters: rcl_interfaces/srv/ListParameters
+    /object_goto/set_parameters: rcl_interfaces/srv/SetParameters
+    /object_goto/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+    /navigate_to_pose: nav2_msgs/action/NavigateToPose
+################ /planner_server
+/planner_server
+  Subscribers:
+    /bond: bond/msg/Status
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /bond: bond/msg/Status
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /plan: nav_msgs/msg/Path
+    /planner_server/transition_event: lifecycle_msgs/msg/TransitionEvent
+    /rosout: rcl_interfaces/msg/Log
+    /unsmoothed_plan: nav_msgs/msg/Path
+  Service Servers:
+    /is_path_valid: nav2_msgs/srv/IsPathValid
+    /planner_server/change_state: lifecycle_msgs/srv/ChangeState
+    /planner_server/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /planner_server/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /planner_server/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /planner_server/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /planner_server/get_parameters: rcl_interfaces/srv/GetParameters
+    /planner_server/get_state: lifecycle_msgs/srv/GetState
+    /planner_server/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /planner_server/list_parameters: rcl_interfaces/srv/ListParameters
+    /planner_server/set_parameters: rcl_interfaces/srv/SetParameters
+    /planner_server/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+    /compute_path_through_poses: nav2_msgs/action/ComputePathThroughPoses
+    /compute_path_to_pose: nav2_msgs/action/ComputePathToPose
+  Action Clients:
+
+################ /robot_state_publisher
+/robot_state_publisher
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /joint_states: sensor_msgs/msg/JointState
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /robot_description: std_msgs/msg/String
+    /rosout: rcl_interfaces/msg/Log
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Service Servers:
+    /robot_state_publisher/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /robot_state_publisher/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /robot_state_publisher/get_parameters: rcl_interfaces/srv/GetParameters
+    /robot_state_publisher/list_parameters: rcl_interfaces/srv/ListParameters
+    /robot_state_publisher/set_parameters: rcl_interfaces/srv/SetParameters
+    /robot_state_publisher/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /smoke_mode
+/smoke_mode
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /imu: sensor_msgs/msg/Imu
+    /map: nav_msgs/msg/OccupancyGrid
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /scan: sensor_msgs/msg/LaserScan
+    /ultrasonic/front_left: sensor_msgs/msg/Range
+    /ultrasonic/front_right: sensor_msgs/msg/Range
+  Publishers:
+    /initialpose: geometry_msgs/msg/PoseWithCovarianceStamped
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /scan_localization: sensor_msgs/msg/LaserScan
+    /scan_obstacles: sensor_msgs/msg/LaserScan
+    /smoke_mode/active: std_msgs/msg/Bool
+    /smoke_mode/bump: geometry_msgs/msg/PointStamped
+    /smoke_mode/pose: geometry_msgs/msg/PoseWithCovarianceStamped
+    /smoke_mode/wall_fix: std_msgs/msg/Float64MultiArray
+    /speed_limit: nav2_msgs/msg/SpeedLimit
+    /tf: tf2_msgs/msg/TFMessage
+  Service Servers:
+    /smoke_mode/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /smoke_mode/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /smoke_mode/get_parameters: rcl_interfaces/srv/GetParameters
+    /smoke_mode/list_parameters: rcl_interfaces/srv/ListParameters
+    /smoke_mode/set: std_srvs/srv/SetBool
+    /smoke_mode/set_parameters: rcl_interfaces/srv/SetParameters
+    /smoke_mode/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+    /global_costmap/clear_entirely_global_costmap: nav2_msgs/srv/ClearEntireCostmap
+    /local_costmap/clear_entirely_local_costmap: nav2_msgs/srv/ClearEntireCostmap
+  Action Servers:
+
+  Action Clients:
+
+################ /smoother_server
+/smoother_server
+  Subscribers:
+    /bond: bond/msg/Status
+    /clock: rosgraph_msgs/msg/Clock
+    /global_costmap/costmap_raw: nav2_msgs/msg/Costmap
+    /global_costmap/published_footprint: geometry_msgs/msg/PolygonStamped
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /bond: bond/msg/Status
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /plan_smoothed: nav_msgs/msg/Path
+    /rosout: rcl_interfaces/msg/Log
+    /smoother_server/transition_event: lifecycle_msgs/msg/TransitionEvent
+  Service Servers:
+    /smoother_server/change_state: lifecycle_msgs/srv/ChangeState
+    /smoother_server/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /smoother_server/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /smoother_server/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /smoother_server/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /smoother_server/get_parameters: rcl_interfaces/srv/GetParameters
+    /smoother_server/get_state: lifecycle_msgs/srv/GetState
+    /smoother_server/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /smoother_server/list_parameters: rcl_interfaces/srv/ListParameters
+    /smoother_server/set_parameters: rcl_interfaces/srv/SetParameters
+    /smoother_server/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+    /smooth_path: nav2_msgs/action/SmoothPath
+  Action Clients:
+
+################ /transform_listener_impl_5712ce4cd130
+/transform_listener_impl_5712ce4cd130
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /transform_listener_impl_59a772c5d710
+/transform_listener_impl_59a772c5d710
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /transform_listener_impl_5a69ae54f500
+/transform_listener_impl_5a69ae54f500
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /transform_listener_impl_5e3aa9318050
+/transform_listener_impl_5e3aa9318050
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /transform_listener_impl_60d40bc27640
+/transform_listener_impl_60d40bc27640
+  Subscribers:
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /transform_listener_impl_7dc028001d30
+/transform_listener_impl_7dc028001d30
+  Subscribers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /transform_listener_impl_7dc030003670
+/transform_listener_impl_7dc030003670
+  Subscribers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /transform_listener_impl_7dc04c002370
+/transform_listener_impl_7dc04c002370
+  Subscribers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /transform_listener_impl_7dc054005f80
+/transform_listener_impl_7dc054005f80
+  Subscribers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /rosout: rcl_interfaces/msg/Log
+  Service Servers:
+
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /velocity_smoother
+/velocity_smoother
+  Subscribers:
+    /bond: bond/msg/Status
+    /clock: rosgraph_msgs/msg/Clock
+    /cmd_vel_nav: geometry_msgs/msg/Twist
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /bond: bond/msg/Status
+    /cmd_vel: geometry_msgs/msg/Twist
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /velocity_smoother/transition_event: lifecycle_msgs/msg/TransitionEvent
+  Service Servers:
+    /velocity_smoother/change_state: lifecycle_msgs/srv/ChangeState
+    /velocity_smoother/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /velocity_smoother/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /velocity_smoother/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /velocity_smoother/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /velocity_smoother/get_parameters: rcl_interfaces/srv/GetParameters
+    /velocity_smoother/get_state: lifecycle_msgs/srv/GetState
+    /velocity_smoother/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /velocity_smoother/list_parameters: rcl_interfaces/srv/ListParameters
+    /velocity_smoother/set_parameters: rcl_interfaces/srv/SetParameters
+    /velocity_smoother/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+
+################ /waypoint_follower
+/waypoint_follower
+  Subscribers:
+    /bond: bond/msg/Status
+    /clock: rosgraph_msgs/msg/Clock
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Publishers:
+    /bond: bond/msg/Status
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /waypoint_follower/transition_event: lifecycle_msgs/msg/TransitionEvent
+  Service Servers:
+    /waypoint_follower/change_state: lifecycle_msgs/srv/ChangeState
+    /waypoint_follower/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /waypoint_follower/get_available_states: lifecycle_msgs/srv/GetAvailableStates
+    /waypoint_follower/get_available_transitions: lifecycle_msgs/srv/GetAvailableTransitions
+    /waypoint_follower/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /waypoint_follower/get_parameters: rcl_interfaces/srv/GetParameters
+    /waypoint_follower/get_state: lifecycle_msgs/srv/GetState
+    /waypoint_follower/get_transition_graph: lifecycle_msgs/srv/GetAvailableTransitions
+    /waypoint_follower/list_parameters: rcl_interfaces/srv/ListParameters
+    /waypoint_follower/set_parameters: rcl_interfaces/srv/SetParameters
+    /waypoint_follower/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+    /follow_waypoints: nav2_msgs/action/FollowWaypoints
+  Action Clients:
+    /navigate_to_pose: nav2_msgs/action/NavigateToPose
+################ /ydlidar_ros2_driver_node
+/ydlidar_ros2_driver_node
+  Subscribers:
+
+  Publishers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /scan: sensor_msgs/msg/LaserScan
+  Service Servers:
+    /ydlidar_ros2_driver_node/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /ydlidar_ros2_driver_node/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /ydlidar_ros2_driver_node/get_parameters: rcl_interfaces/srv/GetParameters
+    /ydlidar_ros2_driver_node/list_parameters: rcl_interfaces/srv/ListParameters
+    /ydlidar_ros2_driver_node/set_parameters: rcl_interfaces/srv/SetParameters
+    /ydlidar_ros2_driver_node/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+
+  Action Servers:
+
+  Action Clients:
+

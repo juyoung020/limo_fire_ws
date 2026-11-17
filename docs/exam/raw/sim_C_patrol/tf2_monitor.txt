@@ -1,0 +1,29 @@
+Gathering data on all frames for 10 seconds...
+
+
+
+RESULTS: for all Frames
+
+Frames:
+Frame: base_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: camera_color_frame, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: camera_color_optical_frame, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: camera_depth_frame, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: camera_depth_optical_frame, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: camera_ir_frame, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: camera_ir_optical_frame, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: camera_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: front_left_wheel_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: front_right_wheel_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: imu_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: inertial_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: laser_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: odom, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: rear_left_wheel_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: rear_right_wheel_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: ultrasonic_front_left_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+Frame: ultrasonic_front_right_link, published by <no authority available>, Average Delay: 1.79493e+09, Max Delay: 1.79493e+09
+
+All Broadcasters:
+Node: <no authority available> 65.1444 Hz, Average Delay: 1.79493e+09 Max Delay: 1.79493e+09
+[INFO] [1794931365.355559128] [rclcpp]: signal_handler(SIGINT/SIGTERM)

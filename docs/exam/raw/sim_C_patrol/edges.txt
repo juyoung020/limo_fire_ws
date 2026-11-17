@@ -1,0 +1,86 @@
+# topic | type | publishers(node[R/BE,V/TL]) -> subscribers
+/Ros2Supervisor/remove_node | std_msgs/msg/String | - -> /Ros2Supervisor/Ros2Supervisor[R,V]
+/amcl/transition_event | lifecycle_msgs/msg/TransitionEvent | /amcl[R,V] -> -
+/amcl_pose | geometry_msgs/msg/PoseWithCovarianceStamped | /amcl[R,TL] -> /smoke_mode[R,V]
+/behavior_server/transition_event | lifecycle_msgs/msg/TransitionEvent | /behavior_server[R,V] -> -
+/behavior_tree_log | nav2_msgs/msg/BehaviorTreeLog | /bt_navigator_navigate_through_poses_rclcpp_node[R,V], /bt_navigator_navigate_to_pose_rclcpp_node[R,V] -> -
+/bond | bond/msg/Status | /map_server[R,V], /lifecycle_manager_localization[R,V], /amcl[R,V], /lifecycle_manager_localization[R,V], /controller_server[R,V], /lifecycle_manager_navigation[R,V], /smoother_server[R,V], /lifecycle_manager_navigation[R,V], /planner_server[R,V], /lifecycle_manager_navigation[R,V], /behavior_server[R,V], /lifecycle_manager_navigation[R,V], /bt_navigator[R,V], /lifecycle_manager_navigation[R,V], /waypoint_follower[R,V], /lifecycle_manager_navigation[R,V], /velocity_smoother[R,V], /lifecycle_manager_navigation[R,V] -> /map_server[R,V], /lifecycle_manager_localization[R,V], /amcl[R,V], /lifecycle_manager_localization[R,V], /controller_server[R,V], /lifecycle_manager_navigation[R,V], /smoother_server[R,V], /lifecycle_manager_navigation[R,V], /planner_server[R,V], /lifecycle_manager_navigation[R,V], /behavior_server[R,V], /lifecycle_manager_navigation[R,V], /bt_navigator[R,V], /lifecycle_manager_navigation[R,V], /waypoint_follower[R,V], /lifecycle_manager_navigation[R,V], /velocity_smoother[R,V], /lifecycle_manager_navigation[R,V]
+/bt_navigator/transition_event | lifecycle_msgs/msg/TransitionEvent | /bt_navigator[R,V] -> -
+/camera/color/camera_info | sensor_msgs/msg/CameraInfo | /camera/camera[R,V] -> -
+/camera/color/image_raw | sensor_msgs/msg/Image | /camera/camera[R,V] -> -
+/camera/color/image_raw/compressed | sensor_msgs/msg/CompressedImage | /camera/camera[R,V] -> -
+/camera/depth/camera_info | sensor_msgs/msg/CameraInfo | /camera/camera[R,V] -> -
+/camera/depth/image_raw | sensor_msgs/msg/Image | /camera/camera[R,V] -> -
+/camera/depth/image_raw/compressed | sensor_msgs/msg/CompressedImage | /camera/camera[R,V] -> -
+/camera/depth/image_raw/compressedDepth | sensor_msgs/msg/CompressedImage | /camera/camera[R,V] -> -
+/camera/depth/points | sensor_msgs/msg/PointCloud2 | /camera/camera[R,V] -> -
+/camera/depth_registered/points | sensor_msgs/msg/PointCloud2 | /camera/camera[R,V] -> -
+/camera/ir/camera_info | sensor_msgs/msg/CameraInfo | /camera/camera[R,V] -> -
+/camera/ir/image_raw | sensor_msgs/msg/Image | /camera/camera[R,V] -> -
+/camera/ir/image_raw/compressed | sensor_msgs/msg/CompressedImage | /camera/camera[R,V] -> -
+/clock | rosgraph_msgs/msg/Clock | /Ros2Supervisor/Ros2Supervisor[R,V] -> /robot_state_publisher[BE,V], /nav2_container[BE,V], /controller_server[BE,V], /local_costmap/local_costmap[BE,V], /smoother_server[BE,V], /planner_server[BE,V], /global_costmap/global_costmap[BE,V], /behavior_server[BE,V], /bt_navigator[BE,V], /waypoint_follower[BE,V], /velocity_smoother[BE,V], /lifecycle_manager_navigation[BE,V], /map_server[BE,V], /amcl[BE,V], /lifecycle_manager_localization[BE,V], /smoke_mode[BE,V], /transform_listener_impl_5b426fd25710[BE,V], /object_goto[BE,V], /transform_listener_impl_596741c6bc60[BE,V], /LIMO[BE,V], /controller_manager[BE,V], /joint_state_broadcaster[BE,V], /diffdrive_controller[BE,V]
+/cmd_vel | geometry_msgs/msg/Twist | /behavior_server[R,V], /behavior_server[R,V], /behavior_server[R,V], /behavior_server[R,V], /velocity_smoother[R,V] -> /diffdrive_controller[BE,V]
+/cmd_vel_nav | geometry_msgs/msg/Twist | /controller_server[R,V] -> /velocity_smoother[R,V]
+/controller_server/transition_event | lifecycle_msgs/msg/TransitionEvent | /controller_server[R,V] -> -
+/diagnostics | diagnostic_msgs/msg/DiagnosticArray | /lifecycle_manager_navigation[R,V], /lifecycle_manager_localization[R,V] -> -
+/diffdrive_controller/odom | nav_msgs/msg/Odometry | /diffdrive_controller[R,TL] -> -
+/diffdrive_controller/transition_event | lifecycle_msgs/msg/TransitionEvent | /diffdrive_controller[R,V] -> -
+/dynamic_joint_states | control_msgs/msg/DynamicJointState | /joint_state_broadcaster[R,TL] -> -
+/global_costmap/costmap | nav_msgs/msg/OccupancyGrid | /global_costmap/global_costmap[R,TL] -> -
+/global_costmap/costmap_raw | nav2_msgs/msg/Costmap | /global_costmap/global_costmap[R,TL] -> /smoother_server[R,TL]
+/global_costmap/costmap_updates | map_msgs/msg/OccupancyGridUpdate | /global_costmap/global_costmap[R,TL] -> -
+/global_costmap/footprint | geometry_msgs/msg/Polygon | - -> /global_costmap/global_costmap[BE,V]
+/global_costmap/global_costmap/transition_event | lifecycle_msgs/msg/TransitionEvent | /global_costmap/global_costmap[R,V] -> -
+/global_costmap/published_footprint | geometry_msgs/msg/PolygonStamped | /global_costmap/global_costmap[R,TL] -> /smoother_server[BE,V]
+/goal_pose | geometry_msgs/msg/PoseStamped | - -> /bt_navigator[BE,V]
+/gt/detections | vision_msgs/msg/Detection2DArray | /LIMO[R,V] -> -
+/gt/mask | sensor_msgs/msg/Image | /LIMO[R,V] -> -
+/imu | sensor_msgs/msg/Imu | /limo/limo_base[R,V] -> /smoke_mode[BE,V]
+/initialpose | geometry_msgs/msg/PoseWithCovarianceStamped | /smoke_mode[R,V] -> /amcl[BE,V], /smoke_mode[R,V]
+/joint_state_broadcaster/transition_event | lifecycle_msgs/msg/TransitionEvent | /joint_state_broadcaster[R,V] -> -
+/joint_states | sensor_msgs/msg/JointState | /joint_state_broadcaster[R,TL] -> /robot_state_publisher[BE,V]
+/local_costmap/costmap | nav_msgs/msg/OccupancyGrid | /local_costmap/local_costmap[R,TL] -> -
+/local_costmap/costmap_raw | nav2_msgs/msg/Costmap | /local_costmap/local_costmap[R,TL] -> /behavior_server[R,TL]
+/local_costmap/costmap_updates | map_msgs/msg/OccupancyGridUpdate | /local_costmap/local_costmap[R,TL] -> -
+/local_costmap/footprint | geometry_msgs/msg/Polygon | - -> /local_costmap/local_costmap[BE,V]
+/local_costmap/local_costmap/transition_event | lifecycle_msgs/msg/TransitionEvent | /local_costmap/local_costmap[R,V] -> -
+/local_costmap/published_footprint | geometry_msgs/msg/PolygonStamped | /local_costmap/local_costmap[R,TL] -> /behavior_server[BE,V]
+/lookahead_collision_arc | nav_msgs/msg/Path | /controller_server[R,V] -> -
+/lookahead_point | geometry_msgs/msg/PointStamped | /controller_server[R,V] -> -
+/low_rl/goto_status | std_msgs/msg/String | - -> /object_goto[R,V]
+/low_rl/instruction | std_msgs/msg/String | /object_goto[R,V] -> -
+/low_rl/target_class | std_msgs/msg/String | /object_goto[R,V] -> -
+/map | nav_msgs/msg/OccupancyGrid | /map_server[R,TL] -> /global_costmap/global_costmap[R,TL], /amcl[R,TL], /smoke_mode[R,TL], /object_goto[R,TL]
+/map_server/transition_event | lifecycle_msgs/msg/TransitionEvent | /map_server[R,V] -> -
+/object_goto/goal | std_msgs/msg/String | - -> /object_goto[R,V]
+/object_goto/overlay | rviz_2d_overlay_msgs/msg/OverlayText | /object_goto[R,TL] -> -
+/object_goto/status | std_msgs/msg/String | /object_goto[R,TL] -> -
+/object_goto/target | visualization_msgs/msg/MarkerArray | /object_goto[R,TL] -> -
+/object_mapper/objects | vision_msgs/msg/Detection3DArray | - -> /object_goto[R,TL]
+/odom | nav_msgs/msg/Odometry | /limo/limo_base[R,V] -> /controller_server[BE,V], /bt_navigator[BE,V]
+/parameter_events | rcl_interfaces/msg/ParameterEvent | /launch_ros_1518413[R,V], /Ros2Supervisor/Ros2Supervisor[R,V], /robot_state_publisher[R,V], /controller_server[R,V], /local_costmap/local_costmap[R,V], /smoother_server[R,V], /planner_server[R,V], /global_costmap/global_costmap[R,V], /behavior_server[R,V], /bt_navigator[R,V], /waypoint_follower[R,V], /velocity_smoother[R,V], /lifecycle_manager_navigation[R,V], /map_server[R,V], /amcl[R,V], /lifecycle_manager_localization[R,V], /bt_navigator_navigate_to_pose_rclcpp_node[R,V], /bt_navigator_navigate_through_poses_rclcpp_node[R,V], /smoke_mode[R,V], /object_goto[R,V], /_ros2cli_daemon_93_55929482192d4da5997559196adee69e[R,V], /LIMO[R,V], /controller_manager[R,V], /joint_state_broadcaster[R,V], /diffdrive_controller[R,V], /ydlidar_ros2_driver_node[R,V], /limo/limo_base[R,V], /camera/camera[R,V] -> /robot_state_publisher[R,V], /robot_state_publisher[R,V], /nav2_container[R,V], /controller_server[R,V], /local_costmap/local_costmap[R,V], /smoother_server[R,V], /planner_server[R,V], /global_costmap/global_costmap[R,V], /behavior_server[R,V], /bt_navigator[R,V], /waypoint_follower[R,V], /velocity_smoother[R,V], /lifecycle_manager_navigation[R,V], /map_server[R,V], /transform_listener_impl_5c8ac3415cf0[R,V], /amcl[R,V], /lifecycle_manager_localization[R,V], /transform_listener_impl_74d8f8002370[R,V], /transform_listener_impl_74d898001e20[R,V], /transform_listener_impl_74d8e4003430[R,V], /transform_listener_impl_74d8dc001d30[R,V], /bt_navigator_navigate_to_pose_rclcpp_node[R,V], /bt_navigator_navigate_through_poses_rclcpp_node[R,V], /smoke_mode[R,V], /transform_listener_impl_5b426fd25710[R,V], /object_goto[R,V], /transform_listener_impl_596741c6bc60[R,V], /LIMO[R,V], /controller_manager[R,V], /joint_state_broadcaster[R,V], /diffdrive_controller[R,V]
+/particle_cloud | nav2_msgs/msg/ParticleCloud | /amcl[BE,V] -> -
+/plan | nav_msgs/msg/Path | /planner_server[R,V] -> -
+/plan_smoothed | nav_msgs/msg/Path | /smoother_server[R,V] -> -
+/planner_server/transition_event | lifecycle_msgs/msg/TransitionEvent | /planner_server[R,V] -> -
+/received_global_plan | nav_msgs/msg/Path | /controller_server[R,V] -> -
+/remove_urdf_robot | std_msgs/msg/String | /LIMO[R,V] -> -
+/robot_description | std_msgs/msg/String | /robot_state_publisher[R,TL] -> -
+/rosout | rcl_interfaces/msg/Log | /launch_ros_1518413[R,TL], /Ros2Supervisor/Ros2Supervisor[R,TL], /robot_state_publisher[R,TL], /nav2_container[R,TL], /controller_server[R,TL], /local_costmap/local_costmap[R,TL], /smoother_server[R,TL], /planner_server[R,TL], /global_costmap/global_costmap[R,TL], /behavior_server[R,TL], /bt_navigator[R,TL], /waypoint_follower[R,TL], /velocity_smoother[R,TL], /lifecycle_manager_navigation[R,TL], /map_server[R,TL], /transform_listener_impl_5c8ac3415cf0[R,TL], /amcl[R,TL], /lifecycle_manager_localization[R,TL], /transform_listener_impl_74d8f8002370[R,TL], /transform_listener_impl_74d898001e20[R,TL], /transform_listener_impl_74d8e4003430[R,TL], /transform_listener_impl_74d8dc001d30[R,TL], /bt_navigator_navigate_to_pose_rclcpp_node[R,TL], /bt_navigator_navigate_through_poses_rclcpp_node[R,TL], /smoke_mode[R,TL], /transform_listener_impl_5b426fd25710[R,TL], /object_goto[R,TL], /transform_listener_impl_596741c6bc60[R,TL], /_ros2cli_daemon_93_55929482192d4da5997559196adee69e[R,TL], /LIMO[R,TL], /controller_manager[R,TL], /joint_state_broadcaster[R,TL], /diffdrive_controller[R,TL], /ydlidar_ros2_driver_node[R,TL], /limo/limo_base[R,TL], /camera/camera[R,TL] -> -
+/scan | sensor_msgs/msg/LaserScan | /ydlidar_ros2_driver_node[BE,V] -> /smoke_mode[BE,V]
+/scan_localization | sensor_msgs/msg/LaserScan | /smoke_mode[BE,V] -> /amcl[BE,V]
+/scan_obstacles | sensor_msgs/msg/LaserScan | /smoke_mode[BE,V] -> /local_costmap/local_costmap[BE,V], /global_costmap/global_costmap[BE,V]
+/sim/ground_truth | geometry_msgs/msg/PoseStamped | /LIMO[R,V] -> -
+/smoke_mode/active | std_msgs/msg/Bool | /smoke_mode[R,TL] -> -
+/smoke_mode/bump | geometry_msgs/msg/PointStamped | /smoke_mode[R,V] -> -
+/smoke_mode/pose | geometry_msgs/msg/PoseWithCovarianceStamped | /smoke_mode[R,V] -> -
+/smoke_mode/wall_fix | std_msgs/msg/Float64MultiArray | /smoke_mode[R,V] -> -
+/smoother_server/transition_event | lifecycle_msgs/msg/TransitionEvent | /smoother_server[R,V] -> -
+/speed_limit | nav2_msgs/msg/SpeedLimit | /smoke_mode[R,V] -> /controller_server[R,V]
+/tf | tf2_msgs/msg/TFMessage | /robot_state_publisher[R,V], /amcl[R,V], /smoke_mode[R,V], /diffdrive_controller[R,TL], /limo/limo_base[R,V], /camera/camera[R,V] -> /transform_listener_impl_5c8ac3415cf0[R,V], /transform_listener_impl_74d8f8002370[R,V], /transform_listener_impl_74d898001e20[R,V], /transform_listener_impl_74d8e4003430[R,V], /transform_listener_impl_74d8dc001d30[R,V], /bt_navigator[R,V], /transform_listener_impl_5b426fd25710[R,V], /transform_listener_impl_596741c6bc60[R,V]
+/tf_static | tf2_msgs/msg/TFMessage | /robot_state_publisher[R,TL] -> /transform_listener_impl_5c8ac3415cf0[R,TL], /transform_listener_impl_74d8f8002370[R,TL], /transform_listener_impl_74d898001e20[R,TL], /transform_listener_impl_74d8e4003430[R,TL], /transform_listener_impl_74d8dc001d30[R,TL], /bt_navigator[R,TL], /transform_listener_impl_5b426fd25710[R,TL], /transform_listener_impl_596741c6bc60[R,TL]
+/ultrasonic/front_left | sensor_msgs/msg/Range | - -> /local_costmap/local_costmap[BE,V], /global_costmap/global_costmap[BE,V], /smoke_mode[BE,V], /smoke_mode[BE,V]
+/ultrasonic/front_right | sensor_msgs/msg/Range | - -> /local_costmap/local_costmap[BE,V], /global_costmap/global_costmap[BE,V], /smoke_mode[BE,V], /smoke_mode[BE,V]
+/unsmoothed_plan | nav_msgs/msg/Path | /planner_server[R,V] -> -
+/velocity_smoother/transition_event | lifecycle_msgs/msg/TransitionEvent | /velocity_smoother[R,V] -> -
+/waypoint_follower/transition_event | lifecycle_msgs/msg/TransitionEvent | /waypoint_follower[R,V] -> -

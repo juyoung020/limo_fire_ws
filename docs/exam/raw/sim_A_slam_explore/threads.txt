@@ -1,0 +1,66 @@
+# 프로세스별 스레드 수 (ps -T), sim A
+1285731 webots threads=1 | /bin/bash /usr/local/webots/webots --port=1293 --batch --mode=realtime  /home/juyoung/limo_fire_ws/sim/webots/worlds/limo_fire_maze.wbt
+1285733 python3 threads=11 | python3 /opt/ros/humble/lib/webots_ros2_driver/ros2_supervisor.py --ros-args -r __ns:=/Ros2Supervisor -r /Ros2Supervisor/clock:=/clock
+1285735 ros2 threads=1 | /usr/bin/python3 /opt/ros/humble/bin/ros2 run webots_ros2_driver driver --ros-args -p robot_description:=/home/juyoung/limo_upper_keep/wt_ex
+1285743 robot_state_pub threads=12 | /opt/ros/humble/lib/robot_state_publisher/robot_state_publisher --ros-args --params-file /tmp/launch_params_q_surp4i --params-file /tmp/laun
+1285745 cartographer_no threads=18 | /opt/ros/humble/lib/cartographer_ros/cartographer_node -configuration_directory /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_navi
+1285748 cartographer_oc threads=12 | /opt/ros/humble/lib/cartographer_ros/cartographer_occupancy_grid_node -resolution 0.05 -publish_period_sec 1.0 --ros-args -r __node:=cartogr
+1285750 component_conta threads=47 | /opt/ros/humble/lib/rclcpp_components/component_container_isolated --ros-args --log-level info --ros-args -r __node:=nav2_container -r __ns:
+1285754 smoke_mode threads=14 | /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_navigation/lib/limo_fire_navigation/smoke_mode --ros-args -r __node:=smoke_mode --pa
+1285756 object_goto threads=14 | /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_navigation/lib/limo_fire_navigation/object_goto --ros-args -r __node:=object_goto --
+1285766 explore_frontie threads=14 | /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_rl/lib/limo_fire_rl/explore_frontier --ros-args -r __node:=explore_frontier --params
+1285768 rviz2 threads=43 | /opt/ros/humble/lib/rviz2/rviz2 -d /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_description/share/limo_fire_description/rviz/limo
+
+# 스레드 이름 (ps -T -o spid,comm)
+== 1285731 webots
+      1 webots
+== 1285733 python3
+     11 python3
+== 1285735 ros2
+      1 ros2
+== 1285743 robot_state_pub
+     12 robot_state_pub
+== 1285745 cartographer_no
+     18 cartographer_no
+== 1285748 cartographer_oc
+     12 cartographer_oc
+== 1285750 component_conta
+     47 component_conta
+== 1285754 smoke_mode
+     14 smoke_mode
+== 1285756 object_goto
+     14 object_goto
+== 1285766 explore_frontie
+     14 explore_frontie
+== 1285768 rviz2
+     26 rviz2
+      1 rviz2:disk$0
+      1 llvmpipe-9
+      1 llvmpipe-8
+      1 llvmpipe-7
+      1 llvmpipe-6
+      1 llvmpipe-5
+      1 llvmpipe-4
+      1 llvmpipe-3
+      1 llvmpipe-2
+      1 llvmpipe-11
+      1 llvmpipe-10
+
+# 같은 프로세스 그룹 전체 (xvfb-run 아래) — 래퍼 밑 실제 실행 파일 포함. NLWP = 스레드 수, RSS KB, %CPU
+   PGID     PID    PPID NLWP   RSS %CPU COMMAND
+1285685 1285685    1174    1  1924  0.0 xvfb-run
+1285685 1285695 1285685    1 83912  0.6 Xvfb
+1285685 1285698 1285685   25 71428  1.1 ros2
+1285685 1285731 1285698    1  3624  0.0 webots
+1285685 1285733 1285698   11 69828  2.3 python3
+1285685 1285735 1285698    1 25244  0.0 ros2
+1285685 1285743 1285698   12 32980  0.9 robot_state_pub
+1285685 1285745 1285698   18 54832  4.3 cartographer_no
+1285685 1285746 1285731   33 791656 310 webots-bin
+1285685 1285748 1285698   12 37616  0.9 cartographer_oc
+1285685 1285750 1285698   47 101868 13.6 component_conta
+1285685 1285754 1285698   14 34328  1.8 smoke_mode
+1285685 1285756 1285698   14 33972  1.3 object_goto
+1285685 1285766 1285698   14 35060  1.4 explore_frontie
+1285685 1285768 1285698   43 692164 120 rviz2
+1285685 1285862 1285735   28 190928 6.6 driver

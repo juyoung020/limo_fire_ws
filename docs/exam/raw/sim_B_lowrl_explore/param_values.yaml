@@ -1,0 +1,534 @@
+# ################ /LIMO
+/LIMO:
+  ros__parameters:
+    components_remappings: ''
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+      /parameter_events:
+        publisher:
+          depth: 1000
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+    robot_description: /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_sim/share/limo_fire_sim/resource/limo_webots.urdf
+    set_robot_state_publisher: false
+    use_sim_time: true
+
+# ################ /Ros2Supervisor/Ros2Supervisor
+/Ros2Supervisor/Ros2Supervisor:
+  ros__parameters:
+    use_sim_time: false
+
+# ################ /camera/camera
+/camera/camera:
+  ros__parameters:
+    use_sim_time: false
+
+# ################ /cartographer_node
+/cartographer_node:
+  ros__parameters:
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+      /parameter_events:
+        publisher:
+          depth: 1000
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+      /tf:
+        publisher:
+          depth: 100
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+    use_sim_time: true
+
+# ################ /cartographer_occupancy_grid_node
+/cartographer_occupancy_grid_node:
+  ros__parameters:
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+      /parameter_events:
+        publisher:
+          depth: 1000
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+    use_sim_time: true
+
+# ################ /controller_manager
+/controller_manager:
+  ros__parameters:
+    diffdrive_controller:
+      type: diff_drive_controller/DiffDriveController
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+      /parameter_events:
+        publisher:
+          depth: 1000
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+    robot_description: /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_sim/share/limo_fire_sim/resource/limo_webots.urdf
+    set_robot_state_publisher: false
+    update_rate: 25
+    use_sim_time: true
+
+# ################ /diffdrive_controller
+/diffdrive_controller:
+  ros__parameters:
+    angular:
+      z:
+        has_acceleration_limits: false
+        has_jerk_limits: false
+        has_velocity_limits: false
+        max_acceleration: .nan
+        max_jerk: .nan
+        max_velocity: .nan
+        min_acceleration: .nan
+        min_jerk: .nan
+        min_velocity: .nan
+    base_frame_id: base_link
+    cmd_vel_timeout: 0.5
+    enable_odom_tf: false
+    left_wheel_names:
+    - front_left_wheel
+    - rear_left_wheel
+    left_wheel_radius_multiplier: 1.0
+    linear:
+      x:
+        has_acceleration_limits: false
+        has_jerk_limits: false
+        has_velocity_limits: true
+        max_acceleration: .nan
+        max_jerk: .nan
+        max_velocity: 0.5
+        min_acceleration: .nan
+        min_jerk: .nan
+        min_velocity: .nan
+    odom_frame_id: odom
+    open_loop: false
+    pose_covariance_diagonal:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    position_feedback: true
+    publish_limited_velocity: false
+    publish_rate: 50.0
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+    right_wheel_names:
+    - front_right_wheel
+    - rear_right_wheel
+    right_wheel_radius_multiplier: 1.0
+    robot_description: /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_sim/share/limo_fire_sim/resource/limo_webots.urdf
+    set_robot_state_publisher: false
+    tf_frame_prefix: ''
+    tf_frame_prefix_enable: true
+    twist_covariance_diagonal:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    update_rate: 0
+    use_sim_time: true
+    use_stamped_vel: false
+    velocity_rolling_window_size: 10
+    wheel_radius: 0.045
+    wheel_separation: 0.172
+    wheel_separation_multiplier: 2.414
+    wheels_per_side: 0
+
+# ################ /joint_state_broadcaster
+/joint_state_broadcaster:
+  ros__parameters:
+    extra_joints: []
+    frame_id: base_link
+    interfaces: []
+    joints:
+    - front_left_wheel
+    - front_right_wheel
+    - rear_left_wheel
+    - rear_right_wheel
+    map_interface_to_joint_state:
+      effort: effort
+      position: position
+      velocity: velocity
+    publish_dynamic_joint_states: true
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+    robot_description: /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_sim/share/limo_fire_sim/resource/limo_webots.urdf
+    set_robot_state_publisher: false
+    update_rate: 0
+    use_local_topics: false
+    use_sim_time: true
+
+# ################ /limo/limo_base
+/limo/limo_base:
+  ros__parameters:
+    use_sim_time: false
+
+# ################ /low_rl
+/low_rl:
+  ros__parameters:
+    base_frame: base_link
+    camera_layer: true
+    cmd_vel_topic: /cmd_vel
+    con_acc: 15.0
+    con_mask: 71
+    con_stall: 2
+    contact_resume_s: 0.0
+    decider_compact: true
+    decider_hint: true
+    decider_image: A
+    decider_log_k: 4
+    decider_match_r: 1.5
+    decider_max_cands: 6
+    decider_mem_image: true
+    decider_obj_stale_s: 600.0
+    decider_px: 288
+    decider_timeout: 8.0
+    decider_url: http://127.0.0.1:8171
+    depth_info_topic: /camera/depth/camera_info
+    depth_timeout: 0.5
+    depth_topic: /camera/depth/image_raw
+    dry_run: false
+    enabled: false
+    env_yaml: /home/juyoung/limo_upper_keep/wt_exam/train/explore/sim/config/env.yaml
+    fuel_global: true
+    fuel_hyst: 0.2
+    fuel_room: false
+    fuel_t0: 0.1
+    fuel_time: true
+    fuel_v: 0.981
+    fuel_vp: true
+    fuel_vp_clear: 0.21
+    fuel_vp_min: 0.75
+    fuel_w: 3.232
+    goto_arrive_far_m: 1.0
+    goto_arrive_m: 0.4000000059604645
+    goto_face_timeout_s: 5.0
+    goto_face_tol: 0.15000000596046448
+    goto_fail_ttl_s: 120.0
+    goto_max_fail: 3
+    goto_nopath_s: 3.0
+    goto_resume: false
+    goto_stall_m: 0.3
+    goto_stall_s: 10.0
+    imu_topic: /imu
+    input_timeout: 0.3
+    instruction_limit_s: 300.0
+    map_frame: map
+    max_speed: -1.0
+    odom_topic: /odom
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+      /parameter_events:
+        publisher:
+          depth: 1000
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+      /tf:
+        subscription:
+          depth: 100
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+      /tf_static:
+        subscription:
+          depth: 100
+          history: keep_last
+          reliability: reliable
+    rc_auto_value: 2
+    rc_button: 1
+    rc_resubscribe_s: 2.0
+    rc_timeout: 0.5
+    rc_topic: /rc_state
+    record: ''
+    require_rc: false
+    scan_topic: /scan
+    tf_timeout: 0.2
+    upper: slot0
+    use_sim_time: true
+
+# ################ /object_goto
+/object_goto:
+  ros__parameters:
+    aliases:
+    - "\uC0AC\uB78C=person"
+    - "\uC758\uC790=chair"
+    - "\uC18C\uD30C=couch"
+    - "\uCE68\uB300=bed"
+    - "\uC2DD\uD0C1=dining_table"
+    - "\uCC45\uC0C1=dining_table"
+    - "\uBCC0\uAE30=toilet"
+    - "\uD2F0\uBE44=tv"
+    - TV=tv
+    - "\uB178\uD2B8\uBD81=laptop"
+    - "\uB9C8\uC6B0\uC2A4=mouse"
+    - "\uB9AC\uBAA8\uCEE8=remote"
+    - "\uD0A4\uBCF4\uB4DC=keyboard"
+    - "\uD734\uB300\uD3F0=cell_phone"
+    - "\uD578\uB4DC\uD3F0=cell_phone"
+    - "\uC804\uC790\uB808\uC778\uC9C0=microwave"
+    - "\uC624\uBE10=oven"
+    - "\uD1A0\uC2A4\uD130=toaster"
+    - "\uC2F1\uD06C\uB300=sink"
+    - "\uB0C9\uC7A5\uACE0=refrigerator"
+    - "\uCC45=book"
+    - "\uC2DC\uACC4=clock"
+    - "\uAF43\uBCD1=vase"
+    - "\uAC00\uC704=scissors"
+    - "\uACF0\uC778\uD615=teddy_bear"
+    - "\uCE6B\uC194=toothbrush"
+    - "\uBCD1=bottle"
+    - "\uCEF5=cup"
+    - "\uADF8\uB987=bowl"
+    - "\uC21F\uAC00\uB77D=spoon"
+    - "\uD3EC\uD06C=fork"
+    - "\uCE7C=knife"
+    - "\uAC00\uBC29=backpack"
+    - "\uBC30\uB0AD=backpack"
+    - "\uD578\uB4DC\uBC31=handbag"
+    - "\uC6B0\uC0B0=umbrella"
+    - "\uC5EC\uD589\uAC00\uBC29=suitcase"
+    - "\uCE90\uB9AC\uC5B4=suitcase"
+    - "\uD654\uBD84=potted_plant"
+    - "\uC790\uC804\uAC70=bicycle"
+    - "\uACF5=sports_ball"
+    - "\uBC14\uB098\uB098=banana"
+    - "\uC0AC\uACFC=apple"
+    - "\uC624\uB80C\uC9C0=orange"
+    - "\uBD88=fire"
+    - "\uC5F0\uAE30=smoke"
+    - "\uC18C\uD654\uAE30=fire_extinguisher"
+    - "\uBE44\uC0C1\uAD6C=exit_sign"
+    - "\uC720\uB3C4\uB4F1=exit_sign"
+    - "\uBB38=door"
+    - "\uACC4\uB2E8=stairs"
+    explore_status_topic: /low_rl/goto_status
+    explore_target_topic: /low_rl/target_class
+    explore_topic: /low_rl/instruction
+    map_frame: map
+    mode: explore
+    objects_topic: /object_mapper/objects
+    occupied_threshold: 50
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+      /parameter_events:
+        publisher:
+          depth: 1000
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+    robot_frame: base_link
+    robot_radius: 0.25
+    stand_band: 0.6
+    stand_dist: 0.6
+    use_sim_time: true
+
+# ################ /robot_state_publisher
+/robot_state_publisher:
+  ros__parameters:
+    frame_prefix: ''
+    ignore_timestamp: false
+    publish_frequency: 20.0
+    qos_overrides:
+      /clock:
+        subscription:
+          depth: 1
+          durability: volatile
+          history: keep_last
+          reliability: best_effort
+      /joint_states:
+        subscription:
+          depth: 5
+          history: keep_last
+          reliability: best_effort
+      /parameter_events:
+        publisher:
+          depth: 1000
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+      /tf:
+        publisher:
+          depth: 100
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+      /tf_static:
+        publisher:
+          depth: 1
+          history: keep_last
+          reliability: reliable
+    robot_description: "<?xml version=\"1.0\" ?>\n<!-- ===================================================================================\
+      \ -->\n<!-- |    This document was autogenerated by xacro from /home/juyoung/limo_upper_keep/wt_exam/install/limo_fire_description/share/limo_fire_description/urdf/limo_fire.urdf.xacro\
+      \ | -->\n<!-- |    EDITING THIS FILE BY HAND IS NOT RECOMMENDED            \
+      \                     | -->\n<!-- ===================================================================================\
+      \ -->\n<!-- \uD654\uC7AC \uB300\uC751 LIMO Pro \uC870\uB9BD. \uBAA8\uB4C8\uB9C8\
+      \uB2E4 xacro \uD558\uB098, \uC7A5\uCC29 \uC704\uCE58\uB294 \uC5EC\uAE30 \uD55C\
+      \ \uACF3\uC5D0\uB9CC \uB454\uB2E4.\n     \uC5F4\uD654\uC0C1\xB7\uB808\uC774\uB354\
+      \xB7\uB178\uC990(\uD32C\xB7\uD2F8\uD2B8)\uC740 \uBC30\uCE58\uAC00 \uC815\uD574\
+      \uC9C0\uBA74 \uBAA8\uB4C8 xacro \uB97C \uB354\uD558\uACE0 \uC5EC\uAE30\uC11C\
+      \ \uBD80\uB978\uB2E4.\n     xacro limo_fire.urdf.xacro platform:=real camera_pitch:=0.0\
+      \ camera_driver_tf:=false -->\n<robot name=\"limo_fire\">\n  <link name=\"base_link\"\
+      >\n    <visual>\n      <origin rpy=\"0 0 1.57\" xyz=\"0 0 -0.15\"/>\n      <geometry>\n\
+      \        <mesh filename=\"file:///home/juyoung/limo_upper_keep/wt_exam/install/limo_description/share/limo_description/meshes/limo_base.dae\"\
+      \ scale=\"1 1 1\"/>\n      </geometry>\n    </visual>\n    <collision>\n   \
+      \   <origin rpy=\"0 0 0\" xyz=\"0 0 0\"/>\n      <geometry>\n        <box size=\"\
+      0.322 0.13 0.1\"/>\n      </geometry>\n    </collision>\n  </link>\n  <link\
+      \ name=\"inertial_link\">\n    <inertial>\n      <origin xyz=\"0 0 0\"/>\n \
+      \     <mass value=\"2.1557\"/>\n      <inertia ixx=\"0.24\" ixy=\"0\" ixz=\"\
+      0\" iyy=\"0.96\" iyz=\"0\" izz=\"0.96\"/>\n    </inertial>\n  </link>\n  <joint\
+      \ name=\"inertial_joint\" type=\"fixed\">\n    <origin rpy=\"0 0 0\" xyz=\"\
+      0 0 0\"/>\n    <parent link=\"base_link\"/>\n    <child link=\"inertial_link\"\
+      />\n  </joint>\n  <link name=\"laser_link\">\n    <pose>0 0 0 0 0 0</pose>\n\
+      \    <inertial>\n      <mass value=\"0.1\"/>\n      <origin rpy=\"0 0 0\" xyz=\"\
+      0.0 0 0\"/>\n      <inertia ixx=\"1e-6\" ixy=\"0\" ixz=\"0\" iyy=\"1e-6\" iyz=\"\
+      0\" izz=\"1e-6\"/>\n    </inertial>\n    <visual name=\"laser_visual\">\n  \
+      \    <origin rpy=\"0 0 0\" xyz=\"0 0 0\"/>\n      <geometry>\n        <cylinder\
+      \ length=\"0.01\" radius=\"0.02\"/>\n      </geometry>\n      <material name=\"\
+      laser_material\">\n        <ambient>0.1 0.1 0.1 1</ambient>\n        <diffuse>0.1\
+      \ 0.1 0.2 1</diffuse>\n        <specular>0 0 0 0</specular>\n        <emissive>0\
+      \ 0 0 1</emissive>\n      </material>\n    </visual>\n    <collision name=\"\
+      laser_collision\">\n      <origin rpy=\"0 0 0\" xyz=\"0 0 0\"/>\n      <geometry>\n\
+      \        <cylinder length=\"0.016\" radius=\"0.032\"/>\n      </geometry>\n\
+      \    </collision>\n  </link>\n  <joint name=\"laser_joint\" type=\"fixed\">\n\
+      \    <origin rpy=\"0 0 0\" xyz=\"0.103 0 -0.034\"/>\n    <child link=\"laser_link\"\
+      />\n    <parent link=\"base_link\"/>\n  </joint>\n  <gazebo reference=\"laser_link\"\
+      >\n    <material>Gazebo/Yellow</material>\n  </gazebo>\n  <link name=\"imu_link\"\
+      >\n    <pose>0 0 0 0 0 0</pose>\n    <inertial>\n      <mass value=\"0.01\"\
+      />\n      <origin rpy=\"0 0 0\" xyz=\"0.0 0 0\"/>\n      <inertia ixx=\"1e-7\"\
+      \ ixy=\"0\" ixz=\"0\" iyy=\"1e-7\" iyz=\"0\" izz=\"1e-7\"/>\n    </inertial>\n\
+      \    <visual name=\"imu_visual\">\n      <origin rpy=\"0 0 0\" xyz=\"0 0 0\"\
+      />\n      <geometry>\n        <box size=\"0.001 0.001 0.001\"/>\n      </geometry>\n\
+      \      <material name=\"imu_material\">\n        <ambient>0.1 0.1 0.1 1</ambient>\n\
+      \        <diffuse>0.1 0.1 0.2 1</diffuse>\n        <specular>0 0 0 0</specular>\n\
+      \        <emissive>0 0 0 1</emissive>\n      </material>\n    </visual>\n  \
+      \  <collision name=\"imu_collision\">\n      <origin rpy=\"0 0 0\" xyz=\"0 0\
+      \ 0\"/>\n      <geometry>\n        <box size=\"0.001 0.001 0.001\"/>\n     \
+      \ </geometry>\n    </collision>\n  </link>\n  <joint name=\"imu_joint\" type=\"\
+      fixed\">\n    <origin rpy=\"0 0 0\" xyz=\"0 0 -0.1\"/>\n    <child link=\"imu_link\"\
+      />\n    <parent link=\"base_link\"/>\n  </joint>\n  <gazebo reference=\"imu_link\"\
+      >\n    <material>Gazebo/Yellow</material>\n  </gazebo>\n  <link name=\"front_left_wheel_link\"\
+      >\n    <inertial>\n      <origin xyz=\"0 0 0\"/>\n      <mass value=\"0.5\"\
+      />\n      <inertia ixx=\"0.01055\" ixy=\"0\" ixz=\"0\" iyy=\"0.00075\" iyz=\"\
+      0\" izz=\"0.01055\"/>\n    </inertial>\n    <visual>\n      <origin rpy=\"0\
+      \ 0 0\" xyz=\"0 0 0\"/>\n      <geometry>\n        <mesh filename=\"file:///home/juyoung/limo_upper_keep/wt_exam/install/limo_description/share/limo_description/meshes/limo_wheel.dae\"\
+      />\n      </geometry>\n    </visual>\n    <collision>\n      <origin rpy=\"\
+      1.57 0 0\" xyz=\"0 0.0225 0\"/>\n      <geometry>\n        <cylinder length=\"\
+      0.045\" radius=\"0.045\"/>\n      </geometry>\n    </collision>\n  </link>\n\
+      \  <joint name=\"front_left_wheel\" type=\"continuous\">\n    <parent link=\"\
+      base_link\"/>\n    <child link=\"front_left_wheel_link\"/>\n    <origin rpy=\"\
+      0 0 0\" xyz=\"0.1 0.086 -0.1\"/>\n    <axis xyz=\"0 1 0\"/>\n  </joint>\n  <link\
+      \ name=\"front_right_wheel_link\">\n    <inertial>\n      <origin xyz=\"0 0\
+      \ 0\"/>\n      <mass value=\"0.5\"/>\n      <inertia ixx=\"0.01055\" ixy=\"\
+      0\" ixz=\"0\" iyy=\"0.00075\" iyz=\"0\" izz=\"0.01055\"/>\n    </inertial>\n\
+      \    <visual>\n      <origin rpy=\"0 0 0\" xyz=\"0 0 0\"/>\n      <geometry>\n\
+      \        <mesh filename=\"file:///home/juyoung/limo_upper_keep/wt_exam/install/limo_description/share/limo_description/meshes/limo_wheel.dae\"\
+      />\n      </geometry>\n    </visual>\n    <collision>\n      <origin rpy=\"\
+      1.57 0 0\" xyz=\"0 0.0225 0\"/>\n      <geometry>\n        <cylinder length=\"\
+      0.045\" radius=\"0.045\"/>\n      </geometry>\n    </collision>\n  </link>\n\
+      \  <joint name=\"front_right_wheel\" type=\"continuous\">\n    <parent link=\"\
+      base_link\"/>\n    <child link=\"front_right_wheel_link\"/>\n    <origin rpy=\"\
+      3.14159265 0 0\" xyz=\"0.1 -0.086 -0.1\"/>\n    <axis xyz=\"0 -1 0\"/>\n  </joint>\n\
+      \  <link name=\"rear_left_wheel_link\">\n    <inertial>\n      <origin xyz=\"\
+      0 0 0\"/>\n      <mass value=\"0.5\"/>\n      <inertia ixx=\"0.01055\" ixy=\"\
+      0\" ixz=\"0\" iyy=\"0.00075\" iyz=\"0\" izz=\"0.01055\"/>\n    </inertial>\n\
+      \    <visual>\n      <origin rpy=\"0 0 0\" xyz=\"0 0 0\"/>\n      <geometry>\n\
+      \        <mesh filename=\"file:///home/juyoung/limo_upper_keep/wt_exam/install/limo_description/share/limo_description/meshes/limo_wheel.dae\"\
+      />\n      </geometry>\n    </visual>\n    <collision>\n      <origin rpy=\"\
+      1.57 0 0\" xyz=\"0 0.0225 0\"/>\n      <geometry>\n        <cylinder length=\"\
+      0.045\" radius=\"0.045\"/>\n      </geometry>\n    </collision>\n  </link>\n\
+      \  <joint name=\"rear_left_wheel\" type=\"continuous\">\n    <parent link=\"\
+      base_link\"/>\n    <child link=\"rear_left_wheel_link\"/>\n    <origin rpy=\"\
+      0 0 0\" xyz=\"-0.1 0.086 -0.1\"/>\n    <axis xyz=\"0 1 0\"/>\n  </joint>\n \
+      \ <link name=\"rear_right_wheel_link\">\n    <inertial>\n      <origin xyz=\"\
+      0 0 0\"/>\n      <mass value=\"0.5\"/>\n      <inertia ixx=\"0.01055\" ixy=\"\
+      0\" ixz=\"0\" iyy=\"0.00075\" iyz=\"0\" izz=\"0.01055\"/>\n    </inertial>\n\
+      \    <visual>\n      <origin rpy=\"0 0 0\" xyz=\"0 0 0\"/>\n      <geometry>\n\
+      \        <mesh filename=\"file:///home/juyoung/limo_upper_keep/wt_exam/install/limo_description/share/limo_description/meshes/limo_wheel.dae\"\
+      />\n      </geometry>\n    </visual>\n    <collision>\n      <origin rpy=\"\
+      1.57 0 0\" xyz=\"0 0.0225 0\"/>\n      <geometry>\n        <cylinder length=\"\
+      0.045\" radius=\"0.045\"/>\n      </geometry>\n    </collision>\n  </link>\n\
+      \  <joint name=\"rear_right_wheel\" type=\"continuous\">\n    <parent link=\"\
+      base_link\"/>\n    <child link=\"rear_right_wheel_link\"/>\n    <origin rpy=\"\
+      3.14159265 0 0\" xyz=\"-0.1 -0.086 -0.1\"/>\n    <axis xyz=\"0 -1 0\"/>\n  </joint>\n\
+      \  <link name=\"camera_link\"/>\n  <joint name=\"camera_joint\" type=\"fixed\"\
+      >\n    <origin rpy=\"0 0.0 0\" xyz=\"0.096 0.015 0.03\"/>\n    <parent link=\"\
+      base_link\"/>\n    <child link=\"camera_link\"/>\n  </joint>\n  <link name=\"\
+      ultrasonic_front_left_link\"/>\n  <joint name=\"ultrasonic_front_left_joint\"\
+      \ type=\"fixed\">\n    <origin rpy=\"0 -0.08726646259971647 0.3490658503988659\"\
+      \ xyz=\"0.18 0.025 -0.06\"/>\n    <parent link=\"base_link\"/>\n    <child link=\"\
+      ultrasonic_front_left_link\"/>\n  </joint>\n  <link name=\"ultrasonic_front_right_link\"\
+      />\n  <joint name=\"ultrasonic_front_right_joint\" type=\"fixed\">\n    <origin\
+      \ rpy=\"0 -0.08726646259971647 -0.3490658503988659\" xyz=\"0.18 -0.025 -0.06\"\
+      />\n    <parent link=\"base_link\"/>\n    <child link=\"ultrasonic_front_right_link\"\
+      />\n  </joint>\n  <ros2_control name=\"WebotsControl\" type=\"system\">\n  \
+      \  <hardware>\n      <plugin>webots_ros2_control::Ros2ControlSystem</plugin>\n\
+      \    </hardware>\n    <joint name=\"front_left_wheel\">\n      <state_interface\
+      \ name=\"position\"/>\n      <state_interface name=\"velocity\"/>\n      <command_interface\
+      \ name=\"velocity\"/>\n    </joint>\n    <joint name=\"front_right_wheel\">\n\
+      \      <state_interface name=\"position\"/>\n      <state_interface name=\"\
+      velocity\"/>\n      <command_interface name=\"velocity\"/>\n    </joint>\n \
+      \   <joint name=\"rear_left_wheel\">\n      <state_interface name=\"position\"\
+      />\n      <state_interface name=\"velocity\"/>\n      <command_interface name=\"\
+      velocity\"/>\n    </joint>\n    <joint name=\"rear_right_wheel\">\n      <state_interface\
+      \ name=\"position\"/>\n      <state_interface name=\"velocity\"/>\n      <command_interface\
+      \ name=\"velocity\"/>\n    </joint>\n  </ros2_control>\n</robot>\n"
+    use_sim_time: true
+
+# ################ /ydlidar_ros2_driver_node
+/ydlidar_ros2_driver_node:
+  ros__parameters:
+    use_sim_time: false
+

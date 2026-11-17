@@ -1,0 +1,45 @@
+# sim A launch 로그: 프로세스 시작 줄 + WARN/ERROR 종류별 횟수 (원본 runA.log, 색 코드 지움)
+[INFO] [webots-1]: process started with pid [1285731]
+[INFO] [ros2_supervisor.py-2]: process started with pid [1285733]
+[INFO] [webots_controller_LIMO-3]: process started with pid [1285735]
+[INFO] [spawner-4]: process started with pid [1285739]
+[INFO] [spawner-5]: process started with pid [1285741]
+[INFO] [robot_state_publisher-6]: process started with pid [1285743]
+[INFO] [cartographer_node-7]: process started with pid [1285745]
+[INFO] [cartographer_occupancy_grid_node-8]: process started with pid [1285748]
+[INFO] [component_container_isolated-9]: process started with pid [1285750]
+[INFO] [smoke_mode-10]: process started with pid [1285754]
+[INFO] [object_goto-11]: process started with pid [1285756]
+[INFO] [explore_frontier-12]: process started with pid [1285766]
+[INFO] [rviz2-13]: process started with pid [1285768]
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/controller_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/smoother_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/planner_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/behavior_server' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/bt_navigator' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/waypoint_follower' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/velocity_smoother' in container 'nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/lifecycle_manager_navigation' in container 'nav2_container'
+[component_container_isolated-9] [INFO] [1794930035.224530120] [lifecycle_manager_navigation]: Managed nodes are active
+
+     38 [component_container_isolated-9] [WARN]  [controller_server]: RegulatedPurePursuitController detected collision ahead!
+     12 [component_container_isolated-9] [WARN]  [planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+     12 [component_container_isolated-9] [WARN]  [planner_server]: GridBased: failed to create plan, invalid use: Starting point in lethal space! Cannot create feasible plan..
+      5 [component_container_isolated-9] [WARN]  [planner_server]: Planning algorithm GridBased failed to generate a valid path to (-0.41, 1.04)
+      4 [component_container_isolated-9] [WARN]  [planner_server]: Planning algorithm GridBased failed to generate a valid path to (0.70, 2.81)
+      3 [component_container_isolated-9] [WARN]  [planner_server]: Planning algorithm GridBased failed to generate a valid path to (0.02, 1.15)
+      2 [component_container_isolated-9] [WARN]  [behavior_server]: spin failed
+      2 [component_container_isolated-9] [WARN]  [behavior_server]: backup failed
+      2 [component_container_isolated-9] [WARN]  [behavior_server]: [spin] [ActionServer] Aborting handle.
+      2 [component_container_isolated-9] [WARN]  [behavior_server]: [backup] [ActionServer] Aborting handle.
+      2 [component_container_isolated-9] [WARN]  [behavior_server]: Collision Ahead - Exiting Spin
+      2 [component_container_isolated-9] [WARN]  [behavior_server]: Collision Ahead - Exiting DriveOnHeading
+      1 [rviz2-13] [ERROR]  [rviz2]: Vertex Program:rviz/glsl120/indexed_8bit_image.vert Fragment Program:rviz/glsl120/indexed_8bit_image.frag GLSL link result : 
+      1 [explore_frontier-12] [WARN]  [explore_frontier]: Nav2 가 목표 (5.75, -0.77) 포기 — 블랙리스트
+      1 [component_container_isolated-9] [WARN]  [controller_server]: No goal checker was specified in parameter 'current_goal_checker'. Server will use only plugin loaded general_goal_checker . This warning will appear once.
+      1 [component_container_isolated-9] [WARN]  [controller_server]: Control loop missed its desired rate of 20.0000Hz
+      1 [component_container_isolated-9] [WARN]  [bt_navigator]: [navigate_to_pose] [ActionServer] Aborting handle.
+      1 [component_container_isolated-9] [WARN]  [bt_navigator.rclcpp]: failed to send response to /bt_navigator/list_parameters (timeout): client will not receive response, at ./src/rmw_response.cpp:154, at ./src/rcl/service.c:
+      1 [component_container_isolated-9] [WARN]  [behavior_server.rclcpp]: failed to send response to /behavior_server/get_state (timeout): client will not receive response, at ./src/rmw_response.cpp:154, at ./src/rcl/service.c:
+      1 [component_container_isolated-9] [WARN]  [BehaviorTreeEngine]: Behavior Tree tick rate 10.00 was exceeded!
+      1 [cartographer_node-7] [WARN]  [cartographer_node.rclcpp]: failed to send response to /cartographer_node/list_parameters (timeout): client will not receive response, at ./src/rmw_response.cpp:154, at ./src/rcl/service.c:3
