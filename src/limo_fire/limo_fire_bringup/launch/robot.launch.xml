@@ -7,6 +7,7 @@
   <arg name="viz" default="false"/>
   <arg name="base" default="true" description="false 면 베이스(바퀴·IMU)·EKF 를 켜지 않고 센서만"/>
   <arg name="max_clocks" default="true" description="jetson_clocks 로 CPU·GPU·메모리 클럭을 최대로 고정 (재부팅하면 풀림, sudo 암호 없이 될 때만)"/>
+  <arg name="camera" default="true" description="false: 카메라 드라이버를 여기서 안 띄움 — limo_fire_explore app.launch.xml camera_in_app:=true 가 /app 안에 올림"/>
   <arg name="esp32" default="false" description="ESP32 다리(초음파 HC-SR04 × 2 → /ultrasonic/*). 초음파·ESP32 를 단 뒤 true (limo_fire_esp32_bridge README)"/>
 
   <!-- 클럭 고정: 카메라처럼 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려가 YOLO 가 21 ms → 고정하면 11 ms -->
@@ -26,8 +27,8 @@
     <param from="$(find-pkg-share limo_fire_bringup)/config/limo_base.yaml"/>
   </node>
 
-  <!-- 깊이 카메라 Orbbec Dabai DC1 -->
-  <group>
+  <!-- 깊이 카메라 Orbbec Dabai DC1 (camera:=false 면 /app 이 올림 — app.launch.xml camera_in_app) -->
+  <group if="$(var camera)">
     <push_ros_namespace namespace="camera"/>
     <node_container pkg="rclcpp_components" exec="component_container" name="camera_container" namespace="" output="screen">
       <composable_node pkg="orbbec_camera" plugin="orbbec_camera::OBCameraNodeDriver" name="camera" namespace="">

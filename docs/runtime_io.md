@@ -34,7 +34,7 @@ ros2 launch limo_fire_bringup robot.launch.xml                                  
 ros2 launch limo_fire_explore app.launch.xml perception:=true stack:=true rviz:=true   # 2) 우리 프로세스 /app (+ Cartographer · RViz)
 ```
 
-`app.launch.xml` 인자: `perception`(인식 같이) · `stack`(Cartographer) · `rviz` · `dry_run`(기본 true — `/cmd_vel` 안 냄) · `debug`(RViz 표시 토픽, 기본 = rviz) · `record` · `perception_config` · `objects_file` · `gpu_thread`(옛 YOLO 작업 스레드 — 로봇 확인 전 대비).
+`app.launch.xml` 인자: `perception`(인식 같이) · `stack`(Cartographer) · `rviz` · `dry_run`(기본 true — `/cmd_vel` 안 냄) · `debug`(RViz 표시 토픽, 기본 = rviz) · `record` · `perception_config` · `objects_file` · `gpu_thread`(옛 YOLO 작업 스레드 — 로봇 확인 전 대비) · `camera_in_app`(카메라 드라이버도 `/app` 안에 — `robot.launch.xml camera:=false` 와 짝, 로봇 확인 전, 아래 "카메라를 /app 에").
 
 ## 한눈에 — 데이터 흐름
 
@@ -84,7 +84,7 @@ flowchart LR
 
 | launch | 프로세스 (노드) | 켜는 조건 |
 |---|---|---|
-| `limo_fire_bringup/robot.launch.xml` | `robot_state_publisher` · `joint_state_publisher` · `/limo/limo_fire_base` · `/camera/camera_container`(컴포넌트 `/camera/camera`) · `/ydlidar_ros2_driver_node` · `/ekf_filter_node_odom` · `esp32_bridge` · `rviz2` · `jetson_clocks`(한 번 돌고 끝) | 섀시·EKF 는 `base:=true`(기본), ESP32 는 `esp32:=true`, RViz 는 `viz:=true` |
+| `limo_fire_bringup/robot.launch.xml` | `robot_state_publisher` · `joint_state_publisher` · `/limo/limo_fire_base` · `/camera/camera_container`(컴포넌트 `/camera/camera`) · `/ydlidar_ros2_driver_node` · `/ekf_filter_node_odom` · `esp32_bridge` · `rviz2` · `jetson_clocks`(한 번 돌고 끝) | 섀시·EKF 는 `base:=true`(기본), 카메라는 `camera:=true`(기본 — `false` 면 `/app` 이 올림), ESP32 는 `esp32:=true`, RViz 는 `viz:=true` |
 | `limo_fire_explore/app.launch.xml` | **`/app`** (`component_container` — 한 스레드 실행기, 컴포넌트 `/explore/explorer` + `perception:=true` 면 `/perception/object_detector` · `/perception/object_map`, 모두 `use_intra_process_comms`) · `limo_fire_rviz` (RViz) | 인식은 `perception:=true`, RViz 는 `rviz:=true` |
 | ↳ `stack:=true` | `mapping.launch.xml`: `cartographer_node` · `cartographer_occupancy_grid_node` | |
 | (ROS 밖) | `llama-server` (`127.0.0.1:8171`, 판단 모델) — [limo_fire_explore README](../src/limo_fire/limo_fire_explore/README.md) 대로 손으로 먼저 띄움 | 늘 |
@@ -166,6 +166,38 @@ Fast DDS 문서: "Setting a segment_size close to or smaller than the data size 
 - 전송 확인: 발행 프로세스를 `strace -f -e sendmsg,sendto` 로 7 s 보면 UDP 는 43~64 번 · 14~22 KB(발견만, 60 KB 넘는 것 0) — 영상 1.5 MB × 30 장/초는 모두 공유 메모리로 감.
   칸 크기는 `/proc/<발행 PID>/maps` 의 `/dev/shm/fastrtps_*` 파일 크기: 기본 549 408 B, 이 설정 4 219 424 B. 공유 메모리 덤프(`rtps_dump_file`)의 데이터 조각은 65 528 B.
 - 범위 확인: `fastdds_localhost.xml` ↔ `ROS_LOCALHOST_ONLY=1` 참가자는 양쪽으로 받음(150 장/5 s), 기본 참가자와는 0 장 — `ROS_LOCALHOST_ONLY=1` ↔ 기본도 0 장이라 옛 동작과 같음. 이 판의 UDP 목적지는 127.0.0.1 · 239.255.0.1 뿐.
+
+### 카메라를 /app 에 (`camera_in_app:=true` — 기본 꺼짐, 로봇에서 확인 전)
+
+```bash
+ros2 launch limo_fire_bringup robot.launch.xml camera:=false                                  # 카메라만 빼고 드라이버들
+ros2 launch limo_fire_explore app.launch.xml perception:=true camera_in_app:=true [stack:=true]  # Orbbec 컴포넌트도 /app 에
+```
+
+- Orbbec 컴포넌트(`orbbec_camera::OBCameraNodeDriver`, 같은 `config/orbbec_dabai_dc1.yaml`, 이름 `/camera/camera` 그대로)를 `/app` 에 올리고 **이 노드만** 프로세스 안 전달을 끈다
+  (드라이버의 transient_local 발행자 `depth_to_color` 등 때문에 켜면 rclcpp 가 거부). 같은 프로세스 = 같은 DDS 참가자라 Fast DDS 가 영상을 공유 메모리·UDP 없이 받는 쪽에 바로 넘긴다
+  (직렬화 1 · 역직렬화 1 은 남음 — 깊이는 구독 하나라 1 번).
+- 대가: 카메라 SDK 가 죽거나 멈추면 `/app`(탐사·인식·`/cmd_vel`)도 같이 죽는다. 드라이버 스레드(SDK 프레임 콜백 · 컬러 스레드)가 `/app` 에 들어오고, 드라이버의 실행기 콜백(TF 10 Hz 등)이 우리 한 스레드 실행기에서 돈다.
+  그래서 기본은 꺼 두고, 로봇에서 아래로 이득이 확인되면 기본을 바꾼다.
+- 기대 이득 (이 PC 합성 카메라 — 깊이 + 컬러 30 Hz, 받기 깊이 2 + 컬러 1, 4 MB 칸, 30 s × 3 번 번갈아. 이때 PC 에 다른 사람 작업이 돌아 부하 평균 24):
+
+| | 따로 프로세스 (지금) | 한 프로세스 (`camera_in_app`) |
+|---|---|---|
+| 받은 장 | 30.0 · 30.0 Hz | 30.0 · 30.0 Hz |
+| 깊이 지연 중앙 · p99 | 1.05~1.45 · 3.8~4.6 ms | **0.46~0.71 · 0.59~0.88 ms** |
+| CPU (발행 + 받기, 한 코어) | 4.0 · 5.6 · 4.6 % | **2.5 · 2.1 · 2.9 %** |
+
+  (합성 발행자는 장마다 1.5 MB 를 채우는 몫도 들어 있다 — 실물 드라이버의 MJPG 풀기·정렬 몫은 그대로라 로봇 이득은 CPU 2 % 안팎·지연 1 ms 안팎으로 본다.)
+
+**로봇에서 확인할 차례** (주행 없음 — `dry_run` 기본):
+1. 두 터미널 모두 `source env.sh`(DDS 4 MB 설정), `colcon build --packages-select limo_fire_bringup limo_fire_perception limo_fire_explore`.
+2. 앞: `robot.launch.xml` + `app.launch.xml perception:=true` 를 띄우고 60 s 동안 `pidstat -u -p $(pgrep -f __node:=camera_container),$(pgrep -f __node:=app) 5`,
+   `ros2 topic hz /camera/depth/image_raw` · `/camera/color/image_raw`, `object_detector` 5 초 로그의 "콜백 최대 ms", `/explore/status` 의 걸음 ms.
+3. 뒤: 둘 다 끄고 위 두 줄(`camera:=false` · `camera_in_app:=true`)로 띄움. `/app` 로그에 `Loaded node '/camera/camera' in container '/app'`,
+   `ros2 component list` 의 `/app` 아래 `/camera/camera` · `/explore/explorer` · `/perception/object_detector` · `/perception/object_map`.
+4. 같은 것을 잼: `pidstat -u -p $(pgrep -f __node:=app) 5`(앞의 두 프로세스 합과 견줌) · 주기 · 콜백 최대 · 걸음 ms. `ros2 topic info -v /camera/color/image_raw` 에 발행 `/camera/camera` 와 받기 `/perception/object_detector`.
+5. 영상 한 장이 `/app` 안에서 끝나는지: `sudo strace -f -c -e trace=sendmsg,sendto -p $(pgrep -f __node:=app)` 10 s — UDP 는 발견·`/perception/*` 의 RViz 몫만이어야 함.
+6. 판정: 주기가 같거나 오르고 CPU 합이 줄면 이득. 카메라 USB 를 뺐다 꽂는 시험은 하지 않는다(`/app` 이 같이 죽을 수 있음 — 죽으면 이 선택지를 버림).
 
 ### 앞(11-18 이름 정리) · 뒤(이 구조) — PC 녹화 재생 (`1116_fuel_rl_1`, `--clock`, 켬 dry run, 40 s 평균)
 

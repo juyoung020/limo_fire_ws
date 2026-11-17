@@ -16,6 +16,7 @@
   <arg name="record" default="" description="입력·명령 녹화 파일 (비우면 안 씀 — low_explore_replay 로 다시 돌림)"/>
   <arg name="perception_config" default="yolo_coco.yaml" description="인식 설정 (limo_fire_perception/config): yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
   <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음)"/>
+  <arg name="camera_in_app" default="false" description="true: 카메라 드라이버(Orbbec)를 /app 안에 — 카메라 → 우리 노드가 공유 메모리·UDP 없이 프로세스 안. robot.launch.xml camera:=false 와 같이"/>
   <arg name="gpu_thread" default="false" description="true: YOLO 를 옛 작업 스레드 판으로 (로봇에서 실행기 판 확인 전 대비) — TODO(제거)"/>
 
   <group if="$(var stack)">
@@ -48,6 +49,18 @@
         <param from="$(find-pkg-share limo_fire_perception)/config/$(var perception_config)"/>
         <param name="objects_file" value="$(var objects_file)"/>
         <extra_arg name="use_intra_process_comms" value="true"/>
+      </composable_node>
+    </load_composable_node>
+  </group>
+
+  <!-- 카메라를 /app 안에 (camera_in_app:=true, robot.launch.xml camera:=false 와 짝). 이 노드만 프로세스 안 전달을 끔: 드라이버가 transient_local 발행자
+       (depth_to_color 등)를 만들어 켜면 rclcpp 가 거부. 그래도 같은 DDS 참가자 안이라 Fast DDS 가 프로세스 안으로 바로 넘김(공유 메모리·UDP 안 거침).
+       대가: 카메라 SDK 가 죽으면 /app(탐사·인식)도 같이 죽음. 로봇 시험 차례는 docs/runtime_io.md "카메라를 /app 에" -->
+  <group if="$(var camera_in_app)">
+    <load_composable_node target="/app">
+      <composable_node pkg="orbbec_camera" plugin="orbbec_camera::OBCameraNodeDriver" name="camera" namespace="camera">
+        <param from="$(find-pkg-share limo_fire_bringup)/config/orbbec_dabai_dc1.yaml"/>
+        <extra_arg name="use_intra_process_comms" value="false"/>
       </composable_node>
     </load_composable_node>
   </group>

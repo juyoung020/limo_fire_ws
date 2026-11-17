@@ -479,7 +479,9 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
   중계 노드로 한 번 받아 ROS 토픽으로 다시 내면 Humble rclcpp 가 밖에서 온 메시지를 프로세스 안으로 넘길 때 한 번 복사해 이득이 없다.
   그래서 토픽 없이 **프로세스에 하나인 표**(`limo_fire_perception/shared_image.hpp`)가 구독 하나로 받아 같은 `ConstSharedPtr` 을 두 노드 콜백에 함수 부름으로 넘긴다(2026-11-18):
   `/app` 의 깊이 구독 2 → 1, 역직렬화 614 KB × 30 장/초 한 벌 줄음, 같은 녹화 재생의 물체 지도 파일은 앞과 바이트까지 같음.
-- 카메라를 같이 못 올린 까닭: Orbbec 드라이버가 TRANSIENT_LOCAL 발행자(`/camera/depth_to_color` 등)를 만들어, intra-process 를 켜면 rclcpp 가 노드 생성을 거부. 또 YOLO 가 죽으면 카메라도 같이 죽는다(장애 격리). 📁 `robot.launch.xml` 주석, 커밋 05f3a3b.
+- 카메라를 기본으로 같이 안 올린 까닭: Orbbec 드라이버가 TRANSIENT_LOCAL 발행자(`/camera/depth_to_color` 등)를 만들어, intra-process 를 켜면 rclcpp 가 노드 생성을 거부. 또 카메라 SDK 가 죽으면 탐사·인식도 같이 죽는다(장애 격리). 📁 `robot.launch.xml` 주석, 커밋 05f3a3b.
+  그래도 **그 노드만** intra-process 를 끄고 `/app` 에 올리면(`app.launch.xml camera_in_app:=true` + `robot.launch.xml camera:=false`) 같은 DDS 참가자라 Fast DDS 가 공유 메모리·UDP 없이 넘긴다 —
+  PC 합성 시험에서 깊이 지연 중앙 1.05~1.45 → 0.46~0.71 ms, CPU(발행 + 받기) 4.0~5.6 → 2.1~2.9 %. 기본은 꺼 두고 로봇 확인 차례는 `docs/runtime_io.md` "카메라를 /app 에".
 - 다른 선택지의 문제: 다 한 컨테이너 = 한 노드가 죽으면 다 죽음, TL 토픽은 어차피 직렬화.
 
 **Q12. 탐사 노드 계산은 48 µs 인데 왜 느린가?**
