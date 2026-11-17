@@ -56,16 +56,16 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 - **모듈 이름공간**: 모듈의 주 노드는 이름공간을 쓰고 토픽은 이름공간 바로 아래(`/explore/status`). 같은 이름공간의 다른 노드는 자기 이름 아래(`~/` → `/explore/frontier_explorer/state`).
 - **센서·드라이버·표준 토픽은 그대로**: `/scan` `/odom` `/imu` `/camera/*` `/cmd_vel` `/map` `/tf` `/tf_static` `/rc_state`.
 - **팀원 모듈 이름은 그 사람이 정한다** (임무 BT `/mission/*`, 연기 모드, ESP32 다리) — 우리 이름을 바꿀 때는 그쪽의 참조만 고친다.
-- **launch 파일 = 띄우는 것의 이름**: `robot.launch.xml`(로봇 센서·섀시) · `explore.launch.xml`(탐사 한 벌) · `perception.launch.xml`(인식) · `navigation.launch.xml`(Nav2).
-  노드 하나만 띄우는 launch 는 노드 이름(`explorer.launch.xml` · `frontier_explorer.launch.xml`). 설정 파일도 노드 이름(`config/explorer.yaml`).
+- **launch 파일 = 띄우는 것의 이름**: `robot.launch.xml`(로봇 센서·섀시) · `app.launch.xml`(우리 노드 전부 — 프로세스 `/app` 하나) · `perception.launch.xml`(인식만, 시뮬) · `navigation.launch.xml`(Nav2).
+  노드 하나만 띄우는 launch 는 노드 이름(`frontier_explorer.launch.xml`). 설정 파일도 노드 이름(`config/explorer.yaml`).
 
 | 모듈 (패키지) | 노드 | 주요 입출력 | launch |
 |---|---|---|---|
-| 탐사 (`limo_fire_explore`) | `/explore/explorer` | `/explore/status` `/explore/state` `/explore/done` `/explore/goal_marker` `/explore/candidates` `/explore/decider_image` `/explore/instruction` `/explore/target_class` `/explore/goto_status`, 서비스 `/explore/enable` | `explore.launch.xml` · `explorer.launch.xml` |
+| 탐사 (`limo_fire_explore`) | `/explore/explorer` | `/explore/status` `/explore/state` `/explore/done` `/explore/goal` `/explore/goal_status`, 서비스 `/explore/enable` (debug: `/explore/goal_marker` `/explore/candidates` `/explore/candidates_text` `/explore/decider_image` `/explore/cmd_debug`) | `app.launch.xml` (컨테이너 `/app`)
 | 탐사 (`limo_fire_explore`) | `/explore/frontier_explorer` | `/explore/frontier_explorer/{state,status,done,frontiers}`, 서비스 `…/enable` | `frontier_explorer.launch.xml` |
-| 탐사 (`limo_fire_navigation`) | `/explore/object_goto` | `/explore/object_goto/{goal,status,target,overlay}` | `explore.launch.xml perception:=true` |
-| 인식 (`limo_fire_perception`) | `/perception/object_detector` | `/perception/detections` `/perception/mask` `/perception/detection_image` | `perception.launch.xml` |
-| 인식 (`limo_fire_perception`) | `/perception/object_map` | `/perception/objects` `/perception/markers` `/perception/summary`, 서비스 `/perception/{clear,save,load}_objects`, 토픽 `/perception/save_objects_to` | `perception.launch.xml` |
+| 주행 (`limo_fire_navigation`) | `/explore/object_goto` (저장 지도만) | `/explore/goal` `/explore/goal_status` | `navigation.launch.xml` |
+| 인식 (`limo_fire_perception`) | `/perception/object_detector` | `/perception/detections` `/perception/mask` `/perception/detection_image` | `app.launch.xml perception:=true` · `perception.launch.xml`(시뮬) |
+| 인식 (`limo_fire_perception`) | `/perception/object_map` | `/perception/objects` `/perception/markers` `/perception/summary`, 서비스 `/perception/{clear,save,load}_objects`, 토픽 `/perception/save_objects_to` | `app.launch.xml perception:=true` · `perception.launch.xml`(시뮬) |
 
 옛 이름 → 새 이름 표 (2026-11-18 바꿈):
 
@@ -83,6 +83,9 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 | 서비스 `/object_mapper/clear` · `/save` · `/load`, 토픽 `/object_mapper/save_to` | `/perception/clear_objects` · `/perception/save_objects` · `/perception/load_objects`, `/perception/save_objects_to` |
 | launch `explore_fuel_rl.launch.xml` · `low_rl.launch.xml` · `explore_frontier.launch.xml` | `explore.launch.xml` · `explorer.launch.xml` · `frontier_explorer.launch.xml` |
 | launch `yolo.launch.xml` (limo_fire_perception) | `perception.launch.xml` |
+| (2026-11-18 한 프로세스) launch `explore.launch.xml` · `explorer.launch.xml` | `app.launch.xml` |
+| (2026-11-18) `/explore/object_goto/goal` · `/explore/instruction` · `/explore/target_class` | `/explore/goal` (explorer 가 직접 받음) |
+| (2026-11-18) `/explore/goto_status` · `/explore/object_goto/status` | `/explore/goal_status` (`object_goto/target` · `overlay` 는 지움) |
 | 설정 `low_rl.yaml` · `explore_frontier.yaml` | `explorer.yaml` · `frontier_explorer.yaml` |
 | RViz `explore_fuel_rl.rviz` | `explore.rviz` |
 
@@ -110,6 +113,6 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 
 - 표준 타입 우선(`sensor_msgs/Image`, `sensor_msgs/Range`, `sensor_msgs/JointState`, `std_srvs/SetBool` …). 맞는 게 없을 때만 `limo_fire_msgs` 에 만든다.
 - 헤더 `frame_id` 는 URDF 링크 이름과 같게.
-- 노드 사이 상태 알림은 사람이 읽는 한글 한 줄 `std_msgs/String`(`~/status`, `~/goto_status`), 켜짐 상태는 짧은 영문 값 `~/state`(`idle`·`running`·`paused`·`done`, TRANSIENT_LOCAL)로 낸다. 다른 노드가 글을 보고 갈래를 정할 때는 앞말만 본다(예: `object_goto` 는 `도착` 으로 시작하는 글).
+- 노드 사이 상태 알림은 사람이 읽는 한글 한 줄 `std_msgs/String`(`~/status`, `~/goal_status`), 켜짐 상태는 짧은 영문 값 `~/state`(`idle`·`running`·`paused`·`done`, TRANSIENT_LOCAL)로 낸다. 다른 노드가 글을 보고 갈래를 정할 때는 앞말만 본다(예: `object_goto` 는 `도착` 으로 시작하는 글).
 - 지도 위 물체는 `vision_msgs/Detection3DArray`(`map` 틀): `id` = `<클래스>-<번호>`, `results[0].hypothesis.class_id` = 클래스 이름 글, `results[0].pose.covariance[35]` = 마지막으로 본 뒤 지난 초. 칸마다의 뜻은 [runtime_io.md](runtime_io.md#object_mapper-limo_fire_perceptionsrcobject_mapper_nodecpp-같은-설정-파일의-object_mapper-칸).
 - 실행 중인 노드·스레드가 주고받는 토픽 전체(타입·QoS·주기·frame_id·상태 값)는 [실행 구조 — 스레드·토픽 입출력](runtime_io.md) 한 곳에 둔다. 토픽을 더하거나 바꾸면 그 표도 같이 고친다.

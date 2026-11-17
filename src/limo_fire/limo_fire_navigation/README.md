@@ -102,12 +102,19 @@ ros2 run limo_fire_navigation nav_benchmark --ros-args -p use_sim_time:=true \
 - `smoke:=true` 면 처음 위치를 라이다(AMCL)로 잡은 상태에서 연기 모드를 켜고 출발한다.
 - 목표마다: 결과(성공·중단·시간 초과), 걸린 시간(시뮬), 도착 오차 |정답 − 목표|, 추정 오차 |Nav2 자세 − 정답|, 정답으로 잰 이동 거리.
 
-## "○○ 로 가" (`object_goto`)
+## "○○ 로 가" 저장 지도 (`object_goto`)
 
-물체 지도(limo_fire_perception `object_map` `/perception/objects`)에서 물체를 찾아 그 옆 설 자리로 간다. 설정은 `config/object_goto.yaml`(설 자리 거리 · 로봇 반경 · 한글 별칭).
+물체 지도(limo_fire_perception `object_map` `/perception/objects`)에서 물체를 찾아 그 옆 설 자리로 Nav2 로 간다. 저장 지도 주행(`navigation.launch.xml`, 기본 `object_goto:=true`)에서만 쓴다.
+탐사 중 "○○ 로 가" 는 explorer 가 같은 토픽을 직접 받는다(limo_fire_explore README "탐사 중 ○○ 로 가") — 둘을 같이 띄우지 않는다.
 
-- 저장 지도(`navigation.launch.xml`, 기본 `object_goto:=true`): Nav2 `navigate_to_pose` 로. 물체 지도는 `perception.launch.xml objects_file:=<지도이름>_objects.txt` 로 읽는다 (`save_map.launch.xml` 이 지도 옆에 저장).
-- 탐사 중(`limo_fire_explore explore.launch.xml perception:=true`, `mode: explore`): 지시 글을 `/explore/instruction`, 글에서 푼 클래스를 `/explore/target_class` 로 넘기기만 한다 — 설 자리 고르기·가기는 판단 모델 물체 후보로 `explorer` 이 한다(limo_fire_explore README "탐사 중 ○○ 로 가"). 이 모드에서는 `/map`·TF 를 구독하지 않는다.
-- 저장 지도(`mode: nav2`): 이름 → 클래스(별칭) → 같은 클래스 중 로봇에서 가장 가까운 것. 설 자리: 물체 둘레 `stand_dist`~`stand_dist + stand_band` 고리에서 `robot_radius` 안이 빈 칸이고 로봇에서 빈 칸으로 이어지는(BFS) 칸 중 길이 가장 짧은 칸, 물체를 바라봄.
+```bash
+ros2 topic pub -1 /explore/goal std_msgs/msg/String "{data: '소화기'}"   # 빈 글 = 지움
+ros2 topic echo /explore/goal_status
+```
+
+- 설정은 `config/object_goto.yaml`(설 자리 거리 · 로봇 반경), 한글 별칭은 explorer 와 같은 것(`limo_fire_explore/config/explorer.yaml` 의 `/explore/**` 칸 — `navigation.launch.xml` 이 같이 읽음), 글 → 클래스 코드도 같은 것(`limo_fire_explore/class_alias.h`).
+- 물체 지도는 `perception.launch.xml objects_file:=<지도이름>_objects.txt` 로 읽는다 (`save_map.launch.xml` 이 지도 옆에 저장).
+- 이름 → 클래스(별칭) → 같은 클래스 중 로봇에서 가장 가까운 것. 설 자리: 물체 둘레 `stand_dist`~`stand_dist + stand_band` 고리에서 `robot_radius` 안이 빈 칸이고 로봇에서 빈 칸으로 이어지는(BFS) 칸 중 길이 가장 짧은 칸, 물체를 바라봄.
   지도에 없으면 상태에 "지도에 없음" 을 내고 물체 지도가 바뀔 때마다 다시 찾는다.
+- 2026-11-18: 탐사 모드(`mode: explore` — 지시를 `/explore/instruction` · `/explore/target_class` 로 넘기던 것)를 explorer 안으로 옮기고 이 노드는 저장 지도만 남김. `~/goal` · `~/status` · `~/target` · `~/overlay` → `/explore/goal` · `/explore/goal_status`.
 - 확인 (2026-11-17, PC): 저장 지도 lab_1116b + 가짜 물체 지도(의자 (1.5, 0.5)) → "의자" 에 설 자리 (0.43, 0.02)(물체에서 1.17 m). 탐사 중 설 자리를 `/explore/goto` 로 바로 주던 `direct` 모드는 2026-11-17 지움(판단 모델 물체 후보가 대신).

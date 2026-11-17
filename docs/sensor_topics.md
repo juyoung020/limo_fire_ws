@@ -1,7 +1,7 @@
 # 센서 토픽 — 누가 내고 누가 읽나
 
 실물 LIMO Pro 의 센서가 어떤 토픽으로 나오고, 우리 노드(EKF·Cartographer·Nav2·YOLO·object_map)가 그중 무엇을 읽는지 한 곳에 모은다. 센서 자체의 사양(해상도 근거, 노이즈, 장착 위치)은 [hardware.md](hardware.md) 에 있다.
-우리 노드(합친 탐사 `explorer`·물체 지도·`object_goto`)가 서로 주고받는 토픽, QoS, 상태 글의 뜻, 스레드 구성은 [runtime_io.md](runtime_io.md) 에 모았다.
+우리 노드(한 프로세스 `/app` — 합친 탐사 `explorer`·YOLO·물체 지도)가 서로 주고받는 토픽, QoS, 상태 글의 뜻, 스레드 구성은 [runtime_io.md](runtime_io.md) 에 모았다.
 
 **조사 방법 (2026-10-28)**
 - 코드: 드라이버 소스(`src/external/wego_limo_pro`)와 우리 launch·config(`src/limo_fire`)에서 발행·구독 토픽 이름을 찾았다.
@@ -28,7 +28,7 @@
 | 깊이 내부 파라미터 | `/camera/depth/camera_info` | `sensor_msgs/CameraInfo` | 30.2 Hz | 위와 같음 | `/camera/camera` | `object_map`, `explorer` |
 
 로봇이 받는 쪽: `/cmd_vel` (`geometry_msgs/Twist`) 은 `limo_fire_base` 가 구독한다. Nav2 에서는 controller → `cmd_vel_nav` → velocity_smoother → `/cmd_vel` 순으로 들어온다.
-합친 탐사(`explore.launch.xml`)에서는 Nav2 없이 `explorer` 이 `dry_run:=false` 일 때 바로 `/cmd_vel` 을 낸다 — 흐름은 [runtime_io.md](runtime_io.md#한눈에--데이터-흐름).
+합친 탐사(`app.launch.xml`)에서는 Nav2 없이 `explorer` 이 `dry_run:=false` 일 때 바로 `/cmd_vel` 을 낸다 — 흐름은 [runtime_io.md](runtime_io.md#한눈에--데이터-흐름).
 
 ## 데이터 흐름
 

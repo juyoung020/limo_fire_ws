@@ -7,8 +7,9 @@ ros2 launch limo_fire_perception perception.launch.xml          # 탐지 + 물�
 ```
 
 - `object_detector`·`object_map` 는 컴포넌트(`limo_fire_perception::ObjectDetectorNode`, `::ObjectMapNode`). 같은 이름의 실행 파일도 있다
-- 기본은 둘을 한 스레드 컨테이너 `/perception_container` 한 프로세스에 올리고 프로세스 안 전달(intra-process)로 탐지·마스크를 복사 없이 넘긴다.
-  예전에 한 스레드 컨테이너가 5 초에 18~20 장을 버린 까닭은 매퍼가 콜백 안에서 TF 를 최대 0.2 s 기다린 것 — 이제 기다리지 않고, YOLO 는 영상을 자기 작업 스레드에서 직접 받는다 (아래 "스레드·메모리")
+- 로봇에서는 `limo_fire_explore app.launch.xml perception:=true` 가 둘을 탐사 노드와 같은 한 스레드 컨테이너 `/app` 에 올린다 (프로세스 안 전달로 탐지·마스크를 복사 없이).
+  이 파일(`perception.launch.xml`)은 인식만 따로 — 자기 컨테이너 `/perception_container` (시뮬 `sim.launch.xml perception:=true` 가 씀).
+  YOLO 는 스레드를 따로 두지 않는다: 실행기 콜백이 GPU 에 걸고, GPU 에 건 장이 있을 때만 도는 `poll_period`(2 ms) 타이머가 끝났나 묻기만 한다(아래 "한 스레드")
 - 카메라 드라이버(Orbbec) 컨테이너에는 올리지 않는다: 드라이버가 transient_local 발행자를 만들어 프로세스 안 전달을 켤 수 없고
   (켜면 rclcpp 가 노드 생성을 거부), 같은 프로세스여도 직렬화는 그대로라 이득이 작은데 YOLO 가 죽으면 카메라도 같이 죽는다
 
@@ -33,7 +34,8 @@ ros2 launch limo_fire_perception perception.launch.xml          # 탐지 + 물�
 - 영상 크기가 정해지면 위 전체를 슬롯(2 개)마다 CUDA 그래프로 담아(결과 영상 있는 그래프는 구독자가 처음 생길 때), 한 장에 `cudaGraphLaunch` 한 번만 한다 (TensorRT 를 그냥 띄우면 CPU 가 일을 거는 데만 4.6 ms)
 - 조건 노드(CUDA 12.4+ `cudaGraphConditionalHandle`): 해석 커널이 장치에서 조건 값을 정해, 물체가 없는 장은 마스크 커널을 건너뛴다 (CPU 왕복 없음). 안 되면 일반 그래프 → 그래프 없음 순으로 물러난다
 - GPU 를 기다릴 때 CPU 는 잠든다 (`cudaEventBlockingSync`, 바쁜 대기 없음)
-- 영상은 작업 스레드가 WaitSet 으로 직접 꺼내(실행기 콜백 아님) 가장 최근 것만 쓰고, 결과를 받자마자 다음 영상을 GPU 에 건 뒤 앞 장을 발행한다. 밀리면 오래된 영상은 버린다
+- 영상은 실행기 콜백이 받아 GPU 가 비었으면 바로 걸고, 일하는 중이면 가장 최근 것 하나만 쥔다(밀린 앞 장은 버림). 끝나면 결과를 꺼내자마자 쥔 장을 GPU 에 건 뒤 앞 장을 발행한다
+  (`TrtYolo::ready` = `cudaEventQuery`, 기다리지 않음). `gpu_thread: true` 면 옛 판 — 작업 스레드가 WaitSet 으로 받고 `collect` 로 기다림 (TODO(제거): 로봇 확인 뒤)
 - 마스크: 원형 해상도(120×160)에서 계수와 내적(로짓) → 입력 크기로 쌍선형(align_corners=False) → 상자(`x1 <= u < x2`) 밖 버림 → 로짓 > 0.
   Ultralytics `process_mask(upsample=True)` 와 같은 순서라, 같은 엔진 출력으로 만든 Ultralytics 결과와 물체 번호 영상이 픽셀까지 같다 (시뮬 영상 4 장, 물체 1~3 개, 307,200 중 다른 픽셀 0)
 - 원형 마스크(2.4 MB)는 CPU 로 가져오지 않는다
@@ -203,7 +205,7 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
 - **물체 지도 파일**: 한 줄에 물체 하나 — 클래스 · 번호 · 가운데 x y z · 방향 · 본 횟수 · 최고 점수 · 넓이 · 너비 · 마지막 본 시각 · 발자국 칸(`gx,gy,횟수`). map 좌표.
   `objects_file` 이 있으면 켤 때 읽고(저장한 지도로 다시 돌 때), `~/save` 는 그 파일에, `~/save_to`(std_msgs/String 경로)는 준 경로에 쓴다.
   `limo_fire_bringup save_map.launch.xml` 이 지도와 같은 이름으로 `<이름>_objects.txt` 를 옆에 저장한다. 다시 돌 때 `objects_file:=…/<이름>_objects.txt`.
-- 탐사 중 보기: `ros2 launch limo_fire_explore explore.launch.xml … perception:=true [perception_config:=yolo_coco.yaml]` — 탐사 RViz 가 같은 `/perception/markers` 를 그린다.
+- 탐사 중 보기: `ros2 launch limo_fire_explore app.launch.xml … perception:=true [perception_config:=yolo_coco.yaml]` — 탐사 RViz 가 같은 `/perception/markers` 를 그린다.
 
 ### COCO 80 종 분할 엔진 만들기 (로봇에서 한 번)
 
@@ -255,8 +257,8 @@ PY
 
 로봇에서 판단 모델(llama-server d1-3B, 약 4.1 GB + 요청 버퍼)이 인식 + RViz 와 같이 돌 때 GPU 메모리 부족(NvMap error 12)으로 죽어 인식 쪽을 줄였다.
 
-- **한 스레드**: 컨테이너는 `component_container`(실행기 스레드 1). `object_detector` 는 영상 구독을 실행기에 올리지 않고 작업 스레드가 WaitSet 으로 직접 꺼낸다
-  (GPU 를 기다리는 스레드 하나는 그대로) — 다른 콜백이 길어도 영상 받기가 안 밀린다. 받기 메시지는 몇 개를 돌려 써서 장마다 921 KB 할당이 없다.
+- **한 스레드**: 컨테이너는 `component_container`(실행기 스레드 1). `object_detector` 도 그 스레드에서 — 영상 콜백은 GPU 에 걸기만(비동기), 끝났나는 2 ms 타이머가 묻기만 하므로
+  추론 동안 실행기를 막지 않는다(콜백 최대 시간을 5 초 로그 "콜백 최대 ms" 로 봄). 2026-11-18 전에는 GPU 를 기다리는 작업 스레드가 따로 있었다(`gpu_thread: true` 로 그 판).
   `object_map` 는 받기 콜백에서 일하지 않는다(예전엔 콜백 안에서 처리 + TF 를 최대 0.2 s 기다림 — 1116 실시간 재생에서 2500 장 중 71 번 33 ms 넘게, 최대 232 ms 막음):
   탐지·깊이 짝은 작업 줄(`max_pending` 10 장, 넘치면 가장 오래된 장을 버려 최신 쪽만 남김)에 넣기만 하고, `process_period`(20 ms, 노드 시계) 타이머가
   그 시각 TF 가 있는 장부터 처리한다(`tf_wait` 지나도 없으면 버림). 물체의 "마지막 본 시각"은 처리한 때가 아니라 받은 때. TF 리스너도 따로 스레드 없이 이 노드 콜백.

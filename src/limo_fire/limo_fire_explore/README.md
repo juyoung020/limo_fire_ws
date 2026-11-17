@@ -61,7 +61,12 @@ ros2 topic echo /explore/frontier_explorer/state
 > 기준선 위층(cand · fuel · slot0)은 2026-11-18 노드에서 빼고 시뮬 도구(`low_explore_check --upper …` · `combine_run`)에만 남겼다.
 > 같은 날 실물에서 fuel+RL · 가까운 후보+RL · 판단 모델+RL · 판단 모델+A* 를 돌려 판단 모델+A* 가 가장 잘 됐다(녹화 `~/limo_bags/1116_*`).
 > 실행: ① 로봇 page cache 비우기(`sync && echo 3 | sudo -n tee /proc/sys/vm/drop_caches` — Orin GPU 메모리 확보) → ② 아래 "판단 모델" 절의 llama-server →
-> ③ `robot.launch.xml` → ④ `ros2 launch limo_fire_explore explore.launch.xml stack:=true rviz:=true dry_run:=false` → 리모컨 SWB 위 + 패널 버튼. 멈춤은 SWB 내림.
+> ③ `robot.launch.xml` → ④ `ros2 launch limo_fire_explore app.launch.xml stack:=true rviz:=true dry_run:=false [perception:=true]` → 리모컨 SWB 위 + 패널 버튼. 멈춤은 SWB 내림.
+
+**한 프로세스 · 한 스레드 (2026-11-18)**: `app.launch.xml` 이 우리 노드 전부(`/explore/explorer` + `perception:=true` 면 `/perception/object_detector` · `/perception/object_map`)를
+컨테이너 `/app` 하나(`component_container` — 실행기 스레드 하나)에 올린다. 그 스레드가 차례로: 영상을 GPU 에 걸고(기다리지 않음) → 끝난 탐지를 물체 지도에 → `/scan` 한 장마다 걸음 하나
+(`on_scan_tf`: 감각 `sense` → 깊이 `read_depth` → 위층 `decide` → A* 추종 → `publish_cmd`). 오래 걸리는 것(GPU · 판단 모델 HTTP · TF)은 모두 묻기만 하고 기다리지 않는다.
+프로세스·스레드·토픽 표는 [docs/runtime_io.md](../../../docs/runtime_io.md).
 
 시뮬(`low_explore_check` · `combine_run`)과 **같은 코드·같은 값**으로 로봇이 탐사한다. 위층이 로봇이 쌓은 지도에서 목표를 고르고(결정 차례 1 s — 판단 모델은 그중 사건 때만 묻는다), 아래층 규칙 추종기(로봇 지도 A* `plan_ref.h` + 경로 추종 `path_step_*` — `RobotEnv::low_act` 계층형 가지)가 0.1 s 마다 `/cmd_vel` 을 낸다.
 Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`)만 준다. 관측 설정은 `train/explore/sim/config/env.yaml` 그대로.
@@ -95,7 +100,8 @@ launch 인자는 `dry_run` · `record` · `decider_url` 등뿐이고, 나머지 
 | 끝 (위 표) | 명령 0 · `done` |
 
 - `dry_run:=true`(기본): `/cmd_vel` 발행자를 아예 안 만들고 같은 명령을 `/explore/cmd_debug`(TwistStamped)에만. dry run 에서는 닿음의 "멈춤" 신호(명령 대비 바퀴 정지)를 뺀다 — 명령이 안 나가 늘 참.
-- `max_speed`: 기본 = 시뮬 한도(자르지 않음). 토픽: `/explore/state`(idle · running · paused · done) · `/explore/status`(한 줄 — 까닭·리모컨·목표·명령·시간) · `/explore/done` · `/explore/goal_marker` · `/explore/cmd_debug` · `/explore/candidates`.
+- `max_speed`: 기본 = 시뮬 한도(자르지 않음). 토픽: `/explore/state`(idle · running · paused · done) · `/explore/status`(한 줄 — 까닭·리모컨·목표·명령·시간) · `/explore/done` · `/explore/goal`(지시 글) · `/explore/goal_status`.
+  `debug:=true`(`app.launch.xml` 은 `rviz:=true` 면 켬)일 때만 RViz 표시 토픽 `/explore/goal_marker` · `/explore/candidates` · `/explore/candidates_text` · `/explore/decider_image`, `cmd_debug` 는 dry run 이거나 debug 일 때.
 - `/explore/candidates` (MarkerArray, map 틀, 결정마다): 새 후보(`train/explore/scripts/cand_view.h`)마다 구(서는 자리)·글(판단 모델 글자 · 안정 번호 · 예상 넓이/시간)·덩어리 대표 칸까지 선·덩어리 프론티어 칸, 색 초록 보통 · 파랑 지금 목표 · 주황 실패 기억 · 회색 쉬는 덩어리, 로봇 자취(60 s), 판단 모델 답 수·마지막 답 시간. RViz `explore.rviz` 의 Candidates 표시.
 - RViz 탐사 패널: 고르기에서 "합친 탐사 (/explore)". `paused` 면 상세 줄에 까닭.
 - 리모컨 칸 확인: 녹화 `1103_M_drive3`(리모컨으로 몬 것)의 `/rc_state` buttons 는 모두 `[3, 1, 3, 3]`, `1104_M_cmd_mix`(ROS 명령으로 몬 것)는 모두 `[3, 2, 3, 3]`.
@@ -117,20 +123,20 @@ launch 인자는 `dry_run` · `record` · `decider_url` 등뿐이고, 나머지 
 ```bash
 # 빌드 (한 번)
 cd $WS && git pull --rebase --autostash && source env.sh
-colcon build --packages-select limo_fire_explore limo_fire_rviz && source install/local_setup.bash
+colcon build --packages-select limo_fire_explore limo_fire_navigation limo_fire_perception limo_fire_rviz && source install/local_setup.bash
 
 # 터미널 1 — 센서·섀시·EKF (대시보드 limo_base 가 떠 있으면 켜지 않는다 — 섀시 포트는 하나만)
 ros2 launch limo_fire_bringup robot.launch.xml
 
-# 터미널 2 — 1) dry run 먼저: Cartographer + explorer + RViz, /cmd_vel 안 냄
-ros2 launch limo_fire_explore explore.launch.xml stack:=true rviz:=true dry_run:=true
+# 터미널 2 — 1) dry run 먼저: Cartographer + /app(explorer [+ 인식]) + RViz, /cmd_vel 안 냄
+ros2 launch limo_fire_explore app.launch.xml stack:=true rviz:=true dry_run:=true [perception:=true]
 #   RViz 탐사 패널 "합친 탐사 (/explore)" → Auto explore ON. 확인할 것:
 ros2 topic echo /explore/status          # running · 리모컨 오토 · 목표 칸 · 명령 · 시간
 ros2 topic echo /explore/cmd_debug       # 낼 명령 (v ≤ 1.0 m/s, ω ≤ 3.14 rad/s)
 #   리모컨 SWB 를 내렸다 올림 → /explore/state paused 로 바뀌고, 올려도 paused 그대로인지 (다시 버튼을 눌러야 running)
 
 # 2) 점검표를 다 확인한 뒤에만 — 실제 주행
-ros2 launch limo_fire_explore explore.launch.xml stack:=true rviz:=true dry_run:=false
+ros2 launch limo_fire_explore app.launch.xml stack:=true rviz:=true dry_run:=false [perception:=true]
 ros2 service call /explore/enable std_srvs/srv/SetBool "{data: true}"    # 버튼과 같음
 ros2 topic echo /explore/done            # true 면 끝 (지도 닫힘)
 ```
@@ -149,18 +155,18 @@ ros2 topic echo /explore/done            # true 면 끝 (지도 닫힘)
 
 ### 탐사 중 "○○ 로 가" (물체 지도 · `perception:=true`)
 
-`explore.launch.xml perception:=true` 면 YOLO 분할 + 물체 지도(limo_fire_perception) 와 `object_goto`(limo_fire_navigation, `mode explore`)가 같이 뜬다.
+`app.launch.xml perception:=true` 면 YOLO 분할 + 물체 지도(limo_fire_perception)가 같은 프로세스 `/app` 에 같이 뜬다. 지시는 explorer 가 직접 받는다.
 
 ```bash
-ros2 topic pub -1 /explore/object_goto/goal std_msgs/msg/String "{data: '의자'}"   # 한글 별칭(config/object_goto.yaml) 또는 영문 클래스 이름. 빈 글 = 지시 지움
-ros2 topic echo /explore/object_goto/status        # 무엇을 찾았고 어디로 가는지 · /explore/goto_status: 가는 중 · 도착
+ros2 topic pub -1 /explore/goal std_msgs/msg/String "{data: '의자'}"   # 한글 별칭(config/explorer.yaml aliases) 또는 영문 클래스 이름. 빈 글 = 지시 지움
+ros2 topic echo /explore/goal_status        # 푼 클래스 · 고른 물체 · 가는 중 · 도착
 ```
 
 - 판단 모델이 물체 후보를 고르면 `explorer` 이 그 설 자리로 같은 A* 아래층으로 가고, `goto_arrive_m`(0.4 m) 안에 들면 물체 쪽으로 제자리에서 돌아(남은 각 < `goto_face_tol` 0.15 rad 또는 5 s)
-  "도착" 을 알리고 멈춘다 (기본 `goto_resume: false`, true 면 탐사를 이어 감). object_goto 는 도착을 받으면 그 지시를 끝낸다. 가는 동안은 탐사 끝 판정을 하지 않는다.
-- RViz: 왼쪽 아래 글상자(`/explore/object_goto/overlay`) · `/explore/candidates` 의 물체 후보 글자.
-- **판단 모델이 고름**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다 — object_goto 는 지시 글(`/explore/instruction`)과 선택적 클래스 힌트
-  (`/explore/target_class` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 비움 — 판단 모델이 글을 읽음)만 넘긴다. 설 자리를 바로 `/explore/goto` 로 주던 길(`direct`)은 2026-11-17 지움. 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
+  "도착" 을 알리고 멈춘다 (기본 `goto_resume: false`, true 면 탐사를 이어 감). 가는 동안은 탐사 끝 판정을 하지 않는다.
+- RViz: `/explore/candidates_text` 끝 줄(지시 · 마지막 진행) · `/explore/candidates` 의 물체 후보 글자.
+- **판단 모델이 고름**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다 — explorer 는 지시 글과 선택적 클래스 힌트
+  (`include/limo_fire_explore/class_alias.h` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 비움 — 판단 모델이 글을 읽음)만 판단 모델 글에 넣는다. (2026-11-18 전에는 따로 노드 `object_goto` 가 이 일을 해 `/explore/instruction` · `/explore/target_class` 로 넘겼다) 설 자리를 바로 `/explore/goto` 로 주던 길(`direct`)은 2026-11-17 지움. 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
   물체 지도의 **모든 클래스** 물체 설 자리가 물체 후보(`kind: object` — `object` 클래스 · `oid` 지도 번호 · `len` 길 m · `bear` · `dist` 직선 m · `seen_s` · `vis` 지금 보임)로 들어가
   프론티어 후보와 섞인다(합쳐 6 개). 칸보다 많으면 힌트 클래스 먼저, 한 무리 안에선 길 거리 순으로 고르게 벌려(가장 가까운 것·가장 먼 것 늘 포함 — "가장 먼 의자" 같은 지시). 
   글에는 지시 원문(`instruction`) · 힌트(`class_hint`) · 아는 물체 10 개(`known_objects`: "chair-3 chair 4.1 m front-left seen 2 s visible") · 후보 종류 설명(`candidate_kinds`)이 들어가고
@@ -212,7 +218,7 @@ ros2 topic echo /explore/object_goto/status        # 무엇을 찾았고 어디�
 cd ~/decider_test && LLAMA_DECISION_IMAGES_LAST=1 nohup ./llama.cpp/build/bin/llama-server -m models/d1-3B-Q8_0.gguf --mmproj models/mmproj-d1-3B-Q8_0.gguf \
   --host 127.0.0.1 --port 8171 -ngl 99 -c 4096 -np 1 -lm dio > server_dec.log 2>&1 &
 # 뜰 때까지 (모델 읽기 약 1 분): grep -m1 "listening" server_dec.log
-ros2 launch limo_fire_explore explore.launch.xml [dry_run:=false] [rviz:=true]
+ros2 launch limo_fire_explore app.launch.xml [dry_run:=false] [rviz:=true]
 ```
 
 서버는 `train/explore/upper_lora/patches/` 의 두 패치(판단 요청 checkpoint · 그림을 글 뒤로)를 넣은 빌드에 `LLAMA_DECISION_IMAGES_LAST=1` 로 띄운다 — 결정마다 같은 앞부분(템플릿 · 설명 글 · 힌트)을 다시 계산하지 않음. 미세조정 v1(LoRA)도 이 차례로 학습한다.
