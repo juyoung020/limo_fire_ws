@@ -7,11 +7,11 @@
 // 설 자리: 물체 둘레 stand_dist ~ stand_dist + stand_band 고리의 지도 칸 가운데, 로봇 반경(robot_radius) 안이 모두 빈 칸이고
 //   로봇에서 빈 칸으로 이어지는(BFS) 칸 중 로봇에서 길이 가장 짧은 칸. 방향은 물체를 봄.
 // 가는 길 (mode):
-//   nav2 — 저장 지도 위 주행(navigation.launch.xml: map_server + AMCL + Nav2): NavigateToPose 액션
+//   nav2 — 저장 지도 위 주행(navigation.launch.xml: map_server + AMCL + Nav2): 설 자리로 NavigateToPose 액션. 지도에 없으면 물체 지도가 바뀔 때마다
+//          다시 찾아 나타나는 즉시 그리로 간다
 //   explore — 탐사 중(explore_fuel_rl.launch.xml: Cartographer + low_rl, Nav2 없음): 지시 글(~/instruction)과 풀어 낸 클래스(~/target_class)만 low_rl 에 넘기고,
-//             판단 모델이 후보 목록(그 물체 옆 설 자리 + 프론티어)에서 고른다 (low_decider.h 물체 후보). direct: true 면 예전처럼 설 자리를 ~/goto 로 바로
-// (탐사 모드 클래스는 판단 모델 힌트일 뿐 — 글 전체나 글 안의 별칭·클래스 이름) 지도에 없으면: explore_topic(low_rl ~/instruction)에 글을 넘겨 탐사로 찾게 하고(판단 모델 글에 지시 + 아는 물체가 들어감),
-//   물체 지도가 바뀔 때마다 다시 찾아 나타나는 즉시 그리로 간다. 빈 글을 주면 지시를 지움.
+//             판단 모델이 후보 목록(그 물체 옆 설 자리 + 프론티어)에서 고른다 (low_decider.h 물체 후보 — 설 자리·가기는 low_rl 이 함). 클래스는 힌트일 뿐
+// 빈 글을 주면 지시를 지움.
 // 상태: ~/status (std_msgs/String, 한글 한 줄)
 #include <algorithm>
 #include <chrono>
@@ -20,10 +20,10 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "geometry_msgs/msg/point_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
@@ -54,9 +54,9 @@ std::string norm(std::string s)
 
 class ObjectGoto : public rclcpp::Node {
  public:
-  ObjectGoto() : Node("object_goto"), tf_buffer_(get_clock()), tf_listener_(tf_buffer_) {
+  ObjectGoto() : Node("object_goto") {
     mode_ = declare_parameter<std::string>("mode", "nav2");
-    direct_ = declare_parameter<bool>("direct", false);
+    if (mode_ != "nav2" && mode_ != "explore") {throw std::runtime_error("mode 는 nav2 · explore");}
     map_frame_ = declare_parameter<std::string>("map_frame", "map");
     robot_frame_ = declare_parameter<std::string>("robot_frame", "base_link");
     stand_dist_ = declare_parameter<double>("stand_dist", 0.6);
@@ -74,8 +74,6 @@ class ObjectGoto : public rclcpp::Node {
     target_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/target", rclcpp::QoS(1).transient_local());
     overlay_pub_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>("~/overlay", rclcpp::QoS(1).transient_local());
     explore_pub_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_topic", "/low_rl/instruction"), 10);
-    goto_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(declare_parameter<std::string>("explore_goto_topic", "/low_rl/goto"), 10);
-    face_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(declare_parameter<std::string>("explore_face_topic", "/low_rl/goto_face"), 10);
     target_pub_cls_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_target_topic", "/low_rl/target_class"), 10);
     objects_sub_ = create_subscription<vision_msgs::msg::Detection3DArray>(
       declare_parameter<std::string>("objects_topic", "/object_mapper/objects"), rclcpp::QoS(1).transient_local(),
@@ -84,9 +82,6 @@ class ObjectGoto : public rclcpp::Node {
         objects_ = m;
         if (searching_ && !done_ && m->detections.size() != before) {try_name();}   // 새 물체가 올라오면 바로 다시 찾음
       });
-    map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
-      declare_parameter<std::string>("map_topic", "/map"), rclcpp::QoS(1).transient_local().reliable(),
-      [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr m) {map_ = m;});
     // 탐사 노드가 도착을 알리면(low_rl ~/goto_status "도착…") 이 목표는 끝 — 새 목표가 올 때까지 다시 찾지 않음
     arrived_sub_ = create_subscription<std_msgs::msg::String>(declare_parameter<std::string>("explore_status_topic", "/low_rl/goto_status"), 10,
       [this](std_msgs::msg::String::ConstSharedPtr m) {
@@ -98,7 +93,14 @@ class ObjectGoto : public rclcpp::Node {
       });
     goal_sub_ = create_subscription<std_msgs::msg::String>("~/goal", 10,
       [this](std_msgs::msg::String::ConstSharedPtr m) {on_goal(m->data);});
-    nav_ = rclcpp_action::create_client<Nav>(this, declare_parameter<std::string>("nav_action", "navigate_to_pose"));
+    if (mode_ == "nav2") {   // 저장 지도 주행만 지도·TF·Nav2 를 씀 (탐사 모드는 low_rl 이 설 자리를 고르고 감)
+      tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
+      tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
+      map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+        declare_parameter<std::string>("map_topic", "/map"), rclcpp::QoS(1).transient_local().reliable(),
+        [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr m) {map_ = m;});
+      nav_ = rclcpp_action::create_client<Nav>(this, declare_parameter<std::string>("nav_action", "navigate_to_pose"));
+    }
     say("대기 — /object_goto/goal 에 지시를 주세요 (예: 의자로 가 · 사람 따라가)");
   }
 
@@ -150,7 +152,7 @@ class ObjectGoto : public rclcpp::Node {
 
   std::optional<std::pair<double, double>> robot_xy() {
     try {
-      const auto tf = tf_buffer_.lookupTransform(map_frame_, robot_frame_, tf2::TimePointZero);
+      const auto tf = tf_buffer_->lookupTransform(map_frame_, robot_frame_, tf2::TimePointZero);
       return std::make_pair(tf.transform.translation.x, tf.transform.translation.y);
     } catch (const tf2::TransformException &) {return std::nullopt;}
   }
@@ -188,7 +190,7 @@ class ObjectGoto : public rclcpp::Node {
       say("지시 지움");
       return;
     }
-    if (mode_ == "explore" && !direct_) {   // 판단 모델이 고르게: 클래스와 지시만 넘김
+    if (mode_ == "explore") {   // 판단 모델이 고르게: 클래스와 지시만 넘김
       const std::string cls = class_of(text);
       std_msgs::msg::String c, t;
       c.data = cls;
@@ -306,49 +308,34 @@ class ObjectGoto : public rclcpp::Node {
       return;
     }
     char b[256];
-    std::snprintf(b, sizeof b, "'%s' → %s (%s) 물체 (%.2f, %.2f) · 설 자리 (%.2f, %.2f) 로 %s", goal_text_.c_str(), d.id.c_str(),
-      how.c_str(), ox, oy, spot->first, spot->second, mode_ == "nav2" ? "Nav2 주행" : "탐사 노드에 목표");
+    std::snprintf(b, sizeof b, "'%s' → %s (%s) 물체 (%.2f, %.2f) · 설 자리 (%.2f, %.2f) 로 Nav2 주행", goal_text_.c_str(), d.id.c_str(),
+      how.c_str(), ox, oy, spot->first, spot->second);
     say(b);
     show_target(&d, spot->first, spot->second);
-    if (mode_ == "nav2") {
-      if (!nav_->wait_for_action_server(std::chrono::seconds(2))) {say("Nav2 navigate_to_pose 가 없음 (navigation.launch.xml 을 켜 두세요)"); return;}
-      Nav::Goal g;
-      g.pose.header.frame_id = map_frame_;
-      g.pose.header.stamp = now();
-      g.pose.pose.position.x = spot->first;
-      g.pose.pose.position.y = spot->second;
-      const double yaw = std::atan2(oy - spot->second, ox - spot->first);   // 물체를 봄
-      g.pose.pose.orientation.z = std::sin(yaw / 2);
-      g.pose.pose.orientation.w = std::cos(yaw / 2);
-      rclcpp_action::Client<Nav>::SendGoalOptions o;
-      const std::string id = d.id;
-      o.result_callback = [this, id](const rclcpp_action::ClientGoalHandle<Nav>::WrappedResult & r) {
-        say(std::string(r.code == rclcpp_action::ResultCode::SUCCEEDED ? "도착: " : "주행 못 끝냄: ") + id);
-      };
-      nav_->async_send_goal(g, o);
-    } else {
-      geometry_msgs::msg::PointStamped f;   // 도착 뒤 바라볼 물체 자리 (low_rl ~/goto_face) — ~/goto 보다 먼저
-      f.header.frame_id = map_frame_;
-      f.header.stamp = now();
-      f.point.x = ox;
-      f.point.y = oy;
-      face_pub_->publish(f);
-      geometry_msgs::msg::PointStamped p;
-      p.header.frame_id = map_frame_;
-      p.header.stamp = now();
-      p.point.x = spot->first;
-      p.point.y = spot->second;
-      goto_pub_->publish(p);
-    }
+    if (!nav_->wait_for_action_server(std::chrono::seconds(2))) {say("Nav2 navigate_to_pose 가 없음 (navigation.launch.xml 을 켜 두세요)"); return;}
+    Nav::Goal g;
+    g.pose.header.frame_id = map_frame_;
+    g.pose.header.stamp = now();
+    g.pose.pose.position.x = spot->first;
+    g.pose.pose.position.y = spot->second;
+    const double yaw = std::atan2(oy - spot->second, ox - spot->first);   // 물체를 봄
+    g.pose.pose.orientation.z = std::sin(yaw / 2);
+    g.pose.pose.orientation.w = std::cos(yaw / 2);
+    rclcpp_action::Client<Nav>::SendGoalOptions o;
+    const std::string id = d.id;
+    o.result_callback = [this, id](const rclcpp_action::ClientGoalHandle<Nav>::WrappedResult & r) {
+      say(std::string(r.code == rclcpp_action::ResultCode::SUCCEEDED ? "도착: " : "주행 못 끝냄: ") + id);
+    };
+    nav_->async_send_goal(g, o);
   }
 
-  tf2_ros::Buffer tf_buffer_;
-  tf2_ros::TransformListener tf_listener_;
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
   std::string mode_, map_frame_, robot_frame_, goal_text_;
   double stand_dist_, stand_band_, robot_radius_;
   int occ_threshold_;
   std::vector<std::pair<std::string, std::string>> aliases_;
-  bool searching_ = false, direct_ = false, done_ = false;
+  bool searching_ = false, done_ = false;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr arrived_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr target_pub_cls_;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
@@ -356,7 +343,6 @@ class ObjectGoto : public rclcpp::Node {
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_, explore_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr target_pub_;
   rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr overlay_pub_;
-  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr goto_pub_, face_pub_;
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr objects_sub_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr goal_sub_;

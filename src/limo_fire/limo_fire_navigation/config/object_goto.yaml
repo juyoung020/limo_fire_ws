@@ -1,6 +1,7 @@
-# "○○ 로 가" (object_goto). 탐사 중(mode explore → low_rl ~/goto) · 저장 지도(mode nav2 → Nav2 NavigateToPose). mode 는 launch 가 준다
+# "○○ 로 가" (object_goto). 탐사 중(mode explore → 지시 글·클래스를 low_rl 에, 판단 모델이 고름) · 저장 지도(mode nav2 → 설 자리로 Nav2 NavigateToPose). mode 는 launch 가 준다
 object_goto:
   ros__parameters:
+    # 아래 넷은 nav2 모드만 (탐사 모드 설 자리는 low_rl — scripts/low_decider.h obj_ring_*)
     stand_dist: 0.6        # m, 물체 가운데에서 설 자리까지 최소 거리 (로봇 반 길이 0.16 + 물체 반 너비 여유) — 잠정
     stand_band: 0.6        # m, 설 자리 고리 폭 (stand_dist ~ stand_dist + stand_band)
     robot_radius: 0.25     # m, 설 자리 둘레 빈 칸 반경 (LIMO 외접 반경 0.21 + 여유) — 잠정
