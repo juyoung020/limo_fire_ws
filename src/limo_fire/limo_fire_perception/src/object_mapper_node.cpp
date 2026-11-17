@@ -2,14 +2,11 @@
 // 같은 클래스가 merge_radius 안에서 다시 보이면 같은 물체로 보고 위치를 평균한다. min_hits 번 이상 본 것만 지도에 올린다.
 // 깊이는 컬러 카메라에 정렬돼 있어야 한다 (실물 Orbbec align_mode HW, Webots 는 원래 같은 프레임)
 // 분할 모델이면 같은 시각의 물체 번호 영상(yolo_detector/mask)으로 물체 픽셀만 골라 위치·거리·(불) 넓이를 잰다. 없으면 상자로
-// 물체마다 가장 크게·확실하게 찍힌 장면(탐지 결과 영상을 상자 둘레만 잘라낸 것)을 두고, RViz Publish Point 로 아이콘을 누르면
-// 그 사진을 ~/selected 로 낸다 (선택한 물체는 흰 고리, 현황판에 정보)
 //
 // 한 스레드 컨테이너에서 다른 콜백을 막지 않게: 탐지·깊이 짝이 오면 받기 콜백은 작업 줄(max_pending 장, 넘치면 가장 오래된 장을 버림 —
 // 늘 최신 쪽이 남음)에 넣고 바로 돌아오고, 처리는 process_period 타이머가 그 시각 TF 가 있는 장부터 한다(tf_wait 지나도 없으면 버림).
 // TF 도 이 노드의 콜백으로 받는다(따로 스레드 없음). 깊이 영상 받기 메시지는 몇 개를 돌려 써서 장마다 큰 할당을 하지 않는다.
 // stats_period 마다 짝 못 지은 탐지 비율(탐지↔깊이 max_sync_dt)·줄 지연·처리 시간을 로그로 낸다
-// 결과 영상(대표 사진)은 그것을 쓰는 쪽(~/selected 구독자)이 있을 때만 구독한다
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -218,8 +215,6 @@ public:
     for (const auto & n : declare_parameter<std::vector<std::string>>("ignore_classes", std::vector<std::string>{})) {ignored_.push_back(n);}
     // 물체 지도 파일 (클래스·위치·크기·본 횟수·마지막 본 시각). 있으면 켤 때 읽는다 — 저장한 지도(map_saver)와 같이 다시 쓰려고
     objects_file_ = declare_parameter<std::string>("objects_file", "");
-    view_margin_ = declare_parameter<double>("view_margin", 0.3);
-    select_radius_ = declare_parameter<double>("select_radius", 0.6);
 
     // 늦게 켠 RViz 도 받게 transient_local. 프로세스 안 전달(intra-process)은 volatile 만 되므로 이 둘은 끈다
     rclcpp::PublisherOptions latched;
@@ -241,23 +236,12 @@ public:
         masks_.push_back(msg);
         if (masks_.size() > 10) {masks_.pop_front();}
       });
-    // 대표 사진: 탐지 결과 영상(마스크 덧칠·상자·이름). 탐지보다 늦게 올 수 있어 최근 몇 장을 두고 시각으로 맞춘다.
-    // ~/selected 를 보는 쪽(RViz Selected 칸)이 있을 때만 구독한다 — 이 구독이 있으면 yolo_detector 가 매 장 결과 영상을 GPU 에서 칠해 내므로
-    view_topic_ = declare_parameter<std::string>("view_topic", "/yolo_detector/image");
-    keep_images_ = static_cast<size_t>(std::max<int64_t>(1, declare_parameter<int>("keep_images", 10)));
-    // RViz Publish Point 로 누른 곳에서 가장 가까운 물체를 고른다
-    selected_pub_ = create_publisher<sensor_msgs::msg::Image>("~/selected", rclcpp::QoS(1).transient_local(), latched);
-    click_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
-      declare_parameter<std::string>("clicked_topic", "/clicked_point"), 10,
-      [this](geometry_msgs::msg::PointStamped::ConstSharedPtr msg) {select(*msg);});
 
     // 지도에 올린 물체를 모두 지운다: ros2 service call /object_mapper/clear std_srvs/srv/Trigger
     clear_srv_ = create_service<std_srvs::srv::Trigger>("~/clear",
         [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
           landmarks_.clear();
           std::fill(counters_.begin(), counters_.end(), 0);
-          pending_.clear();
-          selected_ = -1;
           visualization_msgs::msg::MarkerArray arr;
           arr.markers.emplace_back().action = Marker::DELETEALL;
           marker_pub_->publish(arr);
@@ -327,12 +311,11 @@ public:
     footprint_max_z_ = declare_parameter<double>("footprint_max_z", 2.0);
 
     // 10 Hz: ~/objects(물체 목록 — 바뀌지 않아도 늘 다시 냄, 받는 쪽은 마지막 것만 씀) · 마커(불 위험 반경 깜빡임·로봇까지 거리) — 벽시계라 시뮬이 멈춰도 표시는 돈다
-    timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {update_lazy_subs(); publish();});
+    timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {publish();});
     // 작업 줄 처리: 노드 시계 타이머 (시뮬이면 시뮬 시간 — 받은 시각·tf_wait 와 같은 시계)
     proc_timer_ = rclcpp::create_timer(this, get_clock(),
         rclcpp::Duration::from_seconds(declare_parameter<double>("process_period", 0.02)), [this]() {drain_jobs();});
     stats_period_ = declare_parameter<double>("stats_period", 10.0);
-    update_lazy_subs();
     publish_summary();
   }
 
@@ -388,23 +371,12 @@ private:
     std::unordered_map<int64_t, uint16_t> cells;
     double bx = 0, by = 0, bz = 0;   // 밑점: 마스크 3D 점 중 가장 낮은 곳들(아래 10 %)의 평균 (map) — 불이면 불 밑동. 마스크가 없으면 0
     int base_n = 0;   // 바닥 발자국: 분할 마스크 픽셀의 3D 점을 지도 칸(cell_size)에 내린 것 — 칸 → 본 횟수
-    sensor_msgs::msg::Image::SharedPtr view;  // 대표 사진 (view_quality 가 가장 큰 장면)
-    double view_quality = 0;
     int misses = 0;          // 보여야 할 때 못 본 수 (지도 갱신 — 다시 보면 0)
     int moved = 0;           // 처음 자리(ax, ay)에서 멀리 잰 측정이 이어진 수 (정지 물체 옮겨짐 판정)
     double ax = 0, ay = 0;   // 그 이어짐이 시작될 때의 자리 (평균이 끌려가도 이 자리와 견줌)
     double mx = 0, my = 0, mz = 0;   // 그 측정들의 평균 (옮겨진 자리)
     bool gone = false;       // 없어짐 (못 본 수 neg_misses 번 · 움직이는 클래스는 dynamic_ttl 초) — 표시·목록·저장에서 뺌, 같은 자리 탐지는 새 물체로
     bool deleted = false;    // 없어진 물체 마커를 지웠음
-  };
-
-  // 대표 사진을 잘라 올 장면: 결과 영상이 오면 같은 시각 것을 잘라 물체에 붙인다
-  struct PendingView
-  {
-    builtin_interfaces::msg::Time stamp;
-    size_t index;
-    int x0, y0, x1, y1;
-    double quality;
   };
 
   // 탐지 하나를 지도에 올릴 값: 영상 좌표 (u, v), 거리 z, 앞면 넓이
@@ -661,83 +633,8 @@ private:
       const size_t idx = add_seen(seen_now, cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw,
           d.results[0].hypothesis.score, m.area, d.bbox.size_x * m.z / fx);
       if (scanned) {footprint(fx, fy, cx, cy, tf, landmarks_[idx]);}   // scan_mask 의 pts_ (그 뒤 box_depth 만 vals_ 를 씀)
-      // 크게(가까이)·확실하게 찍힐수록 좋은 사진. 지금 것보다 나을 때만 자른다
-      const double quality = d.bbox.size_x * d.bbox.size_y * d.results[0].hypothesis.score;
-      if (view_sub_ && quality > landmarks_[idx].view_quality) {
-        const double mx = view_margin_ * d.bbox.size_x, my = view_margin_ * d.bbox.size_y;
-        pending_.push_back({dets->header.stamp, idx,
-            static_cast<int>(d.bbox.center.position.x - d.bbox.size_x / 2 - mx),
-            static_cast<int>(d.bbox.center.position.y - d.bbox.size_y / 2 - my * 2),  // 위쪽 이름표까지
-            static_cast<int>(d.bbox.center.position.x + d.bbox.size_x / 2 + mx),
-            static_cast<int>(d.bbox.center.position.y + d.bbox.size_y / 2 + my), quality});
-      }
     }
     negative_evidence(*depth, info, tf, sx, sy, fx, fy, cx, cy, seen_now);
-    take_views();
-  }
-
-  // 기다리던 장면의 결과 영상이 왔으면 잘라 물체에 붙인다. 너무 오래된 요청은 버린다
-  void take_views()
-  {
-    for (auto it = pending_.begin(); it != pending_.end(); ) {
-      sensor_msgs::msg::Image::ConstSharedPtr img;
-      for (const auto & v : views_) {
-        if (v->header.stamp == it->stamp) {img = v;}
-      }
-      const bool stale = !views_.empty() &&
-        rclcpp::Time(views_.back()->header.stamp) - rclcpp::Time(it->stamp) > rclcpp::Duration::from_seconds(1.0);
-      if (img && it->index < landmarks_.size() && it->quality > landmarks_[it->index].view_quality) {
-        landmarks_[it->index].view = crop(*img, it->x0, it->y0, it->x1, it->y1);
-        landmarks_[it->index].view_quality = it->quality;
-        if (static_cast<int>(it->index) == selected_) {selected_pub_->publish(*landmarks_[it->index].view);}
-      }
-      it = (img || stale) ? pending_.erase(it) : std::next(it);
-    }
-    while (pending_.size() > 200) {pending_.pop_front();}
-  }
-
-  static sensor_msgs::msg::Image::SharedPtr crop(const sensor_msgs::msg::Image & img, int x0, int y0, int x1, int y1)
-  {
-    x0 = std::clamp(x0, 0, static_cast<int>(img.width) - 1);
-    x1 = std::clamp(x1, x0 + 1, static_cast<int>(img.width));
-    y0 = std::clamp(y0, 0, static_cast<int>(img.height) - 1);
-    y1 = std::clamp(y1, y0 + 1, static_cast<int>(img.height));
-    const size_t px = img.step / img.width;  // 한 픽셀 바이트
-    auto out = std::make_shared<sensor_msgs::msg::Image>();
-    out->header = img.header;
-    out->encoding = img.encoding;
-    out->width = x1 - x0;
-    out->height = y1 - y0;
-    out->step = out->width * px;
-    out->data.resize(static_cast<size_t>(out->step) * out->height);
-    for (int y = y0; y < y1; ++y) {
-      std::copy_n(img.data.data() + static_cast<size_t>(y) * img.step + x0 * px, out->step,
-        out->data.data() + static_cast<size_t>(y - y0) * out->step);
-    }
-    return out;
-  }
-
-  // 누른 곳에서 select_radius 안의 가장 가까운 물체를 고르고 대표 사진을 낸다. 빈 곳을 누르면 선택 해제
-  void select(const geometry_msgs::msg::PointStamped & click)
-  {
-    geometry_msgs::msg::PointStamped p = click;
-    if (click.header.frame_id != map_frame_) {
-      try {
-        // 기다리지 않음 (TF 는 이 노드 콜백으로 받으므로 기다리면 안 옴) — 가장 최근 TF 로
-        tf2::doTransform(click, p, tf_buffer_.lookupTransform(map_frame_, click.header.frame_id, tf2::TimePointZero));
-      } catch (const tf2::TransformException & e) {
-        RCLCPP_WARN(get_logger(), "누른 곳을 %s 로 못 바꿈: %s", map_frame_.c_str(), e.what());
-        return;
-      }
-    }
-    selected_ = -1;
-    double best = select_radius_;
-    for (size_t i = 0; i < landmarks_.size(); ++i) {
-      const double d = std::hypot(landmarks_[i].x - p.point.x, landmarks_[i].y - p.point.y);
-      if (landmarks_[i].number > 0 && d < best) {best = d; selected_ = static_cast<int>(i);}
-    }
-    if (selected_ >= 0 && landmarks_[selected_].view) {selected_pub_->publish(*landmarks_[selected_].view);}
-    publish_summary();
   }
 
   // 물체 목록에 넣고 그 물체의 번호(landmarks_ 안 위치)를 돌려준다
@@ -1087,10 +984,6 @@ private:
     shadow.pose.position.x -= 0.03 * up_x;  // 화면 아래쪽으로 살짝 → 떠 있는 느낌
     shadow.pose.position.y -= 0.03 * up_y;
     arr.markers.push_back(shadow);
-    // 선택한 물체: 아이콘 둘레 흰 고리 (선택이 풀리면 지운다)
-    Marker ring = make(8, Marker::CYLINDER, 0.87, size * 1.45, size * 1.45, 0.01, rgba(1.0f, 1.0f, 1.0f, 0.9f));
-    if (static_cast<int>(index) != selected_) {ring.action = Marker::DELETE;}
-    arr.markers.push_back(ring);
     if (has_icon(s.name)) {
       Marker icon = make(3, Marker::MESH_RESOURCE, 0.9, size, size, 1.0, rgba(0.0f, 0.0f, 0.0f, 0.0f), view_angle_);
       icon.mesh_resource = "package://limo_fire_perception/icons/" + std::string(s.name) + ".obj";
@@ -1140,24 +1033,6 @@ private:
     label.ns = "labels";
     label.text = text;
     arr.markers.push_back(label);
-  }
-
-  // 결과 영상·원본 영상 구독은 쓰는 쪽이 있을 때만 (없으면 영상 복사·역직렬화와 yolo_detector 결과 영상 칠하기가 안 일어남)
-  void update_lazy_subs()
-  {
-    const bool want_view = selected_pub_->get_subscription_count() + selected_pub_->get_intra_process_subscription_count() > 0;
-    if (want_view && !view_sub_) {
-      view_sub_ = create_subscription<sensor_msgs::msg::Image>(view_topic_, 5,
-        [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
-          views_.push_back(msg);
-          if (views_.size() > keep_images_) {views_.pop_front();}
-          take_views();
-        });
-    } else if (!want_view && view_sub_) {
-      view_sub_.reset();
-      views_.clear();
-      pending_.clear();
-    }
   }
 
   void publish()
@@ -1299,16 +1174,7 @@ private:
       lines++;
     }
     html += "</table><div style='color:#9aa0a6;font-size:small;'>" + std::to_string(min_hits_) +
-      "번 이상 확인된 것만 · 거리는 로봇 기준 직선 · Publish Point 로 아이콘을 누르면 사진</div>";
-    if (selected_ >= 0 && selected_ < static_cast<int>(landmarks_.size())) {
-      const Landmark & l = landmarks_[selected_];
-      const Style & s = style_of(class_names_[l.cls]);
-      char buf[160];
-      std::snprintf(buf, sizeof(buf), "선택: %s %s-%d · 신뢰도 %.0f%% · %d 번 봄%s", s.ko, s.tag, l.number,
-        l.best_score * 100, l.hits, l.view ? "" : " · 사진 없음");
-      html += std::string("<div style='color:") + hex(s) + ";'><b>" + buf + "</b></div>";
-      lines++;
-    }
+      "번 이상 확인된 것만 · 거리는 로봇 기준 직선</div>";
 
     rviz_2d_overlay_msgs::msg::OverlayText o;
     o.action = rviz_2d_overlay_msgs::msg::OverlayText::ADD;
@@ -1333,10 +1199,7 @@ private:
     fire_zone_radius_;
   std::vector<double> merge_radii_;
   std::vector<double> label_offset_;
-  double icon_size_, view_angle_, view_margin_, select_radius_;
-  int selected_ = -1;
-  std::deque<PendingView> pending_;
-  std::deque<sensor_msgs::msg::Image::ConstSharedPtr> views_;
+  double icon_size_, view_angle_;
   int min_hits_;
   std::vector<std::string> class_names_;
   std::vector<Landmark> landmarks_;
@@ -1366,9 +1229,8 @@ private:
   double stats_period_ = 10.0;
   double t_obs_ = 0;   // 처리 중인 장을 받은 때 (s, 노드 시계)
   double tf_wait_ = 0.2;
-  size_t max_pending_ = 10, keep_images_ = 10;
+  size_t max_pending_ = 10;
   size_t n_no_tf_ = 0, n_overflow_ = 0;   // TF 가 없어·줄이 넘쳐 버린 장 수
-  std::string view_topic_;
   // 장마다 다시 쓰는 작업 버퍼 (할당을 줄이려고 — 한 스레드에서만 씀)
   std::vector<float> vals_, zs_;
   std::vector<int> xs_;
@@ -1384,9 +1246,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
   std::shared_ptr<message_filters::Synchronizer<Policy>> sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_, view_sub_;
-  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr click_sub_;
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr selected_pub_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr overlay_pub_;
   rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr objects_pub_;

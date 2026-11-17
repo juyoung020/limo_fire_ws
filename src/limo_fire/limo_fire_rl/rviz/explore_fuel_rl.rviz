@@ -515,14 +515,6 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /goal_pose
-    - Class: rviz_default_plugins/PublishPoint
-      Single click: true
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /clicked_point
   Transformation:
     Current:
       Class: rviz_default_plugins/TF
@@ -552,8 +544,6 @@ Window Geometry:
   Hide Left Dock: false
   Hide Right Dock: false
   QMainWindow State: 000000ff00000000fd000000010000000000000207000003c0fc0200000003fb000000080059004f004c004f010000003d000001940000002800fffffffb000000100044006900730070006c00610079007301000001d7000000c9000000c900fffffffb0000001000530065006c0065006300740065006401000002a6000001570000002800ffffff00000573000003c000000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
-  Selected:
-    collapsed: false
   Width: 1920
   X: 0
   Y: 0

@@ -136,8 +136,7 @@ PY
 
 운용 화면 (`limo_fire_description` 의 `viewer.launch.xml` · `rviz/limo_fire.rviz`, 지도 만들기·Nav2 와 같은 화면):
 - 왼쪽: YOLO 탐지 영상. 오른쪽: 지도 + 물체 + 로봇(축) + Nav2 경로(전역·지역), costmap 은 Displays 에서 켠다
-- 도구: 2D Pose Estimate, 2D Goal Pose(Nav2 목표), Publish Point(물체 고르기)
-- 물체 모양 보기: 툴바 **Publish Point** 를 누르고 지도 위 아이콘을 누르면, 그 물체가 가장 크고 확실하게 찍힌 장면(분할 마스크 덧칠·테두리가 있는 탐지 영상을 물체 둘레만 자른 것)이 왼쪽 아래 **Selected** 패널에 뜬다. 고른 아이콘은 흰 고리, 현황판 맨 아래에 종류·번호·신뢰도·본 횟수. 빈 곳을 누르면 선택 해제 (`/clicked_point` → `/object_mapper/selected`)
+- 도구: 2D Pose Estimate, 2D Goal Pose(Nav2 목표). (Publish Point 로 아이콘을 눌러 물체 사진을 보던 기능은 2026-11-18 지움)
 - 왼쪽 위 현황판(`/object_mapper/summary`, `rviz_2d_overlay_plugins`): 화재 경고, 종류별 개수, 로봇에서 가장 가까운 것과 거리
 - 물체마다 원형 아이콘 배지(`icons/`, Material Symbols) + 번호 라벨(`EXT-1` …). 불은 위험 반경(`fire_zone_radius`)이 깜빡인다
 - 표시 켜고 끄기: 메뉴 Panels → Displays. 지도 물체 모두 지우기: `ros2 service call /object_mapper/clear std_srvs/srv/Trigger`
@@ -266,8 +265,7 @@ PY
   줄 지연(받음 → 처리 시작, 평균·최대), 장당 처리 시간, 탐지 시각부터 처리 끝까지 나이, 버린 장(TF 없음·줄 넘침).
 - **보는 쪽이 있을 때만**: 결과 영상(GPU 덧칠 + 상자)은 `~/image` 구독자가 있을 때만 만들고, 그 GPU 버퍼(장치 1 장 + 고정 메모리 2 장 = 2.8 MB)와 결과 영상 그래프 2 개는
   처음 필요할 때 만들어 `vis_release_s`(5 s) 동안 구독자가 없으면 푼다. 예전엔 `object_mapper` 가 대표 사진용으로 늘 구독해서 매 장 만들었다 —
-  이제 매퍼는 `~/selected` 를 보는 쪽(RViz Selected 칸)이 있을 때만 결과 영상을 구독한다
-  (10 장 921 KB = 9.2 MB 를 안 함). 그래서 RViz 를 안 켠 동안 찍힌 물체는 대표 사진이 없다(다시 보이면 생김).
+  대표 사진(누른 물체 사진 `~/selected`)은 2026-11-18 지워 매퍼는 결과 영상을 구독하지 않는다.
 - **물체 지도 픽셀 반복**: 마스크를 상자 안에서 한 번만 훑어 위치·거리·밑동·발자국이 같이 쓰고(예전 세 번), 물체가 없는 줄은 SIMD 로 건너뛰며(분기 없는 OR 모음 — 컴파일러가 NEON·SSE 로),
   깊이 열 번호는 표로, 점마다 나누던 것은 역수 곱, 작업 버퍼는 다시 쓴다. 빌드 종류를 안 주면 Release(예전엔 colcon 기본이라 -O0), Orin 이면 `-mcpu=cortex-a78ae`.
 

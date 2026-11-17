@@ -92,11 +92,11 @@ flowchart LR
 | `ekf_filter_node_odom` | 실행기 1 개 (30 Hz 타이머) | `/odom` `/imu` | 융합 | `/odometry/filtered`, TF `odom→base_link` |
 | `cartographer_node` | 실행기 + Cartographer 뒤 작업 스레드 | `/scan` `/imu` `/odometry/filtered` + TF | SLAM | TF `map→odom`, `/submap_list` 등 → `occupancy_grid_node` 가 `/map` (1 s) |
 | `perception_container` | **YOLO GPU 작업 스레드** (`std::thread`, 실행기 밖, WaitSet 으로 직접 받음) | `/camera/color/image_raw` (가장 최근 장만, 밀린 장은 버림) | RGB 로 맞춤 → 고정 메모리로 복사 → GPU 에 걸기 → 앞 장 결과 받기 (GPU 슬롯 2 개로 겹침) | `~/mask` → `~/detections` 차례로, `~/image` (구독자 있을 때만) |
-| | 실행기 (component_container, **한 스레드**) | `object_mapper` 의 모든 구독 · 타이머 · `/tf` `/tf_static` (TF 스레드 없음) | 탐지·깊이 짝 → 작업 줄 → 20 ms 타이머가 그 시각 TF 있는 장부터 처리 | `~/objects` `~/markers` `~/summary` `~/selected` |
+| | 실행기 (component_container, **한 스레드**) | `object_mapper` 의 모든 구독 · 타이머 · `/tf` `/tf_static` (TF 스레드 없음) | 탐지·깊이 짝 → 작업 줄 → 20 ms 타이머가 그 시각 TF 있는 장부터 처리 | `~/objects` `~/markers` `~/summary` |
 | | CUDA·TensorRT 드라이버 안 스레드 | | | |
 | `low_rl` | 실행기 (`rclcpp::spin`, **한 스레드**, TF 도 이 실행기에서 — 리스너 스레드 없음) | 아래 low_rl 표의 모든 입력, llama-server 답(비차단 소켓을 걸음마다 한 단계씩) | 장 한 장 = 걸음 하나(0.1 s): 지도·관측 → 위층 → A* 추종 | `/cmd_vel` `~/cmd_debug` `~/status` … , HTTP 요청 |
 | `object_goto` | 실행기 1 개 (nav2 모드만 + TF 리스너 스레드) | `/object_mapper/objects` `/low_rl/goto_status` `~/goal` (nav2 모드만 `/map`·TF) | 글 → 클래스, (nav2 모드) 설 자리 BFS | `/low_rl/*` 지시, `~/status` `~/target` `~/overlay`, (nav2 모드) `navigate_to_pose` 액션 |
-| RViz | Qt 화면 스레드 + ROS 실행 스레드 | 화면 토픽 | 탐사 패널: 콜백은 값만 바꾸고 Qt 타이머가 그림 | `/low_rl/enable` 서비스 부름, `/clicked_point` |
+| RViz | Qt 화면 스레드 + ROS 실행 스레드 | 화면 토픽 | 탐사 패널: 콜백은 값만 바꾸고 Qt 타이머가 그림 | `/low_rl/enable` 서비스 부름 |
 | 모든 ROS 프로세스 | DDS 안 스레드 (받기·이벤트·타이머) | 네트워크·공유 메모리 | 역직렬화해 실행기 줄에 넣음 | |
 
 ### 스레드 사이·프로세스 사이 복사 (Rust 한 프로세스 통합 참고)
@@ -192,13 +192,10 @@ flowchart LR
 | 받음 | `mask_topic` = `/yolo_detector/mask` | `Image` mono8 | 10, 최근 10 장에서 같은 stamp 를 찾음 | | |
 | 받음 | `camera_info_topic` = `/camera/depth/camera_info` | `CameraInfo` | SensorData | | |
 | 받음 | `/tf` `/tf_static` | | 리스너 스레드 없음, 프로세스 안 전달 끔 | | |
-| 받음 | `clicked_topic` = `/clicked_point` | `geometry_msgs/PointStamped` | 10 | | RViz Publish Point |
-| 받음 | `view_topic` = `/yolo_detector/image` | `Image` | 5 | `~/selected` 구독자가 있을 때만 구독 | |
 | 받음 | `~/save_to` | `std_msgs/String` (경로) | 10 | | |
 | 냄 | `~/objects` | `vision_msgs/Detection3DArray` | R / TL / 1 | **10 Hz** (벽시계 타이머, 바뀌지 않아도) | `map` |
 | 냄 | `~/markers` | `visualization_msgs/MarkerArray` | R / TL / 1 | 10 Hz (비면 안 냄) | `map` |
 | 냄 | `~/summary` | `rviz_2d_overlay_msgs/OverlayText` | R / TL / 1 | 2 Hz | |
-| 냄 | `~/selected` | `Image` | R / TL / 1 | 누를 때 | |
 | 서비스 | `~/clear` `~/save` `~/load` | `std_srvs/Trigger` | | | |
 | 파일 | `objects_file` | 글 파일 (`# limo_fire object map v1 …`) | | `~/save`·`~/save_to` 로 쓰고 켤 때 읽음 | |
 
