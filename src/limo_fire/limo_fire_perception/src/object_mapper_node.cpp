@@ -178,6 +178,8 @@ public:
     }
     counters_.assign(class_names_.size(), 0);
     min_hits_extra_ = declare_parameter<int>("min_hits_extra", min_hits_);
+    // 지도에 안 올릴 클래스 (실내 로봇에 없는 것 — COCO 의 비행기·버스·트럭은 실험실 큰 가구를 잘못 본 것이 대부분)
+    for (const auto & n : declare_parameter<std::vector<std::string>>("ignore_classes", std::vector<std::string>{})) {ignored_.push_back(n);}
     // 물체 지도 파일 (클래스·위치·크기·본 횟수·마지막 본 시각). 있으면 켤 때 읽는다 — 저장한 지도(map_saver)와 같이 다시 쓰려고
     objects_file_ = declare_parameter<std::string>("objects_file", "");
     view_margin_ = declare_parameter<double>("view_margin", 0.3);
@@ -431,7 +433,7 @@ private:
       const auto & d = dets->detections[i];
       if (d.results.empty() || d.results[0].hypothesis.score < min_score_) {continue;}
       const int cls = class_index(d.results[0].hypothesis.class_id);
-      if (cls < 0) {continue;}
+      if (cls < 0 || std::find(ignored_.begin(), ignored_.end(), class_names_[cls]) != ignored_.end()) {continue;}
       Measure m{d.bbox.center.position.x, d.bbox.center.position.y, 0.0, 0.0};
       if (!mask || i >= 255 || !mask_measure(*depth, *mask, static_cast<uint8_t>(i + 1), d.bbox, sx, sy, fx, fy, m)) {
         m.z = box_depth(*depth, m.u * sx, m.v * sy, d.bbox.size_x * sx, d.bbox.size_y * sy);
@@ -927,6 +929,7 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_srv_, load_srv_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr save_to_sub_;
   int n_main_ = 0;
+  std::vector<std::string> ignored_;
   double cell_size_ = 0.05, footprint_max_z_ = 2.0;
   int footprint_stride_ = 3, footprint_min_count_ = 2;   // class_names 앞 n_main_ 개 = 주 탐지기(화재 모델), 나머지 = extra_class_names
   unsigned tick_ = 0;
