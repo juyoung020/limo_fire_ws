@@ -291,10 +291,8 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
   const size_t cells = (size_t)hc.cfg.size * hc.cfg.size;
   b_.lmap = alloc<int16_t>(cells * n_env);
   b_.marks = alloc<uint32_t>(cells / 4 * n_env);
-  b_.obs_img = alloc<uint8_t>((size_t)mdp::obs::IMG_SIZE * n_env);
+  b_.depth = alloc<uint8_t>((size_t)mdp::obs::DEPTH_SIZE * n_env);
   const bool hier = hc.cfg.action_mode == kActPath;
-  b_.o1d = hier ? mdp::hier::POLICY_1D : mdp::obs::POLICY_1D;
-  b_.obs_1d = alloc<float>((size_t)b_.o1d * n_env);
   if (hier) {   // 계층형 (env.h EnvBatch 아래 칸, include/hier_path.h)
     b_.cand = alloc<int32_t>((size_t)mdp::hier::K * n_env);
     b_.cand_cur = alloc<int32_t>(n_env);
@@ -319,8 +317,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     }
   }
   b_.lidar_ring = alloc<float>((size_t)kLidarRing * mdp::obs::LIDAR_BINS * n_env);
-  b_.vec_prev = alloc<float>((size_t)mdp::obs::VEC * n_env);
-  b_.lidar_int = alloc<float>((size_t)mdp::obs::LIDAR_BINS * n_env);
   b_.done = alloc<int32_t>(n_env);
   b_.ep = alloc<EpInfo>(n_env);
   b_.scratch = alloc<Shared>(n_env);
@@ -380,8 +376,7 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.st, sizeof(EnvState));
     reg(b_.lmap, cells * sizeof(int16_t));
     reg(b_.marks, cells / 4 * sizeof(uint32_t));
-    reg(b_.obs_img, (size_t)mdp::obs::IMG_SIZE);
-    reg(b_.obs_1d, (size_t)b_.o1d * sizeof(float));
+    reg(b_.depth, (size_t)mdp::obs::DEPTH_SIZE);
     reg(b_.cand, (size_t)mdp::hier::K * sizeof(int32_t));
     reg(b_.cand_cur, sizeof(int32_t));
     reg(b_.pplanes, (size_t)kPathPlanes * nf * sizeof(uint32_t));
@@ -391,8 +386,6 @@ Env::Env(const EnvHostCfg& hc, const std::vector<World>& worlds, const LidarMode
     reg(b_.lowcmd, sizeof(LowCmd));
     reg(b_.lowrl, sizeof(LowRl));
     reg(b_.lidar_ring, (size_t)kLidarRing * mdp::obs::LIDAR_BINS * sizeof(float));
-    reg(b_.vec_prev, (size_t)mdp::obs::VEC * sizeof(float));
-    reg(b_.lidar_int, (size_t)mdp::obs::LIDAR_BINS * sizeof(float));
     reg(b_.done, sizeof(int32_t));
     reg(b_.ep, sizeof(EpInfo));
     reg(b_.scratch, sizeof(Shared));
@@ -469,10 +462,6 @@ void Env::reset() {
 void Env::step(const float* actions, cudaStream_t st) {
   if (gpu_) env_step_gpu(b_, actions, st);
   else env_step_cpu(b_, actions);
-}
-
-StepOut Env::outputs() const {
-  return StepOut{b_.obs_img, b_.obs_1d, b_.done, b_.ep, b_.o1d};
 }
 
 void Env::low_prepare(const float* actions, cudaStream_t st) {
@@ -552,10 +541,7 @@ void Env::get_seen(std::vector<uint8_t>& out) const {
 void Env::get_trail(std::vector<uint32_t>& out) const {
   fetch(gpu_, b_.trail, (size_t)b_.n_env * 2 * b_.cfg.size * ((b_.cfg.size + 31) / 32), out);
 }
-void Env::get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const {
-  fetch(gpu_, b_.obs_img, (size_t)mdp::obs::IMG_SIZE * b_.n_env, img);
-  fetch(gpu_, b_.obs_1d, (size_t)b_.o1d * b_.n_env, o1d);
-}
+void Env::get_depth(std::vector<uint8_t>& out) const { fetch(gpu_, b_.depth, (size_t)mdp::obs::DEPTH_SIZE * b_.n_env, out); }
 void Env::get_ep(std::vector<EpInfo>& ep) const { fetch(gpu_, b_.ep, (size_t)b_.n_env, ep); }
 
 // 장면 묶음 목록 (env_api.h 위 설명). 등급(4 번째 열)이 있으면 커리큘럼 단계로.

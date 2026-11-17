@@ -1,4 +1,4 @@
-// trainview — 탐사 RL 학습 뷰어 서버. 읽기 전용: 실행 폴더의 파일만 읽고 아무것도 쓰지 않는다.
+// trainview — 탐사 실행 폴더 뷰어 서버(프론티어 기준선 frontier_run 등). 읽기 전용: 실행 폴더의 파일만 읽고 아무것도 쓰지 않는다.
 // std TcpListener + 연결마다 스레드, 요청 줄을 직접 읽음, GET 만, Connection: close, SSE 는 /api/live.
 //
 //   trainview --root train/explore/runs [--root DIR …] [--port 8095] [--bind 127.0.0.1]

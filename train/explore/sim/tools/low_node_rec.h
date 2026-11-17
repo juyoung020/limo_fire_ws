@@ -1,7 +1,9 @@
 // 실물 합친 탐사 노드 녹화 꼴 (limo_fire_rl low_rl record:= · 시뮬 room_run --rec 가 쓰고, low_explore_replay · node_stats 가 읽는다):
 // RobotEnv 가 받은 입력을 부른 차례대로 + 그때 낸 명령. 노드 차례를 그대로 다시 돌려 위층 결정·명령이 같은지 본다.
 //
-// 판 5 (2026-11-17 —): 판 4 와 같고 EnvHostCfg 에 EnvCfg::face_tol·face_w_min(LowCmd::face 로 돌아 서기) 칸. 판 4 이하는 그 칸에 0 (그때는 face 를 안 씀).
+// 판 6 (2026-11-18 —): 판 5 와 같고 EnvHostCfg 에서 EnvCfg::finish_declare(판단 모델 끝 선언) · max_delay(관측 지연) · n_dir · n_dist · dist · goal_margin
+//   (목표점 행동) 칸이 빠짐 — 그만둔 RL 관측·옛 실험 길을 지우며. 옛 판(1~5)은 판 5 꼴로 맞춘 뒤 그 자리(kV5Gone)를 빼 읽는다 (그 칸들은 다시 돌리기에 안 쓰임).
+// 판 5 (2026-11-17): 판 4 와 같고 EnvHostCfg 에 EnvCfg::face_tol·face_w_min(LowCmd::face 로 돌아 서기) 칸. 판 4 이하는 그 칸에 0 (그때는 face 를 안 씀).
 // 판 4 (2026-11-17): 판 3 과 같고 EnvHostCfg 에 EnvCfg::cam_lw·cam_lh(깊이 층 전용 격자) 칸, 사건 'L' (층 전용 깊이 바이트 cam_lw × cam_lh — 'D' 바로 뒤, 격자가 있을 때만).
 //   판 3 · 2 · 1 은 그 칸에 0 (= 층은 관측 깊이 그대로, 그때 동작)을 끼워 읽는다.
 // 판 3 (2026-11-17): 판 2 와 같고 EnvHostCfg 에 EnvCfg::cam_every(깊이 층 걸음마다 갱신) 칸이 더해짐. 판 2 녹화는 그 칸에 0 (= 그때 동작)을 끼워 읽는다.
@@ -29,14 +31,24 @@
 
 namespace lowrec {
 constexpr int32_t kMagic = 0x4E574F4C;   // "LOWN"
-constexpr int32_t kVersion = 5;
-// 판 3 · 4 에서 더한 칸 (지금 구조체 안 자리, 바이트) — 옛 판은 이 자리에 0 을 끼움
-constexpr size_t kV3Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, cam_every), kV3Len = sizeof(int32_t);
-constexpr size_t kV4Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, cam_lw), kV4Len = 2 * sizeof(int32_t);
-constexpr size_t kV5Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, face_tol), kV5Len = 2 * sizeof(float);
-constexpr size_t kV4Size = sizeof(sim::EnvHostCfg) - kV5Len;
+constexpr int32_t kVersion = 6;
+// 판 5 꼴 EnvHostCfg (1616 바이트) — 판 6 에서 지운 칸 [시작, 끝) 바이트: finish_declare · max_delay … goal_margin. 나머지는 차례·크기 그대로라 이 자리만 빼면 지금 구조체
+constexpr size_t kV5Size = 1616;
+constexpr std::pair<size_t, size_t> kV5Gone[] = {{788, 792}, {868, 900}};
+// 판 3 · 4 · 5 에서 더한 칸 (판 5 꼴 안 자리, 바이트 — 그때 offsetof 로 잰 값) — 옛 판은 이 자리에 0 을 끼움
+constexpr size_t kV3Off = 1588, kV3Len = sizeof(int32_t);       // EnvCfg::cam_every
+constexpr size_t kV4Off = 1592, kV4Len = 2 * sizeof(int32_t);   // EnvCfg::cam_lw · cam_lh
+constexpr size_t kV5Off = 44, kV5Len = 2 * sizeof(float);       // EnvCfg::face_tol · face_w_min
+constexpr size_t kV4Size = kV5Size - kV5Len;
 constexpr size_t kV3Size = kV4Size - kV4Len;
 constexpr size_t kV2Size = kV3Size - kV3Len;
+constexpr size_t v5_kept() {
+  size_t n = kV5Size;
+  for (const auto& g : kV5Gone) n -= g.second - g.first;
+  return n;
+}
+static_assert(v5_kept() == sizeof(sim::EnvHostCfg),
+              "EnvHostCfg 가 바뀜 — 녹화 판 번호(kVersion)를 올리고 옛 판을 새 구조체로 옮기는 길을 Reader 에 더할 것");
 using Window = limo_fire_rl::RobotEnv::Window;
 // 'A' 사건의 아래층 목적지: 0 없음 · 1 세계 좌표 (x, y) · 2 판 1 녹화 — 지도 자세 기준 (x = 거리 m, y = 방향 rad, 그 걸음 지도 자세에서 셈)
 struct Goal { int kind = 0; float x = 0.f, y = 0.f; };
@@ -96,15 +108,14 @@ constexpr int v1_kept() {
   for (const auto& g : kV1Gone) n -= g.second - g.first;
   return n;
 }
-// 지금 구조체 안 자리 → 판 1 꼴(1852 바이트) 안 자리
+// 판 2 꼴 안 자리 → 판 1 꼴(1852 바이트) 안 자리
 constexpr size_t v1_off(size_t cur) {
   size_t o = cur;
   for (const auto& g : kV1Gone)
     if (o >= (size_t)g.first) o += (size_t)(g.second - g.first);
   return o;
 }
-static_assert(v1_kept() == (int)kV2Size,
-              "EnvHostCfg 가 바뀜 — 녹화 판 번호(kVersion)를 올리고 판 1 · 판 2 를 새 구조체로 옮기는 길을 Reader 에 더할 것");
+static_assert(v1_kept() == (int)kV2Size, "판 1 → 판 2 꼴 자리 표가 어긋남");
 
 class Reader {
  public:
@@ -116,7 +127,7 @@ class Reader {
     if (hd[1] >= 2 && hd[1] <= kVersion) {
       int32_t sz[3];
       r(sz, sizeof(sz));
-      const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : hd[1] == 4 ? kV4Size : hd[1] == 3 ? kV3Size : kV2Size;
+      const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : hd[1] == 5 ? kV5Size : hd[1] == 4 ? kV4Size : hd[1] == 3 ? kV3Size : kV2Size;
       if (sz[0] != (int32_t)want || sz[1] != (int32_t)sizeof(limo_fire_rl::Proprio) || sz[2] != (int32_t)sizeof(Window))
         throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
       version = hd[1];
@@ -207,9 +218,9 @@ class Reader {
     n11_ = hd[3];
     // 더 옛 판 1: 칸이 더해진 차례대로 (1852 바이트 꼴 안 자리, 바이트). 크기가 "1852 − 뒤에서 j 개 합" 이면 그 j 개 자리에 0 을 끼움 (0 = 그 기능 끔 = 그때 동작)
     //   1) 2a17a5a 깊이 영상 늦음 범위 DepthModel::lat_lo·lat_hi (8) — 1116 실물 녹화들   2) 구동 달리며 돌 때 ω 몫 DriveModel::n_tg·tg_v·tg_g
-    const std::pair<size_t, size_t> ins[2] = {{v1_off(offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, depth) + offsetof(sim::DepthModel, lat_lo)), 8},
-                                              {v1_off(offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, drive) + offsetof(sim::DriveModel, n_tg)),
-                                               sizeof(int32_t) + 2 * sizeof(float) * sim::kTurnGainPts}};
+    //   자리는 판 2 꼴 안 (v1_off 가 판 2 꼴 → 판 1 꼴): DepthModel::lat_lo 1320 · DriveModel::n_tg 172 (판 5 꼴에서는 face_tol 8 바이트 뒤라 1328 · 180).
+    //   7e550c9(판 5) ~ 2026-11-18 에는 여기에 판 5 꼴 자리(지금 구조체 offsetof)를 넣어 8 바이트 어긋났다 — 1116 녹화의 cam_x 가 0 · lat_hi 가 음수 등으로 읽혔음
+    const std::pair<size_t, size_t> ins[2] = {{v1_off(1320), 8}, {v1_off(172), sizeof(int32_t) + 2 * sizeof(float) * sim::kTurnGainPts}};
     int miss = -1;
     for (int j = 0, sum = 0; j <= 2; ++j) {
       if (cfg_size + sum == kV1Size) { miss = j; break; }
@@ -240,22 +251,32 @@ class Reader {
     std::memcpy(dst + out, full.data() + at, kV1Size - at);
     from_old(v2.data(), 2);
   }
-  // 판 ver 꼴 EnvHostCfg 바이트 → 지금 구조체 (그 뒤 판에서 더한 칸 자리에 0)
+  // 판 ver 꼴 EnvHostCfg 바이트 → 지금 구조체: 판 5 아래면 그 뒤 판에서 더한 칸 자리에 0 을 끼워 판 5 꼴로, 판 5 꼴이면 판 6 에서 지운 칸을 뺌
   void from_old(const uint8_t* src, int ver) {
-    std::vector<std::pair<size_t, size_t>> gaps;
-    if (ver < 3) gaps.emplace_back(kV3Off, kV3Len);
-    if (ver < 4) gaps.emplace_back(kV4Off, kV4Len);
-    if (ver < 5) gaps.emplace_back(kV5Off, kV5Len);
-    std::sort(gaps.begin(), gaps.end());
-    uint8_t* d = reinterpret_cast<uint8_t*>(&hc);
-    size_t at = 0, from = 0;
-    for (const auto& g : gaps) {
-      std::memcpy(d + at, src + from, g.first - at);
-      from += g.first - at;
-      std::memset(d + g.first, 0, g.second);
-      at = g.first + g.second;
+    if (ver == kVersion) { std::memcpy(&hc, src, sizeof(hc)); return; }
+    std::vector<uint8_t> v5(kV5Size, 0);
+    {
+      std::vector<std::pair<size_t, size_t>> gaps;
+      if (ver < 3) gaps.emplace_back(kV3Off, kV3Len);
+      if (ver < 4) gaps.emplace_back(kV4Off, kV4Len);
+      if (ver < 5) gaps.emplace_back(kV5Off, kV5Len);
+      std::sort(gaps.begin(), gaps.end());
+      size_t at = 0, from = 0;
+      for (const auto& g : gaps) {
+        std::memcpy(v5.data() + at, src + from, g.first - at);
+        from += g.first - at;
+        at = g.first + g.second;   // 그 칸은 0 그대로
+      }
+      std::memcpy(v5.data() + at, src + from, kV5Size - at);
     }
-    std::memcpy(d + at, src + from, sizeof(hc) - at);
+    uint8_t* d = reinterpret_cast<uint8_t*>(&hc);
+    size_t at = 0, out = 0;
+    for (const auto& g : kV5Gone) {
+      std::memcpy(d + out, v5.data() + at, g.first - at);
+      out += g.first - at;
+      at = g.second;
+    }
+    std::memcpy(d + out, v5.data() + at, kV5Size - at);
   }
   void skip(size_t n) {
     if (n && std::fseek(f_, (long)n, SEEK_CUR) != 0) throw std::runtime_error("녹화가 짧음");

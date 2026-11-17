@@ -233,7 +233,7 @@ int main(int argc, char** argv) {
       std::vector<int32_t> d;
       for (int s = 0; s < roll_steps; ++s) {
         std::vector<float> act((size_t)mdp::act::DIM * n_env);
-        for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)mdp::act::DIM * i], 0.003f);
+        for (int i = 0; i < n_env; ++i) sim::random_action(hc.cfg, rng, &act[(size_t)mdp::act::DIM * i]);
         cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
         env.step(d_act);
         env.sync();

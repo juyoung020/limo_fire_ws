@@ -88,15 +88,10 @@ EnvHostCfg load_env_cfg(const std::string& path) {
 
   const YAML::Node a = need(y, "action", path);
   const std::string mode = need(a, "mode", path).as<std::string>();
-  if (mode != "velocity" && mode != "goal" && mode != "path") throw std::runtime_error(path + ": action.mode 는 velocity · goal · path");
-  c.action_mode = mode == "velocity" ? kActVelocity : (mode == "path" ? kActPath : kActGoal);
-  const YAML::Node av = need(a, "velocity", path), ag = need(a, "goal", path);
-  c.n_dir = ag["n_dir"].as<int>();
-  c.n_dist = (int)ag["dist"].size();
-  if (c.n_dist < 1 || c.n_dist > 4) throw std::runtime_error(path + ": action.goal.dist 는 1~4 개");
-  for (int i = 0; i < c.n_dist; ++i) c.dist[i] = ag["dist"][i].as<float>();
-  c.goal_margin = ag["goal_margin"].as<float>();
-  const float period = (c.action_mode != kActGoal ? av : ag)["period"].as<float>();   // 계층형도 0.1 s 속도 행동 주기로 시뮬 걸음 (결정은 그 묶음)
+  if (mode != "velocity" && mode != "path") throw std::runtime_error(path + ": action.mode 는 velocity · path (목표점 행동 goal 은 2026-11-18 지움)");
+  c.action_mode = mode == "velocity" ? kActVelocity : kActPath;
+  const YAML::Node av = need(a, "velocity", path);
+  const float period = av["period"].as<float>();   // 계층형도 0.1 s 속도 행동 주기로 시뮬 걸음 (결정은 그 묶음)
   c.substeps = (int)std::lround(period / c.dt);
   if (c.substeps < 1 || std::fabs(c.substeps * c.dt - period) > 1e-4f)
     throw std::runtime_error(path + ": action period 는 time.dt 의 배수");
@@ -159,7 +154,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     if (const YAML::Node co = ap["camera_obstacles"]) {
       c.cam_on = co["enabled"].as<bool>() ? 1 : 0;
       c.cam_every = co["update_every_step"] && co["update_every_step"].as<bool>() ? 1 : 0;
-      if (const YAML::Node lg = co["layer_grid"]) {   // 층 전용 픽셀 격자 [열, 행] — 없으면 정책 관측 깊이 그대로
+      if (const YAML::Node lg = co["layer_grid"]) {   // 층 전용 픽셀 격자 [열, 행] — 없으면 깊이 관측 그대로
         if (lg.size() != 2) throw std::runtime_error(path + ": camera_obstacles.layer_grid 는 [열, 행]");
         c.cam_lw = lg[0].as<int>();
         c.cam_lh = lg[1].as<int>();
@@ -241,7 +236,6 @@ EnvHostCfg load_env_cfg(const std::string& path) {
   c.act_vy_max = mdp::act::VY_MAX;
   c.wheel_k = mdp::obsgen::kWheelK;
   c.wheel_max = drv.v_max;   // 바퀴 하나 최고 선속도 = 실측 1.11 m/s
-  c.max_delay = 1;
   const YAML::Node fl = need(y, "floors", path);
   c.n_floors = (int)fl.size();
   if (c.n_floors < 1 || c.n_floors > kMaxFloors) throw std::runtime_error(path + ": floors 는 1~8 개");

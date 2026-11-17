@@ -10,21 +10,20 @@
 | 파일 | 내용 |
 |---|---|
 | `frontier.h` | 지도 칸 종류(모름 · 막힘 · 갈 수 있음)·프론티어·닫힘 규칙·프론티어 덩어리 요약(`reach_summary`)·계층형 후보(`cand_pick`) — 호스트·장치 공용, CPU == GPU 비트 같음 (`baselines/frontier/tools/frontier_check`, `sim/tools/env_verify`). 프론티어 기준선·실물 `explore_frontier` 노드도 같이 씀 |
-| `observations.h` | 위층 관측 만들기 (지도 그림 · 라이다 · 숫자 · 후보 특징 `mdp::hier::F_*` — 판단 모델 요청의 후보 표가 씀) |
-| `obs_layout.h` | 관측·행동 크기·배치, 행동 한도(`mdp::act`) |
+| `observations.h` | 깊이 관측(깊이 카메라 장애물 층의 입력)·계층형 후보 칸 만들기. 강화학습 정책 관측(지도 그림 · 라이다 1D · 숫자 · 후보 특징)은 2026-11-18 지움 |
+| `obs_layout.h` | 깊이·라이다 각도 칸·계층형 후보 수 크기, 행동 3 칸(v, vy, ω)과 한도(`mdp::act`) |
 | `episode.h` | 판 끝 코드와 끝 조건 (안전 시간 · 진행 없음) |
 
 ## 판 끝 (`sim/include/env.h` `finish_step` — 로봇이 아는 값만)
 
 | 코드 | 뜻 |
 |---|---|
-| 1 성공 | 로봇 지도 닫힘 (아래 "닫힘") 이고 지도 막힘 진척 없음 시계 ≥ 10 s (1 s 마다 판정) — 또는 판단 모델이 닫힌 지도에서 끝을 선언 (`finish_declare`) |
+| 1 성공 | 로봇 지도 닫힘 (아래 "닫힘") 이고 지도 막힘 진척 없음 시계 ≥ 10 s (1 s 마다 판정) |
 | 2 닿음 | 센서로 정한 부딪힘 (`sim/include/contact.h`): 라이다 점이 몸통 0.01 m 안 · 깊이 카메라 층 칸이 몸통 안으로 0.02 m 넘게 · 명령은 움직이라는데 바퀴·자이로가 거의 0 인 걸음 2 번 (값의 근거는 `sim/src/env_cfg.cpp`). 시뮬 정답 충돌은 물리·기록(`EpInfo::gt_touch`)에만 |
 | 3 끊김 | 안전 시간 1200 s |
-| 4 이른 선언 | 판단 모델이 안 닫힌 지도에서 끝 선언 |
 | 6 진행 없음 | 새 막힘 칸 ≥ 10 또는 새로 안 칸 ≥ 10 인 걸음이 60 s 동안 없음 (`episode.h` `kIdleTime` · `kIdleOccMin` · `kIdleNewMin`) |
 
-(5 는 옛 사람 닿음 코드 — 지금은 안 나옴.) 정답 벽 덮음(`EnvState::coverage`, `EpInfo::t95`)은 기록 전용이다 — 판 끝·결정에 안 쓴다.
+(4 는 옛 이른 선언 — 판단 모델의 끝 선언, 2026-11-18 지움 · 5 는 옛 사람 닿음 코드 — 둘 다 지금은 안 나옴.) 정답 벽 덮음(`EnvState::coverage`, `EpInfo::t95`)은 기록 전용이다 — 판 끝·결정에 안 쓴다.
 덮음(정답) = 출발점에서 갈 수 있는 바닥에 4 이웃으로 맞닿은 막힌 칸 가운데 라이다 빔 끝점이 한 번이라도 떨어진 몫 (`env.h` `wall_credit`, 분모는 `sim/src/env_host.cpp` `build_world`).
 탐사 평가는 덮음 시간 지표(`scripts/coverage.h` — 굵은 칸 덮음)로 한다.
 

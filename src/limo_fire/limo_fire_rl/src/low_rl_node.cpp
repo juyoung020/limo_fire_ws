@@ -112,9 +112,9 @@ class LowRlNode : public rclcpp::Node {
     lp_ = lxc::Params::from_cfg(c);
     lp_.use_cand = true;    // 위층 후보 scripts/cand_view.h (판단 모델 후보 · 대신 고르는 규칙은 그 0 번) — low_explore_check --upper decider|cand
     lp_.use_fuel = false;
-    // 걸음마다 관측에서 쓰는 것만 (RobotEnv::set_obs): 위층 관측 그림 · 계층형 후보 8 칸은 노드가 안 씀 (low_explore_check --node-obs 가 같은 설정으로 비교).
+    // 걸음마다 관측에서 쓰는 것만 (RobotEnv::set_obs): 계층형 후보 8 칸은 노드가 안 씀 (low_explore_check --node-obs 가 같은 설정으로 비교).
     // 걸음 사이 프론티어 칸 판정 기억은 RobotEnv 기본 켬 (값 같음 — low_explore_check --fc-check 가 처음부터 다시 센 값과 견줌)
-    env_->set_obs(false, false);
+    env_->set_obs(false);
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
     {
       dp.mode = 1;   // event (scripts/low_decider.h — periodic 은 시뮬 비교에서 덮음이 같고 요청만 많아 실물에서 안 씀)

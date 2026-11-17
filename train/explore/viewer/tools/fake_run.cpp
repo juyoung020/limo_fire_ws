@@ -1,12 +1,12 @@
-// fake_run — 가짜 탐사 PPO 실행 폴더 만들기(뷰어 시험용). 진짜 러너와 같은 길로 쓰려고 include/runfolder.h 만 쓴다.
+// fake_run — 가짜 탐사 실행 폴더 만들기(뷰어 시험용). 진짜 러너(frontier_run)와 같은 길로 쓰려고 include/runfolder.h 만 쓴다.
 //
-// 곡선(progress)·판 기록(episodes, s_eval)·평가 표(evals)·사건(events)·재생 파일(.xrp)을 만든다.
+// 곡선(progress — 탐사 지표만)·판 기록(episodes, s_eval)·평가 표(evals)·사건(events)·재생 파일(.xrp, 보상 항·가치·선언 확률 열 포함 — Replay 띠 시험)을 만든다.
 // 재생 판은 작은 2D 시뮬로 실제로 돌린다: 방 여럿인 정답 맵, 라이다 248 빔(±110°, 8 m), 관측 지도 쌓기, 2.5 m 안에서 본 빈 칸 = 덮음,
 // 관측 지도의 가장 가까운 프론티어를 따라가는 정책 + 학습 진행에 따라 줄어드는 잡음(충돌·이른 선언). 숫자는 전부 가짜다.
 // run.json 에 "synthetic": true 를 적어 뷰어가 "가짜 시험 자료" 띠를 띄운다.
 //
 //   fake_run --out <root>/<이름> [--iters 300] [--seed 1] [--group fake_base] [--live 0.2] [--resume <이터>] [--replay-every 50] [--eval-every 50]
-//     --live S     : 업데이트마다 S 초 쉰다(학습 중인 실행 흉내 — 뷰어 "Training" 불, SSE 시험). 없으면 한 번에 다 쓴다.
+//     --live S     : 줄마다 S 초 쉰다(실행 중 흉내 — 뷰어 "Running" 불, SSE 시험). 없으면 한 번에 다 쓴다.
 //     --resume I   : 같은 폴더를 이터 I 체크포인트에서 이어 쓴다(I 이상 줄을 지움 — 되감기 시험).
 #include "runfolder.h"
 
@@ -374,21 +374,13 @@ int main(int argc, char** argv) {
   std::mt19937 rng(uint32_t(a.seed * 7919 + (a.resume >= 0 ? int(a.resume) : 0)));
   std::normal_distribution<double> nz(0, 1);
   std::uniform_real_distribution<double> u(0, 1);
-  const int n_envs = 4096, T = 24, log_envs = 8;
-  const double gamma = 0.995;
+  const int n_envs = 4096, T = 24, log_envs = 8;   // 줄마다 n_envs × T 걸음(가짜)
 
   rf::Json meta = rf::Json::object();
-  rf::Json stages = rf::Json::array();
-  for (size_t k = 0; k < STAGES.size(); k++) { rf::Json s = rf::Json::object(); s.set("name", STAGES[k]).set("rooms", std::to_string(k + 2) + "x" + std::to_string(k + 1)); stages.push(s); }
-  rf::Json cur = rf::Json::object();
-  cur.set("stages", stages);
-  rf::Json refs = rf::Json::object();
-  refs.set("train/approx_kl", 0.02).set("train/grad_norm", 1.0).set("rollout/success_rate", 0.8);
   rf::Json limits = rf::Json::object();
   limits.set("v", V_MAX).set("vy", VY_MAX).set("w", W_MAX);
-  meta.set("synthetic", true).set("trainer", "fake_run (runfolder.h)").set("group", a.group).set("seed", a.seed).set("n_envs", n_envs)
-      .set("rollout_T", T).set("log_envs", log_envs).set("ctrl_hz", 10).set("gamma", gamma).set("target_kl", 0.02).set("lr", 3e-4)
-      .set("reward_terms", rf::Json::array(TERMS)).set("curriculum", cur).set("refs", refs).set("action_limits", limits)
+  meta.set("kind", "fake").set("synthetic", true).set("trainer", "fake_run (runfolder.h)").set("group", a.group).set("seed", a.seed).set("n_envs", n_envs)
+      .set("log_envs", log_envs).set("ctrl_hz", 10).set("action_limits", limits)
       .set("success_coverage", SUCCESS_COV).set("t_safe_s", T_SAFE).set("coverage_def", "fake: free cell seen within 2.5 m")
       .set("area_bins", rf::Json::array(std::vector<double>{40, 120}));
 
@@ -432,7 +424,7 @@ int main(int argc, char** argv) {
     const double steps = double(it + 1) * n_envs * T;
     int st = p < 0.3 ? 0 : p < 0.65 ? 1 : 2;
     if (st != stage) {
-      if (stage >= 0) run.event("curriculum: stage " + std::to_string(stage) + " -> " + std::to_string(st) + " (" + STAGES[st] + ")");
+      if (stage >= 0) run.event("stage " + std::to_string(stage) + " -> " + std::to_string(st) + " (" + STAGES[st] + ")");
       stage = st;
       run.flush_row();
     }
@@ -444,10 +436,6 @@ int main(int argc, char** argv) {
     r.last(rf::key::ITER, it);
     r.last(rf::key::STEPS, steps);
     if (a.live <= 0) r.last(rf::key::ELAPSED, 2.3 * (it + 1));  // 한 번에 쓸 때는 가짜 경과 시간
-    r.mean(rf::key::FPS, 42000 * (1 + 0.03 * nz(rng)));
-    r.mean(rf::key::ROLLOUT_MS, 1600 * (1 + 0.05 * nz(rng)));
-    r.mean(rf::key::UPDATE_MS, 650 * (1 + 0.05 * nz(rng)));
-    r.mean(rf::key::ITER_MS, 2300 * (1 + 0.04 * nz(rng)));
     r.sum(rf::key::N_EPISODES, std::round(n_eps));
     const double w = std::round(n_eps);
     double sr = clampd(0.85 * L + 0.03 * nz(rng), 0, 1), cr = clampd(0.35 * (1 - L) + 0.03 + 0.02 * nz(rng), 0, 1);
@@ -466,42 +454,6 @@ int main(int argc, char** argv) {
     r.mean_w(rf::key::PATH_LEN_MEAN, (25 + 30 * L) * (1 + 0.05 * nz(rng)), w);
     r.mean_w(rf::key::KNOWN_AREA_MEAN, area * covm * 1.05, w);
     r.mean_w(rf::key::EP_LEN_MEAN, ep_len * (1 + 0.04 * nz(rng)), w);
-    // 보상 항: 판당 합 평균 — 리턴은 항의 합과 같게
-    std::map<std::string, double> rt;
-    rt["coverage"] = 2.0 * area * covm;
-    rt["time"] = -ep_len * DT / (area / 0.5) * 10.0;
-    rt["slip"] = -0.1 * (1.1 - L) * (1 + 0.1 * nz(rng));
-    rt["collision"] = -10.0 * cr;
-    rt["declare"] = sr * 9.0 + dr * -4.5;
-    double ret = 0;
-    for (auto& kv : rt) { r.mean_w(rf::reward_key(kv.first), kv.second, w); ret += kv.second; }
-    r.mean_w(rf::key::EP_REW_MEAN, ret, w);
-    r.mean_w(rf::key::STEP_REWARD_MEAN, ret / ep_len, w);
-    // PPO 건강
-    double log_std = -0.0 - 1.1 * p + 0.02 * nz(rng);
-    r.mean(rf::key::LOG_STD, log_std);
-    r.mean(rf::key::STD, std::exp(log_std));
-    r.mean(rf::std_key("v"), std::exp(log_std + 0.1));
-    r.mean(rf::std_key("vy"), std::exp(log_std + 0.2));
-    r.mean(rf::std_key("w"), std::exp(log_std - 0.1));
-    r.mean(rf::key::ENTROPY_LOSS, -(3 * (0.5 * std::log(2 * M_PI * M_E) + log_std)));
-    r.mean(rf::entropy_key("declare"), 0.01 + 0.05 * p);
-    r.mean(rf::key::APPROX_KL, std::fabs(0.012 + 0.004 * nz(rng)) * (it > a.iters * 0.8 && a.seed == 2 ? 2.5 : 1));
-    r.mean(rf::key::CLIP_FRACTION, clampd(0.12 + 0.02 * nz(rng), 0, 1));
-    r.mean(rf::key::EXPLAINED_VAR, clampd(0.2 + 0.7 * L + 0.03 * nz(rng), -1, 1));
-    r.mean(rf::key::VALUE_LOSS, (2.0 - 1.5 * L) * (1 + 0.1 * nz(rng)));
-    r.mean(rf::key::PG_LOSS, -0.01 + 0.005 * nz(rng));
-    r.mean(rf::key::LOSS, (1.0 - 0.75 * L) * (1 + 0.1 * nz(rng)));
-    r.mean(rf::key::GRAD_NORM, std::fabs(0.6 + 0.15 * nz(rng)));
-    r.mean(rf::key::LEARNING_RATE, 3e-4);
-    r.mean(rf::key::ADV_STD, 1.0 + 0.05 * nz(rng));
-    r.mean(rf::key::VALUE_MEAN, ret * 0.8);
-    r.mean(rf::key::DECLARE_LOGIT, -7 + 3.5 * L);
-    r.mean(rf::key::DECLARE_PROB, sigm(-7 + 3.5 * L));
-    r.last(rf::key::CURRICULUM_STAGE, stage);
-    r.mean_w("curriculum/success_rate/" + STAGES[stage], sr, w);
-    r.mean(rf::key::GPU_MEM_MB, 6200 + 50 * nz(rng));
-    r.sum(rf::dropped_key("eps"), 0);
     // 표본 판 줄(log_envs 개 환경의 끝난 판 전부): 기대값 log_envs × T / ep_len
     double lam = log_envs * T / ep_len;
     int k = std::poisson_distribution<int>(lam)(rng);
@@ -512,28 +464,17 @@ int main(int argc, char** argv) {
     // 재생 판(본 줄기): 시뮬로 실제로 돌림
     if (a.replay_every > 0 && (it % a.replay_every == 0 || it == a.iters - 1))
       for (int q = 0; q < 2; q++) run_replay(L, it, steps, "", q);
-    // 평가: 판 4 개를 시뮬로 돌려 s_eval 에 쓰고 표·eval/* 키
+    // 평가: 판 4 개를 시뮬로 돌려 s_eval 줄기와 평가 표(evals/)에 쓴다
     if (a.eval_every > 0 && it > 0 && (it % a.eval_every == 0 || it == a.iters - 1)) {
-      double n = 0, s_ = 0, c_ = 0, tr_ = 0, ds = 0, cv = 0, t95s = 0, t95n = 0, pl = 0, rew = 0, len = 0;
+      double n = 0, s_ = 0, c_ = 0, tr_ = 0, ds = 0, cv = 0, t95s = 0, t95n = 0;
       for (int q = 0; q < 4; q++) {
         auto [e, bytes] = run_replay(L, it, steps, "eval", q);
         (void)bytes;
         n++; s_ += e.outcome == rf::outcome::SUCCESS; c_ += e.outcome == rf::outcome::COLLISION; tr_ += e.outcome == rf::outcome::TRUNCATED;
-        ds += e.outcome == rf::outcome::DECLARED_SHORT; cv += e.coverage; pl += e.dist; rew += e.ret; len += e.steps;
+        ds += e.outcome == rf::outcome::DECLARED_SHORT; cv += e.coverage;
         if (std::isfinite(e.t95)) { t95s += e.t95; t95n++; }
       }
-      const double frontier_t95 = 70.0;  // 가짜 프론티어 기준선
-      r.last(rf::key::EVAL_N, n);
-      r.last(rf::key::EVAL_SUCCESS, s_ / n);
-      r.last(rf::key::EVAL_COLLISION, c_ / n);
-      r.last(rf::key::EVAL_TRUNCATION, tr_ / n);
-      r.last(rf::key::EVAL_DECLARE_SHORT, ds / n);
-      r.last(rf::key::EVAL_COVERAGE, cv / n);
-      r.last(rf::key::EVAL_PATH_LEN, pl / n);
-      r.last(rf::key::EVAL_REWARD, rew / n);
-      r.last(rf::key::EVAL_LEN, len / n);
-      r.last(rf::key::EVAL_T95_REACHED, t95n / n);
-      if (t95n > 0) r.last(rf::key::EVAL_T95, t95s / t95n);
+      const double frontier_t95 = 70.0;  // 가짜 프론티어 기준선(frontier_run 이 쓰는 키와 평가 표 ref_t95 시험)
       r.last(rf::key::EVAL_FRONTIER_T95, frontier_t95);
       char nm[32];
       std::snprintf(nm, sizeof nm, "it%06d", it);

@@ -1,4 +1,4 @@
-// 실물 합친 탐사 노드(위층 + 아래층 규칙 추종기 — limo_fire_rl low_rl) == CPU 시뮬 합친 탐사 (combine_run --upper fuel|slot0|decider 와 같은 설정).
+// 실물 합친 탐사 노드(위층 + 아래층 규칙 추종기 — limo_fire_rl low_rl) == CPU 시뮬 합친 탐사 (combine_run --upper fuel|slot0 와 같은 설정 — 판단 모델 위층 --upper decider 는 이 도구 · dec_rollout 에만).
 // 실물 노드의 위층은 판단 모델(decider)과 그 대신 고르는 규칙(cand) 뿐 — fuel · slot0 은 시뮬 기준선 (같은 Ctl 코드라 비교는 그대로 뜻이 있음).
 // 시뮬(환경 하나, CPU 참조판)과 RobotEnv(합친 탐사 모드)가 각자 자기 상태로 위층 결정(scripts/low_explore_ctl.h — combine_run 의 환경 하나 몫)을 하고,
 // 걸음마다 시뮬 라이다 장·감각·깊이를 RobotEnv 에 넣어 두 쪽의 위층 명령(목표 칸·follow)·준비 뒤 경로(목표 칸·경로 점)·명령(v, ω)·판 끝을 비트 비교한다.
@@ -13,7 +13,7 @@
 //     (요청 본문의 FNV 해시로 글자를 고르고 --dec-latency 초 뒤 걸음에 답을 냄). 두 쪽 요청 본문도 비트 비교. 시뮬이 판단 모델 답을 몇 걸음 뒤에 받는 것과 같은 길
 //     --dec-url http://127.0.0.1:8171: 가짜 대신 진짜 llama-server (실물 노드와 같은 비차단 소켓 limo_fire_rl/decider_client.h). 시뮬 시계는 답을 기다리는 동안 멈추고,
 //     답은 --dec-latency 초 뒤 걸음에 줌 (실물 답 시간을 시뮬 걸음으로). 실물 쪽은 같은 답을 같은 차례로 받음 — 판단 모델 위층을 시뮬에서 실물과 같은 코드로 평가
-// 지도 자세 오차·관측 지연은 끈다 (실물 노드는 지도 자세를 그대로 받으므로). 판이 끝나면 둘 다 새 판 (위층 기억도 비움).
+// 지도 자세 오차는 끈다 (실물 노드는 지도 자세를 그대로 받으므로). 판이 끝나면 둘 다 새 판 (위층 기억도 비움).
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -214,9 +214,9 @@ int main(int argc, char** argv) {
     else if (a == "--cand-known") co.known_frac = std::stof(nx());
     // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
-    else if (a == "--node-obs") node_obs = true;
+    else if (a == "--node-obs") node_obs = true;   // 실물 쪽 RobotEnv 를 노드처럼 (set_obs — cand_view 후보 위층이면 계층형 후보 끔) — 그래도 시뮬과 같은지
     else if (a == "--fc-check") fc_check = std::stoi(nx());   // 실물 쪽 걸음 사이 프론티어 칸 판정 기억을 N 걸음마다 처음부터 다시 센 값과 견줌 (frontier_cache.h)
-    else if (a == "--no-fc") fc_on = false;                   // 실물 쪽 기억 끔 (걸음마다 처음부터)   // 실물 쪽 RobotEnv 를 노드처럼 쓰는 관측만 (set_obs — 그림 끔, cand_view 후보 위층이면 계층형 후보도 끔) — 그래도 시뮬과 같은지
+    else if (a == "--no-fc") fc_on = false;                   // 실물 쪽 기억 끔 (걸음마다 처음부터)
     else if (a == "--dec-hint") dec_hint = std::stoi(nx()) != 0;
     else if (a == "--dec-mem-image") dec_mimg = std::stoi(nx()) != 0;
     else if (a == "--dec-image") dec_img = nx() == "B" ? 1 : 0;
@@ -303,15 +303,14 @@ int main(int argc, char** argv) {
     if (people > 0) cpu.set_people_max(std::vector<int>(1, people));
     cpu.reset();
     std::vector<sim::EnvState> st;
-    const auto no_delay = [&]() { cpu.get_state(st); st[0].delay = 0; cpu.set_state(0, st[0]); };
-    no_delay();
+    cpu.get_state(st);
     limo_fire_rl::RobotEnv robot(hc);
     const int AW = mdp::act::DIM, K = mdp::hier::K;
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
     lp.use_cand = use_cand || use_dec;
-    if (node_obs) robot.set_obs(false, !lp.use_cand);
+    if (node_obs) robot.set_obs(!lp.use_cand);
     robot.set_frontier_cache(fc_on, fc_check);   // low_rl_node 와 같은 규칙 (obs_all false)
     lp.cand = co;
     lp.cand_commit = cand_commit;
@@ -327,7 +326,7 @@ int main(int argc, char** argv) {
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
     dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img; dp.log_k = dec_logk;
-    if (use_dec && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("--dec-input text · image · both");
+    if (use_dec && dp.input < 0) throw std::runtime_error("--dec-input text · image · both");
     lxd::Upper us(dp), ur(dp);
     std::vector<lxd::Params::Obj> base_objs, live_objs;   // --dec-obj (따라가기 시험은 결정마다 사람을 더해 다시 넣음) · 그중 못 간 것 뺀 지금 목록
     tsk::Goto gs_(tsp), gr_(tsp);
@@ -391,7 +390,7 @@ int main(int argc, char** argv) {
     std::vector<int16_t> lm;
     std::vector<uint32_t> tr;
     std::vector<uint8_t> vox, img, ldep;
-    std::vector<float> pts, o1d;
+    std::vector<float> pts;
     std::vector<sim::EnvState> st_prep;
     std::vector<int32_t> cand, ccur;
     std::vector<sim::LowRl> R;
@@ -727,8 +726,8 @@ int main(int argc, char** argv) {
       act[0] = ext_goal ? 0.f : (float)cs.slot();   // combine_run 규칙: 결정 때 정한 행동 칸 (다음 결정까지 그대로)
       robot.set_slot(ext_goal ? 0 : cr.slot());
       cpu.low_prepare(act.data());
-      cpu.get_obs(img, o1d);
-      robot.set_depth(img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE);
+      cpu.get_depth(img);
+      robot.set_depth(img.data());
       if (robot.layer_n() > 0) {   // 깊이 층 전용 격자: 시뮬이 준비 단계에서 그린 것을 실물 쪽에 그대로 (실물 노드는 영상에서 layer_from_image)
         cpu.get_layer_depth(ldep);
         robot.set_layer_depth(ldep.data());
@@ -896,7 +895,7 @@ int main(int argc, char** argv) {
         }
         if (max_ep > 0 && n_ep >= max_ep) break;
         if (dn[0] == 0) cpu.reset();   // 대충 다 앎으로 끝낸 판: 시뮬도 새 판
-        no_delay();
+        cpu.get_state(st);
         start();
         continue;
       }

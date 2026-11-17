@@ -250,7 +250,6 @@ int run_mode(const Args& a, const std::string& mode) {
         act[mdp::act::DIM * i] = end ? 0.f : ac.v;
         act[mdp::act::DIM * i + 1] = 0.f;
         act[mdp::act::DIM * i + 2] = end ? 0.f : ac.w;
-        act[mdp::act::DIM * i + 3] = 0.f;
         // 재생 프레임
         const float row[] = {t, s.x, s.y, s.th, px, py, pth, s.drive.wv, s.drive.ww, act[mdp::act::DIM * i], act[mdp::act::DIM * i + 2], s.coverage, e.known_m2, (float)evb};
         e.rw->frame(row);
@@ -356,7 +355,7 @@ int run_mode(const Args& a, const std::string& mode) {
     r.mean_w(rf::key::PATH_LEN_MEAN, pl / n, n);
     r.mean_w(rf::key::KNOWN_AREA_MEAN, km / n, n);
     r.mean_w(rf::key::EP_LEN_MEAN, len / n, n);
-    if (t95n > 0) r.last(rf::key::EVAL_FRONTIER_T95, t95s / t95n);   // Training 탭 t95 그림의 "frontier baseline" 선
+    if (t95n > 0) r.last(rf::key::EVAL_FRONTIER_T95, t95s / t95n);   // 뷰어 Run 탭 평가 표의 기준선 t95
     run.end_update();
     rf::Json row = rf::Json::object();
     row.set("eval", W.name).set("split", mode).set("n", n).set("success", succ / n).set("collision", coll / n).set("truncation", trunc / n)

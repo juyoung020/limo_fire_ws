@@ -9,7 +9,7 @@
 //   3. 지금 목표가 죽었으면: 답이 오는 중이면 (지연 어림 + hold_extra) 걸음까지 기다리고, 아니면 바로 묻고, 답 실패가 fail_max 번 잇따르면 규칙(cand_pick)이 바로 대신
 //      — 그 밖의 1 s 결정 차례에는 목표를 바꾸지 않는다 (판단 모델 답이 올 때만 바꿈 — fuel 의 매초 목표 바뀜을 피함)
 //   4. 묻는 때: event (기본 — 다가감 · 실패 · 후보 크게 바뀜 · 최대 간격) 또는 periodic (period_steps 마다 — 시뮬 비교용)
-// 보내기·받기는 Transport 가 맡는다: 실물 = 비차단 소켓 HTTP — poll 이 한 단계씩 (limo_fire_rl/decider_client.h, 스레드 없음), 시뮬 = 정해진 걸음 뒤에 답을 내놓는 줄 (combine_run).
+// 보내기·받기는 Transport 가 맡는다: 실물 = 비차단 소켓 HTTP — poll 이 한 단계씩 (limo_fire_rl/decider_client.h, 스레드 없음), 시뮬 = 정해진 걸음 뒤에 답을 내놓는 줄 (low_explore_check · dec_rollout).
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@ struct Params {
   int period_steps = 30;    // 요청 주기 (걸음 — 3 s)
   int timeout_steps = 80;   // 답 기다림 한도 (걸음 — 8 s)
   int px = 288;             // 지도 사진 한 변 (px) — 288 이면 그림 약 81 토큰 (LFM2-VL: (px/32)²). 로봇 지연 표 upper_lora/README "요청 꼴과 지연"
-  int input = dec::kBoth;   // dec::kText · kImage · kBoth (kAll 은 시뮬 장면 그림이 필요해 여기서는 안 됨)
+  int input = dec::kBoth;   // dec::kText · kImage · kBoth
   bool hint = true;         // 후보 모드 글의 "Rules of thumb" (가까운 쪽으로 쏠리게 함 — 평가에서 빼고도 잼)
   bool mem_image = true;    // 후보 모드 지도 사진에 지나온 길 · 지난 목표 표시 (꼴 A)
   int mode = 0;             // 0 = periodic (period_steps 마다) · 1 = event: 목표에 다가감(남은 길 ≤ approach_m — 미리 물어 닿기 전에 답) · 목표 실패 · 후보가 크게 바뀜
@@ -103,7 +103,7 @@ class Transport {
   virtual bool poll(Answer* a) = 0;       // 와 있는 답 하나 (없으면 false) — 기다리지 않음
 };
 
-// 답 고르기: answers.pick.choice (decider.cpp Client::ask 의 choice 가지와 같은 꼴)
+// 답 고르기: answers.pick.choice (llama-server /v1/systemone 의 choice 답)
 inline Answer parse_answer(long id, const std::string& raw) {
   Answer a;
   a.id = id;

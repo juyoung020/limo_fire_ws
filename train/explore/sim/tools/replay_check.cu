@@ -232,7 +232,7 @@ void run_job(const Job& job, const sim::EnvHostCfg& hc_in, const sim::LidarModel
     std::vector<P> path;
     bool collided = false;
     for (size_t i = i0; i < rows.size() && rows[i].t <= job.to; ++i) {
-      const float act[mdp::act::DIM] = {rows[i].cmd_v, 0.f, rows[i].cmd_w, 0.f};
+      const float act[mdp::act::DIM] = {rows[i].cmd_v, 0.f, rows[i].cmd_w};
       cudaMemcpy(d_act, act, sizeof(act), cudaMemcpyHostToDevice);
       env.step(d_act);
       env.sync();

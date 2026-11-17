@@ -1,5 +1,5 @@
-// 관측 만들기 CPU 참조판 (호스트 전용, CUDA 없음): 프론티어 요약·계층형 후보 → 관측(write_obs), 깊이 카메라 장애물 층 갱신(camlayer_ref).
-// 시뮬 CPU 참조판(src/env_ref.cpp)과 실물 노드(src/limo_fire/limo_fire_rl)가 이 함수들을 그대로 같이 부른다 — 실물 관측이 학습 관측과 갈라지지 않게
+// 관측 만들기 CPU 참조판 (호스트 전용, CUDA 없음): 프론티어 요약(닫힘)·계층형 후보·깊이 → 관측(write_obs), 깊이 카메라 장애물 층 갱신(camlayer_ref).
+// 시뮬 CPU 참조판(src/env_ref.cpp)과 실물 노드(src/limo_fire/limo_fire_rl)가 이 함수들을 그대로 같이 부른다 — 실물 관측이 시뮬 관측과 갈라지지 않게
 // 한 벌만 둔다. GPU 판(env_kernel.cu)은 같은 단계 함수로 같은 값을 낸다(tools/env_verify).
 #pragma once
 #include <cstdint>
@@ -28,8 +28,8 @@ struct ReachKeep {
 };
 
 // 도달 가능한 프론티어 요약 (mdp/frontier.h reach_summary = 기준선 frontier_search 그대로). GPU 는 env_kernel.cu reach_block — 같은 값.
-// 계층형이면 같은 찾기에서 후보(mdp::cand_pick)·주변 프론티어 칸 수(mdp::cand_util)도 → 관측 후보 칸 (GPU env_reach_kernel 과 같은 값).
-// cand = false: 계층형 후보를 안 셈 (관측 후보 칸은 빈 칸 — 그 후보를 안 쓰는 실물 위층). keep: 찾기 버퍼·결과를 거기에 남김 (라벨까지)
+// 계층형이면 같은 찾기에서 후보(mdp::cand_pick)·주변 프론티어 칸 수(mdp::cand_util)도 → 후보 칸 (GPU env_reach_kernel 과 같은 값).
+// cand = false: 계층형 후보를 안 셈 (후보 칸은 빈 칸 — 그 후보를 안 쓰는 실물 위층). keep: 찾기 버퍼·결과를 거기에 남김 (라벨까지)
 inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh, bool cand = true, ReachKeep* keep = nullptr) {
   const EnvCfg& c = b.cfg;
   const MapDev& m = b.maps[e.map];
@@ -98,21 +98,17 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh,
       }
     }
   }
-  if (b.cand) mdp::obsgen::obs_cand(b, e, env, cs);
+  if (b.cand) mdp::obsgen::obs_cand(b, env, cs);
 }
 
-// depth = false: 깊이 칸을 안 그림 (계층형 묶음 가운데 걸음 — GPU 도 묶음 끝에만 그림, 깊이는 상태만의 함수라 끝 값이 같다)
-// cells = false: 위층 관측 그림 · 라이다 1D 칸을 안 그림 (실물 노드는 안 씀 — RobotEnv::set_obs). cand · keep: reach_obs
-inline void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, const mdp::obsgen::FarDirty& fd, bool depth = true, bool cells = true,
-                      bool cand = true, ReachKeep* keep = nullptr) {
+// depth = false: 깊이 칸을 안 그림 (계층형 묶음 가운데 걸음 — GPU 도 묶음 끝에만 그림, 깊이는 상태만의 함수라 끝 값이 같다. 실물은 깊이를 영상에서 — RobotEnv::set_depth).
+// cand · keep: reach_obs
+inline void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, bool depth = true, bool cand = true, ReachKeep* keep = nullptr) {
   trail_mark(b, e, env, 0, 1);   // 닫힘 규칙의 지나간 길 (GPU env_reach_kernel 처음과 같은 때)
   reach_obs(b, e, env, sh, cand, keep);
   e.map_closed = sh.reach.closed;   // 다음 걸음 finish_step 성공 판정 (GPU env_reach_kernel 과 같음)
-  if (cells)
-    for (int tid = 0; tid < kThreads; ++tid) mdp::obsgen::obs_cells(b, e, env, sh, tid, fd);
   if (depth)
     for (int i = 0; i < mdp::obs::DEPTH_SIZE; ++i) mdp::obsgen::obs_depth(b, e, env, i);
-  mdp::obsgen::obs_finish(b, e, env, sh, true);
 }
 
 // 아래 참조판 함수가 HD 템플릿(cam_pixel)에 넘기는 함수 객체 — 람다 대신 DEV operator() (2026-11-16): .cu 번역 단위(env_verify 등)가 이 머리를

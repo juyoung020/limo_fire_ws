@@ -43,8 +43,6 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   const EnvCfg& c = b.cfg;
   if (sub > 0 && b.done[env] != 0) return;   // 계층형: 이 묶음 앞 걸음에서 판이 끝나 쉼
   Shared sh;
-  Shared& g = b.scratch[env];   // 걸음을 넘어 남는 칸 (먼 지도 다시 그릴 곳 — GPU 와 같은 증분)
-  mdp::obsgen::far_dirty_clear(g);
   EnvState e = b.st[env];
   e.collided = 0;
   apply_action(b, e, env, actions + (size_t)mdp::act::DIM * env);
@@ -65,7 +63,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
     }
     int s = 0, f = 0, kn = 0, nn = 0, no = 0;
     for (int tid = 0; tid < kThreads; ++tid) {
-      const ApplyCount a = scan_apply(b, e, env, sh, tid, kThreads, g.far_mask);
+      const ApplyCount a = scan_apply(b, e, env, sh, tid, kThreads);
       s += a.wall;
       f += a.floor;
       kn += a.known;
@@ -82,7 +80,6 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
   map_progress(e, n_occ, n_new);   // 진행 없음 시계 — finish_step 판 끝이 씀
   sense_step(b, e, env, sh);   // 로봇이 재는 간격·닿음 (contact.h) — 판 끝이 씀
   finish_step(b, e, env, new_wall, new_floor, d_known, n_new);
-  mdp::obsgen::far_dirty_robot(b, e, g);
   b.done[env] = e.done;
   if (CpuTap* tap = g_tap) tap->step_end(env, e);   // 시험 탭: 걸음 끝 상태 (판 끝 리셋·관측 전)
   if (sh.scanned) ring_advance(e);
@@ -94,8 +91,7 @@ void step_env(const EnvBatch& b, const float* actions, int env, int sub) {
     return;
   }
   if (was_done) reset_env(b, e, env);
-  write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, was_done),
-            sub < 0 || sub == c.decide_steps - 1 || (b.lowcmd && b.low[env].hold) || b.lowrl);   // 깊이는 묶음의 마지막 걸음에만 (아래층 단독 과제: 결정이 끝난 걸음)
+  write_obs(b, e, env, sh, sub < 0 || sub == c.decide_steps - 1 || (b.lowcmd && b.low[env].hold) || b.lowrl);   // 깊이는 묶음의 마지막 걸음에만 (아래층 단독 과제: 결정이 끝난 걸음)
   b.st[env] = e;
 }
 
@@ -139,11 +135,10 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
       step_env(b, actions, env, 0);
       if (b.done[env] != 0) {
         Shared sh;
-        Shared& g = b.scratch[env];
         EnvState e = b.st[env];
         if (c.end_hold) { e.done = 0; e.halt = 1; }   // 판 끝 뒤 멈춤: 리셋 대신 표시만 (GPU env_bundle_end_kernel 과 같게)
         else reset_env(b, e, env);
-        write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, true));
+        write_obs(b, e, env, sh);
         b.st[env] = e;
       }
     });
@@ -158,10 +153,9 @@ void env_step_cpu(const EnvBatch& b, const float* actions) {
     for (int s = 0; s < c.decide_steps; ++s) step_env(b, actions, env, s);
     if (b.done[env] == 0) return;
     Shared sh;
-    Shared& g = b.scratch[env];
     e = b.st[env];
     reset_env(b, e, env);
-    write_obs(b, e, env, sh, mdp::obsgen::far_dirty_take(b, e, g, true));
+    write_obs(b, e, env, sh);
     b.st[env] = e;
   });
 }
@@ -171,8 +165,7 @@ void env_reset_cpu(const EnvBatch& b) {
     Shared sh;
     EnvState e = b.st[env];
     reset_env(b, e, env);
-    write_obs(b, e, env, sh, mdp::obsgen::FarDirty{1, 0.f, 0.f, 0.f, 0.f});
-    b.scratch[env].far_ok = 0;   // GPU 리셋 커널과 같게: 다음 걸음은 다시 전부
+    write_obs(b, e, env, sh);
     b.st[env] = e;
     b.done[env] = 0;
     if (b.lowrl) lowrl_clear(b.lowrl[env]);

@@ -3,7 +3,7 @@
 // (이름의 "rl" 은 그만둔 아래층 강화학습 때 붙은 것 — 정책·보상·관측은 2026-11-16·17 에 archive/rl 로 옮기고 여기서 걷어냄)
 //
 // 한 걸음의 차례 — GPU(env_kernel.cu)·CPU 참조판(env_ref.cpp)·실물 RobotEnv 가 같은 함수를 같은 차례로 부른다:
-//   [행동]  lowrl_begin      막힘 신호 지움(새 결정 구간) · 끝 선언(finish_declare)
+//   [행동]  lowrl_begin      막힘 신호 지움(새 결정 구간)
 //   [물리·라이다·지도 — env.h]
 //   [걸음 끝] lowrl_finish   막힘 신호 올림 (정체 — 위층이 그 칸을 피함) · 판이 끝났으면 걸음 사이 값 비움
 //   [준비]  lowrl_due 일 때 깊이 카메라 층 · 경로 계획 (hier_path.h — low_period 걸음마다 · 목표가 바뀌면 바로) → lowrl_planned
@@ -12,10 +12,9 @@
 
 DEV int lowrl_period(const EnvCfg& c) { return c.low_period > 0 ? c.low_period : c.decide_steps; }
 
-// 행동 앞머리 (env.h action_begin 몫 — 선언은 EnvCfg::finish_declare 를 켰을 때 호스트가 넣은 LowCmd{kLowFinish, 0} 만, 기본은 없음)
+// 행동 앞머리 (env.h action_begin 몫)
 DEV void lowrl_begin(const EnvBatch& b, EnvState& e, int env) {
   e.people.hit_person = 0;
-  e.declared = b.cfg.finish_declare && b.lowcmd[env].follow == 0 && b.lowcmd[env].target == kLowFinish ? 1 : 0;
   LowRl& R = b.lowrl[env];
   if (R.p_step == e.step) {   // 계획 단계 뒤 첫 걸음 = 새 결정 구간: 막힘 신호를 지움 (low_task.h LowRl::stall)
     R.stall = 0;

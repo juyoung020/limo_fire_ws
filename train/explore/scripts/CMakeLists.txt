@@ -1,4 +1,4 @@
-# 두 층 합친 탐사 측정(combine_run): 시뮬(limo_sim) + 프론티어 기준선(baselines/frontier) + 판단 모델 위층(decider.cpp).
+# 두 층 합친 탐사 측정(combine_run): 시뮬(limo_sim) + 프론티어 기준선(baselines/frontier) + 위층 slot0 · fuel(fuel_upper.h).
 #   cmake -S train/explore/scripts -B <빌드> -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.0/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=86
 #   cmake --build <빌드> -j8 --target combine_run
 # 탐사 강화학습(학습기 train · 평가 low_policy_run · hybrid_eval)은 2026-11-16 에 그만둠 — archive/rl/README.md
@@ -24,16 +24,7 @@ target_include_directories(frontier_explorer_h PUBLIC ${FRONTIER_DIR}/include ${
 target_link_libraries(frontier_explorer_h PUBLIC limo_sim)
 target_compile_definitions(frontier_explorer_h PUBLIC FRONTIER_CONFIG="${FRONTIER_DIR}/config/frontier.yaml")
 
-# 두 층 합친 탐사 측정(combine_run): 위층(slot0 · fuel · 판단 모델 …) + 아래층 규칙 추종기로 탐사를 끝까지 — 평가 전용
+# 두 층 합친 탐사 측정(combine_run): 위층(slot0 · fuel) + 아래층 규칙 추종기로 탐사를 끝까지 — 평가 전용. 판단 모델 위층은 sim/tools/low_explore_check · upper_lora/rollout/dec_rollout (decider.cpp 를 그쪽이 직접 빌드)
 add_executable(combine_run combine_run.cpp)
 set_source_files_properties(combine_run.cpp PROPERTIES LANGUAGE CUDA)   # 예전 빌드와 같은 번역(nvcc 호스트 경로) — 결과 비트 같게
 target_link_libraries(combine_run frontier_explorer_h)
-# 위층을 바깥 판단 모델 서버(llama-server /v1/systemone)에 맡기는 길 (combine_run --upper decider, decider.h): HTTP 는 libcurl, 사진은 zlib(PNG), JSON 은 nlohmann_json
-find_package(CURL REQUIRED)
-find_package(ZLIB REQUIRED)
-find_package(nlohmann_json REQUIRED)
-add_library(decider STATIC decider.cpp)
-target_link_libraries(decider PRIVATE CURL::libcurl ZLIB::ZLIB nlohmann_json::nlohmann_json)
-target_compile_options(decider PRIVATE -Wall -Wextra)
-target_link_libraries(combine_run decider)
-target_compile_definitions(combine_run PRIVATE DECIDER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/decider.yaml")   # 임무 문장 (--decider-finish)

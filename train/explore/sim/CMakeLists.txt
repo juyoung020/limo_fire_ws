@@ -131,11 +131,10 @@ target_link_libraries(mesh2scene limo_sim)
 # 실물 합친 탐사 노드 · 시뮬 도구가 같이 쓰는 RobotEnv (src/limo_fire/limo_fire_rl)
 set(RL_NODE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../src/limo_fire/limo_fire_rl)
 # 실물 합친 탐사 노드(위층 fuel · slot0 + 아래층 규칙 추종기) == CPU 시뮬 합친 탐사 (combine_run --upper fuel|slot0 설정) — 위층 결정은 scripts/low_explore_ctl.h 를 두 쪽이 같이
-# --upper decider: 판단 모델 위층(scripts/low_decider.h — 실물 노드 upper:=decider)을 정해진 가짜 응답기로 (요청 본문 · 주기 · 지연까지 비트 비교) — 사진·본문은 scripts/decider.cpp (HTTP 없이)
+# --upper decider: 판단 모델 위층(scripts/low_decider.h — 실물 노드 upper:=decider)을 정해진 가짜 응답기로 (요청 본문 · 주기 · 지연까지 비트 비교) — 지도 사진은 scripts/decider.cpp
 find_package(ZLIB REQUIRED)
 add_executable(low_explore_check tools/low_explore_check.cpp ${RL_NODE_DIR}/src/robot_env.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/decider.cpp)
 target_include_directories(low_explore_check PRIVATE ${RL_NODE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/../scripts)
-target_compile_definitions(low_explore_check PRIVATE DEC_NO_CURL)
 target_link_libraries(low_explore_check limo_sim ZLIB::ZLIB)
 # 실물 합친 탐사 노드 녹화(record:=…)를 RobotEnv + 위층만으로 다시 돌려 위층 결정마다 까닭을 적음 (GPU·ROS 없이)
 add_executable(low_explore_replay tools/low_explore_replay.cpp ${RL_NODE_DIR}/src/robot_env.cpp)

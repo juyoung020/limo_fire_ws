@@ -1,8 +1,8 @@
 // 실물 쪽 탐사 환경 (ROS 없음) — 실물 합친 탐사 노드(low_rl_node.cpp)가 쓰는 시뮬 한 환경 몫.
-// 실물 센서 값(라이다 장·지도 자세·바퀴·IMU·깊이)을 시뮬과 같은 함수로 쌓아 지도·위층 관측·후보·닫힘을 만들고, 아래층 규칙 추종기(A* 경로 + 추종)로 명령을 낸다.
+// 실물 센서 값(라이다 장·지도 자세·바퀴·IMU·깊이)을 시뮬과 같은 함수로 쌓아 지도·후보·닫힘을 만들고, 아래층 규칙 추종기(A* 경로 + 추종)로 명령을 낸다.
 // 시뮬 한 걸음(0.1 s, env_ref.cpp step_env + low_prepare_env)의 차례를 그대로 따르고, 센서를 흉내 내는 부분(물리·광선)만 실물 값으로 바꾼다:
 //   low_act(규칙 추종기 → 명령) → step(감각, 라이다 장: scan_begin_map → 빔마다 scan_beam_map → scan_apply → known_box → map_progress → sense_step
-//   → finish_step(닫힘 성공·진행 없음 판정) → ring_advance → push_bins → write_obs(깊이 빼고)) → set_depth(깊이) → [set_cmd(위층 목표)] → low_prepare(계획)
+//   → finish_step(닫힘 성공·진행 없음 판정) → ring_advance → push_bins → write_obs(프론티어 요약·후보, 깊이 빼고)) → set_depth(깊이) → [set_cmd(위층 목표)] → low_prepare(계획)
 // 지도·관측·후보·닫힘·경로는 모두 sim/include(env.h · obs_ref.h · plan_ref.h)·mdp/ 의 함수 그대로라 같은 입력이면 시뮬과 비트까지 같다
 // (train/explore/sim/tools/low_explore_check 가 CPU 시뮬 걸음과 비교). 정답 격자는 없다(MapDev::grid 는 0 — 덮음·벽 칸은 실물에서 0).
 // 빌드할 때 -ffp-contract=off (시뮬 CPU 참조판과 같은 부동소수점 — aarch64 g++ 기본은 곱셈·덧셈을 합쳐 값이 달라짐).
@@ -50,9 +50,9 @@ class RobotEnv {
     int gw, gh;
   };
   // 새 판: 시작 지도 자세·그때 감각(바퀴·IMU — 리셋 관측의 숫자 칸)·라이다 시야(rad, −2·angle_min — 닫힘 규칙의 본 칸).
-  // 리셋 관측(장 없음)까지 만든다. win = nullptr 이면 시작점 가운데 창
+  // 리셋 관측(장 없음 — 프론티어 요약·후보)까지 만든다. win = nullptr 이면 시작점 가운데 창
   void reset(float x0, float y0, float th0, const Proprio& p0, float fov, const Window* win = nullptr);
-  // 0.1 s 걸음 하나 (라이다 장 하나). 끝에 관측을 다시 쓴다 (깊이 칸은 set_depth 가 넣은 값 그대로)
+  // 0.1 s 걸음 하나 (라이다 장 하나). 끝에 프론티어 요약·후보를 다시 낸다 (깊이 칸은 set_depth 가 넣은 값 그대로)
   void step(const Proprio& p, const Scan& s);
   // 관측 깊이 칸 (mdp::obs::DEPTH_SIZE 바이트, observations.h depth_u8 값)
   void set_depth(const uint8_t* d);
@@ -75,13 +75,12 @@ class RobotEnv {
   const sim::LowEp& low_ep() const { return lowep_[0]; }
   void low_prepare();
   void low_act(float* v, float* w);   // 규칙 추종기 명령 → 내보낼 v (m/s) · ω (rad/s)
-  // 실물 멈춤(꺼짐·리모컨·닿음) 걸음: 명령 0 (low_act 대신 — 시뮬에는 없는 걸음. 직전 행동 칸도 0)
+  // 실물 멈춤(꺼짐·리모컨·닿음) 걸음: 명령 0 (low_act 대신 — 시뮬에는 없는 걸음)
   void hold();
   const sim::LowRl& low_rl() const { return lowrl_[0]; }
   const sim::LowCmd& low_cmd() const { return lowcmd_[0]; }
 
   // 읽기
-  const float* obs_1d() const { return b_.obs_1d; }
   bool cell_xy(int cell, float* x, float* y) const;
   int cand_cur() const { return b_.cand_cur[0]; }
   int done() const { return done_; }               // 지난 걸음 mdp::cur::Done (0 진행 · 1 닫힘 성공 · 5 진행 없음 · 3 끊김 …)
@@ -96,10 +95,9 @@ class RobotEnv {
 
   const sim::EnvBatch& batch() const { return b_; }
 
-  // 걸음마다 관측에서 무엇을 셀지 (실물 노드는 쓰는 것만 — low_rl_node). 기본은 모두 (시뮬과 같은 관측 — low_explore_check 가 비트 비교)
-  //   cells: 위층 관측 그림 · 라이다 1D 칸 (obs_cells) — 실물 노드는 안 씀
-  //   hier : 계층형 후보 8 칸 (cand() · cand_cur() · 1D 후보 칸) — 시뮬 기준선 위층 fuel · slot0 만 씀 (low_explore_check · low_explore_replay — 노드는 끔). 끄면 빈 칸(−1)
-  void set_obs(bool cells, bool hier) { obs_cells_ = cells; obs_hier_ = hier; }
+  // 걸음마다 계층형 후보 8 칸(cand() · cand_cur())을 셀지 — 시뮬 기준선 위층 fuel · slot0 만 씀 (low_explore_check · low_explore_replay — 노드는 끔). 끄면 빈 칸(−1).
+  // 기본 켬 (시뮬과 같은 후보 — low_explore_check 가 비트 비교)
+  void set_obs(bool hier) { obs_hier_ = hier; }
   // 이 걸음 관측의 프론티어 찾기 결과 (후보 뽑기 cand::build 가 같은 입력이면 다시 안 찾음). 깊이 층이 바뀌면(low_prepare) 무효 — nullptr
   const sim::ReachKeep* reach_keep() const { return keep_.valid ? &keep_ : nullptr; }
   // 걸음 사이 프론티어 칸 판정 기억 (mdp/frontier_cache.h — 기본 켬, 값은 같음). every > 0: 그 걸음마다 기억 전체를 처음부터 다시 센 값과 견줌 (다르면 n_bad · 전부 다시)
@@ -114,14 +112,14 @@ class RobotEnv {
   sim::Shared sh_{};
   int done_ = 0;
   float slot_ = -1.f;
-  bool obs_cells_ = true, obs_hier_ = true;
+  bool obs_hier_ = true;
   sim::ReachKeep keep_;
   // 메모리 (EnvBatch 포인터가 가리킴)
   std::vector<uint8_t> grid_;
   std::vector<int16_t> lmap_;
   std::vector<uint32_t> marks_, trail_;
-  std::vector<uint8_t> img_, cvox_, cldep_;
-  std::vector<float> o1d_, ring_, vprev_, lint_, cpts_;
+  std::vector<uint8_t> depth_, cvox_, cldep_;
+  std::vector<float> ring_, cpts_;
   std::vector<int32_t> done_buf_, cand_, cand_cur_;
   std::vector<sim::EpInfo> ep_;
   // 아래층 걸음 길 (env_host.cpp 가 low_rl 일 때 잡는 칸과 같은 것)

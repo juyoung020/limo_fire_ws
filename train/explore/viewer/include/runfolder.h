@@ -1,7 +1,7 @@
-// runfolder.h — 탐사 RL 러너(C++)가 학습 뷰어(trainview)의 실행 폴더 규약대로 쓰는 헤더 하나. 표준 라이브러리 + POSIX 만 쓴다.
+// runfolder.h — 탐사 실행(프론티어 기준선 frontier_run 등, C++)이 뷰어(trainview)의 실행 폴더 규약대로 쓰는 헤더 하나. 표준 라이브러리 + POSIX 만 쓴다.
 //
 // 형식의 원본은 viewer/trainfmt(Rust)다. 이 헤더는 그 규약을 그대로 쓰는 쪽이고, 어긋나면 `runcheck <실행 폴더>` 가 잡는다.
-// fake_run(viewer/tools/fake_run.cpp)도 이 헤더로 쓴다 — 진짜 러너와 같은 길.
+// fake_run(viewer/tools/fake_run.cpp)도 이 헤더로 쓴다 — 진짜 러너(train/explore/scripts/frontier_run.cpp)와 같은 길.
 //
 //   <root>/latest.txt                기본으로 열 실행 이름
 //   <root>/<이름>/run.json           설정·상수(schema 1) — 이름 바꾸기로 씀
@@ -15,18 +15,16 @@
 // 쓰임(러너의 로그 스레드 하나에서만 부른다 — 스레드 안전하지 않다):
 //
 //   rf::Json meta = rf::Json::object();
-//   meta.set("group", "explore_base").set("seed", 1).set("n_envs", 4096).set("ctrl_hz", 10);
+//   meta.set("kind", "baseline").set("group", "frontier_nav2").set("seed", 1).set("n_envs", 4);   // kind 는 꼭 넣는다
 //   rf::RunFolder::Options o;                 // 이어 하기면 o.resume = true; o.resume_iter = <체크포인트 이터>;
-//   rf::RunFolder run("train/explore/runs/explore_base_s1", meta, o);
-//   // 업데이트마다:
+//   rf::RunFolder run("train/explore/runs/frontier_nav2", meta, o);
+//   // 한 줄 모을 때마다(frontier_run 은 장면마다):
 //   auto& r = run.row();
 //   r.last(rf::key::ITER, it); r.last(rf::key::STEPS, steps);
 //   r.sum(rf::key::N_EPISODES, n_done);
 //   r.mean_w(rf::key::SUCCESS_RATE, sr, n_done);     // n_done == 0 이면 키가 빠진다(잰 것만 쓴다)
-//   r.mean_w(rf::reward_key("coverage"), cov_sum_mean, n_done);
-//   r.mean(rf::key::APPROX_KL, kl);
 //   run.end_update();                                 // 1 초 지났으면 한 줄 씀
-//   // 판이 끝나면(표본 환경만):
+//   // 판이 끝나면:
 //   rf::Json ep = rf::Json::object(); ep.set("iter", it).set("env_steps", steps).set("ep", run.new_episode_id()) …;
 //   run.episode(ep);                                  // 평가 판은 run.episode(ep, "eval")
 //   // 끝:
@@ -283,75 +281,30 @@ class Json {
 };
 
 // =============================================================================================
-// progress 키 이름 — trainfmt/src/keys.rs 와 같은 표(표준 SB3 꼴 + 탐사 지표)
+// progress 키 이름 — trainfmt/src/keys.rs 와 같은 표(SB3 이름 꼴 + 탐사 지표). PPO 키는 2026-11-18 에 뺐다(archive/rl).
 
 namespace key {
 // time/
 inline constexpr const char* ITER = "time/iterations";            // 필수
 inline constexpr const char* STEPS = "time/total_timesteps";      // 필수, 단조 증가
 inline constexpr const char* ELAPSED = "time/time_elapsed";       // 안 넣으면 RunFolder 가 넣음(재개해도 이어 셈)
-inline constexpr const char* FPS = "time/fps";
-inline constexpr const char* ITER_MS = "time/iter_ms";
-inline constexpr const char* ROLLOUT_MS = "time/rollout_ms";
-inline constexpr const char* UPDATE_MS = "time/update_ms";
 // rollout/ — 그 사이 끝난 모든 판. 비율은 mean_w(값, 판 수) — 판이 0 이면 키가 빠진다
 inline constexpr const char* N_EPISODES = "rollout/n_episodes";   // sum
-inline constexpr const char* EP_REW_MEAN = "rollout/ep_rew_mean";
 inline constexpr const char* EP_LEN_MEAN = "rollout/ep_len_mean";
 inline constexpr const char* SUCCESS_RATE = "rollout/success_rate";
 inline constexpr const char* COLLISION_RATE = "rollout/collision_rate";
-inline constexpr const char* PERSON_COLLISION_RATE = "rollout/person_collision_rate";   // 사람과 부딪혀 끝난 비율 (충돌의 일부)
 inline constexpr const char* TRUNCATION_RATE = "rollout/truncation_rate";
 inline constexpr const char* DECLARE_RATE = "rollout/declare_rate";
 inline constexpr const char* DECLARE_SHORT_RATE = "rollout/declare_short_rate";
-inline constexpr const char* NO_PROGRESS_RATE = "rollout/no_progress_rate";   // 진행 없음으로 끝난 비율
 inline constexpr const char* COVERAGE_MEAN = "rollout/coverage_mean";
 inline constexpr const char* COVERAGE_AT_DECLARE = "rollout/coverage_at_declare_mean";  // 가중치 = 선언한 판 수
 inline constexpr const char* T95_MEAN = "rollout/t95_mean";                 // 가중치 = 95 % 도달 판 수
 inline constexpr const char* T95_REACHED_RATE = "rollout/t95_reached_rate";
 inline constexpr const char* PATH_LEN_MEAN = "rollout/path_len_mean";
 inline constexpr const char* KNOWN_AREA_MEAN = "rollout/known_area_mean";
-inline constexpr const char* STEP_REWARD_MEAN = "rollout/step_reward_mean";
-// train/
-inline constexpr const char* PG_LOSS = "train/policy_gradient_loss";
-inline constexpr const char* VALUE_LOSS = "train/value_loss";
-inline constexpr const char* ENTROPY_LOSS = "train/entropy_loss";  // = −엔트로피
-inline constexpr const char* APPROX_KL = "train/approx_kl";
-inline constexpr const char* CLIP_FRACTION = "train/clip_fraction";
-inline constexpr const char* EXPLAINED_VAR = "train/explained_variance";
-inline constexpr const char* GRAD_NORM = "train/grad_norm";
-inline constexpr const char* LEARNING_RATE = "train/learning_rate";
-inline constexpr const char* LOSS = "train/loss";
-inline constexpr const char* STD = "train/std";
-inline constexpr const char* LOG_STD = "train/log_std";
-inline constexpr const char* ADV_STD = "train/advantage_std";
-inline constexpr const char* ADV_MEAN = "train/advantage_mean";
-inline constexpr const char* VALUE_MEAN = "train/value_mean";
-inline constexpr const char* DECLARE_LOGIT = "train/declare_logit_mean";
-inline constexpr const char* DECLARE_PROB = "train/declare_prob_mean";
 // eval/
-inline constexpr const char* EVAL_N = "eval/n_episodes";
-inline constexpr const char* EVAL_REWARD = "eval/mean_reward";
-inline constexpr const char* EVAL_LEN = "eval/mean_ep_length";
-inline constexpr const char* EVAL_SUCCESS = "eval/success_rate";
-inline constexpr const char* EVAL_COLLISION = "eval/collision_rate";
-inline constexpr const char* EVAL_TRUNCATION = "eval/truncation_rate";
-inline constexpr const char* EVAL_DECLARE_SHORT = "eval/declare_short_rate";
-inline constexpr const char* EVAL_COVERAGE = "eval/coverage_mean";
-inline constexpr const char* EVAL_COVERAGE_AT_DECLARE = "eval/coverage_at_declare_mean";
-inline constexpr const char* EVAL_T95 = "eval/t95_mean";
-inline constexpr const char* EVAL_T95_REACHED = "eval/t95_reached_rate";
-inline constexpr const char* EVAL_PATH_LEN = "eval/path_len_mean";
-inline constexpr const char* EVAL_FRONTIER_T95 = "eval/frontier_t95_mean";
-// 그 밖
-inline constexpr const char* CURRICULUM_STAGE = "curriculum/stage";
-inline constexpr const char* GPU_MEM_MB = "gpu/mem_used_mb";
+inline constexpr const char* EVAL_FRONTIER_T95 = "eval/frontier_t95_mean";   // frontier_run 이 씀
 }  // namespace key
-inline std::string reward_key(const std::string& term) { return "reward/" + term; }        // 판당 항 합 평균
-inline std::string eval_reward_key(const std::string& term) { return "eval_reward/" + term; }
-inline std::string std_key(const std::string& comp) { return "train/std/" + comp; }        // v | vy | w
-inline std::string entropy_key(const std::string& comp) { return "train/entropy/" + comp; }  // v | vy | w | declare
-inline std::string dropped_key(const std::string& what) { return "log/" + what + "_dropped"; }
 
 // 판 끝 사유(episodes.jsonl outcome)
 namespace outcome {
@@ -521,10 +474,11 @@ class RunFolder {
   static constexpr long long EPISODES_ROTATE_BYTES = 1LL << 30;  // trainfmt::EPISODES_ROTATE_BYTES 와 같음
   using Options = RunOptions;
 
-  // meta = run.json 내용(group, seed, n_envs, ctrl_hz, reward_terms, curriculum, refs, …).
-  // schema·kind·name·pid·pid_start·started·segments·git 은 여기서 채운다. 실패하면 std::runtime_error.
+  // meta = run.json 내용(kind 필수, group, seed, n_envs, ctrl_hz, …).
+  // schema·name·pid·pid_start·started·segments·git 은 여기서 채운다. kind 가 없거나 실패하면 std::runtime_error.
   RunFolder(const std::string& dir, Json meta, const Options& opt = Options()) : dir_(dir), meta_(std::move(meta)), opt_(opt) {
     if (!meta_.is_obj()) throw std::runtime_error("runfolder: meta must be a JSON object");
+    if (!meta_.has("kind")) throw std::runtime_error("runfolder: meta needs \"kind\" (e.g. \"baseline\")");
     if (opt_.resume && !(opt_.resume_iter >= 0)) throw std::runtime_error("runfolder: resume needs resume_iter (checkpoint iteration)");
     mkdirs(dir_);
     started_ = now_ts();
@@ -554,7 +508,6 @@ class RunFolder {
     }
     segs.push(seg);
     meta_.set("schema", 1);
-    if (!meta_.has("kind")) meta_.set("kind", "explore_ppo");
     if (!meta_.has("name")) meta_.set("name", basename_of(dir_));
     meta_.set("pid", pid);
     if (auto s = pid_start(pid)) meta_.set("pid_start", s);

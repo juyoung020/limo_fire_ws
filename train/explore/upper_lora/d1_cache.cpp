@@ -1,5 +1,5 @@
 // d1_cache — 위층 판단 모델 LoRA 학습의 특징 캐시 (upper_lora/README.md).
-// 요청 본문(scripts/decider.cpp 가 만든 /v1/systemone JSON, combine_run --decider-log)마다 llama-server 와 같은 길로 프롬프트를 만들고
+// 요청 본문(/v1/systemone JSON — rollout/dec_rollout 의 *.req.json · dec_rollout --render, 옛 combine_run --decider-log 는 2026-11-18 지움)마다 llama-server 와 같은 길로 프롬프트를 만들고
 // (server_decision_context::fill_task — 서버 코드 그대로 링크) 모델을 한 번 돌려, 28 층(마지막 shortconv 두 층의 첫 층) 입력 = l_out-27 의 마지막 5 토큰 은닉,
 // pick 질문의 선택지 글자 토큰 묶음, 그 토큰들의 마지막 자리 로짓(확인용)을 저장한다.
 // 왜 5 토큰: 28 · 29 층은 커널 3 의 인과 shortconv 라 마지막 토큰 출력은 28 층 입력의 마지막 5 토큰에만 달림 (src/models/lfm-base.cpp build_lfm_shortconv).

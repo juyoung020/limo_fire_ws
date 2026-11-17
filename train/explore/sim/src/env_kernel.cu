@@ -38,42 +38,6 @@ __device__ void reset_env(const EnvBatch& b, EnvState& e, int env, int tid) {
   __syncthreads();
 }
 
-// 먼 지도: 다시 그릴 칸을 모아(공유 메모리 목록) 칸마다 8 스레드가 점 줄 하나씩 — 최댓값·OR 을 8 스레드끼리 합친다.
-// 칸마다 스레드 하나가 64 점을 다 돌면 다시 그릴 칸이 흩어진 워프가 오래 놀아서 (CPU 참조판은 obs_cells 안에서 칸마다 차례로, 같은 함수)
-__device__ void obs_far_block(const EnvBatch& b, const EnvState& e, int env, int tid, const mdp::obsgen::FarDirty& fd, bool statics) {
-  using namespace mdp::obs;
-  constexpr int kRowThreads = mdp::obsgen::kFarSub;   // 칸 하나 = 8 스레드
-  constexpr int kPerRound = kThreads / kRowThreads;
-  static_assert(32 % kRowThreads == 0 && kThreads % 32 == 0, "점 줄 스레드 묶음이 워프 안에");
-  __shared__ int list[FAR_H * FAR_W];
-  __shared__ int n_list;
-  const EnvCfg& c = b.cfg;
-  const MapDev& m = b.maps[e.map];
-  const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
-  const uint32_t* M = b.marks + (size_t)env * (c.size * c.size / 4);
-  uint8_t* F = b.obs_img + (size_t)env * IMG_SIZE + NEAR_SIZE;
-  mdp::obsgen::FarFrame ff;
-  mdp::obsgen::far_frame(e, e.x + e.ex, e.y + e.ey, &ff);
-  if (tid == 0) n_list = 0;
-  __syncthreads();
-  for (int i = tid; i < FAR_H * FAR_W; i += kThreads)
-    if (mdp::obsgen::far_cell_head(e, fd, ff, F, i, statics)) list[atomicAdd(&n_list, 1)] = i;
-  __syncthreads();
-  const int n = n_list, kr = tid % kRowThreads;
-  for (int base = 0; base < n; base += kPerRound) {   // 모든 스레드가 같은 횟수 (셔플이 워프 전체)
-    const int t = base + tid / kRowThreads;
-    int lmax = kUnknown, vis = 0, fr = 0;
-    if (t < n) mdp::obsgen::far_cell_row(c, m, L, M, b.fmap + (size_t)env * c.size * fmap_row(c), e, ff, list[t], kr, &lmax, &vis, &fr);
-    for (int o = 1; o < kRowThreads; o <<= 1) {
-      const int l2 = __shfl_xor_sync(0xffffffffu, lmax, o);
-      lmax = l2 > lmax ? l2 : lmax;
-      vis |= __shfl_xor_sync(0xffffffffu, vis, o);
-      fr |= __shfl_xor_sync(0xffffffffu, fr, o);
-    }
-    if (t < n && kr == 0) mdp::obsgen::far_cell_put(c, F, list[t], lmax, vis, fr);
-  }
-}
-
 // ---------- 도달 가능한 프론티어 요약 (mdp/frontier.h reach_summary 와 같은 값, 블록 병렬 — 아래 reach_block·reach_fix) ----------
 constexpr int kRT = kThreads;     // env_reach_kernel 블록 스레드 (환경 하나)
 constexpr int kAccShared = 1792; // 번진 곳·설 수 있는 칸·BFS 후보 비트를 공유 메모리에 둘 범위 낱말 수 상한 (7 KB 씩 둘)
@@ -778,8 +742,8 @@ __device__ void reach_block(const EnvBatch& b, const EnvState& e, int env, mdp::
   __syncthreads();
 }
 
-// 관측 마무리 뒤 (env_finish_kernel·env_reset_kernel 다음): 환경마다 블록 하나가 요약을 내고 그 칸만 관측에 (observations.h obs_reach).
-// 관측 커널과 따로 둔 까닭: 이 단계의 레지스터·공유 메모리가 관측 커널에 붙으면 그 커널 전체의 동시 블록 수가 줄어서
+// 걸음 마무리 뒤 (env_finish_kernel·env_reset_kernel 다음): 환경마다 블록 하나가 프론티어 요약(닫힘)·계층형 후보를 낸다.
+// 마무리 커널과 따로 둔 까닭: 이 단계의 레지스터·공유 메모리가 그 커널에 붙으면 그 커널 전체의 동시 블록 수가 줄어서
 // gate (계층형 묶음): 0 모든 환경 · 1 판이 끝난(쉬는) 환경은 건너뜀 (묶음 가운데 걸음) · 2 끝난 환경만 (묶음 끝 리셋 뒤)
 __global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate, int sub) {
   __shared__ mdp::ReachSummary rs;
@@ -792,10 +756,7 @@ __global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate,
   trail_mark(b, e, env, tid, kRT);   // 닫힘 규칙의 지나간 길에 지금 자세 (CPU write_obs 와 같은 때)
   __syncthreads();
   reach_block(b, e, env, rs, cs, tid);
-  if (tid == 0) {
-    mdp::obsgen::obs_reach(b, e, env, rs);
-    b.st[env].map_closed = rs.closed;   // 다음 걸음 finish_step 성공 판정 (CPU env_ref.cpp write_obs 와 같음)
-  }
+  if (tid == 0) b.st[env].map_closed = rs.closed;   // 다음 걸음 finish_step 성공 판정 (CPU obs_ref.h write_obs 와 같음)
   if (!b.cand) return;
   // 계층형 후보: 주변 프론티어 칸 수 = 프론티어 칸 비트 지도(fmap)의 ±R 네모 안 비트 수 (mdp::cand_util 과 같은 값) — (후보, 줄)마다 스레드
   const EnvCfg& c = b.cfg;
@@ -830,17 +791,8 @@ __global__ void __launch_bounds__(kRT, 6) env_reach_kernel(EnvBatch b, int gate,
   __syncthreads();
   if (tid == 0) {
     for (int k = 0; k < mdp::hier::K; ++k) cs.c[k].util = s_util[k];
-    mdp::obsgen::obs_cand(b, e, env, cs);
+    mdp::obsgen::obs_cand(b, env, cs);
   }
-}
-
-// 관측: 칸마다(모든 스레드) → 합치기·숫자(스레드 0). statics: 늘 0 인 물체 채널(📏)도 씀 — 판이 시작할 때만 (observations.h obs_cells)
-__device__ void write_obs(const EnvBatch& b, EnvState& e, int env, Shared& sh, int tid, const mdp::obsgen::FarDirty& fd, bool statics) {
-  mdp::obsgen::obs_cells(b, e, env, sh, tid, fd, false, statics);
-  obs_far_block(b, e, env, tid, fd, statics);
-  __syncthreads();
-  if (tid == 0) mdp::obsgen::obs_finish(b, e, env, sh, false);   // 프론티어 덩어리 칸은 env_reach_kernel
-  __syncthreads();
 }
 
 // 물리 걸음을 k_next 부터 다음 라이다 장(그 장 준비까지) 또는 행동 끝까지. 장이 있으면 pending = 1
@@ -865,7 +817,6 @@ __device__ void physics_until_scan(const EnvBatch& b, EnvState& e, Shared& sh) {
 // 걸음 첫머리: 이번 걸음의 장·지도 갱신 집계를 비움 (행동을 정한 뒤)
 __device__ void step_begin(Shared& sh, const EnvState& e) {
   sh.new_wall = sh.new_floor = sh.d_known = sh.n_new = sh.n_occ = 0;
-  mdp::obsgen::far_dirty_clear(sh);
   sh.scanned = 0;
   sh.k_next = 0;
   sh.tick0 = e.tick;
@@ -891,7 +842,7 @@ __global__ void __launch_bounds__(kPhysThreads) env_phys_kernel(EnvBatch b, cons
 // (hier_path.h 의 t0·stride — 개수는 정수 합, 거리²는 정수 최솟값, 걸림은 OR 이라 나눠도 답이 같다), 차례가 있는 나머지(path_step_a·b·c)는 스레드 0 이
 // CPU 참조판과 같은 함수로 돈다 → 값은 비트까지 그대로
 constexpr int kActT = 128;
-__global__ void __launch_bounds__(kActT) env_act_kernel(EnvBatch b, const float* actions, int sub) {
+__global__ void __launch_bounds__(kActT) env_act_kernel(EnvBatch b, int sub) {
   const int env = blockIdx.x, tid = threadIdx.x;
   if (sub > 0 && b.done[env] != 0) return;   // 계층형 묶음: 판이 이 묶음 앞 걸음에서 끝남 — 묶음 끝까지 쉼
   __shared__ PathPre pre;
@@ -904,9 +855,8 @@ __global__ void __launch_bounds__(kActT) env_act_kernel(EnvBatch b, const float*
   __syncthreads();   // 위 판정(블록 전체 같은 값)을 모두 읽은 뒤에 스레드 0 이 상태를 고친다
   if (tid == 0) {
     e.collided = 0;
-    const float* a = actions + (size_t)mdp::act::DIM * env;
     if (b.lowrl) lowrl_begin(b, e, env);
-    else action_begin(c, e, a);
+    else action_begin(e);
     pre.od_best = 1 << 30;
     pre.rot_cnt = 0;
     pre.now_hit = 0;
@@ -1014,7 +964,7 @@ __global__ void __launch_bounds__(kThreads, 6) env_apply_kernel(EnvBatch b) {   
   if (tid == 0) n_chg = 0;
   __syncthreads();
   const ClassLog log{b.fchg + (size_t)env * kClassLog, &n_chg};
-  const ApplyCount n = scan_apply(b, e, env, sh, tid, kThreads, b.scratch[env].far_mask, &log);   // 로그 오즈가 바뀐 칸 → 먼 지도 칸 표시
+  const ApplyCount n = scan_apply(b, e, env, sh, tid, kThreads, &log);
   int v[kSums] = {n.wall, n.floor, n.known, n.fresh, n.occ};
   block_sum(v, tid);   // 끝에 __syncthreads — 지도 갱신이 다 보임
   frontier_fix(b, e, env, sh, tid, n_chg);
@@ -1038,13 +988,12 @@ __device__ void copy_state(EnvState& dst, const EnvState& src, int tid) {
   for (int i = tid; i < (int)(sizeof(EnvState) / 4); i += kThreads) d[i] = s[i];
 }
 
-// sub < 0: 기본 (행동 하나 = 걸음 하나). sub ≥ 0: 계층형 묶음의 sub 번째 걸음 — 보상·항을 묶음 합에 더하고, 판이 끝나면 리셋·관측을 묶음 끝
+// sub < 0: 기본 (행동 하나 = 걸음 하나). sub ≥ 0: 계층형 묶음의 sub 번째 걸음 — 판이 끝나면 리셋을 묶음 끝
 // (env_bundle_end_kernel)으로 미룬다. 앞 걸음에서 끝난 환경은 쉼
 __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int sub) {
   const int env = blockIdx.x, tid = threadIdx.x;
   if (sub > 0 && b.done[env] != 0) return;   // 블록 전체 같은 값 (b.done 은 아래 첫 __syncthreads 뒤에만 씀)
   __shared__ EnvState e;
-  __shared__ Shared sh;   // 관측용 (프론티어 합)
   Shared& g = b.scratch[env];
   copy_state(e, b.st[env], tid);
   __syncthreads();
@@ -1058,7 +1007,6 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int su
     map_progress(e, g.n_occ, g.n_new);   // 진행 없음 시계 — finish_step 판 끝이 씀
     sense_step(b, e, env, g);   // 로봇이 재는 간격·닿음 (contact.h) — 판 끝이 씀
     finish_step(b, e, env, g.new_wall, g.new_floor, g.d_known, g.n_new);
-    mdp::obsgen::far_dirty_robot(b, e, g);   // 지나간 곳 표시도 먼 지도 다시 그릴 곳에
     b.done[env] = e.done;
     if (g.scanned) ring_advance(e);
   }
@@ -1067,17 +1015,12 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int su
   __syncthreads();
   const bool was_done = e.done != 0;
   __syncthreads();
-  if (was_done && sub >= 0) {   // 계층형: 리셋·관측은 묶음 끝에
+  if (was_done && sub >= 0) {   // 계층형: 리셋은 묶음 끝에
     copy_state(b.st[env], e, tid);
     if (tid == 0) g.cam = mdp::obsgen::depth_camera(b.cfg, e);
     return;
   }
-  if (was_done) reset_env(b, e, env, tid);
-  __shared__ mdp::obsgen::FarDirty fd;
-  if (tid == 0) {
-    fd = mdp::obsgen::far_dirty_take(b, e, g, was_done);
-  }
-  write_obs(b, e, env, sh, tid, fd, was_done);   // 끝에 __syncthreads
+  if (was_done) reset_env(b, e, env, tid);   // 끝에 __syncthreads
   copy_state(b.st[env], e, tid);
   if (tid == 0) g.cam = mdp::obsgen::depth_camera(b.cfg, e);
 }
@@ -1085,16 +1028,10 @@ __global__ void __launch_bounds__(kThreads) env_finish_kernel(EnvBatch b, int su
 __global__ void env_reset_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
   __shared__ EnvState e;
-  __shared__ Shared sh;
   copy_state(e, b.st[env], tid);
   __syncthreads();
   reset_env(b, e, env, tid);
-  const mdp::obsgen::FarDirty all{1, 0.f, 0.f, 0.f, 0.f};
-  write_obs(b, e, env, sh, tid, all, true);
-  if (tid == 0) {
-    b.scratch[env].far_ok = 0;   // 다음 걸음은 다시 전부 (판 기록은 그때 남김)
-    b.scratch[env].cam = mdp::obsgen::depth_camera(b.cfg, e);
-  }
+  if (tid == 0) b.scratch[env].cam = mdp::obsgen::depth_camera(b.cfg, e);
   copy_state(b.st[env], e, tid);
   if (tid == 0) {
     b.done[env] = 0;
@@ -1417,24 +1354,20 @@ __global__ void __launch_bounds__(kRT) env_camlayer_kernel(EnvBatch b) {
   }
 }
 
-// 묶음 끝 (환경 하나 = 블록 하나): 보상·항 = 묶음 합, 판이 끝난 환경은 리셋 + 새 판 관측 (끝난 걸음 env_finish_kernel 이 미룬 것 — 그 커널의 was_done 길과 같은 차례)
+// 묶음 끝 (환경 하나 = 블록 하나): 판이 끝난 환경은 리셋 (끝난 걸음 env_finish_kernel 이 미룬 것 — 그 커널의 was_done 길과 같은 차례. 새 판 관측은 뒤 reach_and_depth)
 __global__ void __launch_bounds__(kThreads) env_bundle_end_kernel(EnvBatch b) {
   const int env = blockIdx.x, tid = threadIdx.x;
   if (b.done[env] == 0) return;   // 블록 전체 같은 값
   __shared__ EnvState e;
-  __shared__ Shared sh;
   Shared& g = b.scratch[env];
   copy_state(e, b.st[env], tid);
   __syncthreads();
-  if (b.cfg.end_hold && b.lowrl) {   // 판 끝 뒤 멈춤: 리셋 대신 표시만 (관측은 지금 상태로 전부 다시)
+  if (b.cfg.end_hold && b.lowrl) {   // 판 끝 뒤 멈춤: 리셋 대신 표시만 (관측은 지금 상태로 다시)
     if (tid == 0) { e.done = 0; e.halt = 1; }
     __syncthreads();
   } else {
     reset_env(b, e, env, tid);
   }
-  __shared__ mdp::obsgen::FarDirty fd;
-  if (tid == 0) fd = mdp::obsgen::far_dirty_take(b, e, g, true);
-  write_obs(b, e, env, sh, tid, fd, true);
   copy_state(b.st[env], e, tid);
   if (tid == 0) g.cam = mdp::obsgen::depth_camera(b.cfg, e);
 }
@@ -1699,7 +1632,7 @@ void depth_gpu(const EnvBatch& b, cudaStream_t st) {
 
 }  // namespace
 
-// 요약 커널을 깊이 커널과 겹쳐 돌림: 둘은 서로 다른 메모리만 쓴다(요약 = obs_1d 의 덩어리 칸·vec_prev 그 칸, 깊이 = obs_img 깊이 칸).
+// 요약 커널을 깊이 커널과 겹쳐 돌림: 둘은 서로 다른 메모리만 쓴다(요약 = 상태의 map_closed·지나간 길·후보 칸, 깊이 = 깊이 관측 칸).
 // 옆 스트림에서 돌리고 st 가 끝을 기다린다 — 걸음 결과·차례는 그대로
 namespace {
 struct ReachStream {
@@ -1735,14 +1668,14 @@ void step_once(const EnvBatch& b, const float* actions, cudaStream_t st, int sub
   const int phys_blocks = (b.n_env + kPhysThreads - 1) / kPhysThreads;
   const bool staged = c.action_mode == kActPath;   // 계층형: 행동(걸음 첫머리)은 env_act_kernel 이 — 무거운 검사를 블록 스레드로 나눠 본다
   for (int s = 0; s < n_scan; ++s) {
-    if (s == 0 && staged) env_act_kernel<<<b.n_env, kActT, 0, st>>>(b, actions, sub); ksync("env_act_kernel");
+    if (s == 0 && staged) env_act_kernel<<<b.n_env, kActT, 0, st>>>(b, sub); ksync("env_act_kernel");
     env_phys_kernel<<<phys_blocks, kPhysThreads, 0, st>>>(b, actions, s == 0 && !staged, sub); ksync("env_phys_kernel");
     beams_gpu(b, st);
     env_apply_kernel<<<b.n_env, kThreads, 0, st>>>(b); ksync("env_apply_kernel");
   }
   env_finish_kernel<<<b.n_env, kThreads, 0, st>>>(b, sub); ksync("env_finish_kernel");
   if (sub < 0) reach_and_depth(b, st);
-  else if (reach) env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1, sub); ksync("env_reach_kernel");   // 덩어리 칸 관측의 지연 차례(vec_prev)를 걸음마다 맞춤 — 끝난 환경은 묶음 끝에
+  else if (reach) env_reach_kernel<<<b.n_env, kRT, 0, st>>>(b, 1, sub); ksync("env_reach_kernel");   // 닫힘(map_closed)·지나간 길을 걸음마다 (CPU 참조판과 같은 차례) — 끝난 환경은 묶음 끝에
 }
 }  // namespace
 

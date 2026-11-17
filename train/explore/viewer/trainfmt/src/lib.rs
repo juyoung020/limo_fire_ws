@@ -1,4 +1,4 @@
-//! 탐사 RL 실행 폴더 규약 — 형식은 이 크레이트 한 곳에서 정한다. 쓰는 쪽은 `include/runfolder.h`(C++ 러너·fake_run),
+//! 탐사 실행 폴더 규약(프론티어 기준선 frontier_run 등) — 형식은 이 크레이트 한 곳에서 정한다. 쓰는 쪽은 `include/runfolder.h`(C++ 러너·fake_run),
 //! 읽는 쪽은 trainview 서버와 `runcheck`. 둘이 어긋나면 `runcheck <실행 폴더>` 가 잡는다.
 //!
 //! ```text
@@ -22,8 +22,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const SCHEMA: i64 = 1;
-/// 실행 종류 — 지금은 탐사 PPO 하나
-pub const KIND_EXPLORE_PPO: &str = "explore_ppo";
 
 pub const RUN_JSON: &str = "run.json";
 pub const PROGRESS: &str = "progress.jsonl";

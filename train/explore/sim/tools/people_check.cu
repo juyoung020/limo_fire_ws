@@ -72,12 +72,11 @@ int test_visible(const sim::EnvHostCfg& hc, const std::vector<sim::World>& world
       if (r > 0.f) { ++valid; beams += ray.obj == sim::kObjPerson; }
     }
     std::vector<uint8_t> d1, d2;
-    std::vector<float> n1, n2;
-    with.get_obs(d1, n1);
-    without.get_obs(d2, n2);
-    const size_t D = (size_t)mdp::obs::DEPTH_SIZE, off = (size_t)mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE;   // 깊이 = 2D 관측 끝 칸
+    with.get_depth(d1);
+    without.get_depth(d2);
+    const size_t D = (size_t)mdp::obs::DEPTH_SIZE;
     long dd = 0;
-    for (size_t k = 0; k < D; ++k) dd += d1[pick * mdp::obs::IMG_SIZE + off + k] != d2[pick * mdp::obs::IMG_SIZE + off + k];
+    for (size_t k = 0; k < D; ++k) dd += d1[pick * D + k] != d2[pick * D + k];
     const float px = ew.people.cyl[0].x - ew.x, py = ew.people.cyl[0].y - ew.y;
     if (t % 3 == 0)
       std::printf("  t %.1f s: 사람 로봇 기준 (앞 %.2f, 왼 %+.2f) m, 이 장 사람 맞은 빔 %d / 유효 %d, 깊이 다른 칸 %ld / %zu, 몸통 간격 %.2f m, 판 끝 %d\n",

@@ -43,37 +43,16 @@ header#top { position: sticky; top: 0; z-index: 5; background: var(--surface); b
 .pill { border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; font-size: 11.5px; color: var(--ink2); }
 .pill.ok { border-color: var(--good); }
 .badge { display: inline-block; border-radius: 4px; padding: 0 6px; margin-left: 4px; font-size: 11px; border: 1px solid var(--line); color: var(--ink2); }
-.badge.live { border-color: var(--good); color: var(--ink); }
-.badge.live::before { content: "● "; color: var(--good); }
 .badge.syn { border-style: dashed; }
 
 main { padding: 10px 16px 40px; }
 .tab { display: none; }
 .tab.on { display: block; }
 #metaline { margin: 2px 0 8px; }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-height: 62px; }
-.card .t { color: var(--muted); font-size: 11.5px; }
-.card .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.card .s { color: var(--ink2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.card.bad { border-color: var(--critical); }
-.minibar { display: grid; grid-template-columns: 62px 1fr 38px; gap: 4px; align-items: center; font-size: 11px; }
-.minibar .b { height: 6px; background: var(--grid); border-radius: 3px; overflow: hidden; }
-.minibar .b i { display: block; height: 100%; background: var(--s1); border-radius: 3px; }
 .bar { display: flex; align-items: center; gap: 12px; margin: 10px 0; flex-wrap: wrap; }
 .bar label { display: flex; align-items: center; gap: 5px; color: var(--ink2); }
 .bar.wrap { flex-wrap: wrap; }
-#cursor { min-width: 160px; }
 details > summary { cursor: pointer; font-weight: 600; margin: 6px 0; }
-#checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 4px 12px; }
-.chk { display: flex; gap: 6px; align-items: baseline; font-size: 12.5px; }
-.chk .ic { width: 16px; text-align: center; font-weight: 700; }
-.chk.ok .ic { color: var(--good); } .chk.warn .ic { color: var(--critical); } .chk.na .ic { color: var(--muted); }
-.chk.na { color: var(--muted); }
-.note { background: var(--surface); border-left: 3px solid var(--warning); padding: 6px 10px; margin: 8px 0; border-radius: 4px; }
-.group { margin-top: 16px; }
-.group > h3 { display: flex; gap: 10px; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
-.group .nl { font-weight: 400; color: var(--muted); font-size: 11.5px; }
 .charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
 .chart { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px 4px; position: relative; }
 .chart .ct { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
@@ -119,7 +98,7 @@ pre.small { white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 0;
 }
 
 .synbanner { background: var(--critical); color: #fff; font-weight: 700; padding: 8px 14px; border-radius: 6px; margin: 0 0 10px; font-size: 14px; }
-/* 학습 상태 불: training 초록(천천히 숨쉼) · stalled 노랑 · finished 회색 · crashed 빨강 · unknown 테두리만 */
+/* 실행 상태 불: training(실행 중) 초록(천천히 숨쉼) · stalled 노랑 · finished 회색 · crashed 빨강 · unknown 테두리만 */
 .stl { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; border: 1px solid transparent; flex: none; }
 .stl.training { background: var(--good); box-shadow: 0 0 0 0 rgba(12,163,12,0.6); animation: stpulse 1.6s ease-in-out infinite; }
 .stl.stalled { background: var(--warning); }
@@ -127,8 +106,7 @@ pre.small { white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 0;
 .stl.crashed { background: var(--critical); }
 .stl.unknown { background: transparent; border-color: var(--muted); }
 @keyframes stpulse { 0% { box-shadow: 0 0 0 0 rgba(12,163,12,0.55); } 70% { box-shadow: 0 0 0 6px rgba(12,163,12,0); } 100% { box-shadow: 0 0 0 0 rgba(12,163,12,0); } }
-.badge.stb { display: inline-flex; align-items: center; }
-/* ===== Training 탭 머리: 한 줄 + 카드 4 + 건강 칩 + 곡선 4 ===== */
+/* ===== 실행 목록 · Run 탭 머리 ===== */
 .runmenu { left: 0; right: auto; min-width: 560px; max-width: 92vw; max-height: 70vh; overflow: auto; flex-direction: column; gap: 4px; padding: 8px; }
 .runmenu input[type=search] { width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
 .rm_h { font-weight: 600; margin: 8px 2px 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
@@ -139,18 +117,9 @@ pre.small { white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 0;
 #runbtn b { font-weight: 600; margin-left: 4px; max-width: 28ch; display: inline-block; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap; }
 .runhead { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; margin-bottom: 10px; }
 .rh1 { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
-.rh_name { font-size: 15px; font-weight: 600; } .rh_stage { font-weight: 600; color: var(--ink2); }
+.rh_name { font-size: 15px; font-weight: 600; }
 .rh_state { display: inline-flex; align-items: center; } .rh_state .stl { width: 11px; height: 11px; }
 .rh_res { display: inline-flex; align-items: center; gap: 6px; } .spark { vertical-align: middle; }
-.rh_teacher a { color: var(--accent); }
-.hchip { cursor: pointer; border: 1px solid var(--line); border-radius: 12px; padding: 2px 11px; font-size: 12.5px; user-select: none; }
-.hchip.ok { border-color: var(--good); } .hchip.ok::before { content: "✓ "; color: var(--good); }
-.hchip.warn { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 14%, var(--surface)); } .hchip.warn::before { content: "! "; color: var(--critical); font-weight: 700; }
-.hbox { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
-.cards.bigcards { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
-.card.big { padding: 10px 14px; min-height: 96px; } .card.big .v { font-size: 26px; } .card.big .t { font-size: 12.5px; }
-.morecards, .morecharts { margin-top: 8px; } .morecards summary, .morecharts summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
-.morecards .cards { margin-top: 6px; }
 .emptybox { max-width: 760px; margin: 60px auto; padding: 24px 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; line-height: 1.6; }
 .emptybox h2 { margin: 0 0 10px; font-size: 20px; }
 

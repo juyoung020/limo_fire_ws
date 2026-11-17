@@ -1,4 +1,4 @@
-// 실행 찾기, 줄기, 학습 상태 불(pid 확인), latest, /api/runs 의 한 줄
+// 실행 찾기, 줄기, 실행 상태 불(pid 확인), latest, /api/runs 의 한 줄
 use crate::tail;
 use serde_json::{json, Value};
 use std::fs;
@@ -99,7 +99,7 @@ pub fn pid_alive(meta: &Value) -> Option<bool> {
     })
 }
 
-/// 학습 상태 불: training = 프로세스 살아 있음(pid·시작 시각 맞음) + STALL_S 안에 기록, stalled = 살아 있는데 기록 없음,
+/// 실행 상태 불: training = 프로세스 살아 있음(pid·시작 시각 맞음) + STALL_S 안에 기록, stalled = 살아 있는데 기록 없음,
 /// finished = run.json 에 ended(정상 끝), crashed = 프로세스가 없는데 ended 없음, unknown = pid 를 안 적은 실행.
 pub const STALL_S: f64 = 60.0;
 pub fn status(r: &RunRef) -> Value {
@@ -151,19 +151,8 @@ pub fn count_replays(d: &Path) -> usize {
 
 pub struct DiskCache(pub std::collections::HashMap<PathBuf, (Instant, f64)>);
 
-/// 실행 목록 카드에 쓰는 최근 값
-const HEALTH_KEYS: &[&str] = &[
-    "rollout/success_rate",
-    "rollout/collision_rate",
-    "rollout/coverage_mean",
-    "rollout/t95_mean",
-    "rollout/ep_len_mean",
-    "eval/success_rate",
-    "eval/coverage_mean",
-    "eval/t95_mean",
-    "curriculum/stage",
-    "time/total_timesteps",
-];
+/// 실행 목록 줄에 쓰는 최근 값(app.js runRow 가 읽는 것만)
+const HEALTH_KEYS: &[&str] = &["rollout/success_rate", "rollout/coverage_mean"];
 
 pub fn summary(r: &RunRef, roots: &[Root], lines: &mut tail::LineCount, disk: &mut DiskCache, rewound: Option<usize>) -> Value {
     let meta = read_meta(&r.dir);

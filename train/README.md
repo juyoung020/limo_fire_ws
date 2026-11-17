@@ -34,11 +34,11 @@ M=../../sim/maps
 
 ## 탐사 시뮬 (`explore/sim/`) — 새 판, 실물에 맞춘 센서
 
-환경 하나 = CUDA 블록 하나, 커널 한 번 = 행동 하나(속도 행동 0.1 s · 목표점 행동 0.5 s). 그 안에서 (목표점이면 Nav2 RPP 추종기) → 실물로 맞춘 섀시 구동(지연·가속·바닥 미끄러짐)·몸통 충돌·실물 오차 라이다(`lidar_real.h`)·Cartographer 식 확률 지도·보상·리셋을 다 한다. 설정 `config/env.yaml`, 센서 오차 `config/sensor_model.yaml`, 근거 `analysis/`.
+환경 하나 = CUDA 블록 하나, 커널 한 번 = 행동 하나(0.1 s — 속도 행동, 또는 계층형 경로 추종기의 걸음). 그 안에서 실물로 맞춘 섀시 구동(지연·가속·바닥 미끄러짐)·몸통 충돌·실물 오차 라이다(`lidar_real.h`)·Cartographer 식 확률 지도·판 끝·리셋을 다 한다. 설정 `config/env.yaml`, 센서 오차 `config/sensor_model.yaml`, 근거 `analysis/`.
 
 ```bash
 cd train/explore/sim && cmake -S . -B build && cmake --build build -j
-./build/env_verify <장면.scene> …            # GPU == CPU 비트 동일 (상태·보상·지도·관측)
+./build/env_verify <장면.scene> …            # GPU == CPU 비트 동일 (상태·지도·깊이 관측·후보)
 ./build/env_verify <장면.scene> … --negative # 음성 대조
 ./build/env_bench  <장면.scene> … --envs 1024
 ```

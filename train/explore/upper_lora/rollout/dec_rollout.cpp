@@ -184,7 +184,7 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
       if (snaps) snaps->push_back(make_snap(C, w, st[0], lm, cs, r, hist, kfp, us));
       if (r.id == forced) {
         branch_step = t;
-        if (reseed > 0) {   // 그 뒤 우연만 다르게 (combine_run --branch-reseed 와 같은 섞기)
+        if (reseed > 0) {   // 그 뒤 우연만 다르게 (옛 combine_run --branch-reseed 와 같은 섞기 — 그 옵션은 2026-11-18 지움)
           cpu.get_state(st);
           st[0].rng = mix(st[0].rng ^ mix(reseed * 0x9e3779b97f4a7c15ull));
           cpu.set_state(0, st[0]);

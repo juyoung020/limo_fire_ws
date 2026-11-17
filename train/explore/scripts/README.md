@@ -3,9 +3,10 @@
 | 파일 | 내용 |
 |---|---|
 | `frontier_run.cpp` | 프론티어 탐사 기준선(nav2 · fast)을 장면 × 판으로 돌려 뷰어 실행 폴더(`run.json kind: baseline`)로 쓴다. 빌드·옵션은 [baselines/frontier](../baselines/frontier/README.md) |
-| `combine_run.cpp` | 두 층을 한 판에서 합쳐 탐사를 끝까지: 위층(slot0 · fuel · 판단 모델 · cand_tsp · random) + 아래층 규칙 추종기(A* + 경로 추종 — 실물 노드 `low_rl` 과 같은 길). 막힘 신호(`LowRl::stall`)를 받아 그 칸을 한동안 피하고 다시 고른다. 빌드는 이 폴더 `CMakeLists.txt` |
-| `fuel_upper.h` · `low_explore_ctl.h` · `low_decider.h` · `cand_rules.h` | 위층 규칙(fuel · slot0 · 판단 모델 · 후보 규칙)과 목표 넘기기 — 시뮬 도구와 실물 노드가 같이 씀 |
-| `decider.h` · `decider.cpp` | 판단 모델 서버(llama.cpp `/v1/systemone`)에 묻는 쪽: 요청 글·사진 만들기, 여러 요청 한꺼번에 보내기, 점유 격자만으로 남은 프론티어 세기(`grid_open_frontier`). 설정 글은 `config/decider.yaml` |
+| `combine_run.cpp` | 두 층을 한 판에서 합쳐 탐사를 끝까지: 위층(slot0 · fuel) + 아래층 규칙 추종기(A* + 경로 추종 — 실물 노드 `low_rl` 과 같은 길). 막힘 신호(`LowRl::stall`)를 받아 그 칸을 한동안 피하고 다시 고른다. 빌드는 이 폴더 `CMakeLists.txt`, 옵션은 아래 "combine_run — 돌리기 · 옵션" |
+| `fuel_upper.h` · `low_explore_ctl.h` · `low_decider.h` | 위층 규칙(fuel · slot0 · 판단 모델)과 목표 넘기기 — 시뮬 도구와 실물 노드가 같이 씀 |
+| `cand_rules.h` | 정답 지도를 다 아는 순회(`combine_run --gt-bound` — 시뮬 전용 진단) |
+| `decider.h` · `decider.cpp` | 판단 모델 요청에 넣는 로봇 지도 사진(PNG · 후보 꼬리표 · 지나온 길 · 지난 목표)과 data URI — `low_decider.h` 가 씀 (요청 본문 · 보내기는 `low_decider.h` 와 노드 쪽) |
 
 탐사 강화학습 실행기(학습기 `train.cpp` · 아래층 정책 측정 `low_policy_run`/`low_run.cpp` · `hybrid_eval.cpp` · 판정 `tools/judge_low.py`)는 2026-11-16 에 그만두고
 [archive/rl](../../../archive/rl/README.md) 로 옮겼다. 그때의 이 README(학습기 옵션·아래층 판정 포함)는 `archive/rl/train/explore/scripts/README.md`.
@@ -19,7 +20,7 @@
 - 순회 = 식 5 (`M(k, 0) = 0`) 의 열린 ATSP — 덩어리 ≤ 12 개면 정확한 동적 계획법, 넘으면 최근접 이웃 + 2-opt · Or-opt (논문은 LKH). 덩어리는 합침(1 m)·주성분 나눔(1.5 m)·상한 20 개.
 - 시점 = 덩어리 가운데 둘레 0.6 · 1.2 · 1.8 m 고리 36 칸 + 가장 가까운 칸 중 (예상 새로 보이는 모름 넓이, `frontier.h cand_gain_ray`) ÷ (로봇에서 시간 + t0) 가 가장 큰 칸 (덩어리 칸이 막힘에 안 가리고 보여야).
 - v_eff · ω_eff 는 `--leg-log` 로 잰 slot0 도착 구간 2781 개 맞춤(학습 장면 10 개 · 씨앗 11 · 12, 아래층 low_s4 18806): `t = L / 0.98 + |Δθ| / 3.23 − 0.59` (R² 0.89, 절편은 통과 반경 0.5 m 몫).
-- 끄면(기본) 다른 위층 방식의 판 결과는 비트까지 그대로 (학습 장면 10 개 × slot0 · cand_tsp 의 판 tsv 가 고치기 전 빌드와 같음).
+- 끄면(기본) 다른 위층 방식의 판 결과는 비트까지 그대로 (학습 장면 10 개 × slot0 · cand_tsp 의 판 tsv 가 고치기 전 빌드와 같음). 아래 표의 cand_tsp 는 그때 기록 — `--upper cand_tsp` 는 2026-11-18 지움.
 
 학습 장면 측정 (ProcTHOR 가구 없는 판 8 + HSSD 학습 2, 씨앗 11 · 12 × 12 판, 아래층 RL low_s4 18806 + `SIM_PATH_FALLBACK=1`, 사람 0).
 같은 시작 칸끼리 짝 지어 둘 다 성공한 판의 끝 시간 차 (± 표준오차):
@@ -56,7 +57,7 @@
 - 미리 정한 통과 기준 4 개 중 성공(fuel 0.812 대 slot0 0.667)·충돌(8 대 13)은 넘고, "장면 평균 끝 시간이 cand_tsp 보다 짧음"(117.8 대 116.6)·"4 장면 중 3 장면 이상 slot0 보다 짧음"(2 장면)은
   **못 넘었다**. 낮은 상자판 두 곳에서 fuel 이 더 많이 끝내는데, 더 끝낸 판이 긴 판이라 성공 판 평균이 올라간 몫이 섞여 있다(짝 비교로는 짧음).
 - 사람 2 (씨앗 4): 성공 0.646 대 slot0 0.604, 충돌 판 9 대 12, 짝 끝 시간 −2.3 % (21 판).
-- 판단 모델 (`--upper decider --decider-mode choice --decider-input all`, d1-3B Q8_0, 같은 조건): 117.8 s (115.8 · 119.8) · 성공 0.667 · 충돌 판 13 · 짝 끝 시간 −1.5 % (47 판) ·
+- 판단 모델 (그때의 `--upper decider --decider-mode choice --decider-input all` — 2026-11-18 지움, d1-3B Q8_0, 같은 조건): 117.8 s (115.8 · 119.8) · 성공 0.667 · 충돌 판 13 · 짝 끝 시간 −1.5 % (47 판) ·
   요청 지연(16 개 동시) 중앙값 3.4 s · p95 5.9 s (시뮬 시계에 안 들어감).
 - 최종 아래층(넓은 지도 + GRU, w2 반복 7702, `SIM_LOW_WIDE=1 SIM_LOW_GOALONLY=1 SIM_LOW_OBS_MOV=1`)으로 다시: slot0 148.0 s · 성공 0.500 · 충돌 판 18, fuel 151.3 s · 0.583 · 15,
   짝 끝 시간 −3.8 % (38 판, −5.3 ± 5.3 s — 잡음 안).
@@ -162,52 +163,18 @@
 시점 둘레 모름 간격 0.21 m (FUEL 3D 값 — 2D 에서는 프론티어 가에 서야 가장 많이 봐 정답 견줌 0.77 → 0.30),
 광선마다 모름 깊이 1 m 까지만 (0.75 → 0.30, bookstore 씨앗 4), 길 위 모름 간격, 빔 사이 가는 모름 줄 빼기 (0.1 m 차이 없음).
 
-## combine_run — 위층을 판단 모델에 맡기기 (`--upper decider`, 실험 중)
+## combine_run — 돌리기 · 옵션 (위층 slot0 · fuel)
 
-두 층 탐사(위층 1 s 마다 후보 고르기 + 아래층 규칙 추종기 0.1 s)에서 위층의 "어느 후보로 갈까"를 바깥 판단 모델 서버에 묻는다(`decider.h` · `decider.cpp`).
-이 절은 2026-11-14 의 제로샷 실험 길(여러 환경을 한꺼번에 묻고 판단 지연은 시계에 안 넣음)이다. 실물 노드와 같은 길(`low_decider.h` — 사건 때만 묻기 · 후보 최대 6 ·
-지연 걸음)은 `sim/tools/low_explore_check --upper decider` 와 `upper_lora/rollout/dec_rollout` 이 돌리고, 그 비교는 [upper_lora/README](../upper_lora/README.md) "위층 비교".
-모델은 글을 만들지 않고 선택지·예/아니오·점수 단계의 확률만 낸다. 미세조정 없이(제로샷) 붙인 것이고, **지금까지 규칙(늘 가장 가까운 후보)보다 나아진 것은 없다** — 아래 "결과".
-
-### 준비: 모델과 서버 (저장소에 없음)
-
-- **모델 가중치는 저장소에 넣지 않는다.** LiquidAI d1-3B 의 GGUF 두 파일을 각자 받는다: <https://huggingface.co/LiquidAI/d1-3B-GGUF> 의
-  `d1-3B-Q8_0.gguf`(2.9 GB) · `mmproj-d1-3B-Q8_0.gguf`(0.6 GB, 사진 입력용). 이 PC 는 `~/models/decision/d1-3b/` 에 뒀다.
-- **라이선스**: LFM Open License v1.0 (받은 폴더의 `LICENSE`). 쓰기 전에 본문을 직접 읽는다 — 조건을 여기 옮겨 적지 않는다.
-- **서버**: llama.cpp(<https://github.com/ggml-org/llama.cpp>) 의 `llama-server`. `/v1/systemone` 길이 있는 판이어야 한다(이 PC 는 커밋 `31953bc`, CUDA 빌드).
-
-```bash
-llama-server -m ~/models/decision/d1-3b/d1-3B-Q8_0.gguf --mmproj ~/models/decision/d1-3b/mmproj-d1-3B-Q8_0.gguf \
-  --host 127.0.0.1 --port 8171 -ngl 99 -c 32768 -np 16
-```
-
-`-np 16` 은 한꺼번에 받는 요청 수(`--decider-parallel` 과 맞춤), `-c` 는 그 16 칸이 나눠 쓰는 문맥 길이. RTX 3060 12 GB 에서 서버 약 4.0 GB, 시뮬과 합쳐 4.7 ~ 5.2 GB.
-빌드에는 libcurl · zlib · nlohmann_json 개발 패키지(`libcurl4-openssl-dev` · `zlib1g-dev` · `nlohmann-json3-dev`), 녹화에는 `ffmpeg` 가 있어야 한다.
-
-### 돌리기
+GPU 시뮬로 장면마다 판을 많이 돌려 두 층 합친 탐사를 잰다. 위층은 slot0(기준선)과 fuel 두 가지, 아래층은 늘 규칙 추종기(실물 노드 `low_rl` 과 같은 길).
+판단 모델 위층은 여기서 안 돈다 — 실물 노드와 같은 코드(`low_decider.h`)로 `sim/tools/low_explore_check --upper decider` 와 `upper_lora/rollout/dec_rollout` 이 돌린다.
 
 ```bash
 cmake -S train/explore/scripts -B <빌드> -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.0/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=86
-cmake --build <빌드> -j8 --target combine_run scene_lowobs
-cd train/explore/sim
-T=../scenes/test
-# 기준선 (위층 규칙)
-<빌드>/combine_run --people 0 --scenes $T/bookstore.scene $T/small-house.scene --episodes 24 --seed 1 --out <접두사>
-# 판단 모델: 막힌 후보만 건너뛰기 (prune) · 후보 하나 고르기 (choice)
-<빌드>/combine_run --people 0 --scenes $T/bookstore.scene $T/small-house.scene --episodes 24 --seed 1 \
-  --decider-url http://127.0.0.1:8171 --decider-input all --decider-mode prune --decider-ask-m 2 --decider-timeout-ms 120000 --out <접두사>
-# 한 판을 영상으로 (환경 0, 위에서 본 지도 + 카메라 그림 + 두 층의 출력 글)
-<빌드>/combine_run --people 0 --scenes $T/small-house.scene --episodes 1 --seed 1 \
-  --decider-url http://127.0.0.1:8171 --decider-input all --decider-mode prune --decider-ask-m 2 --decider-timeout-ms 120000 --video <접두사>
+cmake --build <빌드> -j8 --target combine_run
+T=train/explore/scenes
+<빌드>/combine_run --scenes $T/bookstore.scene $T/small-house.scene --episodes 24 --seed 1 --upper slot0 --out <접두사>
+<빌드>/combine_run --scenes $T/bookstore.scene $T/small-house.scene --episodes 24 --seed 1 --upper fuel --fuel-time 1 --fuel-global 1 --fuel-vp 1 --out <접두사>
 ```
-
-모델에 가는 것(`--decider-input all`): 로봇 카메라 자리에서 본 장면 그림, 위에서 본 로봇 지도 사진(후보에 글자 A~H), 후보 표(경로 거리·방향·폭·예상 관측량).
-카메라 그림은 장면 형상을 참 자세에서 그린 것이지 진짜 컬러 영상이 아니다. 서버 오류·시간 끝·답 꼴 오류면 그 결정은 규칙으로 떨어지고 그 수를 출력에 적는다.
-**판단에 걸린 시간은 시뮬 시계에 안 들어간다**(로봇이 기다리지 않는 것으로 셈) — 닫힘까지 시간은 지연 0 가정이다.
-
-### 옵션
-
-공통(위층 방식과 무관):
 
 | 옵션 | 기본 | 뜻 |
 |---|---|---|
@@ -218,83 +185,43 @@ T=../scenes/test
 | `--env` · `--model` · `--frontier` | sim/config 의 env.yaml · sensor_model.yaml, 프론티어 기준선 설정 | 시뮬·센서·후보 설정 파일 |
 | `--no-avoid` | 끔 | 막힘 신호가 선 칸을 피하지 않음 |
 | `--no-redecide` | 끔 | 도착·경로 실패 때 바로 다시 고르지 않음 |
-| `--no-stick` | 끔 | 고른 후보 덩어리가 지금 목표를 품어도 목표 칸을 새로 잡음 |
+| `--no-stick` | 끔 | 요약 첫 줄의 "목표 이어 가기" 표시만 끔 — 이 도구에서 고르기에 쓰는 곳이 없다 |
 | `--stall-s <초>` | 0 | 막힘 판정 시간을 이 값으로 (0 = env.yaml 값, 실험용) |
-| `--gt` · `--gt-base a0.scene …` | 끔 | **셈 전용 — 정답 지도를 씀.** 후보까지 참 길이 바탕 장면(낮은 장애물 없는 원본)보다 3 m · 1.5 배 넘게 길거나 없으면 "막힌 후보"로 센다(문턱 잠정). 고르기·판 결과에는 안 쓴다 |
-| `--video <접두사>` · `--video-env` · `--end-hold <초>` | 없음 · 0 · 3 | 환경 하나의 판을 `<접두사>_<장면>.mp4` 로(시뮬 시계 실시간). 판이 끝나면 리셋 없이 명령 0 으로 `--end-hold` 초 더 찍는다(0 = 끔, 값 잠정) |
-
-위층 방식:
-
-| 옵션 | 기본 | 뜻 |
-|---|---|---|
-| `--upper slot0\|random\|decider\|cand_tsp` | slot0 | slot0 = 유효 후보 가운데 번호가 가장 작은 것(기준선) · random = 아무거나(하한) · decider = 판단 모델 · cand_tsp = 후보를 모두 도는 가장 짧은 차례의 첫 후보(`cand_rules.h`, 로봇 지도만 — 고른 후보가 피하는 칸이면 slot0) |
-| `--rule-stick <x>` · `--rule-turn <m>` | 0 · 0 | cand_tsp: frontier_run 과 같은 뜻(지금 목표보다 1 + x 배 넘게 좋을 때만 바꿈 · 방향 1 rad 어긋남마다 더하는 거리). 후보 v2 는 환경 변수 `SIM_CAND_V2=1` |
-| `--upper fuel` + `--fuel-time 0\|1` · `--fuel-global 0\|1` · `--fuel-vp 0\|1` · `--fuel-hyst <x>` · `--fuel-room 0\|1` | 모두 0 | 프론티어 덩어리 순회의 첫 시점(`fuel_upper.h`, 로봇 지도·지도 자세만, CPU). 부품: 시간 비용(FUEL 식 1 — 길이/v_eff 와 머리각 차/ω_eff 중 큰 것) · 지도 전체 덩어리 순회(끄면 후보 K 개) · 덩어리마다 시점 고르기(예상 새로 보이는 모름 넓이 ÷ 시간) · 지금 목표 붙들기 여유 · 방 마무리(좁은 곳에서 나눈 로봇 방의 덩어리를 먼저). 결과는 아래 "fuel" |
+| `--close-lidar` | 끔 | 합친 탐사의 닫힘·후보 번지기를 라이다 지도만으로 (위 "실물 1116") |
+| `--upper slot0\|fuel` | slot0 | slot0 = 유효 후보 가운데 번호가 가장 작은 것(기준선) · fuel = 프론티어 덩어리 순회의 첫 시점 |
+| `--fuel-time 0\|1` · `--fuel-global 0\|1` · `--fuel-vp 0\|1` · `--fuel-hyst <x>` · `--fuel-room 0\|1` | 모두 0 | fuel(`fuel_upper.h`, 로봇 지도·지도 자세만, CPU) 부품: 시간 비용(FUEL 식 1 — 길이/v_eff 와 머리각 차/ω_eff 중 큰 것) · 지도 전체 덩어리 순회(끄면 후보 K 개) · 덩어리마다 시점 고르기(예상 새로 보이는 모름 넓이 ÷ 시간) · 지금 목표 붙들기 여유 · 방 마무리(좁은 곳에서 나눈 로봇 방의 덩어리를 먼저). 결과는 위 "위층 fuel" |
 | `--fuel-v` · `--fuel-w` · `--fuel-t0` | 0.70 · 1.0 · 1.0 | 시간 비용의 실효 속도(m/s)·회전(rad/s)·시점 점수 분모에 더하는 시간(s) — `--leg-log` 맞춤 값을 넣는다 |
 | `--fuel-vp-min` · `--fuel-vp-clear` · `--fuel-first` | 0 · 0 · 0 | 시점 자격(로봇에서 최소 거리 m · 모름까지 간격 m — 켜면 시점 없는 덩어리는 쉼, 모두 쉬면 목표 없음) · 순회 대신 덩어리 차례의 첫 것(slot0 를 시점으로). 실물 노드 기본은 0.75 · 0.21 · 끔 (위 "실물 1116") |
 | `--fuel-turn` · `--fuel-wc` · `--fuel-nodes` · `--fuel-merge` · `--fuel-split` · `--fuel-room-pen` · `--fuel-door` | 0 · 0 · 20 · 1.0 · 1.5 · 10 · 0.45 | 첫 회전 항 배수 · FUEL 식 3 속도 어긋남 w_c · 순회 덩어리 상한(넘으면 가까운 순 2/3 = 13 개 + 나머지에서 큰 순 7 개) · 합치는 거리(m) · 나누는 주성분 표준편차(m) · 방을 떠나는 구간 벌점(s) · 좁은 곳 문턱(m) — 모두 잠정 |
 | `--leg-log <접두사>` | 없음 | 도착한 목표 구간마다 처음 계획 길이·첫 회전각·걸린 시간 (`<접두사>_<장면>.tsv`, 기록만 — fuel 시간 비용 맞춤용) |
-| `--branch-dec <d>` · `--branch-k <k>` | 끔 | 갈래 굴리기. `--decider-cand fuel` 이면 fuel 후보 k 째(−1 = fuel 이 고른 것)로 — 위층 판단 모델 결과 기반 학습의 선호 쌍용. `--branch-reseed r` 은 갈래를 딴 결정에서 그 환경 난수만 섞어 같은 결정 상태에서 뒤 우연만 다르게 여러 번 굴림. `--decider-cand fuel` 과만 (slot0 갈래는 아래층 RL 과 함께 뺌 — 2026-11-16부터 갈래도 아래층 규칙 추종기가 몲) |
-| `--upper rich` · `--rich-w "opp=1,ab=1,clear=1,people=1,depth=1,room=1,hyst=0.2"` | 모두 0 | fuel 후보(덩어리마다 시점, 예상 관측량 ÷ 시간 큰 순) 가운데 점수 최대 — 가중이 모두 0 이면 예상 관측량 ÷ 시간 최대. 가중은 떠나는 값·포기 수·좁은 틈·사람·틈 너머 트임·같은 방·붙들기 (잠정, `combine_run.cpp RichW`) |
-| `--decider-cand fuel` · `--cand-cap 16` | sim · 16 | 판단 모델에 시뮬 후보 8 개 대신 fuel 후보(수 가변, 상한 16 은 잠정 — 예상 관측량 ÷ 시간 큰 순 12 개 + 나머지에서 틈 큰 순 4 개(`--cand-big`, 잠정), 지금 목표·fuel 이 고른 것은 늘 넣음)와 특징 표(가는 시간·예상 관측량·떠나는 값·틈 너머 트임·같은 방 후보 수·좁은 틈·가구 밀도·사람·시도/포기)를 줌. 지도·카메라 그림에 글자 표시. 입력 all · choice 만 |
-| `--decider-log <폴더>` · `--decider-url none` | 없음 | fuel 후보 결정마다 요청 본문(그림 포함)·후보 특징·라벨(fuel 이 고른 것·예상 관측량 ÷ 시간 최대)·모델 답·로봇 지도 아는 칸 수, 판 끝에 끝 코드·시각 (`<장면>_s<씨앗>.jsonl` + `*.request.json`) — 위층 판단 모델 학습 데이터. `none` 이면 서버 없이 fuel 이 몰며 모음 |
-| `--gt-bound` · `--gt-tile <m>` | 끔 · 1.5 | **시뮬 전용 진단 — 정답 지도를 씀.** 장면마다 정답 지도를 다 아는 순회(`cand_rules.h gt_tour`: 타일 닻 탐욕 덮기 + 최근접 이웃·2-opt, 360°)의 길이·회전·시간(`--fuel-v`·`--fuel-w`)을 찍음. 판에는 안 씀. 엄밀한 하한 아님 |
 | `--rule-cell` | 끔 | 규칙 추종기에 후보 번호 대신 목표 칸을 줌 — fuel 규칙 추종기 판과 같은 길로 slot0 을 견줄 때 |
-| `--decider-url <주소>` | 없음 | 서버 주소. 주면 `--upper decider` |
-| `--decider-input text\|image\|both\|all` | text | 모델에 주는 것: 후보 표 글 · 지도 사진 · 둘 다 · 카메라 그림까지(all). `prune` · `--decider-finish` 는 all 만 |
-| `--decider-mode choice\|prune\|score` | choice | choice = 후보 하나를 고름 · prune = 규칙 차례는 그대로 두고 "그 길이 막혔나"만 물어 막혔다는 후보를 건너뜀 · score = 후보마다 "가면 지도가 얼마나 더 채워지나"를 5 단계로 물어 기대 점수가 가장 높은 후보로 (아래 "점수 방식") |
-| `--decider-prompt 1\|2\|3` | 1 | 질문 글 판(실험용, `decider.cpp` 에 글자 그대로). 입력 all 은 1 · 2: 2 는 "카메라에 보이는 장애물" 을 따로 일러 줌. 3 은 글 입력에서 상태를 JSON 으로 |
-| `--decider-ask-m` | 4 | prune: 규칙 차례 앞에서 이 수만큼만 묻는다 (잠정) |
-| `--decider-veto-thr` | 0.5 | prune: "막혔다" 확률이 이 값 이상이면 건너뜀 (잠정) |
-| `--decider-finish` | 끔 | 판 끝을 모델이 선언 — 아래 "끝 선언". choice · score 만 (prune 과 같이 주면 오류) |
-| `--decider-config <yaml>` | `scripts/config/decider.yaml` | 임무 문장 · 점수 질문 글과 단계 · 문턱을 읽는 설정 파일. score 방식이나 `--decider-finish` 일 때만 읽는다 |
-| `--decider-mission "<글>"` | 없음 | 설정 파일의 임무 문장을 실행할 때 덮어씀 |
-| `--decider-left-hold <N>` | 설정 파일 `left_hold` (2, 잠정) | choice 끝 선언: "더 넣을 게 없다" 답이 이 수만큼 이어진 결정에서 선언 |
-| `--decider-score-margin <x>` | 설정 파일 `score_margin` (0.25, 잠정) | score: 최고 기대 점수에서 이 안이면 비긴 것으로 (지금 목표 · 가까운 후보 차례) |
-| `--decider-score-finish <x>` | 설정 파일 `score_finish_below` (−1) | score 끝 선언: 모든 후보의 기대 점수가 이 값 아래면 끝. 음수면 "모든 후보의 가장 그럴듯한 단계가 0" |
-| `--decider-timeout-ms` | 10000 | 요청 하나의 시간 한계. 넘으면 규칙으로 떨어짐. 환경 여러 개를 한꺼번에 물으면 줄 서는 시간이 들어가므로 넉넉히 |
-| `--decider-parallel` | 16 | 한꺼번에 보내는 요청 수 (서버 `-np` 와 맞춤). 1 이면 하나씩 — 지연을 잴 때 |
-| `--decider-px` | 384 | 지도 사진 한 변 픽셀 |
-| `--decider-cam-h` · `--decider-cam-div` | 480 · 2 | 카메라 그림 높이(실물 컬러 영상 640 × 480) · 줄이는 배수 (잠정) |
-| `--decider-shuffle` | 끔 | 후보 글자를 번호와 무관하게 섞음 (글자 자리 쏠림 확인용) |
-| `--decider-compact 0\|1\|2` | 0 | fuel 후보 표 꼴: 0 = 후보마다 JSON, 1 = 압축 표(열 이름 한 줄 + 후보마다 값 한 줄, 프롬프트 798 + 57 × 후보 수 토큰 — JSON 은 707 + 231 ×), 2 = 1 에서 extra 열(값이 새는 열) 뺌, 3 = 후보마다 JSON 객체에 짧은 키(755 + 155 × 후보 수), 4 = 3 에서 extra 뺌. 기본 모델 fuel 맞춤(두 차례 평균): JSON 0.785 · 압축 표 0.523(검증 302 결정), 같은 100 요청에서 JSON 0.76 · 짧은 키 0.70 — 그래서 학습은 JSON(0) 그대로 |
-| `--decider-dump <폴더>` · `--decider-dump-n` | 없음 · 6 | 요청(JSON) · 사진(PNG) · 답을 장면마다 이 수만큼 남김 |
+| `--gt-bound` · `--gt-tile <m>` | 끔 · 1.5 | **시뮬 전용 진단 — 정답 지도를 씀.** 장면마다 정답 지도를 다 아는 순회(`cand_rules.h gt_tour`: 타일 닻 탐욕 덮기 + 최근접 이웃·2-opt, 360°)의 길이·회전·시간(`--fuel-v`·`--fuel-w`)을 찍음. 판에는 안 씀. 엄밀한 하한 아님 |
 
-### 점수 방식 (`--decider-mode score`)
+`--upper fuel` 의 요약 줄 가운데 "위층 고르기 … 몇 째 · 번호 분포" 세 줄은 옛 비교 출력 꼴을 그대로 둔 것이다(fuel 판의 후보 번호는 늘 slot0 차례라 0 째 1.000).
 
-요청 하나에 후보마다 score 질문 하나를 넣는다("그 후보로 가면 지도가 얼마나 더 채워지나" — 0 전혀 · 1 조금 · 2 꽤 · 3 많이 · 4 새 구역이 열림).
-질문 글과 단계는 `scripts/config/decider.yaml` 의 `score_question` · `score_level_0…` 에서 읽는다(단계 수는 2 ~ 10, 서버 한계).
-기대 점수(Σ 단계 × 확률)가 가장 높은 후보로 가고, 최고에서 `score_margin` 안이면 비긴 것으로 보아 지금 목표가 그 안에 있으면 그대로, 아니면 경로가 가까운 후보로 간다.
+## combine_run 판단 모델 실험 길 — 기록 (2026-11-18 지움)
 
-뒤에 학습 정답으로 쓸 기록 두 파일을 남긴다(둘 다 로봇 지도만으로 만든 값):
+2026-11-14 ~ 11-17 에 `combine_run` 안에서 위층을 바깥 판단 모델 서버(llama.cpp `llama-server` `/v1/systemone`)에 묻던 실험 길이다.
+여러 환경을 한꺼번에 묻고 판단 지연은 시뮬 시계에 넣지 않았으며, 실물 노드와 다른 요청 꼴(카메라 자리 장면 그림 · fuel 후보 표 · prune/score 질문)이었다.
+**2026-11-18 에 지웠다** — 이제 판단 모델 위층은 실물 노드와 같은 코드(`low_decider.h` — 사건 때만 묻기 · 후보 최대 6 · 지연 걸음)로만 돌고,
+시뮬 확인은 `sim/tools/low_explore_check --upper decider`, 학습 라벨은 `upper_lora/rollout/dec_rollout` 이 만든다 ([upper_lora/README](../upper_lora/README.md)).
+그때 판을 다시 내려면 `6c85897`(지우기 바로 앞) 판으로. 아래 옵션 이름은 그 판 기준이다.
 
-- `<접두사>_<장면>_score.tsv` — 결정 · 후보마다 단계 확률 `p0…`, 기대 점수, 고른 후보인지, 끝 규칙에 걸렸는지.
-- `<접두사>_<장면>_gain.tsv` — 고른 목표마다: 그 목표로 정한 걸음부터 도착(`arrived`) · 포기(`abandoned`) · 다른 목표로 바꿈(`switched`) · 판 끝(`episode_end`)까지
-  로봇 지도에서 새로 알게 된 칸 수(`cells_gained`)와 걸린 시간(`elapsed_s`), 그때 모델이 낸 단계 확률.
+같이 지운 것 (2026-11-18 지움): `--upper decider`(`--decider-mode choice|prune|score` · `--decider-input text|image|both|all` 카메라 자리 장면 그림 ·
+`--decider-finish` 끝 선언 · `--decider-config`/`scripts/config/decider.yaml` 임무·점수 문장 · `--decider-prompt` · `--decider-shuffle` · `--decider-dump` · `--decider-compact` ·
+`--decider-timeout-ms` · `--decider-parallel` · `--decider-px` · `--decider-cam-*`), fuel 후보 행동 복제 기록(`--decider-cand fuel` · `--decider-log` · `--decider-url none` ·
+`--decider-orders` · `--cand-cap` · `--cand-big`), `--upper random` · `--upper cand_tsp`(`--rule-stick` · `--rule-turn`) · `--upper rich`(`--rich-w`),
+옛 선호 쌍 갈래 굴리기(`--branch-dec` · `--branch-k` · `--branch-reseed`), 녹화(`--video` · `--video-env` · `--end-hold`), 정답 격자 "막힌 후보" 셈(`--gt` · `--gt-base`),
+그리고 그것들만 쓰던 `decider.h` 의 요청 본문 · libcurl 동시 요청(`Client`) · 장면 카메라 그림 · 녹화(`Video`) · 점유 격자 끝 선언 채점(`grid_open_frontier`),
+`cand_rules.h` 의 후보 고르기 규칙(`choose` — `gt_tour` 만 남김).
 
-### 끝 선언 (`--decider-finish`, 기본 끔)
+모델 · 서버 준비(진짜 서버로 `low_explore_check --dec-url` 등을 돌릴 때 — 실물 로봇 쪽은 [limo_fire_rl README](../../../src/limo_fire/limo_fire_rl/README.md) "판단 모델"):
+- **모델 가중치는 저장소에 넣지 않는다.** LiquidAI d1-3B 의 GGUF 두 파일을 각자 받는다: <https://huggingface.co/LiquidAI/d1-3B-GGUF> 의
+  `d1-3B-Q8_0.gguf`(2.9 GB) · `mmproj-d1-3B-Q8_0.gguf`(0.6 GB, 사진 입력용). 이 PC 는 `~/models/decision/d1-3b/` 에 뒀다.
+- **라이선스**: LFM Open License v1.0 (받은 폴더의 `LICENSE`). 쓰기 전에 본문을 직접 읽는다 — 조건을 여기 옮겨 적지 않는다.
+- **서버**: llama.cpp(<https://github.com/ggml-org/llama.cpp>) 의 `llama-server`. `/v1/systemone` 길이 있는 판이어야 한다(이 PC 는 커밋 `31953bc`, CUDA 빌드).
 
-끄면 판은 규칙으로만 끝난다: 로봇 지도가 닫히고 10 초 동안 지도가 안 늘면 성공. 켜면 모델이 그보다 먼저 끝을 선언할 수 있고, 선언한 걸음에 판이 끝난다
-(위층 멈춤 · 아래층 멈춤 · 명령 0). 규칙은 그대로 살아 있어 모델이 선언하지 않아도 판은 끝난다. 옵션을 끄면 요청 글과 출력은 본 측정 때와 글자까지 같다.
-
-- **choice 방식(주 설계)**: 고르기 질문은 그대로 후보 A~H 만 고른다(FINISH 선택지 없음). **같은 요청**에 score 질문 하나를 더한다 —
-  "로봇이 갈 수 있는 곳에서 지도에 더 넣을 수 있는 게 얼마나 남았나(갈 수 없는 모르는 곳은 세지 않음)", 0 더 없음 … 4 새 구역 하나.
-  글과 단계는 설정 파일 `left_question` · `left_level_0…`. 가장 그럴듯한 단계가 0 인 답이 `left_hold`(기본 2, 잠정) 결정 이어지면 끝을 선언한다
-  (`left_finish_below` 를 0 이상으로 주면 "기대 점수가 그 값 아래"로 바뀜). 후보가 2 개보다 적은 결정에는 score 질문만 보낸다.
-  `<접두사>_<장면>_left.tsv` 에 결정마다 choice 확률, 단계 확률, 기대 점수, 그때 로봇 지도의 아는 칸 수와 **그때부터 판 끝까지 로봇 지도가 는 칸 수**(뒤에 이 점수의 학습 정답)를 남긴다.
-- **score 방식**: 모든 후보의 가장 그럴듯한 단계가 0 이거나 후보가 하나도 없으면(가다 포기해 잠깐 뺀 후보도 없을 때) 끝을 선언한다.
-- **임무 문장은 설정에서**: `mission`(기본 "map the whole floor as fast as possible"). `--decider-mission` 으로 바꿀 수 있다.
-- **모델이 받는 것 — 전부 로봇이 스스로 아는 값**: 지금 후보 수, 가다 포기해 뺀 후보 수, 로봇 지도가 닫혔는지, 지도가 마지막으로 늘어난 뒤 시간(초), 지금까지 포기한 목표 수, 판 시간,
-  그리고 후보마다 이 판에서 그 자리를 목표로 삼은 횟수와 가다가 포기한 횟수(진행 없음 시간 초과 · 경로 잃음). 정답 지도에서 나온 값은 넣지 않는다.
-- **채점도 로봇 지도만으로**(실물에서 같은 식으로 잴 수 있어야 하므로): 선언한 걸음에 로봇 지도가 닫혀 있으면 "맞음"(판 끝 코드 1), 갈 수 있는 프론티어가 남아 있으면 "이른 선언"(코드 4).
-  닫힘 정의는 `mdp/frontier.h` 머리글(출발 칸에서 설 수 있는 칸으로 번져 닿는, 4 칸 이상 프론티어 덩어리가 없음 + 라이다가 가까이서 이미 본 틈은 안 침).
-  이 정의는 로봇이 쌓는 "가 본 칸 · 가까이서 본 칸" 겹도 쓰므로, **점유 격자 한 장만으로** 같은 판정을 하는 함수(`decider.h` `grid_open_frontier` — ROS `nav_msgs/OccupancyGrid`
-  꼴: −1 모름, 65 이상 막힘)도 같이 돌려 tsv 에 적는다. 둘이 다르면 다른 대로 적는다.
-- **정답 덮음은 시뮬 전용 진단**으로만 출력 한 줄에 따로 적는다("시뮬 전용 진단" 이라 표시). 판정·모델 입력에 안 쓴다.
-- tsv 에 붙는 칸(켰을 때만): `ended_by_model`(1 = 모델 선언으로 끝남, 0 = 규칙 · 충돌 · 진행 없음 등) · `finish_questions` · `decl_p`(선언 때 "남은 탐사" 기대 점수, score 방식은 후보 기대 점수 가운데 최고, 후보가 없어 끝내면 −1)
-  · `decl_idle_s`(선언 때 지도 안 늘어난 시간) · `decl_map_closed`(frontier.h 닫힘) · `decl_grid_open_cells` · `decl_grid_clusters`(격자만으로 남은 프론티어 칸 · 덩어리).
-
-### 결과 (2026-11-14, 제로샷 — 미세조정 없음)
+### 결과 (2026-11-14, 제로샷 — 미세조정 없음, 그때 기록)
 
 조건(그때 기록): 아래층은 같은 RL 체크포인트(지금은 규칙 추종기), 사람 0, 시험 맵 bookstore · small-house 와 그 낮은 장애물 변형, 씨앗 1 · 2 · 3, 씨앗마다 24 판, d1-3B Q8, RTX 3060.
 "돕는다"의 기준은 측정 전에 정해 두었고(변형 장면마다 실패 판이 규칙보다 적고 닫힘 시간이 규칙의 씨앗 범위 안, 원본 장면마다 성공률 · 닫힘 시간이 규칙의 씨앗 범위 안 — 넷 다),
@@ -323,9 +250,9 @@ T=../scenes/test
 - **모델 끝 선언은 한 번도 없었다** — 모든 판을 규칙(또는 충돌)이 끝냈다. 물은 결정 4492 개 모두에서 가장 그럴듯한 단계가 2 또는 3 이었고 0("더 없음")은 0 번,
   기대 점수는 2.4 ~ 2.6 에서 거의 안 움직였다. 지도가 다 차 판 끝까지 몇 칸밖에 안 느는 마지막 결정들에서도 2.4 안팎이다.
 - 결정마다 점수와 "그때부터 판 끝까지 로봇 지도가 는 칸 수"의 상관: 씨앗 4 세 장면 0.07 · 0.16 · 0.18, 씨앗 1 두 판 −0.04 · −0.40.
-  지금 꼴로는 끝 판단에 쓸 수 없다 — 이 기록(`_left.tsv`)을 정답으로 가르치는 것이 다음 일이다. 문턱은 시험 장면을 보고 바꾸지 않았다.
+  그 꼴로는 끝 판단에 쓸 수 없었다(`_left.tsv` 기록을 정답으로 가르치는 것은 길을 지워 하지 않음). 문턱은 시험 장면을 보고 바꾸지 않았다.
 - 요청 하나의 지연(환경 1 개, 하나씩): choice 만 283 ms, choice + score 질문 하나 367 ms.
-- 씨앗 4 의 대조(slot0 · choice 만 · 후보마다 점수 방식 · `--upper cand_tsp`)는 **측정 대기** — GPU 를 아래층 학습에 먼저 쓰느라 멈춤.
+- 씨앗 4 의 대조(slot0 · choice 만 · 후보마다 점수 방식 · `--upper cand_tsp`)는 GPU 를 아래층 학습에 먼저 쓰느라 멈췄고, 이 길을 지워(2026-11-18) 재지 않았다.
 
 ### 시험 장면: 라이다에 안 보이는 낮은 장애물 (`scene_lowobs`)
 

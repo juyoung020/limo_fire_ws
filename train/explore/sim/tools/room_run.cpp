@@ -6,7 +6,7 @@
 //   room_run <장면.scene> [--start x y θ (없으면 장면 출발점·방향 0)] [--upper fuel|slot0] [--seed 1] [--max-s 300] [--rec 녹화.bin] [--exact] [--env env.yaml] [--model sensor_model.yaml]
 // 장면 좌표 = 실물 지도 좌표 (map2scene 로 만든 장면이면 --start 는 그 실물 지도에서 로봇이 판을 시작한 자세 — node_stats 의 R 사건 / 노드 로그 "시작 자세").
 // 시뮬 쪽: 센서(라이다 장·바퀴·IMU·깊이)를 RobotEnv 에 넣는 탭은 low_explore_check 와 같다. 위층 결정·판 끝은 RobotEnv(노드 몫)만 — 시뮬 환경은 같은 목표·행동 칸을
-// 받아 자기 규칙 추종기로 몬다(env.set_low_cmd · low_prepare). --exact 가 아니면 지도 자세 오차·관측 지연은 env.yaml 그대로 — 노드가 받는 Cartographer 자세 대신 시뮬 오차 모델.
+// 받아 자기 규칙 추종기로 몬다(env.set_low_cmd · low_prepare). --exact 가 아니면 지도 자세 오차는 env.yaml 그대로 — 노드가 받는 Cartographer 자세 대신 시뮬 오차 모델.
 // 위층 결정은 깊이를 넣기 전에 한다 (노드는 깊이 뒤지만 결정은 앞 걸음 깊이 층만 써서 같은 값 — 시뮬 준비 단계가 이 걸음의 목표·행동 칸을 받게).
 // 끝: 노드 판 끝(닫힘 성공 · 진척 없음 · 시간) 또는 시뮬 판 끝(부딪힘 등 — 노드라면 닿음으로 멈춤) 또는 --max-s.
 #include <cmath>
@@ -142,11 +142,10 @@ int main(int argc, char** argv) {
     cpu.get_state(st);
     {
       sim::EnvState e = st[0];
-      e.x = e.x0 = e.gx = start[0];
-      e.y = e.y0 = e.gy = start[1];
+      e.x = e.x0 = start[0];
+      e.y = e.y0 = start[1];
       e.th = e.th0 = start[2];
       e.ex = e.ey = e.eth = 0.f;
-      if (exact) e.delay = 0;
       sim::cam_hist_fill(e);   // 깊이 카메라 늦음 기록도 시작 자세로
       cpu.set_state(0, e);
       cpu.get_state(st);
@@ -163,7 +162,6 @@ int main(int argc, char** argv) {
     tap.robot = &robot;
     tap.rec = rec.get();
     std::vector<uint8_t> img;
-    std::vector<float> o1d;
     std::vector<std::vector<uint8_t>> dep_hist;
     std::vector<uint8_t> ldep;
     sim::World rw;
@@ -207,8 +205,8 @@ int main(int argc, char** argv) {
       act.assign((size_t)AW, 0.f);
       act[0] = (float)ctl.slot();   // combine_run 규칙: 결정 때 정한 행동 칸 (다음 결정까지 그대로)
       cpu.low_prepare(act.data());
-      cpu.get_obs(img, o1d);
-      const uint8_t* dep_now = img.data() + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE;
+      cpu.get_depth(img);
+      const uint8_t* dep_now = img.data();
       // --depth-lag 1: 노드가 앞 걸음(0.1 s 전) 자세에서 찍힌 깊이를 받는 셈 (실물 깊이가 자세보다 늦음 — node_stats "깊이 시각 어긋남")
       dep_hist.insert(dep_hist.begin(), std::vector<uint8_t>(dep_now, dep_now + mdp::obs::DEPTH_SIZE));
       if ((int)dep_hist.size() > depth_lag + 1) dep_hist.pop_back();
@@ -243,7 +241,7 @@ int main(int argc, char** argv) {
     }
     sim::set_cpu_tap(nullptr);
     std::printf("room_run: %s · 걸음 %d (%.1f s) · 끝 %s%s · 결정 %ld · 통과 %ld · 막힘 %ld · %s\n", scene.c_str(), t, t * dt, why,
-                sim_end ? (" (시뮬 끝 코드 " + std::to_string(sim_end) + ")").c_str() : "", ctl.n_dec(), ctl.n_reach(), ctl.n_stall(), exact ? "자세 오차·지연 끔" : "자세 오차·지연 env.yaml");
+                sim_end ? (" (시뮬 끝 코드 " + std::to_string(sim_end) + ")").c_str() : "", ctl.n_dec(), ctl.n_reach(), ctl.n_stall(), exact ? "자세 오차 끔" : "자세 오차 env.yaml");
     return 0;
   } catch (const std::exception& ex) {
     std::fprintf(stderr, "room_run: %s\n", ex.what());

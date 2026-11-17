@@ -65,8 +65,8 @@ export function parseXrp(buf) {
 
 // ------------------------------------------------------------------ 탭
 export class Replay {
-  constructor({ api, getCursorIter }) {
-    this.api = api; this.getCursorIter = getCursorIter;
+  constructor({ api }) {
+    this.api = api;
     this.run = null; this.meta = null; this.rows = []; this.cur = null; this.X = null; this.f = 0;
     this.playing = false; this.visible = false; this.view = null; this.drag = null; this.mapCache = { f: -1 };
     this.cv = $("rp_canvas"); this.strip = $("rp_strip");
@@ -74,7 +74,6 @@ export class Replay {
     $("rp_stream").onchange = () => this.refreshList();
     $("rp_outcome").onchange = () => this.renderList();
     $("rp_map").onchange = () => this.renderList();
-    $("rp_near").onchange = () => this.renderList();
     $("rp_listbtn").onclick = () => { $("tab_replay").classList.toggle("nolist"); this.resize(); };
     $("rp_eprev").onclick = () => this.step_ep(-1);
     $("rp_enext").onclick = () => this.step_ep(1);
@@ -135,13 +134,12 @@ export class Replay {
     this.renderList();
   }
   shown() {
-    const oc = $("rp_outcome").value, mp = $("rp_map").value, near = $("rp_near").checked, ci = this.getCursorIter();
-    const maxIt = Math.max(1, ...this.rows.map(r => (r.meta && r.meta.iter) || 0));
-    return this.rows.filter(r => { const m = r.meta || {}; return (!oc || m.outcome === oc) && (!mp || m.map === mp) && (!near || ci == null || Math.abs((m.iter ?? 0) - ci) <= Math.max(1, 0.05 * maxIt)); });
+    const oc = $("rp_outcome").value, mp = $("rp_map").value;
+    return this.rows.filter(r => { const m = r.meta || {}; return (!oc || m.outcome === oc) && (!mp || m.map === mp); });
   }
   renderList() {
-    const rows = this.shown(), ci = this.getCursorIter();
-    $("rp_note").textContent = this.rows.length ? `${rows.length} of ${this.rows.length} episodes${$("rp_near").checked ? (ci == null ? " (cursor at latest — near-cursor filter off)" : ` near iteration ${fmt(ci)}`) : ""}${this.bad.length ? ` · ${this.bad.length} unreadable files` : ""}` : (this.why || "no replays");
+    const rows = this.shown();
+    $("rp_note").textContent = this.rows.length ? `${rows.length} of ${this.rows.length} episodes${this.bad.length ? ` · ${this.bad.length} unreadable files` : ""}` : (this.why || "no replays");
     $("rp_list").innerHTML = rows.map(r => {
       const m = r.meta || {}, oc = m.outcome || "?";
       return `<div class="item${r.file === this.cur ? " on" : ""}" data-file="${esc(r.file)}" title="${esc(r.file)}\nmap ${esc(m.map || "?")} · stage ${esc(m.stage ?? "?")}\n${(r.size / 1e3).toFixed(0)} kB"><span class="mono">${esc(String(m.ep ?? "?"))}</span><span class="mono">${fmt(m.iter)}</span><span class="oc" style="color:var(${OUT_COLOR[oc] || "--ink2"})">${esc(oc.replace("_", " "))}</span><span class="mono">${m.coverage != null ? (m.coverage * 100).toFixed(0) + "%" : "—"}</span><span class="mono">${m.t != null ? fmt(m.t) + " s" : "—"}</span></div>`;

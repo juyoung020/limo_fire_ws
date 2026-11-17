@@ -1,7 +1,7 @@
 // scene_lowobs — 장면에 "라이다 평면 아래 · 몸통 높이 안" 낮은 상자를 더해 새 장면 파일을 만든다 (원본은 안 건드림).
 // 라이다는 바닥에서 body.lidar_mount[2] 높이의 수평면만 보므로, 윗면이 그보다 낮고 body.collision_band 아래 끝보다 높은 상자는
 // 로봇 지도(라이다)에 안 찍히지만 몸통과는 부딪힌다 (env_host.cpp build_world 가 띠 안 삼각형으로 막힌 칸을 만든다). 카메라(깊이)에는 보인다.
-// 판단 모델 실험(scripts/combine_run --upper decider)의 "눈으로만 알 수 있는 막힘" 시험 장면용.
+// 판단 모델 실험의 "눈으로만 알 수 있는 막힘" 시험 장면용 (그때의 combine_run --upper decider 는 2026-11-18 지움 — 지금 판단 모델 위층 확인은 low_explore_check --upper decider).
 //
 //   scene_lowobs --in a.scene [--boxes boxes.tsv --out b.scene] [--env config/env.yaml] [--ppm out.ppm] [--ppm-scale 4]
 //   boxes.tsv : 줄마다 상자 하나 — 가운데 x  y (m, 세계)  yaw(도)  길이  폭  높이 (m)  [이름]   (# 주석 · 빈 줄 무시, 바닥 z = 0 에 놓음)

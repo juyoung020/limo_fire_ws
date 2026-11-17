@@ -219,4 +219,4 @@ ros2 launch limo_fire_rl explore_fuel_rl.launch.xml [dry_run:=false] [rviz:=true
 요청 꼴 기본은 짧은 꼴(`decider_compact: true`, 지도 288 px, 결정 기록 4, 카메라 없음 — 카메라 키프레임 사진은 v1 학습에 없어 2026-11-17 지움): 로봇 Orin 에서 요청 하나 약 1.6 s(앞 요청 뒤) · 2.2 s(처음) — 예전 기본(긴 꼴 + 카메라 2 × 2)은 5.0–5.6 s (`upper_lora/README.md` "요청 꼴과 지연").
 사건 때만 묻고(event) 요청에 후보를 6 개까지 넣는다(`decider_max_cands: 6`) — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 가장 빨랐고, 라벨 굴리기(`dec_rollout`)·`low_explore_check --upper decider` 기본도 같은 값.
 상태는 `~/status` 끝에 "판단 모델: 보냄 · 답 (마지막 ms) · 시간 끝 · 실패 · 후보 안 맞음 · 규칙 대신". 서버가 없거나 답이 잇따라 틀리면 규칙(cand_pick)이 대신 고르며 계속 돈다 (멈추지 않음).
-요청 입력은 지도 사진 + 후보 글(시뮬 `--dec-input both`)로 고정 — 시뮬 장면 카메라 그림(`combine_run --decider-input all`)은 실물에 같은 것이 없다.
+요청 입력은 지도 사진 + 후보 글(시뮬 `--dec-input both`)로 고정 — 옛 시뮬 장면 카메라 그림(`combine_run --decider-input all`, 2026-11-18 지움)은 실물에 같은 것이 없었다.

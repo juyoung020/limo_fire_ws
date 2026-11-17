@@ -12,7 +12,7 @@ baselines/frontier/
 ├── tools/frontier_check.cu       mdp/frontier.h CPU == GPU 비트 비교
 └── CMakeLists.txt                sim/ 을 add_subdirectory 로 가져와 frontier_run·frontier_check 빌드
 ../../mdp/frontier.h              칸 종류·닫힘·프론티어 찾기 (호스트·장치 공용, 실물 노드·합친 탐사도 같은 함수)
-../../scripts/frontier_run.cpp    장면 × 판을 돌려 학습 뷰어 실행 폴더로
+../../scripts/frontier_run.cpp    장면 × 판을 돌려 뷰어(trainview) 실행 폴더로
 ```
 
 
@@ -151,5 +151,5 @@ viewer/target/release/trainview --root runs --port 8097
 - **잘못 닫힘**: nav2 서점 env 1 은 128 s, 덮음 0.403 에서 `closed` — 로봇이 설 수 있는 칸 덩어리가 막힘 팽창으로 갇혀 프론티어에 안 닿음(로봇 반경 팽창 닫힘 정의의 약점). 원인은 아직 안 잼.
 - 판 끝에 남는 프론티어 칸(번진 칸 안)은 참 바닥·벽 바깥 칸이 대부분 — 벽 면 칸이 스치는 빔으로 빈 칸이 되어 벽 안쪽 모름과 닿는 곳이 있다(위 5).
 - 재생 라이다는 참 자세에서 정적 장면에 다시 쏜 깨끗한 광선이다(시뮬 안의 오차 스캔은 API 로 안 나옴). 관측 지도는 0.5 s 마다(재생 파일 nav2 판 2.4~13.3 MB).
-- progress 는 장면마다 한 줄이라 Training 탭 곡선의 가로축은 시간이 아니라 장면 차례다(머리 카드는 마지막 장면 값). 장면별 값은 평가 표 `evals/frontier.json` 에.
+- progress 는 장면마다 한 줄이라 Compare 탭 곡선의 가로축은 시간이 아니라 장면 차례다(Run 탭 머리줄은 마지막 장면 값). 장면별 값은 평가 표 `evals/frontier.json`(Run 탭 Evaluation)에.
 - 기준선은 호스트에서 환경마다 순서대로 돈다(두 장면 × 판 8 개: nav2 124 s, fast 51 s). 같은 씨앗이면 판 결과가 같다.

@@ -33,11 +33,8 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
   lmap_.assign((size_t)n, sim::kUnknown);
   marks_.assign((size_t)n / 4, 0u);
   trail_.assign((size_t)2 * nf, 0u);
-  img_.assign((size_t)mdp::obs::IMG_SIZE, 0);
-  o1d_.assign((size_t)mdp::hier::POLICY_1D, 0.f);
+  depth_.assign((size_t)mdp::obs::DEPTH_SIZE, 0);
   ring_.assign((size_t)sim::kLidarRing * mdp::obs::LIDAR_BINS, 0.f);
-  vprev_.assign((size_t)mdp::obs::VEC, 0.f);
-  lint_.assign((size_t)mdp::obs::LIDAR_BINS, 0.f);
   done_buf_.assign(1, 0);
   ep_.assign(1, sim::EpInfo{});
   cand_.assign((size_t)mdp::hier::K, -1);
@@ -45,12 +42,8 @@ RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
   b_.lmap = lmap_.data();
   b_.marks = marks_.data();
   b_.trail = trail_.data();
-  b_.obs_img = img_.data();
-  b_.obs_1d = o1d_.data();
-  b_.o1d = mdp::hier::POLICY_1D;
+  b_.depth = depth_.data();
   b_.lidar_ring = ring_.data();
-  b_.vec_prev = vprev_.data();
-  b_.lidar_int = lint_.data();
   b_.done = done_buf_.data();
   b_.ep = ep_.data();
   b_.cand = cand_.data();
@@ -101,7 +94,6 @@ void RobotEnv::reset(float x0, float y0, float th0, const Proprio& p0, float fov
   e_.th = e_.th0 = th0;
   e_.kb_x0 = e_.kb_y0 = 1 << 30;
   e_.kb_x1 = e_.kb_y1 = -1;
-  e_.delay = 0;              // 실물 지연은 센서 값 자체에 들어 있음 (시뮬은 0 또는 1 걸음을 판마다 뽑음)
   e_.t95_step = -1;
   e_.goal_cell = -1;
   e_.p_slot = -1;
@@ -128,7 +120,6 @@ void RobotEnv::step(const Proprio& p, const Scan& s) {
   e_.collided = 0;
   e_.done = 0;
   e_.people.hit_person = 0;
-  e_.declared = 0;
   // 2. 물리 자리: 실물 감각 (시뮬 physics_step 이 쓰는 칸)
   e_.drive.wv = p.wheel_v;
   e_.drive.wvy = p.wheel_vy;
@@ -175,7 +166,7 @@ void RobotEnv::step(const Proprio& p, const Scan& s) {
 
 void RobotEnv::obs() {
   sim::Shared sh{};
-  sim::write_obs(b_, e_, 0, sh, mdp::obsgen::FarDirty{1, 0.f, 0.f, 0.f, 0.f, nullptr}, false, obs_cells_, obs_hier_, &keep_);
+  sim::write_obs(b_, e_, 0, sh, false, obs_hier_, &keep_);   // 깊이는 set_depth 가 (실물 영상)
 }
 
 void RobotEnv::set_depth(const uint8_t* d) {
@@ -245,7 +236,6 @@ void RobotEnv::hold() {
   e_.collided = 0;
   sim::lowrl_begin(b_, e_, 0);
   e_.cmd_v = e_.cmd_vy = e_.cmd_w = 0.f;
-  sim::path_last_act(b_.cfg, e_, 0.f, 0.f);
 }
 
 void RobotEnv::low_prepare() {

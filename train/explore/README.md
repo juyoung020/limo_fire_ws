@@ -10,7 +10,7 @@ explore/
 ├── scripts/     combine_run(두 층 합친 탐사 측정) · frontier_run(프론티어 기준선) · 위층 규칙(fuel_upper.h · low_explore_ctl.h · low_decider.h)
 ├── baselines/   비교 기준선: frontier/ = 프론티어 탐사(explore_lite + Nav2 식)
 ├── upper_lora/  위층 판단 모델 LoRA 학습 (지도 학습)
-├── viewer/      실행 폴더 뷰어(trainview): 곡선·표·2D 재생 + 러너가 쓰는 실행 폴더 헤더 include/runfolder.h
+├── viewer/      실행 폴더 뷰어(trainview): 판 표·평가 표·2D 재생·실행 비교 + 러너가 쓰는 실행 폴더 헤더 include/runfolder.h
 ├── runs/        실행 폴더 (git 제외)
 └── scenes/      시험 장면(.scene, git 제외 — 만드는 명령은 scenes/README · baselines/frontier/README)
 ```

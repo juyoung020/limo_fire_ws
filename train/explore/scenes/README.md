@@ -134,7 +134,7 @@
 
 ## 낮은 장애물 변형 (`scene_lowobs`, `sim/tools/scene_lowobs.cpp`)
 
-판단 모델 실험([scripts/README](../scripts/README.md) "위층을 판단 모델에 맡기기")의 시험 장면. 시험 맵에 높이 0.09 m 턱 · 상자를 더한다.
+판단 모델 실험([scripts/README](../scripts/README.md) "combine_run 판단 모델 실험 길 — 기록" — 그 길은 2026-11-18 지움)의 시험 장면. 시험 맵에 높이 0.09 m 턱 · 상자를 더한다.
 윗면이 라이다 평면보다 낮아 로봇 지도에는 안 찍히지만 몸통과는 부딪히고 카메라에는 보인다 — "지도에는 길이 뚫려 보이는데 실제로는 막힌 곳".
 상자 자리는 `sim/config/lowobs/<장면>.boxes.tsv`(손으로 고른 값, 잠정)에 있고, 변형 장면 파일은 저장소에 넣지 않는다. 다시 만들려면:
 

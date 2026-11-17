@@ -1,4 +1,4 @@
-// 캔버스 곡선(차트 라이브러리 없음 — TRAIN_VIEWER.md 7절). DPR, 축 하나, 눈금, 기준선, 시점 커서, 띠(최소·최대 또는 ±σ), 십자선 값 읽기.
+// 캔버스 곡선(차트 라이브러리 없음 — TRAIN_VIEWER.md 7절). DPR, 축 하나, 눈금, 띠(최소·최대 또는 ±σ), 십자선 값 읽기.
 // 축은 하나다: 단위가 다른 두 값은 두 그림으로 나눈다(이중 축은 읽는 사람을 속인다).
 
 export const COLORS = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"];
@@ -46,12 +46,11 @@ const tip = () => document.getElementById("tip");
 
 export class Plot {
   constructor(canvas) {
-    this.cv = canvas; this.spec = null; this.hover = null; this.sig = "";
+    this.cv = canvas; this.spec = null; this.hover = null;
     canvas.addEventListener("mousemove", e => { const r = canvas.getBoundingClientRect(); this.hover = { x: e.clientX - r.left, y: e.clientY - r.top, cx: e.clientX, cy: e.clientY }; this.draw(this.spec, true); });
     canvas.addEventListener("mouseleave", () => { this.hover = null; tip().hidden = true; this.draw(this.spec, true); });
-    canvas.addEventListener("click", () => { if (this.spec && this.spec.onPick && this.hx != null) this.spec.onPick(this.hx); });
   }
-  /** spec: {series:[{name,x,y,lo,hi,color,dash,width}], refs:[{y,label}], xfmt, pct, cursor, xlabel, ymin, ymax, onPick} */
+  /** spec: {series:[{name,x,y,lo,hi,color,dash,width}], xfmt, pct, xlabel, empty} */
   draw(spec, force) {
     if (!spec) return;
     this.spec = spec;
@@ -62,7 +61,7 @@ export class Plot {
     const g = cv.getContext("2d");
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, W, H);
-    const ink2 = css("--ink2"), muted = css("--muted"), grid = css("--grid");
+    const muted = css("--muted"), grid = css("--grid");
     // 범위
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const s of spec.series) {
@@ -74,11 +73,8 @@ export class Plot {
         if (any) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); }
       }
     }
-    for (const r of spec.refs || []) if (isFinite(r.y)) { y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y); }
     g.font = "11px system-ui, sans-serif";
     if (!isFinite(x0)) { g.fillStyle = muted; g.fillText(spec.empty || "값 없음", 10, 20); return; }
-    if (spec.ymin != null) y0 = Math.min(y0, spec.ymin);
-    if (spec.ymax != null) y1 = Math.max(y1, spec.ymax);
     if (y1 - y0 < 1e-12) { const d = Math.abs(y0) * 0.1 || 1; y0 -= d; y1 += d; }
     const pad = (y1 - y0) * 0.06; y0 -= pad; y1 += pad;
     if (spec.pct) { y0 = Math.max(y0, Math.min(0, y0)); }
@@ -87,7 +83,6 @@ export class Plot {
     const lw = Math.max(...yt.map(v => g.measureText(fmt(v, spec.pct)).width)) + 8;
     const L = lw, R = W - 8, T = 6, B = H - 18;
     const X = x => L + (x - x0) / (x1 - x0) * (R - L), Y = y => B - (y - y0) / (y1 - y0) * (B - T);
-    this.geo = { L, R, T, B, x0, x1, y0, y1, X };
     // 눈금(희미하게)
     g.strokeStyle = grid; g.lineWidth = 1; g.fillStyle = muted; g.textAlign = "right"; g.textBaseline = "middle";
     for (const v of yt) { const y = Math.round(Y(v)) + 0.5; g.beginPath(); g.moveTo(L, y); g.lineTo(R, y); g.stroke(); g.fillText(fmt(v, spec.pct), L - 4, y); }
@@ -95,13 +90,6 @@ export class Plot {
     g.textAlign = "center"; g.textBaseline = "top";
     const xf = spec.xfmt || fmt;
     for (const v of xt) { const x = X(v); if (x < L - 1 || x > R + 1) continue; g.fillText(xf(v), x, B + 4); }
-    // 기준선
-    for (const r of spec.refs || []) {
-      if (!isFinite(r.y)) continue;
-      const y = Math.round(Y(r.y)) + 0.5;
-      g.save(); g.setLineDash([5, 4]); g.strokeStyle = ink2; g.lineWidth = 1; g.beginPath(); g.moveTo(L, y); g.lineTo(R, y); g.stroke(); g.restore();
-      g.fillStyle = ink2; g.textAlign = "right"; g.textBaseline = "bottom"; g.fillText(r.label, R - 2, y - 2);
-    }
     // 띠 → 선
     g.save(); g.beginPath(); g.rect(L, T, R - L, B - T); g.clip();
     for (const s of spec.series) {
@@ -133,15 +121,10 @@ export class Plot {
       if (pts.length < 60) { g.fillStyle = s.color; for (const [x, y] of pts) { g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill(); } }
     }
     g.restore(); g.setLineDash([]);
-    // 커서
-    if (spec.cursor != null && isFinite(spec.cursor) && spec.cursor < x1) {
-      const x = Math.round(X(spec.cursor)) + 0.5;
-      g.strokeStyle = css("--accent"); g.lineWidth = 1; g.beginPath(); g.moveTo(x, T); g.lineTo(x, B); g.stroke();
-    }
     // 십자선 + 값 읽기
-    const h = this.hover; this.hx = null;
+    const h = this.hover;
     if (h && h.x >= L && h.x <= R) {
-      const xv = x0 + (h.x - L) / (R - L) * (x1 - x0); this.hx = xv;
+      const xv = x0 + (h.x - L) / (R - L) * (x1 - x0);
       g.strokeStyle = muted; g.lineWidth = 1; g.beginPath(); g.moveTo(Math.round(h.x) + 0.5, T); g.lineTo(Math.round(h.x) + 0.5, B); g.stroke();
       const rows = [];
       for (const s of spec.series) {

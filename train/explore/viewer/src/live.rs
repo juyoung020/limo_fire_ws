@@ -3,7 +3,7 @@
 //   GET /api/live?runs=a,b&from=<줄>,<줄>&sig=<s>,<s>&eps=<판 수>,<판 수>&rep=<개수>,<개수>
 //
 // 이벤트: progress {run, data: /api/progress 와 같은 꼴(모든 키)}, reset {run, sig}(파일이 새로 쓰임·되감김 → 처음부터 다시 받을 것),
-//         episodes {run, stream, total}, replay {run, stream, n}, runs {n}(목록 바뀜), status [학습 상태 불]. 10 초마다 keepalive.
+//         episodes {run, stream, total}, replay {run, stream, n}, runs {n}(목록 바뀜), status [실행 상태 불]. 10 초마다 keepalive.
 // 감시는 연결마다 한 스레드가 1 초마다 stat 하고 늘어난 바이트만 읽는다(저장소는 /api/progress 와 같이 씀).
 // 클라이언트는 줄 번호(start)로 이어 붙인다 — 다시 붙어도 빠지거나 겹치는 줄이 없다. 끊기면 화면은 3 초 폴링으로 내려간다.
 use crate::http::{jstr, Req};
@@ -72,7 +72,7 @@ pub fn serve(mut s: TcpStream, app: Arc<App>, req: &Req) {
                 rep[i] = k;
             }
         }
-        // 모든 실행의 학습 상태 불 — 2 초마다, 바뀌었을 때만(나이는 서명에서 뺌, 20 초마다는 그래도 보냄)
+        // 모든 실행의 실행 상태 불 — 2 초마다, 바뀌었을 때만(나이는 서명에서 뺌, 20 초마다는 그래도 보냄)
         if last_status.elapsed() > Duration::from_secs(2) {
             let st: Vec<serde_json::Value> = app.runs().iter().map(runs::status).collect();
             let sig: String = st.iter().map(|v| format!("{}{}{}", v["id"], v["state"], v["iter"])).collect();

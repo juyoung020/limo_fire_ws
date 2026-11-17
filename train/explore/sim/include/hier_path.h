@@ -55,13 +55,13 @@
 // raytraceFreespace → markVoxelInMap, 2 차원 칸은 높이 칸 하나라도 켜지면 LETHAL = mark_threshold 0) + 관측 거르기 (observation_buffer.cpp bufferCloud:
 // min_obstacle_height ≤ z ≤ max_obstacle_height 인 점만 남겨 표시·지우기 모두 그 점으로). 값: 띠 = collision_band (Nav2 문서도 깊이 센서는 바닥 점이
 // 안 남게 min 을 0 보다 조금 위로 권함), obstacle_max_range 2.5 · raytrace_max_range 3.0 = Nav2 기본, 높이 칸 8 개(2.75 cm)는 잠정.
-//   입력: 정책 관측과 같은 깊이 바이트 40 × 64 (observations.h depth_u8 — 실물 /camera/depth 를 같은 함수로 줄인 값, 정답 격자 아님). 시뮬은 깊이를 결정마다
+//   입력: 깊이 관측 바이트 40 × 64 (observations.h depth_u8 — 실물 /camera/depth 를 같은 함수로 줄인 값, 정답 격자 아님). 시뮬은 깊이를 결정마다
 //   (1 Hz) 그려서 층도 결정 앞에 한 번 갱신 (실물 29 Hz 보다 드묾 — 보수 쪽). 점 = 픽셀 광선 × z → 숙인 각·장착(env.yaml camera_mount·camera_pitch) →
 //   지도 자세(참값 + 오차)로 칸. 0(구멍)·255(3 m 넘음)는 점 없음 (Nav2 inf_is_valid 기본 false).
 //   차례: 모든 픽셀 지우기(띠 안 점까지 3 차원 광선이 지나는 높이 칸, 끝 칸 빼고) → 표시 → 몸통 밑 칸 지우기 (ObstacleLayer footprint_clearing_enabled).
 //   높이 칸으로 지우므로 낮은 상자 위를 지나는 광선은 상자 높이 칸을 못 지운다 — 가까이 와서 상자가 시야 아래로 빠져도 층에 남는다 (2 차원 층이면 지워짐).
-//   로봇 지도(lmap)에 안 넣는 까닭: lmap 은 정책 관측(가까운·먼 지도)·닫힘 성공·프론티어 후보·덮음 보상(kOccCell)이 쓰는 Cartographer 꼴 점유 지도라 넣으면
-//   관측 분포·닫힘·보상이 바뀐다 (닫힘·후보는 다른 작업 몫). Nav2 도 SLAM 지도(static layer)와 장애물 층을 따로 두고 costmap 에서만 합친다.
+//   로봇 지도(lmap)에 안 넣는 까닭: lmap 은 닫힘 성공·프론티어 후보·진척 시계가 쓰는 Cartographer 꼴 점유 지도라 넣으면
+//   닫힘·후보가 바뀐다 (닫힘·후보는 다른 작업 몫). Nav2 도 SLAM 지도(static layer)와 장애물 층을 따로 두고 costmap 에서만 합친다.
 //   쓰는 곳: 경로 계획(엄격·느슨 둘 다 막힘 — 지금 스캔과 같은 몫), RPP 충돌 검사(path_lethal), 장애물 근접 감속(path_obstacle_dist),
 //   collision_monitor (마지막 깊이 장 열마다 가장 가까운 띠 안 점 cpts — pointcloud_to_laserscan 꼴 scan 출처, 1 s 묵은 장은 Nav2 source_timeout 안).
 //   env_verify --hier: GPU == CPU 층·점 비트 같음, 정답 격자를 바꿔도 층이 같음.
@@ -82,8 +82,7 @@
 // 복구 (2026-11-10, EnvCfg::rec_on · action.path.recovery): 같은 목표(rec_bl_r 안)에서 결정 걸음의 절반 넘게 충돌 검사가 막은 결정이 이어지면 Nav2 BT
 // navigate_to_pose_w_replanning_and_recovery.xml 꼴로 — 1·2 번째: 남은 경로를 버리고 다시 계획 (ComputePathToPose·FollowPath RecoveryNode),
 // 3 번째: BackUp backup_dist 0.30 m @ backup_speed 0.05 m/s (BT 값, 6 s), 4 번째: 그 목표 포기 (NavigateRecovery 재시도 다 씀 → 목표 실패) — rec_bl_steps
-// 동안 그 둘레 후보를 고르면 목표 없음(제자리 회전)으로. "막힌 비율"을 정책 후보 칸에 넣는 것은 하지 않음: mdp::hier::FEAT 가 바뀌면 관측 크기가 바뀌어
-// 지금 체크포인트(model_h2_2850)를 못 쓰고 다시 학습해야 하며, 포기한 목표는 이미 정책이 고를 때 제자리 회전으로 바뀜.
+// 동안 그 둘레 후보를 고르면 목표 없음(제자리 회전)으로.
 #pragma once
 // namespace sim 안에서 넣는다 (env.h — people_sim.h 와 같게)
 
@@ -123,7 +122,7 @@ DEV bool path_scan_cell(const EnvBatch& b, const EnvState& e, int env, int k, in
 
 // ---------- 깊이 카메라 장애물 층 (2026-11-10, EnvCfg::cam_on — 아래 머리말 "깊이 카메라 장애물 층") ----------
 constexpr float kCamNone = 3e38f;   // EnvBatch::cpts 빈 칸
-// 관측 깊이 픽셀 i (행 · DEPTH_W + 열, 값 q = obs_img 깊이 바이트 — 정책 입력과 같은 값, observations.h depth_u8) → base_link 점 (m).
+// 관측 깊이 픽셀 i (행 · DEPTH_W + 열, 값 q = 깊이 관측 바이트 EnvBatch::depth — observations.h depth_u8) → base_link 점 (m).
 // 0 = 구멍 · 255 = obs_max_z(3 m) 넘음 → 점 없음 (Nav2 inf_is_valid 기본 false — 무한 값은 표시·지우기 모두 안 씀). 1~254 는 칸 가운데 거리
 DEV bool cam_point_uv(const EnvCfg& c, uint8_t q, float u, float v, float* bx, float* by, float* bz) {
   if (q == 0 || q == 255) return false;
@@ -140,7 +139,7 @@ DEV bool cam_point_base(const EnvCfg& c, uint8_t q, int i, float* bx, float* by,
   const float su = (float)D.w / (float)mdp::obs::DEPTH_W, sv = (float)D.h / (float)mdp::obs::DEPTH_H;   // observations.h depth_uv 와 같은 픽셀
   return cam_point_uv(c, q, ((float)(i % mdp::obs::DEPTH_W) + 0.5f) * su - 0.5f, ((float)(i / mdp::obs::DEPTH_W) + 0.5f) * sv - 0.5f, bx, by, bz);
 }
-// 층 픽셀 격자: cam_lw > 0 이면 층 전용 격자(EnvBatch::cldep), 아니면 정책 관측 깊이(64 × 40) 그대로
+// 층 픽셀 격자: cam_lw > 0 이면 층 전용 격자(EnvBatch::cldep), 아니면 깊이 관측(64 × 40) 그대로
 DEV int cam_gw(const EnvCfg& c) { return c.cam_lw > 0 ? c.cam_lw : mdp::obs::DEPTH_W; }
 DEV int cam_gh(const EnvCfg& c) { return c.cam_lw > 0 ? c.cam_lh : mdp::obs::DEPTH_H; }
 DEV int cam_npix(const EnvCfg& c) { return cam_gw(c) * cam_gh(c); }
@@ -165,7 +164,7 @@ DEV int cam_voxel(const EnvCfg& c, float h) {
 }
 DEV const uint8_t* cam_depth(const EnvBatch& b, int env) {
   if (b.cfg.cam_lw > 0) return b.cldep + (size_t)env * cam_npix(b.cfg);
-  return b.obs_img + (size_t)env * mdp::obs::IMG_SIZE + mdp::obs::NEAR_SIZE + mdp::obs::FAR_SIZE;
+  return b.depth + (size_t)env * mdp::obs::DEPTH_SIZE;
 }
 // 픽셀 하나의 층 갱신 몫. phase 0 = 지우기: 띠 안 점까지 3 차원 광선이 지나는 높이 칸 (끝 칸 빼고, 센서에서 cam_ray_range 안) → op(칸, 비트) 로 끔.
 // phase 1 = 표시: 띠 안 점이 센서에서 cam_obs_range 안이면 그 칸 그 높이 비트 → op(칸, 비트) 로 켬. 지도 자세(참값 + 오차)로 칸 — 실물과 같은 값.

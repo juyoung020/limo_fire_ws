@@ -27,15 +27,6 @@ World load_world(const std::string& path, const EnvHostCfg& hc, const std::strin
 // 첫 열이 path 인 머리줄·# 주석·빈 줄 무시). skipped 를 주면 안 닫힌 장면은 버리고 이유를 넣음
 std::vector<World> load_scene_list(const std::string& list_file, const EnvHostCfg& hc, std::vector<std::string>* skipped = nullptr);
 
-// 러너가 읽는 출력 — 모두 GPU 장치 포인터 (CPU 판이면 호스트), step 이 끝나면(스트림 순서) 유효. 호스트 왕복 없음
-struct StepOut {
-  const uint8_t* obs_img;       // [N][mdp::obs::IMG_SIZE]
-  const float* obs_1d;          // [N][o1d] — o1d = mdp::obs::POLICY_1D (기본), mdp::hier::POLICY_1D (계층형: 뒤에 후보 칸)
-  const int32_t* done;          // [N] mdp::cur::Done — 종료 여부는 mdp::cur::terminal(done), 끊김 = 3
-  const EpInfo* ep;             // [N] done ≠ 0 인 환경의 끝난 판 정보 (덮음·t95·길이·충돌·단계·맵)
-  int o1d;                      // 관측 1D 한 환경 칸 수
-};
-
 // GPU 광선 길 (include/optix_rt.h). CPU 참조판과 비트까지 같은 것은 kRayRtFast 만 빼고 모두 — 빠른 길은 하드웨어 삼각형 교차라
 // 모서리·동점에서 다른 삼각형(또는 맞음·빗나감)을 골라 통계로만 같다. GPU 결과를 --cpu·옛 빌드와 줄 단위로 견주는 도구는 정확한 길로 돈다
 enum RayPath : int { kRayCpu = 0, kRaySoft = 1, kRayRtExact = 2, kRayRtFast = 3 };
@@ -52,12 +43,10 @@ class Env {
   Env& operator=(const Env&) = delete;
 
   void reset();                         // 모든 환경 새 판 + 관측
-  // 환경마다 float mdp::act::DIM 개 (v, vy, ω, 끝 선언) — 정규 단위 [−1, 1], 선언은 0/1 (> 0.5 이면 선언).
-  // cfg.act_raw 면 물리 단위. 목표점 행동이면 [번호, 0, 0, 선언]. 계층형(kActPath)이면 [후보 번호, 0, 0, 0] — 한 번 부르면 결정 하나
-  // (속도 행동 decide_steps 걸음 묶음: 보상·항은 묶음 합, done 은 끝난 걸음의 코드 — 판이 묶음 가운데서 끝나면 그 환경은 남은 걸음을 쉬고 묶음 끝에 리셋).
-  // 계층형 후보 칸은 관측 1D 뒤 mdp::hier::CAND_1D 칸. GPU 면 장치 포인터, CPU 면 호스트 포인터
+  // 환경마다 float mdp::act::DIM 개 (v, vy, ω) — 정규 단위 [−1, 1]. cfg.act_raw 면 물리 단위.
+  // 계층형(kActPath)이면 [후보 번호, 0, 0] — 한 번 부르면 결정 하나 (속도 행동 decide_steps 걸음 묶음: done 은 끝난 걸음의 코드 — 판이 묶음 가운데서
+  // 끝나면 그 환경은 남은 걸음을 쉬고 묶음 끝에 리셋). 아래층 걸음 길(low_rl)이면 한 번 = 걸음 하나. GPU 면 장치 포인터, CPU 면 호스트 포인터
   void step(const float* actions, cudaStream_t st = 0);
-  StepOut outputs() const;
   void sync() const;
 
   // 호스트로 꺼내기 (비교·뷰어용)
@@ -72,7 +61,7 @@ class Env {
   void get_layer_depth(std::vector<uint8_t>& out) const;
   // 닫힘 규칙의 지나간 길 비트 판 [env · 2 · size · fmap_row] (env.h EnvBatch::trail: 0 지나간 칸 · 1 본 칸) — 도구가 닫힘을 호스트에서 다시 셀 때
   void get_trail(std::vector<uint32_t>& out) const;
-  void get_obs(std::vector<uint8_t>& img, std::vector<float>& o1d) const;
+  void get_depth(std::vector<uint8_t>& out) const;   // 깊이 관측 [N][mdp::obs::DEPTH_SIZE] (observations.h depth_u8 값)
   void get_cand(std::vector<int32_t>& out) const;   // 계층형 후보 목표 칸 [N][mdp::hier::K] (−1 빈 슬롯) — 도구용
   void get_cand_cur(std::vector<int32_t>& out) const;   // 후보마다 "그 덩어리가 지금 목표 칸을 품음" 비트 [N] (hier_path.h act_same — 합친 탐사 도구가 목표를 이어 갈 때)
   // 아래층 계측·단독 과제 (include/low_task.h — cfg.low_stat·low_task 일 때만): 판 누적 [N] (끄면 빈 벡터) · 환경마다 목표 칸·모드 넣기 (결정 앞) ·
@@ -90,7 +79,7 @@ class Env {
   // 움직이는 사람 (src/people_host.cpp): 환경마다 다음 판 사람 수 상한 (판 시작 인자, 0 ~ kMaxPeople) · 이 판 사람들 (뷰어 재생)
   void set_people_max(const std::vector<int>& k);
   void get_people(std::vector<People>& out) const;
-  // 환경 하나의 실행 상태 저장·복원 (2026-11-17, 판단 모델 결과 라벨의 갈래 굴리기 — upper_lora/rollout): 상태(사람 포함)·지도·지나간 길·관측·후보·아래층·작업 판.
+  // 환경 하나의 실행 상태 저장·복원 (2026-11-17, 판단 모델 결과 라벨의 갈래 굴리기 — upper_lora/rollout): 상태(사람 포함)·지도·지나간 길·깊이 관측·후보·아래층·작업 판.
   // 같은 설정(EnvHostCfg · 장면 · n_env 무관)의 Env 끼리 주고받을 수 있음. CPU · GPU 같은 꼴 (GPU 는 장치 ↔ 호스트 복사). 맵·장면 같은 정적 업로드는 안 담음
   std::vector<uint8_t> env_blob(int env) const;
   void set_env_blob(int env, const std::vector<uint8_t>& blob);
@@ -114,9 +103,8 @@ class Env {
   T* upload(const std::vector<T>& v);
 };
 
-// 시험용 무작위 행동 하나 (out[0..3]). 속도 행동은 정규 단위로 고르게(조금 넘게 — 자르기도 시험), 선언은 드물게(p_declare),
-// act_raw 면 물리 단위 한도 안. 목표점 행동은 번호
-inline void random_action(const EnvCfg& c, uint64_t& rng, float* out, float p_declare = 0.f) {
+// 시험용 무작위 행동 하나 (out[0..2]). 속도 행동은 정규 단위로 고르게(조금 넘게 — 자르기도 시험), act_raw 면 물리 단위 한도 안. 계층형은 후보 번호
+inline void random_action(const EnvCfg& c, uint64_t& rng, float* out) {
   if (c.action_mode == kActVelocity) {
     if (c.act_raw) {
       out[0] = dm::rand_range(rng, -0.3f * c.act_v_max, c.act_v_max);
@@ -127,22 +115,18 @@ inline void random_action(const EnvCfg& c, uint64_t& rng, float* out, float p_de
       out[1] = dm::rand_range(rng, -1.2f, 1.2f);
       out[2] = dm::rand_range(rng, -1.2f, 1.2f);
     }
-  } else if (c.action_mode == kActPath) {   // 후보 번호 (빈 칸이면 환경이 제자리 회전)
+  } else {   // 계층형: 후보 번호 (빈 칸이면 환경이 제자리 회전)
     out[0] = (float)(dm::splitmix64(rng) % (uint64_t)mdp::hier::K);
     out[1] = out[2] = 0.f;
-  } else {
-    out[0] = (float)(dm::splitmix64(rng) % (uint64_t)(c.n_dir * c.n_dist));
-    out[1] = out[2] = 0.f;
   }
-  out[3] = dm::rand01(rng) < p_declare ? 1.f : 0.f;
+  (void)dm::rand01(rng);   // 옛 끝 선언 뽑기 자리 (2026-11-18 지움) — 난수 차례를 그대로 두어 시험 도구의 행동 줄이 예전과 같게
 }
 
 // 물리 단위 (v, vy, ω) → 정규 단위 (기준선·도구가 정규 단위 환경을 몰 때)
-inline void to_normalized(const EnvCfg& c, float v, float vy, float w, float declare, float* out) {
+inline void to_normalized(const EnvCfg& c, float v, float vy, float w, float* out) {
   out[0] = v >= 0.f ? v / c.act_v_fwd : v / c.act_v_back;
   out[1] = vy / c.act_vy_max;
   out[2] = w / c.act_w_max;
-  out[3] = declare;
 }
 
 // 한 걸음 (src/env_kernel.cu, src/env_ref.cpp)
