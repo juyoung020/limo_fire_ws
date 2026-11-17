@@ -79,12 +79,13 @@ class ObjectGoto : public rclcpp::Node {
     query_pub_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("query_topic", "/object_mapper/query"), 10);
     explore_pub_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_topic", "/low_rl/instruction"), 10);
     goto_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(declare_parameter<std::string>("explore_goto_topic", "/low_rl/goto"), 10);
+    face_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(declare_parameter<std::string>("explore_face_topic", "/low_rl/goto_face"), 10);
     objects_sub_ = create_subscription<vision_msgs::msg::Detection3DArray>(
       declare_parameter<std::string>("objects_topic", "/object_mapper/objects"), rclcpp::QoS(1).transient_local(),
       [this](vision_msgs::msg::Detection3DArray::ConstSharedPtr m) {
         const size_t before = objects_ ? objects_->detections.size() : 0;
         objects_ = m;
-        if (searching_ && m->detections.size() != before) {try_name();}   // 새 물체가 올라오면 바로 다시 찾음
+        if (searching_ && !done_ && m->detections.size() != before) {try_name();}   // 새 물체가 올라오면 바로 다시 찾음
       });
     result_sub_ = create_subscription<vision_msgs::msg::Detection3DArray>(
       declare_parameter<std::string>("query_result_topic", "/object_mapper/query_result"), 10,
@@ -92,6 +93,16 @@ class ObjectGoto : public rclcpp::Node {
     map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
       declare_parameter<std::string>("map_topic", "/map"), rclcpp::QoS(1).transient_local().reliable(),
       [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr m) {map_ = m;});
+    // 탐사 노드가 도착을 알리면(low_rl ~/goto_status "도착…") 이 목표는 끝 — 새 목표가 올 때까지 다시 찾지 않음
+    arrived_sub_ = create_subscription<std_msgs::msg::String>(declare_parameter<std::string>("explore_status_topic", "/low_rl/goto_status"), 10,
+      [this](std_msgs::msg::String::ConstSharedPtr m) {
+        if (m->data.rfind("도착", 0) == 0 && !goal_text_.empty() && !done_) {
+          done_ = true;
+          searching_ = false;
+          waiting_query_ = false;
+          say("끝: " + m->data + " — 새 목표를 줄 때까지 다시 찾지 않음");
+        }
+      });
     goal_sub_ = create_subscription<std_msgs::msg::String>("~/goal", 10,
       [this](std_msgs::msg::String::ConstSharedPtr m) {on_goal(m->data);});
     nav_ = rclcpp_action::create_client<Nav>(this, declare_parameter<std::string>("nav_action", "navigate_to_pose"));
@@ -170,6 +181,7 @@ class ObjectGoto : public rclcpp::Node {
     goal_text_ = text;
     waiting_query_ = false;
     searching_ = false;
+    done_ = false;
     if (text.empty()) {
       std_msgs::msg::String m;
       explore_pub_->publish(m);   // 탐사 노드 지시도 지움
@@ -209,7 +221,7 @@ class ObjectGoto : public rclcpp::Node {
   }
 
   void on_result(const vision_msgs::msg::Detection3DArray::ConstSharedPtr & m) {
-    if (!waiting_query_) {return;}
+    if (!waiting_query_ || done_) {return;}
     waiting_query_ = false;
     if (!m->detections.empty() && !m->detections[0].results.empty() &&
         m->detections[0].results[0].hypothesis.score >= query_min_score_) {
@@ -223,6 +235,7 @@ class ObjectGoto : public rclcpp::Node {
   }
 
   void not_found() {
+    if (done_) {return;}
     std_msgs::msg::String m;
     m.data = goal_text_;
     explore_pub_->publish(m);
@@ -231,6 +244,7 @@ class ObjectGoto : public rclcpp::Node {
   }
 
   void tick() {
+    if (done_) {return;}
     if (waiting_query_ && (now() - query_t0_).seconds() > query_wait_) {
       waiting_query_ = false;
       if (!searching_) {not_found();}
@@ -289,8 +303,10 @@ class ObjectGoto : public rclcpp::Node {
         if (rd < r_in || rd > r_out) {continue;}
         const int x = ocx + dx, y = ocy + dy;
         if (x < 0 || y < 0 || x >= W || y >= H) {continue;}
+        // 물체에 가까운 고리(0.1 m 띠)부터, 같은 띠면 로봇에서 길이 짧은 칸 — 갈 수 있으면 물체 바로 옆에 선다
         const int dd = dist[static_cast<size_t>(y * W + x)];
-        if (dd >= 0 && dd < bd) {bd = dd; best = y * W + x;}
+        const int key = static_cast<int>((rd - r_in) / 0.1) * 1000000 + dd;
+        if (dd >= 0 && key < bd) {bd = key; best = y * W + x;}
       }
     }
     if (best < 0) {return std::nullopt;}
@@ -298,6 +314,8 @@ class ObjectGoto : public rclcpp::Node {
   }
 
   void go_to(const vision_msgs::msg::Detection3D & d, const std::string & how) {
+    waiting_query_ = false;   // 찾았으면 기다리던 설명 검색·다시 찾기를 멈춤 (도착·새 지시까지 "지도에 없음" 으로 안 돌아감)
+    searching_ = false;
     const double ox = d.bbox.center.position.x, oy = d.bbox.center.position.y;
     const auto spot = stand_spot(ox, oy);
     if (!spot) {
@@ -326,6 +344,12 @@ class ObjectGoto : public rclcpp::Node {
       };
       nav_->async_send_goal(g, o);
     } else {
+      geometry_msgs::msg::PointStamped f;   // 도착 뒤 바라볼 물체 자리 (low_rl ~/goto_face) — ~/goto 보다 먼저
+      f.header.frame_id = map_frame_;
+      f.header.stamp = now();
+      f.point.x = ox;
+      f.point.y = oy;
+      face_pub_->publish(f);
       geometry_msgs::msg::PointStamped p;
       p.header.frame_id = map_frame_;
       p.header.stamp = now();
@@ -341,7 +365,8 @@ class ObjectGoto : public rclcpp::Node {
   double stand_dist_, stand_band_, robot_radius_, query_wait_, query_min_score_;
   int occ_threshold_;
   std::vector<std::pair<std::string, std::string>> aliases_;
-  bool waiting_query_ = false, searching_ = false;
+  bool waiting_query_ = false, searching_ = false, done_ = false;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr arrived_sub_;
   double requery_s_;
   rclcpp::Time query_t0_{0, 0, RCL_ROS_TIME};
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
@@ -349,7 +374,7 @@ class ObjectGoto : public rclcpp::Node {
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_, query_pub_, explore_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr target_pub_;
   rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr overlay_pub_;
-  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr goto_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr goto_pub_, face_pub_;
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr objects_sub_, result_sub_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr goal_sub_;

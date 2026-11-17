@@ -189,10 +189,20 @@ class LowRlNode : public rclcpp::Node {
     pub_dec_img_ = create_publisher<sensor_msgs::msg::Image>("~/decider_image", rclcpp::QoS(1).transient_local());   // 판단 모델에 마지막으로 보낸 지도 그림 (보기만)
     publish_dec_placeholder();   // 첫 요청 전에는 회색 판 (RViz 가 "No Image" 로 비지 않게)
     // 물체로 가기 (limo_fire_navigation object_goto 가 탐사 모드에서 설 자리를 줌) · 지시 글 (판단 모델 글에 넣음 — 물체 찾기 모드)
-    goto_resume_ = declare_parameter<bool>("goto_resume", true);
+    goto_resume_ = declare_parameter<bool>("goto_resume", false);   // 도착하면 멈춤 (true = 탐사 이어 감)
     goto_arrive_m_ = declare_parameter<double>("goto_arrive_m", 0.4);
     pub_goto_status_ = create_publisher<std_msgs::msg::String>("~/goto_status", rclcpp::QoS(1).transient_local());
+    // 설 자리에 닿은 뒤 바라볼 물체 자리 (object_goto 가 ~/goto 바로 앞에 줌). 없으면 돌지 않고 끝
+    face_tol_ = declare_parameter<double>("goto_face_tol", 0.15);
+    face_timeout_s_ = declare_parameter<double>("goto_face_timeout_s", 5.0);
+    face_w_min_ = declare_parameter<double>("goto_face_w_min", 0.4);
+    sub_face_ = create_subscription<geometry_msgs::msg::PointStamped>("~/goto_face", 10, [this](geometry_msgs::msg::PointStamped::ConstSharedPtr m) {
+      face_x_ = m->point.x;
+      face_y_ = m->point.y;
+      face_valid_ = true;
+    });
     sub_goto_ = create_subscription<geometry_msgs::msg::PointStamped>("~/goto", 10, [this](geometry_msgs::msg::PointStamped::ConstSharedPtr m) {
+      facing_ = false;
       goto_x_ = m->point.x;
       goto_y_ = m->point.y;
       goto_active_ = true;
@@ -205,6 +215,8 @@ class LowRlNode : public rclcpp::Node {
       instruction_ = m->data;
       if (instruction_.empty()) {
         goto_active_ = false;
+        facing_ = false;
+        face_valid_ = false;
         say_goto("지시 없음 — 보통 탐사");
       } else if (!goto_active_) {
         say_goto("찾는 중: " + instruction_ + " (지도에 아직 없음 — 탐사하며 찾음)");
@@ -427,13 +439,17 @@ class LowRlNode : public rclcpp::Node {
         const double gx = e.x + e.ex - goto_x_, gy = e.y + e.ey - goto_y_;
         if (std::hypot(gx, gy) <= goto_arrive_m_) {
           goto_active_ = false;
-          say_goto("도착: " + goto_label_ + (goto_resume_ ? " — 탐사를 이어 감" : " — 멈춤"));
           env_->set_cmd(sim::LowCmd{-1, 0});
-          if (!goto_resume_) stop("paused", "물체에 도착 (goto_resume false)", true);
+          if (face_valid_) { facing_ = true; facing_t0_ = now().seconds(); }   // 물체 쪽으로 제자리 돌기 뒤 끝
+          else finish_goto();
         }
       }
+      if (facing_ && running()) {   // 물체를 봄: 남은 각 < face_tol 또는 face_timeout 이면 끝
+        const double err = face_err(e);
+        if (std::fabs(err) < face_tol_ || now().seconds() - facing_t0_ > face_timeout_s_) { facing_ = false; finish_goto(); }
+      }
       // 판 끝 (시뮬 finish_step 의 합친 탐사 규칙 — combine_run.cpp:1270). 물체로 가는 중이면 끝내지 않음
-      if (goto_active_) {
+      if (goto_active_ || facing_) {
       } else if (ctl_->rough_done(e.step)) {   // 후보 모드 "대충 다 앎" 끝 (Ctl::rough_done — low_explore_check 끝 코드 11 과 같은 판정)
         finished_ = true;
         stop("done", "끝: 대충 다 앎 (후보 0 · 남은 덩어리는 대충 아는 곳 안 구멍뿐 10 s)", true);
@@ -442,7 +458,7 @@ class LowRlNode : public rclcpp::Node {
         pub_done_->publish(d);
         return;
       }
-      const int dn = goto_active_ ? 0 : env_->done();
+      const int dn = (goto_active_ || facing_) ? 0 : env_->done();
       if (dn == mdp::cur::kDeclareOk || dn == mdp::cur::kNoProgress || dn == mdp::cur::kTruncated) {
         finished_ = true;
         stop("done", dn == mdp::cur::kDeclareOk ? "끝: 지도 닫힘 + 진척 없음 10 s (시뮬 성공 판정)" : dn == mdp::cur::kNoProgress ? "끝: 지도 진척 없음 (시뮬 실패 판정)" : "끝: 시간 한도",
@@ -475,7 +491,8 @@ class LowRlNode : public rclcpp::Node {
     // 위층
     const auto t1 = clk::now();
     double dec_ms = -1.0;
-    if (goto_active_ && running()) {   // 물체로 가기: 위층 대신 그 설 자리를 목표로 (아래층 A* 는 같음)
+    if (facing_ && running()) {   // 도착 뒤 물체 쪽으로 도는 중: 위층 안 부름
+    } else if (goto_active_ && running()) {   // 물체로 가기: 위층 대신 그 설 자리를 목표로 (아래층 A* 는 같음)
       const int cell = goto_cell();
       if (cell >= 0 && (env_->low_cmd().target != cell || env_->low_cmd().follow != 1)) {
         env_->set_cmd(sim::LowCmd{cell, 1});
@@ -531,6 +548,12 @@ class LowRlNode : public rclcpp::Node {
       const sim::LowCmd& lc = env_->low_cmd();
       if (lc.follow != 0) env_->cell_xy(lc.target, &gx, &gy);
       rec_->act(v, w, gx, gy);
+    }
+    if (facing_ && running()) {   // 도착 뒤 물체 쪽으로 제자리 돌기 (아래층 대신): ω = 비례, 최소 face_w_min (바퀴 마찰), 최대 1 rad/s
+      const double err = face_err(env_->state());
+      const double ww = std::clamp(2.0 * err, -1.0, 1.0);
+      v = 0.f;
+      w = (float)(std::fabs(ww) < face_w_min_ ? std::copysign(face_w_min_, err) : ww);
     }
     if (!running() || stale_) { v = 0.f; w = 0.f; }
     if (std::fabs(v) > max_speed_) v = v > 0.f ? (float)max_speed_ : -(float)max_speed_;   // max_speed (기본 = 시뮬 한도라 안 자름)
@@ -770,6 +793,15 @@ class LowRlNode : public rclcpp::Node {
     if (cx < 0 || cy < 0 || cx >= world_.gw || cy >= world_.gh) return -1;
     return cy * world_.gw + cx;
   }
+  // 로봇 방향과 물체 쪽 방향의 차 (rad, −π~π)
+  double face_err(const sim::EnvState& e) const {
+    const double a = std::atan2(face_y_ - (e.y + e.ey), face_x_ - (e.x + e.ex)) - (e.th + e.eth);
+    return std::atan2(std::sin(a), std::cos(a));
+  }
+  void finish_goto() {
+    say_goto("도착: " + goto_label_ + (goto_resume_ ? " — 탐사를 이어 감" : " — 멈춤"));
+    if (!goto_resume_) stop("paused", "물체에 도착 (goto_resume false)", true);
+  }
   void say_goto(const std::string& s) {
     std_msgs::msg::String m;
     m.data = s;
@@ -875,7 +907,9 @@ class LowRlNode : public rclcpp::Node {
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_instr_;
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
-  bool goto_active_ = false, goto_resume_ = true;
+  bool goto_active_ = false, goto_resume_ = false, facing_ = false, face_valid_ = false;
+  double face_x_ = 0.0, face_y_ = 0.0, face_tol_ = 0.15, face_timeout_s_ = 5.0, face_w_min_ = 0.4, facing_t0_ = 0.0;
+  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_face_;
   double goto_x_ = 0.0, goto_y_ = 0.0, goto_arrive_m_ = 0.4;
   std::string goto_label_, instruction_;
   long n_png_pub_ = 0;
