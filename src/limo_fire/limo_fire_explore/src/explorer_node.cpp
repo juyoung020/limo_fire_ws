@@ -98,6 +98,8 @@ class ExplorerNode : public rclcpp::Node {
     lxd::Params dp;
     dp.px = (int)declare_parameter<int>("decider_px", dp.px);   // 기본은 scripts/low_decider.h Params (시뮬·라벨과 같은 값)
     dp.compact = declare_parameter<bool>("decider_compact", dp.compact);   // 짧은 꼴 (미세조정 v1 꼴 · 로봇 약 2 s)
+    dp.fmt = (int)declare_parameter<int>("decider_fmt", dp.fmt);           // 요청 꼴 1 = state JSON 객체 (v1) · 2 = state 글 하나 (짧은 표 — 토큰 적고 앞부분 캐시)
+    dp.stop_cand = declare_parameter<bool>("decider_stop_cand", dp.stop_cand);   // 지시가 있을 때 멈춤 후보 (고르면 멈춤)
     dp.input = dec::kBoth;
     dp.match_r = (float)declare_parameter<double>("decider_match_r", 1.5);
     dp.hint = declare_parameter<bool>("decider_hint", true);          // 글의 "Rules of thumb"
@@ -604,6 +606,13 @@ class ExplorerNode : public rclcpp::Node {
       publish_goal(cmd.target);
     }
     if (env_->state().step % lp_.decide_steps == 0) publish_object_cands();
+    if (dec_up_->take_stop_pick()) {   // 판단 모델이 멈춤 후보를 고름 ("멈춰" · "거기 서") → 따라가기 · 물체로 가기 끝, 꺼짐 (다시 켜면 이어 감)
+      end_follow("");
+      end_goto();
+      instr_.stop();
+      say_goto("판단 모델이 멈춤을 고름 — 멈춤 (지시: " + instruction_ + ")");
+      stop("paused", "판단 모델이 멈춤을 고름", true);
+    }
     lxd::Params::Obj pick;
     const bool picked = dec_up_->take_object_pick(&pick);
     if (follower_.active() && stepped_change) end_follow("판단 모델이 따라가기 대신 탐사 자리를 고름");

@@ -62,6 +62,7 @@ struct FakeModel : lxd::Transport {
   bool follow = false;  // --dec-fake follow: kind follow 후보가 있으면 그 첫 글자 (따라가기 시험), 없으면 해시
   int fault = 0;        // --dec-fake down: 바로 실패(서버 꺼짐) · garbled: 지연 뒤 꼴 틀린 답 · oor: 없는 글자 'Z' · obj: kind object 첫 글자(없으면 해시)
   bool obj = false;
+  bool stopk = false;   // --dec-fake stop: kind stop 후보가 있으면 그 글자 (멈춤 시험), 없으면 해시
   struct P { int ready; lxd::Answer a; std::string body; };
   std::vector<P> q;
   std::vector<std::string> sent;   // 보낸 본문 (두 쪽 비교)
@@ -100,11 +101,22 @@ struct FakeModel : lxd::Transport {
     if (fault == 3) { a.ok = true; a.choice = "Z"; q.push_back({now + lat, a, r.body}); sent.push_back(r.body); return; }
     a.ok = true;
     a.choice = std::string(1, (char)('A' + (first ? 0 : (int)(h % (uint64_t)(r.cells.size())))));
-    if (follow || obj) {
+    if (follow || obj || stopk) {
+      const std::string kind = follow ? "follow" : obj ? "object" : "stop";
       const auto j = nlohmann::json::parse(r.body, nullptr, false);
-      if (j.is_object() && j.contains("state") && j["state"].contains("candidates"))
+      if (j.is_object() && j.contains("state") && j["state"].is_object() && j["state"].contains("candidates")) {
         for (const auto& c : j["state"]["candidates"])
-          if (c.contains("kind") && c["kind"] == (follow ? "follow" : "object")) { a.choice = c["id"].get<std::string>(); break; }
+          if (c.contains("kind") && c["kind"] == kind) { a.choice = c["id"].get<std::string>(); break; }
+      } else if (j.is_object() && j.contains("state") && j["state"].is_string()) {   // 꼴 2: 후보 줄 "글자 종류 …"
+        const std::string t = j["state"].get<std::string>();
+        for (size_t i = t.find("\nCandidates:"); i != std::string::npos && (i = t.find('\n', i + 1)) != std::string::npos;) {
+          if (t.compare(i + 2, kind.size() + 1, " " + kind) == 0 && (i + 3 + kind.size() >= t.size() || t[i + 3 + kind.size()] == ' ' || t[i + 3 + kind.size()] == '\n')) {
+            a.choice = t.substr(i + 1, 1);
+            break;
+          }
+          if (i + 1 < t.size() && t[i + 1] == '\n') break;   // 후보 줄 끝 (빈 줄)
+        }
+      }
     }
     q.push_back({now + lat, a, r.body});
     sent.push_back(r.body);
@@ -163,10 +175,12 @@ int main(int argc, char** argv) {
   float dec_lead = lxd::Params{}.ask_lead_s;
   int dec_mode = 1, dec_max = 6, dec_order = 0;   // 실물 노드 기본과 같게 (decider_mode event · decider_max_cands 6)
   bool dec_compact = lxd::Params{}.compact, dec_memf = true;
+  int dec_fmt = lxd::Params{}.fmt;
+  bool dec_stop = lxd::Params{}.stop_cand;
   int dec_px = lxd::Params{}.px;
   std::string dec_input = "both", dec_url;
   std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
-  bool dec_fake_a = false, dec_fake_follow = false, dec_fake_obj = false, follow_on = false, goto_on = false;
+  bool dec_fake_a = false, dec_fake_follow = false, dec_fake_obj = false, dec_fake_stop = false, follow_on = false, goto_on = false;
   tsk::Params tsp;
   int obj_move_step = -1, instr_at_step = -1;
   std::string instr_at_text;
@@ -225,6 +239,8 @@ int main(int argc, char** argv) {
     else if (a == "--dec-period") dec_period = std::stod(nx());
     else if (a == "--dec-mode") dec_mode = nx() == "event" ? 1 : 0;
     else if (a == "--dec-compact") dec_compact = std::stoi(nx()) != 0;
+    else if (a == "--dec-fmt") dec_fmt = std::stoi(nx());             // 요청 꼴 1 (JSON 객체) · 2 (글 하나 — lxd::Params::fmt)
+    else if (a == "--dec-stop") dec_stop = std::stoi(nx()) != 0;      // 지시가 있을 때 멈춤 후보 (lxd::Params::stop_cand)
     else if (a == "--dec-px") dec_px = std::stoi(nx());
     else if (a == "--dec-memf") dec_memf = std::stoi(nx()) != 0;
     else if (a == "--dec-max") dec_max = std::stoi(nx());
@@ -238,7 +254,7 @@ int main(int argc, char** argv) {
     else if (a == "--ep-log") ep_log = nx();
     else if (a == "--contact-log") contact_log = nx();
     else if (a == "--lat-log") lat_log = nx();
-    else if (a == "--dec-fake") { const std::string f = nx(); dec_fake_a = f == "A"; dec_fake_follow = f == "follow"; dec_fake_obj = f == "obj";
+    else if (a == "--dec-fake") { const std::string f = nx(); dec_fake_a = f == "A"; dec_fake_follow = f == "follow"; dec_fake_obj = f == "obj"; dec_fake_stop = f == "stop";
                                   dec_fault = f == "down" ? 1 : f == "garbled" ? 2 : f == "oor" ? 3 : 0; }
     else if (a == "--follow") follow_on = true;
     else if (a == "--goto") goto_on = true;
@@ -322,6 +338,7 @@ int main(int argc, char** argv) {
     dp.hold_extra = dec_hold;
     dp.obj_always = dec_obj_always;
     dp.ask_lead_s = dec_lead;
+    dp.fmt = dec_fmt; dp.stop_cand = dec_stop;
     dp.compact = dec_compact; dp.px = dec_px; dp.mem_fields = dec_memf; dp.max_cands = dec_max; dp.order = dec_order;
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
@@ -333,7 +350,7 @@ int main(int argc, char** argv) {
     tsk::Fails gfail_s(tsp);
     tsk::Instr ins_s(tsp);
     if (!dec_instr.empty()) ins_s.start(0.0);
-    long g_start = 0, g_arrive = 0, g_nofail = 0, g_gone = 0, g_moved = 0, g_giveup_fail = 0, g_giveup_time = 0, g_instr_change = 0;
+    long g_stop = 0, g_start = 0, g_arrive = 0, g_nofail = 0, g_gone = 0, g_moved = 0, g_giveup_fail = 0, g_giveup_time = 0, g_instr_change = 0;
     if (!dec_instr.empty()) { us.set_instruction(dec_instr); ur.set_instruction(dec_instr); }
     us.set_class_hint(dec_hint_cls); ur.set_class_hint(dec_hint_cls);
     if (!dec_objs.empty()) {
@@ -356,6 +373,7 @@ int main(int argc, char** argv) {
     ms.first = mr.first = dec_fake_a;
     ms.follow = mr.follow = dec_fake_follow;
     ms.obj = mr.obj = dec_fake_obj;
+    ms.stopk = mr.stopk = dec_fake_stop;
     ms.fault = mr.fault = dec_fault;
     // 따라가기 (--follow): 두 쪽 따라가기 (같은 입력 → 같은 명령이어야), 사람별 마지막으로 본 때 · 자리, 셈
     ofl::Follower fs, fr;
@@ -537,6 +555,14 @@ int main(int argc, char** argv) {
           lxd::Params::Obj pk_s, pk_r;
           const bool gs = us.take_object_pick(&pk_s), gr = ur.take_object_pick(&pk_r);
           if (gs != gr || (gs && (pk_s.oid != pk_r.oid || pk_s.follow != pk_r.follow))) ++f_diff;
+          const bool ss = us.take_stop_pick(), sr = ur.take_stop_pick();
+          if (ss != sr) ++f_diff;
+          if (ss) {   // 노드: 따라가기 · 물체로 가기 끝 → 멈춤(꺼짐). 여기선 다음 지시까지 제자리 (목표 없음 · 판단 모델은 답만 기다림)
+            fs.stop(); fr.stop(); gs_.cancel(); gr_.cancel(); ins_s.stop();
+            us.set_external(true); ur.set_external(true);
+            cpu.set_low_cmd(std::vector<sim::LowCmd>{sim::LowCmd{-1, 1}}); robot.set_cmd(sim::LowCmd{-1, 1});   // 도착 멈춤과 같은 "목표 없음 — 제자리"
+            ++g_stop;
+          }
           if (goto_on) {   // 물체로 가기 (task_sup.h — 노드 explorer_node.cpp 와 같은 차례)
             const sim::EnvState& e = st[0];
             const sim::EnvState& er = robot.state();
@@ -960,6 +986,7 @@ int main(int argc, char** argv) {
     if (use_dec)
       std::printf("판단 모델: 주기 %d 걸음 · 지연 %d 걸음 · 보냄 %ld · 답 적용 %ld · 후보 안 맞음 %ld · slot0 대신 %ld · 본문 다름 %ld | ", dp.period_steps, ms.lat, n_sent_all + us.n_sent(), n_ans,
                   n_nomatch_all + us.n_nomatch(), n_fb_all + us.n_fallback(), d_body);
+    if (dec_stop) std::fprintf(stderr, "STOP 멈춤 고름 %ld\n", g_stop);
     if (goto_on)
       std::fprintf(stderr, "GOTO 감 %ld · 닿음 %ld · 못 감 %ld · 고른 물체 사라짐·옮김 %ld (옮김 주입 %ld) · 포기(못 감 %ld · 시간 %ld) · 규칙이 지시 물체로 %ld · 잇따른 실패 끝 %d · 지시 바뀜 %ld · 새 지시 물음 %ld · 두 쪽 다름 %ld\n",
                    g_start, g_arrive, g_nofail, g_gone, g_moved, g_giveup_fail, g_giveup_time, us.n_fb_obj(), us.streak(), g_instr_change,

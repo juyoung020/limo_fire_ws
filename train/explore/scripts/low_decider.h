@@ -69,6 +69,11 @@ struct Params {
   };
   std::vector<Obj> objects;
   float obj_ring_in = 0.6f, obj_ring_out = 1.2f, obj_clear = 0.25f;   // 설 자리 고리 (물체에서 m) · 둘레 빈 칸 반경 (m) — object_goto 와 같은 뜻
+  // 멈춤 후보 (지시가 있을 때만, 끄면 글이 예전과 바이트 같음): 후보 끝에 kind stop 한 칸 — 고르면 노드가 멈춤 ("멈춰" · "거기 서" 같은 지시를 판단 모델이 고를 수 있게)
+  bool stop_cand = false;
+  // 요청 꼴: 1 = state 를 JSON 객체로 (서버 템플릿이 tojson(indent=2) — v1, 미세조정 v1 꼴) · 2 = state 를 글 하나로 (state_text — 바뀌지 않는 글 · 지시를 앞에,
+  // 후보는 한 줄씩 "글자 종류 이름 값 …"). 2 는 같은 요청이 d1 토크나이저로 1433 → 약 890 토큰이고, 지시가 같은 동안 앞부분이 서버 캐시에 남음 (ko_eval README)
+  int fmt = 1;
   float match_r = 1.5f;     // 답의 후보 안정 번호가 사라졌을 때 그 서는 자리 → 지금 후보 (m)
 };
 
@@ -146,6 +151,7 @@ class Upper {
       last_choice_ = a.choice;   // 그림용 (RViz ~/candidates): 마지막 답 글자 · 그 후보 번호 · 걸음
       last_pick_id_ = req_.ids[(size_t)k];
       last_ans_step_ = s.step;
+      if (req_.ids[(size_t)k] == kStopId) { stop_pick_ = true; picked_obj = true; continue; }   // 멈춤 후보: 노드가 멈춤 (take_stop_pick)
       if (req_.ids[(size_t)k] <= kObjId0) {   // 물체 후보: 노드가 그 설 자리로 감 (take_object_pick)
         const size_t oi = (size_t)(kObjId0 - req_.ids[(size_t)k]);
         if (oi < obj_req_.size()) { obj_last_ = obj_req_[oi]; obj_pick_ = true; picked_obj = true; }
@@ -326,6 +332,51 @@ class Upper {
   }
   // 요청 본문 그리기 (후보 모드) — 노드·시뮬(build_cand)과 라벨 다시 그리기(upper_lora/rollout/req_render: 갈래 굴리기가 남긴 원시 상태)가 같은 함수를 씀.
   // C = 후보(cand::build 차례, 기억 필드 포함) · M = 판 기억 · decs = 지금까지 결정 · (rx, ry, rth) = 지도 자세 · lmap = 지도 (c.size 줄 간격)
+  // 요청 꼴 2: render_cand 가 만든 state(JSON) → 글 하나. 바뀌지 않는 글(과제 · 그림 설명 · 칸 뜻 · 후보 종류 · 힌트 · 지시)을 앞에, 바뀌는 것(후보 · 결정 기록 · 아는 물체)을 뒤에.
+  // 후보 한 줄 = "글자 종류 [이름 oid] 이름 값 …" — 참/거짓 칸은 참일 때 이름만, 실패 0 이면 실패 칸을 뺌, 값이 정수인 실수는 정수로
+  static std::string state_text(const nlohmann::ordered_json& st) {
+    using oj = nlohmann::ordered_json;
+    const auto num = [](const oj& v) {
+      if (v.is_number_float()) { const double d = v.get<double>(); if (d == std::floor(d) && std::fabs(d) < 1e6) return std::to_string((long long)d); }
+      return v.dump();
+    };
+    const auto rep = [](std::string s, const std::string& a, const std::string& b) { const size_t i = s.find(a); if (i != std::string::npos) s.replace(i, a.size(), b); return s; };
+    std::string o = rep(st["task"].get<std::string>(), "(field instruction, written by the user, any language)", "(User instruction below, written by the user, any language)");
+    if (st.contains("map_image")) o += "\n\nMap image: " + rep(st["map_image"].get<std::string>(), "matching decision_log_newest_first", "matching the decision log");
+    if (st.contains("candidate_fields"))
+      o += "\n\nCandidate line: letter, kind, then name value pairs; flags are listed only when true. " + st["candidate_fields"].get<std::string>();
+    if (st.contains("candidate_kinds")) o += "\n\n" + st["candidate_kinds"].get<std::string>();
+    if (st.contains("hint")) o += "\n\n" + st["hint"].get<std::string>();
+    if (st.contains("instruction")) {
+      o += "\n\nUser instruction: " + st["instruction"].get<std::string>();
+      if (st.contains("class_hint") && !st["class_hint"].get<std::string>().empty()) o += "\nClass hint: " + st["class_hint"].get<std::string>();
+    }
+    o += "\n\nCandidates:";
+    for (const auto& c : st["candidates"]) {
+      const std::string k = c.contains("kind") ? c["kind"].get<std::string>() : "frontier";
+      o += "\n" + c["id"].get<std::string>() + " " + k;
+      if (k == "stop") continue;
+      if (k == "object" || k == "follow") {
+        o += " " + c["object"].get<std::string>() + " " + c["oid"].get<std::string>();
+        for (const char* f : {"len", "bear", "dist", "seen_s"}) o += std::string(" ") + f + " " + num(c[f]);
+        if (c.value("vis", false)) o += " vis";
+        continue;
+      }
+      for (const char* f : {"t", "len", "bear", "new", "w"}) o += std::string(" ") + f + " " + num(c[f]);
+      for (const char* f : {"room", "cur", "seen"}) if (c.value(f, false)) o += std::string(" ") + f;
+      if (c.contains("fail") && c["fail"].get<int>() != 0) o += " fail " + num(c["fail"]) + " fail_s " + (c["fail_s"].is_null() ? std::string("-") : num(c["fail_s"]));
+    }
+    if (st.contains("decision_log_newest_first") && !st["decision_log_newest_first"].empty()) {
+      o += "\n\nDecision log (newest first):";
+      for (const auto& l : st["decision_log_newest_first"]) o += "\n" + l.get<std::string>();
+    }
+    if (st.contains("known_objects")) {
+      std::string k;
+      for (const auto& l : st["known_objects"]) k += (k.empty() ? "" : "; ") + l.get<std::string>();
+      o += "\n\nKnown objects: " + (k.empty() ? std::string("none") : k);
+    }
+    return o;
+  }
   static constexpr const char* kHint = "Rules of thumb: prefer a spot that is close and roughly ahead; finish nearby small frontiers before leaving an area because coming back later is "
                                        "expensive; keep the current target unless another candidate is clearly better; avoid spots that failed recently.";
   static bool render_cand(const Params& P, const std::vector<cand::Cand>& C, const cand::Mem& M, const std::vector<Dec>& decs,
@@ -548,10 +599,20 @@ class Upper {
                                               "following that person at about 1 m. kind = frontier: a spot that maps unknown space (exploring). On the map image object and follow "
                                               "candidates are cyan squares, frontier candidates yellow dots."
                                         : "No object on the robot's object map is a candidate right now; all candidates are frontier spots (exploring).";
-    body["state"] = st;
+    const bool stop_c = P.stop_cand && !P.instruction.empty();
+    const char stop_key = (char)('A' + (int)dc.size());
+    if (stop_c) {   // 멈춤 후보: 끝 글자, 칸 없음 (그림에 안 그림), 안정 번호 kStopId
+      st["candidates"].push_back(oj{{"id", std::string(1, stop_key)}, {"kind", "stop"}});
+      st["candidate_kinds"] = st["candidate_kinds"].get<std::string>() + " kind = stop: stay where it is and stop moving (until the next instruction).";
+      r->cells.push_back(-1);
+      r->ids.push_back(kStopId);
+    }
+    if (P.fmt == 2) body["state"] = state_text(st);
+    else body["state"] = st;
     if (!png.empty()) body["images"] = oj::array({dec::png_uri(png)});
     oj crit = oj::object();
     for (const auto& d : dc) crit[std::string(1, d.key)] = nullptr;
+    if (stop_c) crit[std::string(1, stop_key)] = nullptr;
     body["questions"]["pick"] = oj{{"type", "choice"}, {"instructions", P.instruction.empty() ? "Which candidate spot should the robot drive to next so that the whole floor gets mapped in the least total time?"
                                                                                                : "Which candidate best carries out the user's instruction next? If the instruction is to explore, or what it asks "
                                                                                                  "for is not among the candidates, pick the spot that maps the floor (and so most likely reveals it) fastest."},
@@ -590,6 +651,8 @@ class Upper {
   void set_objects(const std::vector<Params::Obj>& o) { p_.objects = o; }
   // 판단 모델이 물체 후보를 골랐으면 그 설 자리 (한 번 꺼내면 지움) — 노드는 ~/goto 처럼 그 자리로 감
   bool take_object_pick(Params::Obj* o) { if (!obj_pick_) return false; *o = obj_last_; obj_pick_ = false; return true; }
+  // 판단 모델이 멈춤 후보를 골랐나 (한 번 꺼내면 지움) — 노드는 따라가기 · 물체로 가기를 끝내고 멈춤
+  bool take_stop_pick() { const bool b = stop_pick_; stop_pick_ = false; return b; }
   const std::vector<Params::Obj>& last_objects() const { return obj_req_; }   // 마지막 요청의 물체 후보 (글자 A … 차례, RViz 용)
   int last_send() const { return last_send_; }   // 마지막으로 보낸 걸음 (−1 = 아직)
   long n_sent() const { return n_sent_; }
@@ -628,6 +691,8 @@ class Upper {
  private:
   Params p_;
   static constexpr int kObjId0 = -1000;   // 물체 후보 안정 번호 = kObjId0 − 차례 (프론티어 후보 번호는 0 이상)
+  static constexpr int kStopId = -500;    // 멈춤 후보 안정 번호 (물체 kObjId0 − 차례 · 프론티어 0 이상과 겹치지 않음)
+  bool stop_pick_ = false;
   std::vector<Params::Obj> obj_req_;      // 마지막 요청의 물체 후보 (번호 차례)
   Params::Obj obj_last_;
   bool obj_pick_ = false;
