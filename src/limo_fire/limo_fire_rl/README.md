@@ -145,6 +145,22 @@ ros2 topic echo /low_rl/done            # true 면 끝 (지도 닫힘)
 - [ ] 다른 주행 노드(Nav2·`explore_frontier`·teleop)가 `/cmd_vel` 을 안 낸다 — `ros2 topic info /cmd_vel` 의 발행자가 없거나 low_rl 뿐
 - [ ] 젯슨 시간: `~/status` 의 평균 걸음 + 관측 + 위층이 100 ms 안 (넘으면 멈추고 알림)
 
+### 탐사 중 "○○ 로 가" (물체 지도 · `perception:=true`)
+
+`explore_fuel_rl.launch.xml perception:=true` 면 YOLO 분할 + 물체 지도(limo_fire_perception) 와 `object_goto`(limo_fire_navigation, `mode explore`)가 같이 뜬다.
+
+```bash
+ros2 topic pub -1 /object_goto/goal std_msgs/msg/String "{data: '의자'}"   # 한글 별칭(config/object_goto.yaml) 또는 영문 클래스 이름. 빈 글 = 지시 지움
+ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가는지 · /low_rl/goto_status: 가는 중 · 도착
+```
+
+- 물체 지도에 있으면: 물체 둘레 0.6~1.2 m 고리에서 로봇과 빈 칸으로 이어지는 가장 가까운 설 자리를 골라 `/low_rl/goto` 로 준다. `low_rl` 은 위층(판단 모델) 대신 그 칸을 목표로 같은 A* 아래층으로 가고,
+  `goto_arrive_m`(0.4 m) 안에 들면 "도착" 을 알리고 탐사를 이어 간다 (`goto_resume: false` 면 멈춤). 가는 동안은 탐사 끝 판정을 하지 않는다.
+- 없으면: 글을 `/low_rl/instruction` 으로 넘겨 판단 모델 요청에 지시(`instruction`)와 아는 물체 10 개(`known_objects`, 거리 · 방향)를 넣고 질문을 "빨리 찾기" 로 바꾼다 — 물체 찾기 모드.
+  물체 지도에 그 클래스가 올라오는 즉시 그리로 간다. 지시가 없으면 요청 본문은 예전과 바이트까지 같다 (`low_explore_check --dec-instr` 로 지시가 있을 때도 시뮬 == 실물 비트 확인).
+- RViz: 고른 물체에 흰 고리 + "GOAL 이름", 설 자리 초록 원, 왼쪽 아래 글상자(`/object_goto/overlay`).
+- 설명 글 검색(SigLIP2, "빨간 컵" 같은 글)은 다음 단계 — 지금은 클래스 이름·별칭만.
+
 ### 깊이 카메라 층을 볼 것
 
 깊이 카메라 장애물 층(env.yaml `camera_obstacles`, 걸음 0.1 s 마다 갱신 — `update_every_step`)은 후보·닫힘에서 막힌 곳을 뺀다. 층 전용 촘촘한 깊이 격자(`layer_grid`)는 시뮬에서 끝 무렵 길이 더 막혀 기본 끔. 실물 깊이가 시뮬 모델과 다르면(정렬 꺼짐·카메라 숙임 바뀜)

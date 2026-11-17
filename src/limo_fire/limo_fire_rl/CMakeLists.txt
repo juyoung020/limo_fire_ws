@@ -22,6 +22,7 @@ find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(vision_msgs REQUIRED)
 find_package(rviz_2d_overlay_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
@@ -48,7 +49,7 @@ target_link_libraries(low_rl ZLIB::ZLIB PNG::PNG Threads::Threads)
 target_include_directories(low_rl PRIVATE ${EXPLORE_DIR}/sim/tools ${EXPLORE_DIR}/scripts)   # low_node_rec.h (녹화 꼴) · fuel_upper.h · low_explore_ctl.h (위층 — combine_run 과 같은 코드)
 target_link_libraries(low_rl limo_fire_rl_core)
 target_compile_definitions(low_rl PRIVATE LIMO_FIRE_RL_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
-ament_target_dependencies(low_rl rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs)
+ament_target_dependencies(low_rl rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs vision_msgs)
 
 # 프론티어 탐사 노드: 탐사 기준선과 같은 찾기(mdp/frontier.h)·고르기(baselines/frontier/include/explore_lite.h), 값도 기준선 설정 그대로
 find_package(ament_index_cpp REQUIRED)

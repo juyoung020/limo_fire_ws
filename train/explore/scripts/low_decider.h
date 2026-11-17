@@ -49,6 +49,9 @@ struct Params {
   int max_cands = 6;        // 후보 모드: 요청에 넣는 후보 수 상한 (0 = 다). 기본 6 — 위층 비교(upper_lora/README, 빌드 1f275bf)에서 AUC180 이 후보 다 보다 +0.026, 토큰도 적음
   int order = 0;            // 후보 모드 글자 차례: 0 = 후보 점수 순 (cand::build) · 1 = 길 거리 순            // 후보 모드 결정 기록: 최근 K 개 결정(언제 · 고른 번호의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 가장 최근)로 — 0 = 끔
   int image = 0;            // 후보 모드 사진 꼴: 0 = A (지금 지도 한 장) · 1 = B (2 × 2 칸: 지금 · 5 · 15 · 30 s 전, 같은 범위 — 토큰 수 같음, 칸마다 해상도 반)
+  // 물체 찾기 지시 (실물 노드 ~/instruction). 비면 글이 예전과 바이트까지 같음 — 차면 "instruction" · "known_objects" 칸을 넣고 질문을 "빨리 찾기"로
+  std::string instruction;
+  std::vector<std::string> known_objects;   // "cup 1.2 m ahead-left" 꼴 짧은 글 (노드가 물체 지도에서 만듦)
   float match_r = 1.5f;     // 답의 후보 칸 → 지금 후보 (m). hier 후보 칸은 덩어리에서 로봇에 가장 가까운 칸이라 답을 기다리는 동안 옮겨감 — 0.5 m 면 답의 40 ~ 55 % 를 버림 (low_explore_check, 지연 2.6 s)
 };
 
@@ -449,12 +452,17 @@ class Upper {
                            "taken (top-right); the yellow dot with a black ring marks the candidate spot. A plain gray panel means the camera has not seen that spot yet.";
     }
     oj body;
+    if (!P.instruction.empty()) {
+      st["instruction"] = "The user asked the robot to find: \"" + P.instruction + "\". It is not on the robot's object map yet. Prefer candidates that are likely to reveal it soon.";
+      st["known_objects"] = P.known_objects;
+    }
     body["state"] = st;
     if (!png.empty()) body["images"] = oj::array({dec::png_uri(png)});
     if (!cpng.empty()) body["images"].push_back(dec::png_uri(cpng));
     oj crit = oj::object();
     for (const auto& d : dc) crit[std::string(1, d.key)] = nullptr;
-    body["questions"]["pick"] = oj{{"type", "choice"}, {"instructions", "Which candidate spot should the robot drive to next so that the whole floor gets mapped in the least total time?"},
+    body["questions"]["pick"] = oj{{"type", "choice"}, {"instructions", P.instruction.empty() ? "Which candidate spot should the robot drive to next so that the whole floor gets mapped in the least total time?"
+                                                                                               : "Which candidate spot should the robot drive to next to find the requested object as soon as possible?"},
                                    {"criteria", crit}};
     r->body = body.dump();
     return true;
@@ -485,6 +493,8 @@ class Upper {
   }
   void restart() { const Params p = p_; const camm::Memory* c = cam_; *this = Upper(p); cam_ = c; }
   bool waiting() const { return wait_; }
+  void set_instruction(const std::string& t) { p_.instruction = t; }
+  void set_known_objects(const std::vector<std::string>& k) { p_.known_objects = k; }
   int last_send() const { return last_send_; }   // 마지막으로 보낸 걸음 (−1 = 아직)
   long n_sent() const { return n_sent_; }
   long n_ans() const { return n_ans_; }

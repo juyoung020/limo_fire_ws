@@ -121,4 +121,12 @@
   <include file="$(find-pkg-share limo_fire_description)/launch/viewer.launch.xml" if="$(var rviz)">
     <arg name="use_sim_time" value="$(var use_sim_time)"/>
   </include>
+  <!-- "○○ 로 가" (저장 지도): 물체 지도(limo_fire_perception yolo.launch.xml objects_file:=…)에서 찾아 Nav2 로 그 옆 설 자리로.
+       ros2 topic pub -1 /object_goto/goal std_msgs/msg/String "{data: '소화기'}" · 지도에 없으면 상태에 "지도에 없음" -->
+  <arg name="object_goto" default="true" description="물체 이름·설명으로 Nav2 주행 (object_goto mode nav2)"/>
+  <node pkg="limo_fire_navigation" exec="object_goto" name="object_goto" output="screen" if="$(var object_goto)">
+    <param from="$(find-pkg-share limo_fire_navigation)/config/object_goto.yaml"/>
+    <param name="mode" value="nav2"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
 </launch>

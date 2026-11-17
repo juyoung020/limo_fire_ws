@@ -32,6 +32,8 @@
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <vision_msgs/msg/detection3_d_array.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -186,6 +188,32 @@ class LowRlNode : public rclcpp::Node {
     pub_cand_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/candidates", 10);
     pub_dec_img_ = create_publisher<sensor_msgs::msg::Image>("~/decider_image", rclcpp::QoS(1).transient_local());   // 판단 모델에 마지막으로 보낸 지도 그림 (보기만)
     publish_dec_placeholder();   // 첫 요청 전에는 회색 판 (RViz 가 "No Image" 로 비지 않게)
+    // 물체로 가기 (limo_fire_navigation object_goto 가 탐사 모드에서 설 자리를 줌) · 지시 글 (판단 모델 글에 넣음 — 물체 찾기 모드)
+    goto_resume_ = declare_parameter<bool>("goto_resume", true);
+    goto_arrive_m_ = declare_parameter<double>("goto_arrive_m", 0.4);
+    pub_goto_status_ = create_publisher<std_msgs::msg::String>("~/goto_status", rclcpp::QoS(1).transient_local());
+    sub_goto_ = create_subscription<geometry_msgs::msg::PointStamped>("~/goto", 10, [this](geometry_msgs::msg::PointStamped::ConstSharedPtr m) {
+      goto_x_ = m->point.x;
+      goto_y_ = m->point.y;
+      goto_active_ = true;
+      goto_label_ = instruction_.empty() ? "지정 자리" : instruction_;
+      char b[160];
+      std::snprintf(b, sizeof b, "가는 중: %s (%.2f, %.2f)%s", goto_label_.c_str(), goto_x_, goto_y_, running() ? "" : " — 탐사가 꺼져 있어 켜야 움직임");
+      say_goto(b);
+    });
+    sub_instr_ = create_subscription<std_msgs::msg::String>("~/instruction", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
+      instruction_ = m->data;
+      if (instruction_.empty()) {
+        goto_active_ = false;
+        say_goto("지시 없음 — 보통 탐사");
+      } else if (!goto_active_) {
+        say_goto("찾는 중: " + instruction_ + " (지도에 아직 없음 — 탐사하며 찾음)");
+      }
+      if (dec_up_) dec_up_->set_instruction(instruction_);
+    });
+    // 물체 지도 (limo_fire_perception object_mapper): 지시가 있을 때 판단 모델 글에 아는 물체를 넣음
+    sub_objects_ = create_subscription<vision_msgs::msg::Detection3DArray>("/object_mapper/objects", rclcpp::QoS(1).transient_local(),
+      [this](vision_msgs::msg::Detection3DArray::ConstSharedPtr m) { objects_ = m; });
     pub_cand_txt_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>("~/candidates_text", rclcpp::QoS(1).transient_local());
     srv_enable_ = create_service<std_srvs::srv::SetBool>("~/enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
@@ -394,8 +422,19 @@ class LowRlNode : public rclcpp::Node {
                       contact_resume_s_ > 0.0 ? "멈춤, 잠시 뒤 저절로 켬" : "멈춤, ~/enable true 로 다시");
         stop("paused", b, true);
       }
-      // 판 끝 (시뮬 finish_step 의 합친 탐사 규칙 — combine_run.cpp:1270)
-      if (ctl_->rough_done(e.step)) {   // 후보 모드 "대충 다 앎" 끝 (Ctl::rough_done — low_explore_check 끝 코드 11 과 같은 판정)
+      // 물체로 가기 (~/goto): 도착하면 상태를 알리고, goto_resume 이면 탐사를 이어 감 (아니면 멈춤)
+      if (goto_active_ && running()) {
+        const double gx = e.x + e.ex - goto_x_, gy = e.y + e.ey - goto_y_;
+        if (std::hypot(gx, gy) <= goto_arrive_m_) {
+          goto_active_ = false;
+          say_goto("도착: " + goto_label_ + (goto_resume_ ? " — 탐사를 이어 감" : " — 멈춤"));
+          env_->set_cmd(sim::LowCmd{-1, 0});
+          if (!goto_resume_) stop("paused", "물체에 도착 (goto_resume false)", true);
+        }
+      }
+      // 판 끝 (시뮬 finish_step 의 합친 탐사 규칙 — combine_run.cpp:1270). 물체로 가는 중이면 끝내지 않음
+      if (goto_active_) {
+      } else if (ctl_->rough_done(e.step)) {   // 후보 모드 "대충 다 앎" 끝 (Ctl::rough_done — low_explore_check 끝 코드 11 과 같은 판정)
         finished_ = true;
         stop("done", "끝: 대충 다 앎 (후보 0 · 남은 덩어리는 대충 아는 곳 안 구멍뿐 10 s)", true);
         std_msgs::msg::Bool d;
@@ -403,7 +442,7 @@ class LowRlNode : public rclcpp::Node {
         pub_done_->publish(d);
         return;
       }
-      const int dn = env_->done();
+      const int dn = goto_active_ ? 0 : env_->done();
       if (dn == mdp::cur::kDeclareOk || dn == mdp::cur::kNoProgress || dn == mdp::cur::kTruncated) {
         finished_ = true;
         stop("done", dn == mdp::cur::kDeclareOk ? "끝: 지도 닫힘 + 진척 없음 10 s (시뮬 성공 판정)" : dn == mdp::cur::kNoProgress ? "끝: 지도 진척 없음 (시뮬 실패 판정)" : "끝: 시간 한도",
@@ -436,7 +475,13 @@ class LowRlNode : public rclcpp::Node {
     // 위층
     const auto t1 = clk::now();
     double dec_ms = -1.0;
-    if (ctl_upper()) {
+    if (goto_active_ && running()) {   // 물체로 가기: 위층 대신 그 설 자리를 목표로 (아래층 A* 는 같음)
+      const int cell = goto_cell();
+      if (cell >= 0 && (env_->low_cmd().target != cell || env_->low_cmd().follow != 1)) {
+        env_->set_cmd(sim::LowCmd{cell, 1});
+        publish_goal(cell);
+      }
+    } else if (ctl_upper()) {
       if (running() && ctl_->due(env_->state())) {
         const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur(), env_->reach_keep()};
         int why = 0;
@@ -455,6 +500,7 @@ class LowRlNode : public rclcpp::Node {
         sim::LowCmd cmd;
         int why = 0;
         if (dp_cam_ > 0 && cam_.due(env_->state().step)) push_keyframe();
+        if (!instruction_.empty() && objects_ && env_->state().step % lp_.decide_steps == 0) dec_up_->set_known_objects(known_objects());
         if (dec_up_->step(v, env_->obs_1d() + mdp::obs::POLICY_1D, *ctl_, *dec_cli_, &cmd, &why)) {
           env_->set_cmd(cmd);
           why_dec_ = why;
@@ -696,6 +742,40 @@ class LowRlNode : public rclcpp::Node {
     cam_.push(std::move(fr));
   }
 
+  // 판단 모델 글에 넣을 아는 물체: 가까운 10 개 "cup 1.2 m front-left" (로봇 기준 거리 · 방향 8 칸)
+  std::vector<std::string> known_objects() const {
+    const sim::EnvState& s = env_->state();
+    const double rx = s.x + s.ex, ry = s.y + s.ey, th = s.th + s.eth;
+    std::vector<std::pair<double, std::string>> v;
+    static const char* dirs[8] = {"front", "front-left", "left", "back-left", "back", "back-right", "right", "front-right"};
+    for (const auto& d : objects_->detections) {
+      if (d.results.empty()) continue;
+      const double dx = d.bbox.center.position.x - rx, dy = d.bbox.center.position.y - ry, dist = std::hypot(dx, dy);
+      double a = std::atan2(dy, dx) - th;
+      a = std::atan2(std::sin(a), std::cos(a));
+      const int k = ((int)std::lround(a / (M_PI / 4)) + 8) % 8;
+      char b[96];
+      std::snprintf(b, sizeof b, "%s %.1f m %s", d.results[0].hypothesis.class_id.c_str(), dist, dirs[k]);
+      v.push_back({dist, b});
+    }
+    std::sort(v.begin(), v.end());
+    std::vector<std::string> out;
+    for (size_t i = 0; i < v.size() && i < 10; ++i) out.push_back(v[i].second);
+    return out;
+  }
+  // ~/goto 의 지도 좌표 → 탐사 지도 칸 (창 밖이면 −1)
+  int goto_cell() const {
+    const float res = env_->cfg().res;
+    const int cx = (int)std::floor((goto_x_ - world_.ox) / res), cy = (int)std::floor((goto_y_ - world_.oy) / res);
+    if (cx < 0 || cy < 0 || cx >= world_.gw || cy >= world_.gh) return -1;
+    return cy * world_.gw + cx;
+  }
+  void say_goto(const std::string& s) {
+    std_msgs::msg::String m;
+    m.data = s;
+    pub_goto_status_->publish(m);
+    RCLCPP_INFO(get_logger(), "%s", s.c_str());
+  }
   void publish_goal(int cell) {
     visualization_msgs::msg::MarkerArray ma;
     visualization_msgs::msg::Marker mk;
@@ -790,6 +870,14 @@ class LowRlNode : public rclcpp::Node {
     im.data.assign((size_t)im.step * im.height, 96);
     pub_dec_img_->publish(im);
   }
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_goto_status_;
+  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_goto_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_instr_;
+  rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;
+  vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
+  bool goto_active_ = false, goto_resume_ = true;
+  double goto_x_ = 0.0, goto_y_ = 0.0, goto_arrive_m_ = 0.4;
+  std::string goto_label_, instruction_;
   long n_png_pub_ = 0;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_done_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_goal_, pub_cand_;

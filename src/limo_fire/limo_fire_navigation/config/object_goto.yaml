@@ -1,0 +1,18 @@
+# "○○ 로 가" (object_goto). 탐사 중(mode explore → low_rl ~/goto) · 저장 지도(mode nav2 → Nav2 NavigateToPose). mode 는 launch 가 준다
+object_goto:
+  ros__parameters:
+    stand_dist: 0.6        # m, 물체 가운데에서 설 자리까지 최소 거리 (로봇 반 길이 0.16 + 물체 반 너비 여유) — 잠정
+    stand_band: 0.6        # m, 설 자리 고리 폭 (stand_dist ~ stand_dist + stand_band)
+    robot_radius: 0.25     # m, 설 자리 둘레 빈 칸 반경 (LIMO 외접 반경 0.21 + 여유) — 잠정
+    occupied_threshold: 50 # 지도 값이 이 이상이면 막힘 (nav2 map_server occupied_thresh 0.65 → 65 보다 낮게, 모름(-1)은 막힘)
+    query_wait: 3.0        # s, 설명 검색(SigLIP2) 답 기다림
+    query_min_score: 0.05  # 설명 검색 1 위 점수 하한 (SigLIP 시그모이드 확률) — 잠정
+    requery_s: 5.0         # s, 지도에 없을 때 설명 검색을 다시 하는 간격
+    # 한글 이름 = 물체 지도 클래스 이름 (COCO 80 종 · 화재 7 종). 영문 클래스 이름은 그대로 써도 된다
+    aliases: ["사람=person", "의자=chair", "소파=couch", "침대=bed", "식탁=dining_table", "책상=dining_table", "변기=toilet",
+              "티비=tv", "TV=tv", "노트북=laptop", "마우스=mouse", "리모컨=remote", "키보드=keyboard", "휴대폰=cell_phone", "핸드폰=cell_phone",
+              "전자레인지=microwave", "오븐=oven", "토스터=toaster", "싱크대=sink", "냉장고=refrigerator", "책=book", "시계=clock",
+              "꽃병=vase", "가위=scissors", "곰인형=teddy_bear", "칫솔=toothbrush", "병=bottle", "컵=cup", "그릇=bowl", "숟가락=spoon",
+              "포크=fork", "칼=knife", "가방=backpack", "배낭=backpack", "핸드백=handbag", "우산=umbrella", "여행가방=suitcase", "캐리어=suitcase",
+              "화분=potted_plant", "자전거=bicycle", "공=sports_ball", "바나나=banana", "사과=apple", "오렌지=orange",
+              "불=fire", "연기=smoke", "소화기=fire_extinguisher", "비상구=exit_sign", "유도등=exit_sign", "문=door", "계단=stairs"]

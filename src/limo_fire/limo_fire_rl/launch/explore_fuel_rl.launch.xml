@@ -34,6 +34,13 @@
       <arg name="objects_file" value="$(var objects_file)"/>
       <arg name="use_sim_time" value="$(var use_sim_time)"/>
     </include>
+    <!-- "○○ 로 가" (탐사 중): 물체 지도에 있으면 그 옆 설 자리를 low_rl ~/goto 로, 없으면 low_rl ~/instruction 으로 찾으며 탐사.
+         ros2 topic pub -1 /object_goto/goal std_msgs/msg/String "{data: '의자'}" · 빈 글이면 지시 지움 · 상태 /object_goto/status, /low_rl/goto_status -->
+    <node pkg="limo_fire_navigation" exec="object_goto" name="object_goto" output="screen">
+      <param from="$(find-pkg-share limo_fire_navigation)/config/object_goto.yaml"/>
+      <param name="mode" value="explore"/>
+      <param name="use_sim_time" value="$(var use_sim_time)"/>
+    </node>
   </group>
 
   <!-- 운용 화면은 limo_fire.rviz 와 같되 탐사 패널이 /low_rl, 목표 표시가 /low_rl/goal_marker 인 이 launch 전용 설정 -->
