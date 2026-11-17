@@ -475,8 +475,10 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 **Q11. 같은 프로세스에 올리면 복사가 없어지나? (intra-process, zero-copy)**
 - 조건: 같은 프로세스 + `use_intra_process_comms: true` + `unique_ptr` 로 publish + VOLATILE + KEEP_LAST. 그러면 포인터만 넘긴다.
 - 이 프로젝트: `/app` 안 `object_detector → object_map` 의 `~/detections`·`~/mask` 만 복사 없음. 카메라 영상은 카메라가 **다른 컨테이너**라 DDS 로 온다.
-  `/perception/objects` 는 같은 `/app` 안 `explorer` 로 가도 TL(임무 BT 가 TL 로 받음)이라 프로세스 안 전달을 끄고 직렬화한다(작은 글 10 Hz). 깊이는 `object_map`·`explorer` 가 따로 받아 두 번 역직렬화 —
-  중계 노드로 한 번 받아 나눠도 Humble rclcpp 는 밖에서 온 메시지를 프로세스 안으로 넘길 때 한 번 복사해 이득이 없다.
+  `/perception/objects` 는 같은 `/app` 안 `explorer` 로 가도 TL(임무 BT 가 TL 로 받음)이라 프로세스 안 전달을 끄고 직렬화한다(작은 글 10 Hz). 깊이는 `object_map`·`explorer` 가 따로 받아 두 번 역직렬화했었다 —
+  중계 노드로 한 번 받아 ROS 토픽으로 다시 내면 Humble rclcpp 가 밖에서 온 메시지를 프로세스 안으로 넘길 때 한 번 복사해 이득이 없다.
+  그래서 토픽 없이 **프로세스에 하나인 표**(`limo_fire_perception/shared_image.hpp`)가 구독 하나로 받아 같은 `ConstSharedPtr` 을 두 노드 콜백에 함수 부름으로 넘긴다(2026-11-18):
+  `/app` 의 깊이 구독 2 → 1, 역직렬화 614 KB × 30 장/초 한 벌 줄음, 같은 녹화 재생의 물체 지도 파일은 앞과 바이트까지 같음.
 - 카메라를 같이 못 올린 까닭: Orbbec 드라이버가 TRANSIENT_LOCAL 발행자(`/camera/depth_to_color` 등)를 만들어, intra-process 를 켜면 rclcpp 가 노드 생성을 거부. 또 YOLO 가 죽으면 카메라도 같이 죽는다(장애 격리). 📁 `robot.launch.xml` 주석, 커밋 05f3a3b.
 - 다른 선택지의 문제: 다 한 컨테이너 = 한 노드가 죽으면 다 죽음, TL 토픽은 어차피 직렬화.
 

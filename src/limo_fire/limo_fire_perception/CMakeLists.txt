@@ -65,13 +65,32 @@ else()
   message(WARNING "TensorRT(NvInfer.h, libnvinfer) 가 없어 object_detector 는 빼고 object_map 만 빌드함 (탐지는 로봇에서)")
 endif()
 
+# 한 프로세스 안에서 영상 구독 하나를 여러 노드가 나눠 씀 (깊이: object_map · 탐사 explorer — 역직렬화 한 번). 공유 라이브러리라 프로세스에 표가 하나
+add_library(limo_fire_shared_image SHARED src/shared_image.cpp)
+target_include_directories(limo_fire_shared_image PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(limo_fire_shared_image rclcpp sensor_msgs)
+install(TARGETS limo_fire_shared_image EXPORT export_limo_fire_perception
+  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+install(FILES include/limo_fire_perception/shared_image.hpp DESTINATION include/limo_fire_perception)
+ament_export_targets(export_limo_fire_perception HAS_LIBRARY_TARGET)
+ament_export_dependencies(rclcpp sensor_msgs)
+
 # 탐지 상자 + 깊이 → 지도 위 물체 위치 (TensorRT·OpenCV 안 씀)
 add_library(object_map_component SHARED src/object_map_node.cpp)
+target_link_libraries(object_map_component limo_fire_shared_image)
 ament_target_dependencies(object_map_component rclcpp rclcpp_components sensor_msgs vision_msgs
   visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs ament_index_cpp)
 rclcpp_components_register_node(object_map_component
   PLUGIN "limo_fire_perception::ObjectMapNode" EXECUTABLE object_map)
 
+
+if(BUILD_TESTING)
+  # 깊이 구독 나눠 쓰기 시험 (구독 하나 · 같은 포인터 · 만든 노드가 빠지면 넘겨 받음): colcon test --packages-select limo_fire_perception
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_shared_image test/test_shared_image.cpp TIMEOUT 60)
+  target_link_libraries(test_shared_image limo_fire_shared_image)
+endif()
 
 install(TARGETS ${PERCEPTION_TARGETS}
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)

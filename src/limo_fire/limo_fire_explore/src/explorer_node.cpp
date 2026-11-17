@@ -31,6 +31,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <limo_fire_perception/shared_image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <png.h>
 #include <sensor_msgs/msg/image.hpp>
@@ -180,7 +181,8 @@ class ExplorerNode : public rclcpp::Node {
       odom_t_ = now();
     });
     sub_imu_ = create_subscription<sensor_msgs::msg::Imu>(imu_topic, 50, [this](sensor_msgs::msg::Imu::ConstSharedPtr m) { imu_ = m; });
-    sub_depth_ = create_subscription<sensor_msgs::msg::Image>(depth_topic, sensor, [this](sensor_msgs::msg::Image::ConstSharedPtr m) { depth_ = m; });
+    // 깊이: 같은 프로세스의 물체 지도(object_map)와 구독 하나를 나눠 씀 — 역직렬화 한 번, 같은 포인터 (limo_fire_perception/shared_image.hpp, SensorDataQoS)
+    sub_depth_ = limo_fire_perception::SharedImageSubscription::create(this, depth_topic, [this](const sensor_msgs::msg::Image::ConstSharedPtr & m) { depth_ = m; });
     sub_info_ = create_subscription<sensor_msgs::msg::CameraInfo>(info_topic, sensor, [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr m) { info_ = m; });
     rc_topic_ = rc_topic;
     subscribe_rc();
@@ -1090,7 +1092,7 @@ class ExplorerNode : public rclcpp::Node {
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_scan_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_depth_;
+  std::shared_ptr<limo_fire_perception::SharedImageSubscription> sub_depth_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr sub_info_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_rc_;
   limo_fire_explore::RcWatch rc_watch_;

@@ -51,6 +51,7 @@ flowchart LR
     YO["/perception/object_detector<br>GPU 비동기"]
     OM["/perception/object_map"]
     EX["/explore/explorer"]
+    DS(["깊이 구독 하나<br>shared_image"])
   end
   LS[("llama-server :8171<br>판단 모델")]
   RV["RViz"]
@@ -58,8 +59,9 @@ flowchart LR
 
   OB -- "컬러 30 Hz" --> YO
   YO -- "탐지 · 마스크 (프로세스 안, 복사 없음)" --> OM
-  OB -- "깊이 30 Hz" --> OM
-  OB -- "깊이" --> EX
+  OB -- "깊이 30 Hz" --> DS
+  DS -- "같은 포인터" --> OM
+  DS -- "같은 포인터" --> EX
   YD -- "/scan 10 Hz" --> EX
   YD --> CG
   LB -- "/odom · /imu · /rc_state" --> EX
@@ -102,7 +104,7 @@ flowchart LR
 | `camera_container` | 실행기 1 개 + Orbbec SDK 프레임 콜백 스레드 + `colorFrameThread_` | USB 영상 | 깊이→컬러 정렬(HW), 메시지 만들기 | `/camera/color/*` `/camera/depth/*` + TF |
 | `ekf_filter_node_odom` | 실행기 1 개 (30 Hz 타이머) | `/odom` `/imu` | 융합 | `/odometry/filtered`, TF `odom→base_link` |
 | `cartographer_node` | 실행기 + Cartographer 뒤 작업 스레드 | `/scan` `/imu` `/odometry/filtered` + TF | SLAM | TF `map→odom`, `/submap_list` 등 → `occupancy_grid_node` 가 `/map` (1 s) |
-| **`/app`** | **실행기 (component_container, 한 스레드)** — 우리 코드는 모두 여기서 차례로 | 아래 셋의 모든 구독·타이머·서비스, `/tf` `/tf_static` (TF 스레드 없음) | ① `object_detector`: 영상 콜백이 GPU 에 걸고(비동기) · 2 ms 타이머가 `cudaEventQuery` 로 끝났나만 묻고 끝나면 꺼내 발행 ② `object_map`: 탐지·깊이 짝 → 20 ms 타이머가 그 시각 TF 있는 장부터 지도에 ③ `explorer`: `/scan` 한 장 = 걸음 하나(감각 → 판 끝 → 깊이 → 판단 모델 답 확인 → A* 추종 → 명령), TF 는 5 ms 타이머로 막지 않고 기다림 | `/perception/*` `/explore/*` `/cmd_vel`, HTTP 요청 |
+| **`/app`** | **실행기 (component_container, 한 스레드)** — 우리 코드는 모두 여기서 차례로 | 아래 셋의 모든 구독·타이머·서비스, `/tf` `/tf_static` (TF 스레드 없음) | ① `object_detector`: 영상 콜백이 GPU 에 걸고(비동기) · 2 ms 타이머가 `cudaEventQuery` 로 끝났나만 묻고 끝나면 꺼내 발행 ② 깊이 한 장을 한 번 받아(구독 하나) `object_map`·`explorer` 콜백을 차례로 부름 ③ `object_map`: 탐지·깊이 짝 → 20 ms 타이머가 그 시각 TF 있는 장부터 지도에 ④ `explorer`: `/scan` 한 장 = 걸음 하나(감각 → 판 끝 → 깊이 → 판단 모델 답 확인 → A* 추종 → 명령), TF 는 5 ms 타이머로 막지 않고 기다림 | `/perception/*` `/explore/*` `/cmd_vel`, HTTP 요청 |
 | | DDS 안 스레드 (Fast DDS 받기·이벤트·타이머 — 우리 코드 아님) · CUDA·TensorRT 드라이버 안 스레드 | 네트워크·공유 메모리 | 역직렬화해 실행기 줄에 넣음 | |
 | RViz | Qt 화면 스레드 + ROS 실행 스레드 | 화면 토픽 | 탐사 패널: 콜백은 값만 바꾸고 Qt 타이머가 그림 | `/explore/enable` 서비스 부름 |
 
@@ -117,14 +119,20 @@ flowchart LR
 | 1 | 카메라 → `object_detector` 컬러 | DDS 직렬화(카메라) → 역직렬화 → `memcpy` 고정 메모리 → `cudaMemcpyAsync` H2D | 640×480 rgb8 = 921 KB, 30 장/초 × 3 번 (`bgr8` 이면 색 바꿈 1 번 더) |
 | 2 | GPU → `/perception/mask` → `object_map` | D2H → `msg.data.assign` 1 번 → 프로세스 안 `unique_ptr` (복사 없음) | 307 KB, 물체가 있을 때만 |
 | 3 | `/perception/detections` → `object_map` | 프로세스 안 `unique_ptr` (복사 없음) | 작음 |
-| 4 | 카메라 → 깊이 (`object_map`·`explorer`) | 구독마다 역직렬화 1 번 (같은 프로세스라도 둘) | 640×480 16UC1 = 614 KB × 30 장/초 × 2 |
+| 4 | 카메라 → 깊이 (`object_map`·`explorer`) | 구독 **하나**에 역직렬화 1 번 → 같은 `ConstSharedPtr` 을 두 노드 콜백에 함수 부름으로 (`limo_fire_perception/shared_image.hpp`) | 640×480 16UC1 = 614 KB × 30 장/초 × **1** (앞: × 2) |
 | 5 | `/perception/objects` → `explorer` | TL(임무 BT 가 TL 로 받음)이라 프로세스 안 전달을 끔 → 같은 프로세스 안에서도 직렬화 1 + 역직렬화 1 | 물체 수 × 수백 B, 10 Hz |
 | 6 | `/scan` → `explorer` | 역직렬화 + `Scan` 구조체로 `ranges`·`intensities` 복사 | 약 250 점, 10 Hz |
 | 7 | `explorer` → llama-server | JSON 본문(지도 PNG 288 px base64) → 소켓 | 요청마다 수십 KB |
 | 8 | TF | `/tf` 를 받는 노드마다 TF 버퍼 따로 (`explorer`·`object_map`·Cartographer·EKF·RViz) | Cartographer `map→odom` 50 Hz 가 가장 많음 |
 
-4 번(깊이 두 번)은 남겨 둔다: 깊이를 한 번 받아 나눠 주는 중계 노드를 둬도 Humble rclcpp 는 밖에서 온 메시지를 프로세스 안으로 넘길 때 한 번 복사하므로
-(`any_subscription_callback.hpp` `create_ros_unique_ptr_from_ros_shared_ptr_message`) 복사 수가 같고 노드·토픽만 는다. 역직렬화도 영상은 거의 `memcpy` 하나다.
+4 번 깊이는 2026-11-18 까지 구독마다(두 번) 역직렬화했다. 중계 노드(한 번 받아 ROS 토픽으로 다시 냄)로는 줄지 않는다 — Humble rclcpp 는 밖에서 온 메시지를
+프로세스 안으로 넘길 때 한 번 복사한다(`any_subscription_callback.hpp` `create_ros_unique_ptr_from_ros_shared_ptr_message`). 그래서 토픽을 새로 내지 않고
+**프로세스에 하나인 표**(`liblimo_fire_shared_image.so`)가 토픽마다 구독 하나를 쥐고 받은 `ConstSharedPtr` 을 붙은 노드 콜백에 차례로 넘긴다:
+- 처음 부른 노드(보통 `explorer`)에 구독이 생기고, 그 노드가 빠지면 남은 노드에 다시 만든다. QoS 는 둘이 쓰던 SensorData 그대로, 받기 메시지 32 개를 돌려 써 장마다 할당 안 함.
+- `object_map` 은 그 포인터를 ApproximateTime(탐지 ↔ 깊이 0.05 s) 입력에 넣고, `explorer` 는 가장 최근 깊이로 쥔다 — 둘의 뜻은 그대로.
+- 확인: `ros2 topic info -v /camera/depth/image_raw` 의 Subscription count 가 `/app` 에서 1(앞: 2), `/app` 로그 "영상 /camera/depth/image_raw: … 나눠 씀 — 받는 노드 2 개". 시험 `test_shared_image`(구독 하나 · 같은 포인터 · 만든 노드가 빠지면 넘겨 받음).
+- 앞·뒤 (이 PC, 4 MB 칸): 다른 프로세스 합성 깊이 30 Hz 만 받는 `/app`(explorer + object_map) CPU 30 s × 4 번씩 번갈아 — 앞 3.07~3.30 % (평균 3.17) → 뒤 2.20~2.50 % (평균 2.29), 한 코어의 약 0.9 % 줄음.
+  녹화 `1116_fuel_rl_1` 재생(+ 미리 만든 탐지) 물체 지도 파일은 앞 3 번 · 뒤 3 번 모두 바이트까지 같음(md5 1b76ce81…), 그때 `/app` CPU 앞 5.72~5.94 % · 뒤 5.14~5.25 %(한 번 7.82 % 튐).
 
 ### DDS 설정 — 공유 메모리 칸 4 MB (`limo_fire_bringup/config/fastdds.xml`)
 
@@ -279,7 +287,7 @@ Fast DDS 문서: "Setting a segment_size close to or smaller than the data size 
 | 방향 | 토픽·서비스 | 타입 | QoS | 주기 | frame_id |
 |---|---|---|---|---|---|
 | 받음 | `detections_topic` = `/perception/detections` | `Detection2DArray` | 10 (message_filters), 프로세스 안 | | |
-| 받음 | `depth_topic` = `/camera/depth/image_raw` | `Image` 16UC1·32FC1 | SensorData, 받기 메시지 32 개 돌려 씀 | | |
+| 받음 | `depth_topic` = `/camera/depth/image_raw` | `Image` 16UC1·32FC1 | SensorData, `explorer` 와 구독 하나를 나눠 씀(`shared_image.hpp` — 역직렬화 한 번, 받기 메시지 32 개 돌려 씀) | | |
 | | ↳ 탐지·깊이 짝 | ApproximateTime 줄 10, 시각 차 ≤ `max_sync_dt` 0.05 s | | | |
 | 받음 | `mask_topic` = `/perception/mask` | `Image` mono8 | 10, 최근 10 장에서 같은 stamp 를 찾음 | | |
 | 받음 | `camera_info_topic` = `/camera/depth/camera_info` | `CameraInfo` | SensorData | | |
@@ -345,7 +353,7 @@ Fast DDS 문서: "Setting a segment_size close to or smaller than the data size 
 | 받음 | `scan_topic` = `/scan` | `LaserScan` | SensorData | 10 Hz | 걸음 시계 |
 | 받음 | `odom_topic` = `/odom` | `Odometry` | 20 | 50 Hz | 바퀴 속도 (EKF 결과 아님) |
 | 받음 | `imu_topic` = `/imu` | `Imu` | 50 | 100 Hz | 자이로·가속도·roll/pitch |
-| 받음 | `depth_topic` · `depth_info_topic` | `Image` 16UC1 · `CameraInfo` | SensorData | 30 Hz | `depth_timeout` 0.5 s 넘은 깊이는 안 씀 (구멍 0) |
+| 받음 | `depth_topic` · `depth_info_topic` | `Image` 16UC1 · `CameraInfo` | SensorData (깊이 영상은 `object_map` 과 구독 하나를 나눠 씀 — `shared_image.hpp`) | 30 Hz | `depth_timeout` 0.5 s 넘은 깊이는 안 씀 (구멍 0) |
 | 받음 | `rc_topic` = `/rc_state` | `Joy` | SensorData 깊이 5 (R 발행자와도 맞음) | 40 Hz | `buttons[1] == 2` 가 아니거나 0.5 s 안 오면 멈추고 꺼짐. 발행자가 있는데 2 s 못 받으면 구독을 새로 만듦 |
 | 받음 | `/perception/objects` | `Detection3DArray` | R / TL / 1 | 10 Hz | 지시가 있을 때 물체 후보·`known_objects` |
 | 받음 | `/explore/goal` | `std_msgs/String` | 10 | | 사용자 지시 글 (빈 글 = 지시 지움 → 보통 탐사). 글 그대로 판단 모델 글에, 별칭(`aliases`)·물체 지도 클래스 이름으로 푼 클래스는 힌트(물체 후보 차례에서 앞으로) |

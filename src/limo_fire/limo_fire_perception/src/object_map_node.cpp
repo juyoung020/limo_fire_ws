@@ -5,7 +5,7 @@
 //
 // 한 스레드 컨테이너에서 다른 콜백을 막지 않게: 탐지·깊이 짝이 오면 받기 콜백은 작업 줄(max_pending 장, 넘치면 가장 오래된 장을 버림 —
 // 늘 최신 쪽이 남음)에 넣고 바로 돌아오고, 처리는 process_period 타이머가 그 시각 TF 가 있는 장부터 한다(tf_wait 지나도 없으면 버림).
-// TF 도 이 노드의 콜백으로 받는다(따로 스레드 없음). 깊이 영상 받기 메시지는 몇 개를 돌려 써서 장마다 큰 할당을 하지 않는다.
+// TF 도 이 노드의 콜백으로 받는다(따로 스레드 없음). 깊이 영상은 같은 프로세스의 탐사와 구독 하나를 나눠 쓴다(shared_image.hpp — 역직렬화 한 번, 받기 메시지를 돌려 씀).
 // stats_period 마다 짝 못 지은 탐지 비율(탐지↔깊이 max_sync_dt)·줄 지연·처리 시간을 로그로 낸다
 #include <algorithm>
 #include <array>
@@ -27,7 +27,6 @@
 #include <message_filters/synchronizer.h>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
-#include <rclcpp/message_memory_strategy.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 #include <rviz_2d_overlay_msgs/msg/overlay_text.hpp>
@@ -42,37 +41,14 @@
 #include <vision_msgs/msg/detection3_d_array.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
+#include "limo_fire_perception/shared_image.hpp"
+
 namespace limo_fire_perception
 {
 
 namespace
 {
 using visualization_msgs::msg::Marker;
-
-// 받기 메시지를 돌려 쓰는 메모리 전략: 아무도(동기화 줄·작업 줄) 안 쥔 메시지에 다음 장을 역직렬화한다 → 영상 버퍼를 장마다 새로 할당하지 않음.
-// 다 쥐고 있으면(최대 max 개) 새로 만든다. 실행기 스레드에서만 부른다
-template<class MsgT>
-class PooledMessages : public rclcpp::message_memory_strategy::MessageMemoryStrategy<MsgT>
-{
-public:
-  explicit PooledMessages(size_t max) : max_(max) {}
-  std::shared_ptr<MsgT> borrow_message() override
-  {
-    for (auto & m : pool_) {
-      if (m.use_count() == 1) {return m;}
-    }
-    if (pool_.size() < max_) {
-      pool_.push_back(std::make_shared<MsgT>());
-      return pool_.back();
-    }
-    return std::make_shared<MsgT>();
-  }
-  void return_message(std::shared_ptr<MsgT> & msg) override {msg.reset();}
-
-private:
-  size_t max_;
-  std::vector<std::shared_ptr<MsgT>> pool_;
-};
 
 // 클래스마다 지도 표시: 지도 위 짧은 이름(RViz 글꼴은 영문만), 현황판 한글 이름, 색
 struct Style
@@ -267,11 +243,10 @@ public:
     // 탐지와 깊이 영상은 시각이 정확히 같지 않으므로 가까운 것끼리 짝짓는다
     det_sub_.subscribe(this, declare_parameter<std::string>("detections_topic", "/perception/detections"));
     det_sub_.registerCallback([this](const vision_msgs::msg::Detection2DArray::ConstSharedPtr &) {++st_.dets;});
-    // 깊이: 카메라 드라이버(다른 프로세스)가 내므로 역직렬화한다 — 받기 메시지를 돌려 써서(동기화 줄 10 + 작업 줄 + 여유) 장마다 할당을 안 함
-    depth_sub_ = create_subscription<sensor_msgs::msg::Image>(
-      declare_parameter<std::string>("depth_topic", "/camera/depth/image_raw"), rclcpp::SensorDataQoS(),
-      [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {++st_.depths; depth_in_.add(msg);}, rclcpp::SubscriptionOptions(),
-      std::make_shared<PooledMessages<sensor_msgs::msg::Image>>(32));
+    // 깊이: 카메라 드라이버(다른 프로세스)가 내므로 역직렬화한다 — 같은 프로세스의 탐사(explorer)와 구독 하나를 나눠 써서 한 번만
+    // (shared_image.hpp, SensorDataQoS · 받기 메시지 32 개를 돌려 써 장마다 할당 안 함)
+    depth_sub_ = SharedImageSubscription::create(this, declare_parameter<std::string>("depth_topic", "/camera/depth/image_raw"),
+      [this](const sensor_msgs::msg::Image::ConstSharedPtr & msg) {++st_.depths; depth_in_.add(msg);});
     const double sync_dt = declare_parameter<double>("max_sync_dt", 0.05);
     // 탐지 시각의 TF 를 기다리는 한도(s), 작업 줄 장 수 한도 (넘으면 가장 오래된 장을 버림)
     tf_wait_ = declare_parameter<double>("tf_wait", 0.2);
@@ -1243,7 +1218,7 @@ private:
 
   message_filters::Subscriber<vision_msgs::msg::Detection2DArray> det_sub_;
   message_filters::PassThrough<sensor_msgs::msg::Image> depth_in_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
+  std::shared_ptr<SharedImageSubscription> depth_sub_;
   std::shared_ptr<message_filters::Synchronizer<Policy>> sync_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_;
