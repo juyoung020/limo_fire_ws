@@ -25,6 +25,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
+#include <png.h>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/joy.hpp>
@@ -183,6 +184,8 @@ class LowRlNode : public rclcpp::Node {
     pub_done_ = create_publisher<std_msgs::msg::Bool>("~/done", rclcpp::QoS(1).transient_local());
     pub_goal_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/goal_marker", 10);
     pub_cand_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/candidates", 10);
+    pub_dec_img_ = create_publisher<sensor_msgs::msg::Image>("~/decider_image", rclcpp::QoS(1).transient_local());   // 판단 모델에 마지막으로 보낸 지도 그림 (보기만)
+    publish_dec_placeholder();   // 첫 요청 전에는 회색 판 (RViz 가 "No Image" 로 비지 않게)
     pub_cand_txt_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>("~/candidates_text", rclcpp::QoS(1).transient_local());
     srv_enable_ = create_service<std_srvs::srv::SetBool>("~/enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
@@ -456,6 +459,10 @@ class LowRlNode : public rclcpp::Node {
           env_->set_cmd(cmd);
           why_dec_ = why;
           publish_goal(cmd.target);
+        }
+        if (dec_cli_->n_png() != n_png_pub_ && !dec_cli_->last_png().empty()) {   // 새 요청을 보냈으면 그 지도 그림을 RViz 로
+          n_png_pub_ = dec_cli_->n_png();
+          publish_dec_png(dec_cli_->last_png());
         }
         dec_ms = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
         if (env_->state().step % lp_.decide_steps == 0) {   // ~/candidates: 후보 모드면 판단 모델이 마지막으로 만든 목록 그대로 (따로 안 만듦), hier 모드면 그림용으로 만듦
@@ -755,6 +762,35 @@ class LowRlNode : public rclcpp::Node {
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pub_cmd_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_status_, pub_state_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_dec_img_;
+  // 판단 모델에 보낸 PNG 를 rgb8 로 풀어 ~/decider_image 로 (보기만 — 요청에는 손대지 않음)
+  void publish_dec_png(const std::vector<uint8_t>& png) {
+    png_image pi{};
+    pi.version = PNG_IMAGE_VERSION;
+    if (!png_image_begin_read_from_memory(&pi, png.data(), png.size())) return;
+    pi.format = PNG_FORMAT_RGB;
+    sensor_msgs::msg::Image im;
+    im.data.resize(PNG_IMAGE_SIZE(pi));
+    if (!png_image_finish_read(&pi, nullptr, im.data.data(), 0, nullptr)) { png_image_free(&pi); return; }
+    im.header.stamp = now();
+    im.header.frame_id = "map";
+    im.width = pi.width;
+    im.height = pi.height;
+    im.encoding = "rgb8";
+    im.step = pi.width * 3;
+    pub_dec_img_->publish(im);
+  }
+  void publish_dec_placeholder() {
+    sensor_msgs::msg::Image im;
+    im.header.stamp = now();
+    im.header.frame_id = "map";
+    im.width = im.height = 288;
+    im.encoding = "rgb8";
+    im.step = im.width * 3;
+    im.data.assign((size_t)im.step * im.height, 96);
+    pub_dec_img_->publish(im);
+  }
+  long n_png_pub_ = 0;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_done_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_goal_, pub_cand_;
   rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr pub_cand_txt_;

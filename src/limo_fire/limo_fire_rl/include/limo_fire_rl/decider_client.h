@@ -52,9 +52,13 @@ class DeciderClient : public lxd::Transport {
   }
   ~DeciderClient() override { if (fd_ >= 0) close(fd_); }
   void send(const lxd::Req& r) override {
+    keep_png(r.body);
     todo_.push_back({r.id, r.body});
     step();
   }
+  // 마지막으로 보낸 요청의 첫 그림(지도 PNG 바이트)과 그 번호 — 노드가 RViz 로 보여 줌 (~/decider_image)
+  const std::vector<uint8_t>& last_png() const { return last_png_; }
+  long n_png() const { return n_png_; }
   bool poll(lxd::Answer* a) override {
     step();
     if (done_.empty()) return false;
@@ -64,6 +68,40 @@ class DeciderClient : public lxd::Transport {
   }
 
  private:
+  // 요청 본문의 첫 "data:image/png;base64,…" 를 풀어 둠 (보는 용도만 — 요청에는 손대지 않음)
+  void keep_png(const std::string& body) {
+    static const std::string tag = "data:image/png;base64,";
+    const size_t b = body.find(tag);
+    if (b == std::string::npos) return;
+    const size_t s = b + tag.size(), e = body.find('"', s);
+    if (e == std::string::npos) return;
+    auto val = [](char c) -> int {
+      if (c >= 'A' && c <= 'Z') return c - 'A';
+      if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+      if (c >= '0' && c <= '9') return c - '0' + 52;
+      if (c == '+') return 62;
+      if (c == '/') return 63;
+      return -1;
+    };
+    std::vector<uint8_t> out;
+    out.reserve((e - s) * 3 / 4);
+    unsigned acc = 0;
+    int bits = 0;
+    for (size_t i = s; i < e; ++i) {
+      const int v = val(body[i]);
+      if (v < 0) continue;   // '=' 채움 · 이스케이프 글자 건너뜀
+      acc = (acc << 6) | (unsigned)v;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        out.push_back((uint8_t)((acc >> bits) & 0xFF));
+      }
+    }
+    last_png_.swap(out);
+    ++n_png_;
+  }
+  std::vector<uint8_t> last_png_;
+  long n_png_ = 0;
   struct Job {
     long id;
     std::string body;
