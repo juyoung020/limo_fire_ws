@@ -40,15 +40,16 @@ set_target_properties(limo_fire_explore_core PROPERTIES POSITION_INDEPENDENT_COD
 
 # 합친 탐사 노드 explorer: 위층 판단 모델 + 아래층 규칙 추종기(A* + 경로 추종) — 시뮬 low_explore_check 와 같은 코드 (README "합친 탐사")
 # 위층 판단 모델: 지도 사진은 시뮬과 같은 scripts/decider.cpp (PNG 는 zlib), 요청 본문은 scripts/low_decider.h (JSON 은 nlohmann_json). HTTP 는 노드의 비차단 소켓 (decider_client.h)
+# 컴포넌트(공유 라이브러리)로만 만든다: app.launch.xml 이 인식 노드와 한 프로세스 · 한 스레드 컨테이너에 올린다
+find_package(rclcpp_components REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)   # 판단 모델 그림을 RViz 용 sensor_msgs/Image 로 풀 때 (decider_image)
-find_package(Threads REQUIRED)
-add_executable(explorer src/explorer_node.cpp ${EXPLORE_DIR}/scripts/decider.cpp)
-target_link_libraries(explorer ZLIB::ZLIB PNG::PNG Threads::Threads)
-target_include_directories(explorer PRIVATE ${EXPLORE_DIR}/sim/tools ${EXPLORE_DIR}/scripts)   # low_node_rec.h (녹화 꼴) · fuel_upper.h · low_explore_ctl.h (위층 — combine_run 과 같은 코드)
-target_link_libraries(explorer limo_fire_explore_core)
-target_compile_definitions(explorer PRIVATE LIMO_FIRE_EXPLORE_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
-ament_target_dependencies(explorer rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs vision_msgs)
+add_library(explorer_component SHARED src/explorer_node.cpp ${EXPLORE_DIR}/scripts/decider.cpp)
+target_link_libraries(explorer_component ZLIB::ZLIB PNG::PNG limo_fire_explore_core)
+target_include_directories(explorer_component PRIVATE ${EXPLORE_DIR}/sim/tools ${EXPLORE_DIR}/scripts)   # low_node_rec.h (녹화 꼴) · low_explore_ctl.h (위층 — combine_run 과 같은 코드)
+target_compile_definitions(explorer_component PRIVATE LIMO_FIRE_EXPLORE_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
+ament_target_dependencies(explorer_component rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs vision_msgs)
+rclcpp_components_register_nodes(explorer_component "limo_fire_explore::ExplorerNode")
 
 # 프론티어 탐사 노드: 탐사 기준선과 같은 찾기(mdp/frontier.h)·고르기(baselines/frontier/include/explore_lite.h), 값도 기준선 설정 그대로
 find_package(ament_index_cpp REQUIRED)
@@ -58,7 +59,11 @@ target_link_libraries(frontier_explorer yaml-cpp)
 target_compile_definitions(frontier_explorer PRIVATE LIMO_FIRE_FRONTIER_YAML="${EXPLORE_DIR}/baselines/frontier/config/frontier.yaml")
 ament_target_dependencies(frontier_explorer rclcpp rclcpp_action nav2_msgs nav_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs ament_index_cpp)
 
-install(TARGETS frontier_explorer explorer DESTINATION lib/${PROJECT_NAME})
+install(TARGETS frontier_explorer DESTINATION lib/${PROJECT_NAME})
+install(TARGETS explorer_component ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+# include/limo_fire_explore/class_alias.h (지시 글 → 클래스) 는 저장 지도 object_goto(limo_fire_navigation) 도 씀
+install(DIRECTORY include/ DESTINATION include)
+ament_export_include_directories(include)
 install(DIRECTORY launch config rviz DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)

@@ -3,7 +3,7 @@
 <package format="3">
   <name>limo_fire_explore</name>
   <version>0.1.0</version>
-  <description>탐사 노드: 합친 탐사 explorer(위층 판단 모델 + 아래층 A* 경로 추종, 시뮬과 같은 코드)와 프론티어 탐사 frontier_explorer(탐사 기준선과 같은 찾기·고르기)</description>
+  <description>탐사 노드: 합친 탐사 explorer(컴포넌트 — 위층 판단 모델 + 아래층 A* 경로 추종, 시뮬과 같은 코드)와 프론티어 탐사 frontier_explorer(탐사 기준선과 같은 찾기·고르기)</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">김주영</maintainer>
   <license>MIT</license>
 
@@ -25,7 +25,7 @@
   <depend>rviz_2d_overlay_msgs</depend>
   <depend>yaml-cpp</depend>
   <depend>ament_index_cpp</depend>
-  <exec_depend>limo_fire_navigation</exec_depend>
+  <depend>rclcpp_components</depend>
   <test_depend>ament_cmake_gtest</test_depend>
 
   <export>

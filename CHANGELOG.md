@@ -99,6 +99,7 @@
 
 ### Changed
 
+- 탐사·인식이 한 프로세스로 `app.launch.xml` 하나로 뜸, 물체로 가기 지시 토픽도 하나로 줄임 (옛 탐사 launch·지시 토픽은 지움)
 - 인식(YOLO)이 따로 스레드 없이 실행기 한 스레드에서 돎 (로봇 확인 전엔 `gpu_thread:=true` 로 옛 방식), TensorRT 없는 PC 도 물체 지도는 빌드됨
 - 탐사·인식 노드·토픽·launch 이름이 바뀜 (/explore/…, /perception/…, 패키지 limo_fire_explore) — 옛→새 표는 conventions 문서
 - 인식이 한 스레드로 돌고 메모리를 덜 씀, 지도 위 사람·동물은 실시간으로 움직이고 떠나면 몇 초 안에 사라짐

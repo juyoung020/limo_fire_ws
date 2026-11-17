@@ -1,7 +1,20 @@
 # 합친 탐사 실물 노드 (src/explorer_node.cpp — 위층 판단 모델 + 아래층 A* 경로 추종). 관측·결정 주기·판 끝은 시뮬 설정
 # (train/explore/sim/config/env.yaml)을 그대로 읽는다 — 여기에는 ROS 쪽과 위층·닿음 값만
-/explore/explorer:          # 노드 /explore/explorer (explorer.launch.xml 이 이름공간 explore 로 띄움)
+# 지시 글 → 클래스 별칭: 이름공간 explore 의 모든 노드 (explorer · 저장 지도 object_goto — navigation.launch.xml 도 이 파일을 읽음)
+/explore/**:
   ros__parameters:
+    # 한글 이름 = 물체 지도 클래스 이름 (COCO 80 종 · 화재 7 종). 영문 클래스 이름은 그대로 써도 된다
+    aliases: ["사람=person", "의자=chair", "소파=couch", "침대=bed", "식탁=dining_table", "책상=dining_table", "변기=toilet",
+              "티비=tv", "TV=tv", "노트북=laptop", "마우스=mouse", "리모컨=remote", "키보드=keyboard", "휴대폰=cell_phone", "핸드폰=cell_phone",
+              "전자레인지=microwave", "오븐=oven", "토스터=toaster", "싱크대=sink", "냉장고=refrigerator", "책=book", "시계=clock",
+              "꽃병=vase", "가위=scissors", "곰인형=teddy_bear", "칫솔=toothbrush", "병=bottle", "컵=cup", "그릇=bowl", "숟가락=spoon",
+              "포크=fork", "칼=knife", "가방=backpack", "배낭=backpack", "핸드백=handbag", "우산=umbrella", "여행가방=suitcase", "캐리어=suitcase",
+              "화분=potted_plant", "자전거=bicycle", "공=sports_ball", "바나나=banana", "사과=apple", "오렌지=orange",
+              "불=fire", "연기=smoke", "소화기=fire_extinguisher", "비상구=exit_sign", "유도등=exit_sign", "문=door", "계단=stairs"]
+
+/explore/explorer:          # 노드 /explore/explorer (app.launch.xml 이 컨테이너 /app 에 이름공간 explore 로 올림)
+  ros__parameters:
+    debug: false              # true: RViz 표시 토픽(candidates · candidates_text · decider_image · goal_marker)과 cmd_debug 도 냄 (app.launch.xml 은 rviz:=true 면 켬)
     dry_run: true             # true: /cmd_vel 발행자를 안 만들고 명령을 /explore/cmd_debug 에만. 실제 주행은 false (README 점검표 뒤)
     enabled: false            # 늘 꺼진 채 뜸 → /explore/enable true (RViz 탐사 패널 "/explore") — 리모컨 오토일 때만 켜짐
     decider_url: http://127.0.0.1:8171   # 위층 판단 모델 — 로봇 안 llama-server (POST /v1/systemone, README)
