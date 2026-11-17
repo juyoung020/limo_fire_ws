@@ -1,3 +1,5 @@
 *.engine
 *.onnx
 *.log
+siglip2_*.txt
+siglip2_*.f16

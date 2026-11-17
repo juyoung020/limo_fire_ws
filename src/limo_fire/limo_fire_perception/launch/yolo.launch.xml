@@ -14,6 +14,8 @@
   <arg name="use_sim_time" default="false"/>
   <arg name="new_container" default="true" description="false 면 container 로 준 이미 있는 컨테이너에 올린다"/>
   <arg name="container" default="/perception_container"/>
+  <arg name="search" default="false" description="설명 글로 물체 찾기(SigLIP2, object_search) — 엔진을 만든 뒤 true"/>
+  <arg name="embeddings_file" default="" description="SigLIP2 물체 사진 벡터 파일 (물체 지도 파일과 같이 쓰는 &lt;이름&gt;_objects.emb)"/>
   <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음 · ~/save 로 씀). 저장 지도 옆 &lt;이름&gt;_objects.txt"/>
 
   <node_container pkg="rclcpp_components" exec="component_container_mt" name="perception_container" namespace=""
@@ -37,6 +39,16 @@
         <param name="objects_file" value="$(var objects_file)"/>
         <param name="use_sim_time" value="$(var use_sim_time)"/>
         <extra_arg name="use_intra_process_comms" value="true"/>
+      </composable_node>
+    </load_composable_node>
+  </group>
+
+  <!-- 설명 글로 물체 찾기 (SigLIP2 — 엔진·토큰 표는 README "SigLIP2"). search:=true 일 때만 -->
+  <group if="$(var search)">
+    <load_composable_node target="$(var container)">
+      <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectSearchNode" name="object_search" namespace="">
+        <param name="embeddings_file" value="$(var embeddings_file)"/>
+        <param name="use_sim_time" value="$(var use_sim_time)"/>
       </composable_node>
     </load_composable_node>
   </group>

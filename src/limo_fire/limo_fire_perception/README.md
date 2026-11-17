@@ -225,6 +225,60 @@ PY
 
 `config/yolo_coco.yaml` 의 `engine_path` 는 파일 이름만 쓴다 — `models/` 의 엔진이 `colcon build` 때 설치 폴더로 복사되고 노드가 거기서 찾는다.
 
+## 설명 글로 물체 찾기 — SigLIP2 (`object_search`, 2026-11-17)
+
+"빨간 컵", "소화기 옆 의자", "모니터" 같은 글로 지도 위 물체를 점수순으로 찾는다. 모델: [google/siglip2-base-patch16-224](https://huggingface.co/google/siglip2-base-patch16-224)
+(고정 해상도 — NVIDIA 문서상 naflex 판은 ONNX·TensorRT 로 못 내보냄: [SigLIP 2 object embeddings](https://docs.nvidia.com/vss/latest/models/clip-object-embeddings.html)). 다국어로 학습돼 한글 글도 된다.
+
+- `object_mapper` 가 물체마다 좋은 원본 사진(상자 + 10 % 여백)을 `~/object_views`(frame_id = 물체 이름)로 내고, `object_search` 가 SigLIP2 그림 벡터로 바꿔 물체마다 최근 좋은 사진 4 장을 둔다.
+- 글(`/object_mapper/query`) → `"a photo of {글}."` → C++ 토크나이저(Gemma BPE, `siglip_tokenizer.hpp` — HF tokenizers 와 8 개 시험 글 모두 같은 토큰) → 글 벡터.
+  물체 점수 = 그 물체 사진들 중 가장 높은 sigmoid(112.67·cos − 16.77). 여러 방향 사진을 평균하면 오히려 나빠진다는 보고([Oxford, arXiv 2412.01539](https://arxiv.org/html/2412.01539v1))가 있어 최댓값.
+  결과 `/object_mapper/query_result`(점수순 Detection3DArray). `object_goto` 가 이름·별칭에 없는 글을 여기로 묻는다.
+- 글 탑의 토큰 표(256000 × 768, fp32 786 MB)는 GPU 엔진에서 빼 `siglip2_tok_emb.f16`(393 MB) 을 mmap 하고 요청 토큰 64 줄만 읽는다 — Orin 8 GB 에 판단 모델과 같이 올리려고.
+  엔진은 그림(약 93 M 개 값)·글 몸통(약 85 M) 둘.
+- 확인 (PC, 같은 가중치 PyTorch): 1116_fuel_rl_1 녹화에서 YOLO 가 찾은 물체 45 장(의자 21 · 사람 18 · TV 4 · 여행가방 2)으로 글 검색 1 위 —
+  chair·의자·a person·사람·television·모니터 6 개 맞음, suitcase·여행 가방 틀림(녹화의 '여행가방' 2 장이 실제로는 다른 물체로 보임). 맞는 1 위 점수 0.006~0.27 → `object_goto query_min_score` 0.003.
+  글 탑을 둘로 나눈 것은 원래 `get_text_features` 와 출력이 같음(최대 차 0.0).
+- 로봇 Orin 시간·메모리는 아직 안 잼.
+
+### 엔진 만들기
+
+PC(같은 transformers 환경)에서 변환하고 로봇에서 엔진을 만든다:
+
+```bash
+# PC: 어휘·병합 글 파일, 그림 ONNX, 글 몸통 ONNX + 토큰 표 (스크립트는 손으로 쓴 변환 보조 — 저장소 밖)
+python export_tok.py siglip2-base-patch16-224/tokenizer.json .          # siglip2_vocab.txt · siglip2_merges.txt
+python export_onnx.py siglip2-base-patch16-224 .                         # siglip2_vision.onnx (B 동적)
+python export_text_split.py siglip2-base-patch16-224 .                   # siglip2_text_body.onnx · siglip2_tok_emb.f16, logit_scale·bias 출력
+# 로봇: models/ 에 두고 엔진 → colcon build (설치 폴더로 복사됨)
+cd $WS/src/limo_fire/limo_fire_perception/models
+/usr/src/tensorrt/bin/trtexec --onnx=siglip2_vision.onnx --fp16 --minShapes=pixel_values:1x3x224x224 --optShapes=pixel_values:4x3x224x224 \
+  --maxShapes=pixel_values:8x3x224x224 --saveEngine=siglip2_vision.engine
+/usr/src/tensorrt/bin/trtexec --onnx=siglip2_text_body.onnx --fp16 --saveEngine=siglip2_text_body.engine
+```
+
+켜기: `yolo.launch.xml search:=true` (또는 `explore_fuel_rl.launch.xml perception:=true search:=true`). 사진 벡터 저장: `object_search ~/save` · `~/save_to`, 읽기: `embeddings_file:=…`.
+
+## 바닥 광선 거리 (가상 깊이, `~/instances`)
+
+불꽃처럼 깊이 카메라가 비거나 틀리는 물체를 위해, 마스크 밑동(맨 아래 5 % 줄의 가운데 열) 픽셀을 지나는 카메라 광선이 바닥면(base_link 높이 − 0.145 m, `limo_pro_base.xacro`)과 만나는 거리를 잰다.
+`prefer_floor_classes`(기본 fire · smoke)는 마스크 깊이와 `fuse_tol_m + fuse_tol_frac × 거리` 넘게 다르면 바닥 광선 거리를, 다른 클래스는 마스크 깊이를 쓰고, 마스크 깊이가 없으면 바닥 광선 거리를 쓴다.
+물체마다 `~/instances`(그 장, Detection3DArray): `id` = "클래스|쓴 출처(mask·box·floor)|mask 거리|floor 거리", `bbox.center` = 쓴 자리, `results[0].pose` = 밑점, `bbox.size.x`·`z` = 너비·높이(마스크 크기 × 거리).
+바닥면은 지금 고정(로봇 높이) — 깊이로 바닥면을 맞추는 일(바닥 위 낮은 물체 작업)이 끝나면 그 면으로 바꿀 자리.
+
+1116_fuel_rl_1 녹화(실험실, 바닥에 선 의자 · 사람)에서 마스크 깊이와 견준 바닥 광선 거리 (`depth_check_csv`, 61 개):
+
+| 마스크 깊이 | 수 | 바닥 광선 − 마스크 (가운데) | 차 크기 (가운데) |
+|---|---|---|---|
+| 0~1 m | 2 | −0.07 m | 0.19 m |
+| 1~1.5 m | 4 | −0.23 m | 0.24 m |
+| 1.5~2 m | 40 | −0.20 m | 0.22 m |
+| 2~3 m | 9 | −0.23 m | 0.34 m |
+| 3~5 m | 6 | −2.62 m | 2.71 m |
+
+바닥 광선은 물체 앞 밑동, 마스크 깊이는 물체 픽셀 가운데 값이라 3 m 안에서는 약 0.2 m 짧게 나오는 것이 맞는 방향이다(의자·사람의 앞뒤 깊이). 3 m 넘으면 밑동이 바닥이 아니거나(가려짐) 각이 얕아 크게 틀린다 — 3 m 안에서만 믿는다.
+아직 불로는 재지 않았다 (불 녹화 없음).
+
 ## 인식 벤치마크 (`perception_benchmark`)
 
 Webots 정답(같은 카메라의 Recognition 분할, `limo_fire_sim`)과 장마다 비교해 상자·마스크 P·R·F1·mAP50·mAP50-95·IoU, 크기별 재현율, 속도, 물체 지도 P·R·F1·위치 오차를 표로 낸다.

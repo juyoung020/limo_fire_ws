@@ -18,6 +18,7 @@
   <arg name="perception" default="false" description="true: YOLO 분할 + 물체 지도(object_mapper) — 찾은 물체가 RViz 지도 위에 모양·이름과 함께 남음"/>
   <arg name="perception_config" default="yolo_coco.yaml" description="인식 모델 설정 (limo_fire_perception/config): yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
   <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음)"/>
+  <arg name="search" default="false" description="perception:=true 일 때 설명 글로 물체 찾기(SigLIP2)도 — 엔진을 만든 뒤"/>
 
   <group if="$(var stack)">
     <include file="$(find-pkg-share limo_fire_bringup)/launch/mapping.launch.xml">
@@ -31,6 +32,7 @@
     <include file="$(find-pkg-share limo_fire_perception)/launch/yolo.launch.xml">
       <arg name="rviz" value="false"/>
       <arg name="config" value="$(var perception_config)"/>
+      <arg name="search" value="$(var search)"/>
       <arg name="objects_file" value="$(var objects_file)"/>
       <arg name="use_sim_time" value="$(var use_sim_time)"/>
     </include>

@@ -203,8 +203,12 @@ class ObjectGoto : public rclcpp::Node {
       if (objects_ && !cls.empty()) {
         for (const auto & d : objects_->detections) {n += !d.results.empty() && d.results[0].hypothesis.class_id == cls;}
       }
-      say("'" + text + "' → " + (cls.empty() ? std::string("클래스 모름(설명 검색은 다음 단계)") : "클래스 " + cls) + " · 지도에 " + std::to_string(n) +
-        " 개 — 판단 모델이 후보(그 물체 옆 · 프론티어)에서 고름");
+      if (cls.empty()) {   // 이름·별칭이 아님 → 설명 검색(SigLIP2) 1 위 물체의 클래스를 넘김 (on_result)
+        ask_query();
+        say("'" + text + "' → 이름에 없어 설명 검색(SigLIP2) 중 — 그동안 판단 모델은 지시만 보고 탐사");
+        return;
+      }
+      say("'" + text + "' → 클래스 " + cls + " · 지도에 " + std::to_string(n) + " 개 — 판단 모델이 후보(그 물체 옆 · 프론티어)에서 고름");
       return;
     }
     if (try_name()) {return;}
@@ -241,6 +245,21 @@ class ObjectGoto : public rclcpp::Node {
   void on_result(const vision_msgs::msg::Detection3DArray::ConstSharedPtr & m) {
     if (!waiting_query_ || done_) {return;}
     waiting_query_ = false;
+    if (mode_ == "explore" && !direct_) {   // 판단 모델 모드: 설명 검색 1 위의 클래스를 물체 후보 클래스로
+      if (!m->detections.empty() && !m->detections[0].results.empty() && m->detections[0].results[0].hypothesis.score >= query_min_score_) {
+        std_msgs::msg::String c;
+        c.data = m->detections[0].results[0].hypothesis.class_id;
+        target_pub_cls_->publish(c);
+        char b[160];
+        std::snprintf(b, sizeof b, "'%s' → 설명 검색 1 위 %s (%.3f) — 그 클래스 물체를 판단 모델 후보로", goal_text_.c_str(), m->detections[0].id.c_str(),
+          m->detections[0].results[0].hypothesis.score);
+        say(b);
+      } else {
+        searching_ = true;   // 맞는 물체 없음 → requery_s 마다 다시 (물체 지도가 자람)
+        query_t0_ = now();
+      }
+      return;
+    }
     if (!m->detections.empty() && !m->detections[0].results.empty() &&
         m->detections[0].results[0].hypothesis.score >= query_min_score_) {
       char b[64];

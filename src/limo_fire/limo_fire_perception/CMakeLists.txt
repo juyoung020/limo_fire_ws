@@ -59,6 +59,17 @@ ament_target_dependencies(object_mapper_component rclcpp rclcpp_components senso
 rclcpp_components_register_node(object_mapper_component
   PLUGIN "limo_fire_perception::ObjectMapperNode" EXECUTABLE object_mapper)
 
+# 물체 설명 글로 찾기 (SigLIP2, TensorRT 그림·글 엔진 + C++ 토크나이저)
+add_library(trt_siglip STATIC src/trt_siglip.cpp)
+set_target_properties(trt_siglip PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(trt_siglip PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> ${TENSORRT_INCLUDE_DIR})
+target_link_libraries(trt_siglip PUBLIC ${NVINFER_LIB} CUDA::cudart opencv_core opencv_imgproc)
+add_library(object_search_component SHARED src/object_search_node.cpp)
+target_link_libraries(object_search_component trt_siglip)
+ament_target_dependencies(object_search_component rclcpp rclcpp_components sensor_msgs std_msgs std_srvs vision_msgs ament_index_cpp)
+rclcpp_components_register_node(object_search_component
+  PLUGIN "limo_fire_perception::ObjectSearchNode" EXECUTABLE object_search)
+
 # 인식 벤치마크: 시뮬 정답(/gt/*) vs 탐지 → P·R·F1·mAP·IoU·속도·물체 지도 표 (지표는 det_metrics.hpp, 학습기와 같이 씀)
 add_library(perception_benchmark_component SHARED src/perception_benchmark_node.cpp)
 target_include_directories(perception_benchmark_component PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -68,10 +79,10 @@ target_link_libraries(perception_benchmark_component yaml-cpp)
 rclcpp_components_register_node(perception_benchmark_component
   PLUGIN "limo_fire_perception::PerceptionBenchmarkNode" EXECUTABLE perception_benchmark)
 
-install(TARGETS trt_yolo yolo_detector_component object_mapper_component perception_benchmark_component
+install(TARGETS trt_yolo trt_siglip yolo_detector_component object_mapper_component object_search_component perception_benchmark_component
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY launch config icons DESTINATION share/${PROJECT_NAME})
 # 엔진(기기마다 만듦, git 에 없음): models/ 에 두면 설치되고 engine_path 에 파일 이름만 써도 찾는다
-install(DIRECTORY models/ DESTINATION share/${PROJECT_NAME}/models FILES_MATCHING PATTERN "*.engine")
+install(DIRECTORY models/ DESTINATION share/${PROJECT_NAME}/models FILES_MATCHING PATTERN "*.engine" PATTERN "siglip2_*.txt" PATTERN "siglip2_*.f16")
 
 ament_package()
