@@ -1023,6 +1023,7 @@ private:
       h.pose.pose.position.y = l.base_n > 0 ? l.by : l.y;
       h.pose.pose.position.z = l.base_n > 0 ? l.bz : l.z;
       h.pose.pose.orientation.w = 1.0;
+      h.pose.covariance[35] = std::max(0.0, now().seconds() - l.last_seen);   // 마지막으로 본 뒤 지난 초 (공분산 칸을 빌려 씀 — low_rl 물체 후보 seen_s)
     }
     objects_pub_->publish(out);
   }

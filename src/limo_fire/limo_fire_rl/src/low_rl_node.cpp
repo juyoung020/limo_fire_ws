@@ -211,15 +211,20 @@ class LowRlNode : public rclcpp::Node {
       std::snprintf(b, sizeof b, "가는 중: %s (%.2f, %.2f)%s", goto_label_.c_str(), goto_x_, goto_y_, running() ? "" : " — 탐사가 꺼져 있어 켜야 움직임");
       say_goto(b);
     });
+    // 지시에 맞는 물체 클래스 (object_goto 가 이름·별칭에서 풀어 줌, 빈 글 = 클래스 모름 — 물체 후보 없음)
+    obj_stale_s_ = declare_parameter<double>("decider_obj_stale_s", 600.0);   // 이보다 오래 안 본 물체는 물체 후보에서 뺌 (s)
+    sub_target_ = create_subscription<std_msgs::msg::String>("~/target_class", 10, [this](std_msgs::msg::String::ConstSharedPtr m) { target_class_ = m->data; });
     sub_instr_ = create_subscription<std_msgs::msg::String>("~/instruction", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
       instruction_ = m->data;
       if (instruction_.empty()) {
         goto_active_ = false;
         facing_ = false;
         face_valid_ = false;
+        target_class_.clear();
+        if (dec_up_) dec_up_->set_objects({});
         say_goto("지시 없음 — 보통 탐사");
       } else if (!goto_active_) {
-        say_goto("찾는 중: " + instruction_ + " (지도에 아직 없음 — 탐사하며 찾음)");
+        say_goto("지시: " + instruction_ + " — 판단 모델이 후보(지도에 있는 그 물체 옆 · 프론티어) 중에서 고름");
       }
       if (dec_up_) dec_up_->set_instruction(instruction_);
     });
@@ -517,11 +522,46 @@ class LowRlNode : public rclcpp::Node {
         sim::LowCmd cmd;
         int why = 0;
         if (dp_cam_ > 0 && cam_.due(env_->state().step)) push_keyframe();
-        if (!instruction_.empty() && objects_ && env_->state().step % lp_.decide_steps == 0) dec_up_->set_known_objects(known_objects());
+        if (!instruction_.empty() && objects_ && env_->state().step % lp_.decide_steps == 0) {
+          dec_up_->set_known_objects(known_objects());
+          // 지시에 맞는 물체(클래스 = ~/target_class) → 판단 모델 후보 목록의 물체 후보 (설 자리는 Upper::object_spots 가 탐사 지도에서)
+          std::vector<lxd::Params::Obj> ob;
+          for (const auto& d : objects_->detections) {
+            if (d.results.empty() || target_class_.empty() || d.results[0].hypothesis.class_id != target_class_) continue;
+            lxd::Params::Obj o;
+            o.oid = d.id;
+            o.cls = d.results[0].hypothesis.class_id;
+            o.x = (float)d.bbox.center.position.x;
+            o.y = (float)d.bbox.center.position.y;
+            o.match = 1.0f;
+            o.seen_s = (float)d.results[0].pose.covariance[35];   // object_mapper: 마지막으로 본 뒤 지난 초
+            if (o.seen_s > obj_stale_s_) continue;                // 오래 안 본 물체는 후보에서 뺌
+            ob.push_back(o);
+          }
+          dec_up_->set_objects(ob);
+        }
         if (dec_up_->step(v, env_->obs_1d() + mdp::obs::POLICY_1D, *ctl_, *dec_cli_, &cmd, &why)) {
           env_->set_cmd(cmd);
           why_dec_ = why;
           publish_goal(cmd.target);
+        }
+        if (env_->state().step % lp_.decide_steps == 0) publish_object_cands();
+        lxd::Params::Obj pick;
+        if (dec_up_->take_object_pick(&pick)) {   // 판단 모델이 물체 후보를 고름 → 그 설 자리로 (~/goto 와 같은 길), 닿으면 물체를 바라보고 멈춤
+          float gx = 0.f, gy = 0.f;
+          if (env_->cell_xy(pick.vp, &gx, &gy)) {
+            goto_x_ = gx;
+            goto_y_ = gy;
+            face_x_ = pick.x;
+            face_y_ = pick.y;
+            face_valid_ = true;
+            facing_ = false;
+            goto_active_ = true;
+            goto_label_ = pick.oid;
+            char b[160];
+            std::snprintf(b, sizeof b, "판단 모델이 물체 후보를 고름: %s — 설 자리 (%.2f, %.2f) 로", pick.oid.c_str(), gx, gy);
+            say_goto(b);
+          }
         }
         if (dec_cli_->n_png() != n_png_pub_ && !dec_cli_->last_png().empty()) {   // 새 요청을 보냈으면 그 지도 그림을 RViz 로
           n_png_pub_ = dec_cli_->n_png();
@@ -786,6 +826,35 @@ class LowRlNode : public rclcpp::Node {
     for (size_t i = 0; i < v.size() && i < 10; ++i) out.push_back(v[i].second);
     return out;
   }
+  // 판단 모델 요청의 물체 후보 글자 (A … — 프론티어 후보보다 앞 글자) 를 ~/candidates 에 (ns cand_obj): 흰 바탕 원 + 글자 + 물체 이름
+  void publish_object_cands() {
+    visualization_msgs::msg::MarkerArray ma;
+    visualization_msgs::msg::Marker del;
+    del.header.frame_id = map_frame_;
+    del.ns = "cand_obj";
+    del.action = visualization_msgs::msg::Marker::DELETEALL;
+    ma.markers.push_back(del);
+    const auto& ob = dec_up_->last_objects();
+    for (size_t i = 0; i < ob.size() && !instruction_.empty(); ++i) {
+      float x = 0.f, y = 0.f;
+      if (!env_->cell_xy(ob[i].vp, &x, &y)) continue;
+      for (int k = 0; k < 2; ++k) {
+        visualization_msgs::msg::Marker m;
+        m.header.frame_id = map_frame_;
+        m.header.stamp = now();
+        m.ns = "cand_obj";
+        m.id = (int)i * 2 + k;
+        m.pose.position.x = x;
+        m.pose.position.y = y;
+        m.pose.orientation.w = 1.0;
+        if (k == 0) { m.type = m.CYLINDER; m.pose.position.z = 0.05; m.scale.x = m.scale.y = 0.42; m.scale.z = 0.02; m.color.r = m.color.g = m.color.b = 1.0f; m.color.a = 0.95f; }
+        else { m.type = m.TEXT_VIEW_FACING; m.pose.position.z = 0.4; m.scale.z = 0.3; m.color.r = 0.1f; m.color.g = 0.1f; m.color.b = 0.1f; m.color.a = 1.0f;
+               m.text = std::string(1, (char)('A' + (int)i)) + " " + ob[i].oid; }
+        ma.markers.push_back(m);
+      }
+    }
+    pub_cand_->publish(ma);
+  }
   // ~/goto 의 지도 좌표 → 탐사 지도 칸 (창 밖이면 −1)
   int goto_cell() const {
     const float res = env_->cfg().res;
@@ -904,7 +973,9 @@ class LowRlNode : public rclcpp::Node {
   }
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_goto_status_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_goto_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_instr_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_instr_, sub_target_;
+  std::string target_class_;
+  double obj_stale_s_ = 600.0;
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
   bool goto_active_ = false, goto_resume_ = false, facing_ = false, face_valid_ = false;

@@ -32,6 +32,7 @@ struct Cand {
   float size_m = 0;    // 덩어리 크기 (F_SIZE × kFrontSizeNorm, 10 m 에서 자름)
   float util = 0;      // 주변 프론티어 칸 수 (F_UTIL × kUtilNorm — 후보 v2 면 예상 관측량 0 ~ 1)
   bool cur = false;    // 지금 목표가 이 덩어리 안 (F_CUR)
+  bool object = false; // 물체 후보 (low_decider 물체 찾기 지시) — 지도 그림에서 노란 점 대신 하늘색 네모 (프론티어 후보와 구별)
   int px = 0, py = 0;  // 지도 사진 안 자리 (render_png 가 채움)
   bool in_cam = false; // 카메라 그림 안에 보임 (render_cam_png 가 채움 — 그 칸 바닥 점이 시야 안이고 안 가려짐)
   int cu = 0, cv = 0;  // 카메라 그림 안 자리

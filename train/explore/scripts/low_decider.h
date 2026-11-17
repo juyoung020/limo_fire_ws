@@ -52,6 +52,17 @@ struct Params {
   // 물체 찾기 지시 (실물 노드 ~/instruction). 비면 글이 예전과 바이트까지 같음 — 차면 "instruction" · "known_objects" 칸을 넣고 질문을 "빨리 찾기"로
   std::string instruction;
   std::vector<std::string> known_objects;   // "cup 1.2 m ahead-left" 꼴 짧은 글 (노드가 물체 지도에서 만듦)
+  // 물체 후보 (지시가 있을 때만): 지시에 맞는 지도 위 물체의 설 자리. 후보 목록 앞 칸에 들어가 프론티어 후보와 섞임 (합쳐 max_cands)
+  struct Obj {
+    std::string oid, cls;   // "chair-1" · "chair"
+    float x = 0, y = 0;     // 물체 자리 (지도 m)
+    float seen_s = 0;       // 마지막으로 본 뒤 (s)
+    float match = 1;        // 지시와 맞는 정도 (클래스 이름 = 1, 설명 글 검색이면 SigLIP2 점수)
+    int vp = -1;            // 설 자리 칸 (build_cand 가 채움)
+    float len_m = 0;        // 로봇에서 설 자리까지 길 (m, 빈 칸 BFS)
+  };
+  std::vector<Obj> objects;
+  float obj_ring_in = 0.6f, obj_ring_out = 1.2f, obj_clear = 0.25f;   // 설 자리 고리 (물체에서 m) · 둘레 빈 칸 반경 (m) — object_goto 와 같은 뜻
   float match_r = 1.5f;     // 답의 후보 칸 → 지금 후보 (m). hier 후보 칸은 덩어리에서 로봇에 가장 가까운 칸이라 답을 기다리는 동안 옮겨감 — 0.5 m 면 답의 40 ~ 55 % 를 버림 (low_explore_check, 지연 2.6 s)
 };
 
@@ -126,6 +137,11 @@ class Upper {
       last_choice_ = a.choice;   // 그림용 (RViz ~/candidates): 마지막 답 글자 · 그 후보 번호 · 걸음
       last_pick_id_ = p_.cand ? req_.ids[(size_t)k] : -1;
       last_ans_step_ = s.step;
+      if (p_.cand && req_.ids[(size_t)k] <= kObjId0) {   // 물체 후보: 노드가 그 설 자리로 감 (take_object_pick)
+        const size_t oi = (size_t)(kObjId0 - req_.ids[(size_t)k]);
+        if (oi < obj_req_.size()) { obj_last_ = obj_req_[oi]; obj_pick_ = true; }
+        continue;
+      }
       if (p_.cand) {   // 후보 모드: 지금 목록을 새로 만들고 안정 번호로, 없으면 서는 자리 match_r 안
         ctl.build_cands(v);
         int idx = ctl.cand_index(req_.ids[(size_t)k]);
@@ -242,11 +258,51 @@ class Upper {
     return true;
   }
   // 후보 모드 요청 (scripts/cand_view.h 후보 — 필드 이름은 cand::Cand 그대로 뜻을 풀어 씀). 기억: 후보마다 기록 + 최근 목표 5 개 + 사진의 지나온 길 · 지난 목표
-  bool build_cand(const lxc::View& v, lxc::Ctl& ctl, Req* r) const {
+  bool build_cand(const lxc::View& v, lxc::Ctl& ctl, Req* r) {
     const cand::Out& co = ctl.build_cands(v);
-    if (co.c.size() < 2) return false;
     const sim::EnvState& s = *v.s;
-    return render_cand(p_, co.c, ctl.cand_mem(), decs_, hist_, cam_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
+    if (p_.instruction.empty() || p_.objects.empty()) {   // 지시 없음: 예전과 같은 요청 (바이트 같음)
+      obj_req_.clear();
+      if (co.c.size() < 2) return false;
+      return render_cand(p_, co.c, ctl.cand_mem(), decs_, hist_, cam_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
+    }
+    Params P = p_;
+    P.objects = object_spots(v, co);
+    obj_req_ = P.objects;
+    if (co.c.size() + P.objects.size() < 2) return false;
+    return render_cand(P, co.c, ctl.cand_mem(), decs_, hist_, cam_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
+  }
+  // 물체마다 설 자리: 물체 둘레 obj_ring_in ~ obj_ring_out 고리에서, 이 결정의 후보 뽑기 BFS 가 닿은 칸(계획 몸통 반경·깊이 층 — 벽 뒤·가구 속 아님) 가운데
+  // 물체에 가까운 띠(0.1 m)부터, 같은 띠면 BFS 길이 짧은 칸. 못 가는 물체는 뺀다. 물체 하나 = 후보 하나 (물체 지도가 이미 합친 것)
+  std::vector<Params::Obj> object_spots(const lxc::View& v, const cand::Out& co) const {
+    std::vector<Params::Obj> out;
+    if (!v.lmap || !co.reach_flag || !co.reach_dist) return out;
+    const sim::EnvCfg& c = *v.c;
+    const sim::World& W = *v.W;
+    const int gw = W.gw, gh = W.gh;
+    // 갈 수 있는 칸 = 이 결정의 후보 뽑기와 같은 BFS (계획 몸통 반경 · 깊이 카메라 층) — 프론티어 후보와 같은 잣대
+    const std::vector<int> dist = [&] { std::vector<int> d((size_t)gw * gh, -1); for (int i = 0; i < gw * gh; ++i) if ((co.reach_flag[i] & 1) && co.reach_dist[i] >= 0) d[(size_t)i] = co.reach_dist[i]; return d; }();
+    for (const auto& o : p_.objects) {
+      const int ox = (int)std::floor((o.x - W.ox) / c.res), oy = (int)std::floor((o.y - W.oy) / c.res);
+      const int ext = (int)std::ceil(p_.obj_ring_out / c.res) + 1;
+      int best = -1, bd = 1 << 30;
+      for (int dy = -ext; dy <= ext; ++dy)
+        for (int dx = -ext; dx <= ext; ++dx) {
+          const float rd = std::hypot((float)dx, (float)dy) * c.res;
+          const int x = ox + dx, y = oy + dy;
+          if (rd < p_.obj_ring_in || rd > p_.obj_ring_out || x < 0 || y < 0 || x >= gw || y >= gh) continue;
+          const int dd = dist[(size_t)y * gw + x];   // 물체에 가까운 고리(0.1 m 띠)부터, 같은 띠면 길 짧은 칸 (object_goto 와 같은 규칙)
+          const int key = (int)((rd - p_.obj_ring_in) / 0.1f) * 1000000 + dd;
+          if (dd >= 0 && key < bd) { bd = key; best = y * gw + x; }
+        }
+      if (best < 0) continue;
+      Params::Obj e = o;
+      e.vp = best;
+      e.len_m = (bd % 1000000) * c.res;
+      out.push_back(e);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const Params::Obj& a, const Params::Obj& b) { return a.match != b.match ? a.match > b.match : a.len_m < b.len_m; });
+    return out;
   }
   // 요청 본문 그리기 (후보 모드) — 노드·시뮬(build_cand)과 라벨 다시 그리기(upper_lora/rollout/req_render: 갈래 굴리기가 남긴 원시 상태)가 같은 함수를 씀.
   // C = 후보(cand::build 차례, 기억 필드 포함) · M = 판 기억 · decs = 지금까지 결정 · (rx, ry, rth) = 지도 자세 · lmap = 지도 (c.size 줄 간격)
@@ -267,18 +323,41 @@ class Upper {
     std::vector<dec::Cand> dc;
     std::vector<int> cells;
     oj cl = oj::array();
-    std::vector<size_t> ord;   // 글자 차례 → C 번호
-    for (size_t i = 0; i < C.size() && i < 26; ++i) ord.push_back(i);
-    if (P.order == 1) std::stable_sort(ord.begin(), ord.end(), [&](size_t a, size_t b) { return C[a].len_m < C[b].len_m; });
-    if (P.max_cands > 0 && (int)ord.size() > P.max_cands) ord.resize((size_t)P.max_cands);   // 점수 순 · 거리 순 어느 쪽이든 앞에서
-    if (ord.size() < 2) return false;
-    std::map<int, char> id_let;
-    for (size_t i = 0; i < ord.size(); ++i) id_let[C[ord[i]].id] = (char)('A' + (int)i);
-    for (size_t i = 0; i < ord.size(); ++i) {
-      const cand::Cand& q = C[ord[i]];
+    // 물체 후보 (지시가 있을 때만, build_cand 가 설 자리를 채움): 앞 글자들. 프론티어 후보는 남은 칸에 (합쳐 max_cands)
+    const size_t n_obj = P.instruction.empty() ? 0 : std::min(P.objects.size(), (size_t)(P.max_cands > 0 ? std::max(1, P.max_cands / 2) : 3));
+    for (size_t i = 0; i < n_obj; ++i) {
+      const Params::Obj& ob = P.objects[i];
       dec::Cand d;
       d.key = (char)('A' + (int)i);
       d.slot = (int)i;
+      d.object = true;
+      dc.push_back(d);
+      cells.push_back(ob.vp % W.gw);
+      cells.push_back(ob.vp / W.gw);
+      r->cells.push_back(ob.vp);
+      r->ids.push_back(kObjId0 - (int)i);
+      const auto [dist, ang] = rel(ob.x, ob.y);
+      oj o;
+      o["id"] = std::string(1, d.key);
+      o["kind"] = "object";
+      o["object"] = ob.cls;
+      if (P.compact) { o["len"] = rnd(ob.len_m, 0.1); o["bear"] = ang; o["seen_s"] = rnd(ob.seen_s, 1.0); o["match"] = rnd(ob.match, 0.01); }
+      else { o["path_length_m"] = rnd(ob.len_m, 0.1); o["bearing_deg_left_positive"] = ang; o["distance_m"] = rnd(dist, 0.1); o["seconds_since_seen"] = rnd(ob.seen_s, 1.0); o["match"] = rnd(ob.match, 0.01); }
+      cl.push_back(o);
+    }
+    std::vector<size_t> ord;   // 글자 차례 → C 번호
+    for (size_t i = 0; i < C.size() && i < 26; ++i) ord.push_back(i);
+    if (P.order == 1) std::stable_sort(ord.begin(), ord.end(), [&](size_t a, size_t b) { return C[a].len_m < C[b].len_m; });
+    const int room = P.max_cands > 0 ? P.max_cands - (int)n_obj : (int)ord.size();
+    if (room >= 0 && (int)ord.size() > room) ord.resize((size_t)room);   // 점수 순 · 거리 순 어느 쪽이든 앞에서
+    if (ord.size() + n_obj < 2) return false;
+    std::map<int, char> id_let;
+    for (size_t i = 0; i < ord.size(); ++i) id_let[C[ord[i]].id] = (char)('A' + (int)(n_obj + i));
+    for (size_t i = 0; i < ord.size(); ++i) {
+      const cand::Cand& q = C[ord[i]];
+      dec::Cand d;
+      d.key = (char)('A' + (int)(n_obj + i));
+      d.slot = (int)(n_obj + i);
       dc.push_back(d);
       cells.push_back(q.vp % W.gw);
       cells.push_back(q.vp / W.gw);
@@ -286,6 +365,7 @@ class Upper {
       r->ids.push_back(q.id);
       oj o;
       o["id"] = std::string(1, d.key);
+      if (n_obj > 0) o["kind"] = "frontier";
       if (P.compact) {   // 짧은 키 (candidate_fields 에 뜻)
         o["t"] = rnd(q.t_s, 0.1); o["len"] = rnd(q.len_m, 0.1); o["bear"] = (int)std::lround(q.bearing * 57.29578f); o["new"] = rnd(q.gain_m2, 1.0);
         o["w"] = rnd(q.open_m, 0.1); o["room"] = q.same_room != 0; o["cur"] = q.cur != 0;
@@ -453,7 +533,10 @@ class Upper {
     }
     oj body;
     if (!P.instruction.empty()) {
-      st["instruction"] = "The user asked the robot to find: \"" + P.instruction + "\". It is not on the robot's object map yet. Prefer candidates that are likely to reveal it soon.";
+      st["instruction"] = n_obj > 0 ? "The user asked the robot to go to: \"" + P.instruction + "\". Candidates with kind = object are spots next to matching objects already on "
+                                          "the robot's object map (object = its class, match = how well it fits the request, 1 = same class); pick one of them to go there, or a "
+                                          "frontier candidate if none fits. On the map image object candidates are cyan squares (frontier candidates are yellow dots)."
+                                    : "The user asked the robot to find: \"" + P.instruction + "\". It is not on the robot's object map yet. Prefer candidates that are likely to reveal it soon.";
       st["known_objects"] = P.known_objects;
     }
     body["state"] = st;
@@ -462,6 +545,7 @@ class Upper {
     oj crit = oj::object();
     for (const auto& d : dc) crit[std::string(1, d.key)] = nullptr;
     body["questions"]["pick"] = oj{{"type", "choice"}, {"instructions", P.instruction.empty() ? "Which candidate spot should the robot drive to next so that the whole floor gets mapped in the least total time?"
+                                                                                               : n_obj > 0 ? "Which candidate should the robot drive to next to reach the requested object as soon as possible?"
                                                                                                : "Which candidate spot should the robot drive to next to find the requested object as soon as possible?"},
                                    {"criteria", crit}};
     r->body = body.dump();
@@ -495,6 +579,10 @@ class Upper {
   bool waiting() const { return wait_; }
   void set_instruction(const std::string& t) { p_.instruction = t; }
   void set_known_objects(const std::vector<std::string>& k) { p_.known_objects = k; }
+  void set_objects(const std::vector<Params::Obj>& o) { p_.objects = o; }
+  // 판단 모델이 물체 후보를 골랐으면 그 설 자리 (한 번 꺼내면 지움) — 노드는 ~/goto 처럼 그 자리로 감
+  bool take_object_pick(Params::Obj* o) { if (!obj_pick_) return false; *o = obj_last_; obj_pick_ = false; return true; }
+  const std::vector<Params::Obj>& last_objects() const { return obj_req_; }   // 마지막 요청의 물체 후보 (글자 A … 차례, RViz 용)
   int last_send() const { return last_send_; }   // 마지막으로 보낸 걸음 (−1 = 아직)
   long n_sent() const { return n_sent_; }
   long n_ans() const { return n_ans_; }
@@ -524,6 +612,10 @@ class Upper {
 
  private:
   Params p_;
+  static constexpr int kObjId0 = -1000;   // 물체 후보 안정 번호 = kObjId0 − 차례 (프론티어 후보 번호는 0 이상)
+  std::vector<Params::Obj> obj_req_;      // 마지막 요청의 물체 후보 (번호 차례)
+  Params::Obj obj_last_;
+  bool obj_pick_ = false;
   Req req_;
   bool wait_ = false;
   int last_send_ = -1;

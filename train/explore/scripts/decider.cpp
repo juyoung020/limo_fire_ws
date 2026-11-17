@@ -139,8 +139,16 @@ void place_tags(Img& im, const std::vector<Cand>& cand, const std::vector<int>& 
     draw_line(im, dots[2 * k], dots[2 * k + 1], tx[k], ty[k], lr, lg, lb);
     draw_line(im, dots[2 * k] + 1, dots[2 * k + 1], tx[k] + 1, ty[k], lr, lg, lb);
   }
-  for (int k = (int)cand.size() - 1; k >= 0; --k)
-    if (show.empty() || show[k]) draw_disc(im, dots[2 * k], dots[2 * k + 1], kDotR, 255, 210, 0);
+  for (int k = (int)cand.size() - 1; k >= 0; --k) {
+    if (!show.empty() && !show[k]) continue;
+    if (!cand[k].object) { draw_disc(im, dots[2 * k], dots[2 * k + 1], kDotR, 255, 210, 0); continue; }
+    const int h = kDotR + 2;   // 물체 후보: 검은 테 하늘색 네모
+    for (int y = -h; y <= h; ++y)
+      for (int x = -h; x <= h; ++x) {
+        const bool edge = std::abs(x) == h || std::abs(y) == h;
+        im.set(dots[2 * k] + x, dots[2 * k + 1] + y, edge ? 0 : 0, edge ? 0 : 200, edge ? 0 : 255);
+      }
+  }
   for (int k = (int)cand.size() - 1; k >= 0; --k)
     if (show.empty() || show[k]) draw_tag(im, tx[k], ty[k], cand[k].key);
 }

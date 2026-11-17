@@ -106,6 +106,10 @@ struct Out {
   int n_gaveup = 0;       // 그중 버림: 시점 곁 실패가 Opt::give_up 번 이상 (구멍과 따로 셈)
   int rotate = 0;         // 후보 0 개인데 쉬는 덩어리가 모두 로봇 곁 → 제자리 회전으로 봄
   int reused = 0;         // 프론티어 찾기를 같은 걸음 관측 것으로 (In::reach)
+  // 이 결정의 갈 수 있는 칸 (프론티어 찾기 BFS — 계획 몸통 반경·깊이 층 그대로): 칸 i 는 (reach_flag[i] & 1) && reach_dist[i] >= 0.
+  // 다음 build 까지만 유효 (Ctl 버퍼 또는 RobotEnv::reach_keep). 물체 후보 설 자리가 같은 판정을 씀 (low_decider object_spots)
+  const uint8_t* reach_flag = nullptr;
+  const int32_t* reach_dist = nullptr;
   double ms = 0;          // 이 결정에 걸린 시간 (ms)
   double ms_part[6] = {0, 0, 0, 0, 0, 0};   // 찾기 · 거리 지도·방 · 덩어리 · 로봇 거리 · 시점 · 고르기
 };
@@ -339,6 +343,8 @@ struct Run {
     }
     out.start_free = r.start_free;
     out.reused = reused;
+    out.reach_flag = FL;
+    out.reach_dist = DI;
     nr0 = r.n_reach0;
     start = r.start;
     return r.start_free;

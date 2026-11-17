@@ -10,7 +10,8 @@
 //   로봇에서 빈 칸으로 이어지는(BFS) 칸 중 로봇에서 길이 가장 짧은 칸. 방향은 물체를 봄.
 // 가는 길 (mode):
 //   nav2 — 저장 지도 위 주행(navigation.launch.xml: map_server + AMCL + Nav2): NavigateToPose 액션
-//   explore — 탐사 중(explore_fuel_rl.launch.xml: Cartographer + low_rl, Nav2 없음): low_rl 의 ~/goto (PointStamped) 로 넘김
+//   explore — 탐사 중(explore_fuel_rl.launch.xml: Cartographer + low_rl, Nav2 없음): 지시 글(~/instruction)과 풀어 낸 클래스(~/target_class)만 low_rl 에 넘기고,
+//             판단 모델이 후보 목록(그 물체 옆 설 자리 + 프론티어)에서 고른다 (low_decider.h 물체 후보). direct: true 면 예전처럼 설 자리를 ~/goto 로 바로
 // 지도에 없으면: explore_topic(low_rl ~/instruction)에 글을 넘겨 탐사로 찾게 하고(판단 모델 글에 지시 + 아는 물체가 들어감),
 //   물체 지도가 바뀔 때마다(이름) · requery_s 마다(설명 검색) 다시 찾아 나타나는 즉시 그리로 간다. 빈 글을 주면 지시를 지움.
 // 상태: ~/status (std_msgs/String, 한글 한 줄)
@@ -57,6 +58,7 @@ class ObjectGoto : public rclcpp::Node {
  public:
   ObjectGoto() : Node("object_goto"), tf_buffer_(get_clock()), tf_listener_(tf_buffer_) {
     mode_ = declare_parameter<std::string>("mode", "nav2");
+    direct_ = declare_parameter<bool>("direct", false);
     map_frame_ = declare_parameter<std::string>("map_frame", "map");
     robot_frame_ = declare_parameter<std::string>("robot_frame", "base_link");
     stand_dist_ = declare_parameter<double>("stand_dist", 0.6);
@@ -80,6 +82,7 @@ class ObjectGoto : public rclcpp::Node {
     explore_pub_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_topic", "/low_rl/instruction"), 10);
     goto_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(declare_parameter<std::string>("explore_goto_topic", "/low_rl/goto"), 10);
     face_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(declare_parameter<std::string>("explore_face_topic", "/low_rl/goto_face"), 10);
+    target_pub_cls_ = create_publisher<std_msgs::msg::String>(declare_parameter<std::string>("explore_target_topic", "/low_rl/target_class"), 10);
     objects_sub_ = create_subscription<vision_msgs::msg::Detection3DArray>(
       declare_parameter<std::string>("objects_topic", "/object_mapper/objects"), rclcpp::QoS(1).transient_local(),
       [this](vision_msgs::msg::Detection3DArray::ConstSharedPtr m) {
@@ -187,6 +190,21 @@ class ObjectGoto : public rclcpp::Node {
       explore_pub_->publish(m);   // 탐사 노드 지시도 지움
       show_target(nullptr, 0, 0);
       say("지시 지움");
+      return;
+    }
+    if (mode_ == "explore" && !direct_) {   // 판단 모델이 고르게: 클래스와 지시만 넘김
+      const std::string cls = class_of(text);
+      std_msgs::msg::String c, t;
+      c.data = cls;
+      t.data = text;
+      target_pub_cls_->publish(c);
+      explore_pub_->publish(t);
+      int n = 0;
+      if (objects_ && !cls.empty()) {
+        for (const auto & d : objects_->detections) {n += !d.results.empty() && d.results[0].hypothesis.class_id == cls;}
+      }
+      say("'" + text + "' → " + (cls.empty() ? std::string("클래스 모름(설명 검색은 다음 단계)") : "클래스 " + cls) + " · 지도에 " + std::to_string(n) +
+        " 개 — 판단 모델이 후보(그 물체 옆 · 프론티어)에서 고름");
       return;
     }
     if (try_name()) {return;}
@@ -365,8 +383,9 @@ class ObjectGoto : public rclcpp::Node {
   double stand_dist_, stand_band_, robot_radius_, query_wait_, query_min_score_;
   int occ_threshold_;
   std::vector<std::pair<std::string, std::string>> aliases_;
-  bool waiting_query_ = false, searching_ = false, done_ = false;
+  bool waiting_query_ = false, searching_ = false, direct_ = false, done_ = false;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr arrived_sub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr target_pub_cls_;
   double requery_s_;
   rclcpp::Time query_t0_{0, 0, RCL_ROS_TIME};
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
