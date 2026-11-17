@@ -18,30 +18,30 @@ LIMO Pro 화재 대응 로봇이 **실제로 돌 때** 어떤 launch 가 어떤 
 
 **이 PC 에서 못 띄운 것 (📄 코드 기준)**
 - 실물 드라이버 `limo_fire_base`(섀시 UART)·`ydlidar_ros2_driver`·Orbbec 카메라·EKF(`robot_localization` 은 `geographic_msgs` 가 없어 빌드 안 됨) — 시뮬에서는 Webots 플러그인이 같은 이름·토픽으로 대신 낸다.
-- 인식(`yolo_detector`·`object_mapper`) — TensorRT 와 Jetson CUDA 12 기준 코드라 이 PC(CUDA 13)에서 빌드 안 됨.
+- 인식(`object_detector`·`object_map`) — TensorRT 와 Jetson CUDA 12 기준 코드라 이 PC(CUDA 13)에서 빌드 안 됨.
 - 임무 BT(`mission`) — BehaviorTree.CPP 4.x 가 이 Humble PC 에 없음(팀원이 Jazzy PC 에서 확인).
 - 판단 모델 서버(llama-server) — 다른 작업이 GPU 를 쓰고 있어 탐사 위층은 규칙 `upper:=slot0` 로 대신 띄움(노드 구조·토픽은 같음).
 
 **시뮬 실측의 한계**: 화면 없는 Xvfb + 소프트웨어 렌더에, 다른 작업이 CPU 를 많이 쓰는 중(load 15)이라 시뮬이 실시간보다 느렸다(sim A 약 0.8 배, sim B 약 0.3 배 — `rtf.txt`). 그래서 **벽시계 Hz 는 실물보다 낮다.** 주기는 🤖 실물 녹화 값을 먼저 보고, 🧪 값은 "구조가 이렇게 이어져 있다" 의 증거로 본다.
 
-### 우리 모듈 이름표 (⚠ 이름 바꾸는 중)
+### 우리 모듈 이름 (2026-11-18 바꿈)
 
-다른 작업이 우리 패키지·노드·토픽 이름을 바꾸고 있다. 이 문서 본문은 **지금 `main` 의 이름**으로 쓰고, 바뀐 뒤에는 이 표의 오른쪽 이름으로 읽는다. 바뀌면 이 표만 고치면 된다.
+이름 규칙과 옛 이름 → 새 이름 표는 [conventions.md "이름"](../conventions.md). `docs/exam/raw/` 의 덤프는 바꾸기 전에 뜬 것이라 옛 이름(`/low_rl`, `/yolo_detector`, `/object_mapper`, `/object_goto`, `/explore_frontier`)이 그대로 있다.
 
-| 지금 이름 (본문에 쓴 것) | 바뀔 이름 | 무엇 |
+| 모듈 | 노드 | 토픽 |
 |---|---|---|
-| 패키지 `limo_fire_rl` | `limo_fire_explore` | 탐사 노드 패키지 |
-| 노드 `/low_rl`, 토픽 `/low_rl/*` | `/explore/*` | 합친 탐사 노드(판단 모델 + A*) |
-| `explore_fuel_rl.launch.xml` | `explore.launch.xml` | 첫 지도 탐사 launch |
-| `/yolo_detector` (`/yolo_detector/*`) | `/perception/object_detector` | YOLO 탐지 |
-| `/object_mapper` (`/object_mapper/*`) | `/perception/object_map` | 물체 지도 |
-| 그대로 | | `/explore_frontier`(Nav2 판 프론티어 탐사), `/object_goto`, `/smoke_mode`, `/mission`, `/esp32_bridge`, `/limo/limo_fire_base` |
+| 탐사 (`limo_fire_explore`) | `/explore/explorer` (합친 탐사: 판단 모델 + A*) | `/explore/*`, 서비스 `/explore/enable` |
+| 탐사 | `/explore/frontier_explorer` (Nav2 판 프론티어 탐사) | `/explore/frontier_explorer/*` |
+| 탐사 (`limo_fire_navigation`) | `/explore/object_goto` | `/explore/object_goto/*` |
+| 인식 (`limo_fire_perception`) | `/perception/object_detector` (YOLO) | `/perception/detections` · `mask` · `detection_image` |
+| 인식 | `/perception/object_map` (물체 지도) | `/perception/objects` · `markers` · `summary` |
+| 그대로 | `/smoke_mode`, `/mission`, `/esp32_bridge`, `/limo/limo_fire_base` | |
 
 ### 누가 만든 것인가 (소유)
 
 | 소유 | 모듈 |
 |---|---|
-| **우리(김주영)** | 섀시 드라이버 확장 `limo_fire_base`, 탐사 `low_rl`·`explore_frontier`, 인식 `yolo_detector`·`object_mapper`, `object_goto`, RViz 탐사 패널, launch·config(`limo_fire_bringup`), URDF(`limo_fire_description`), 시뮬 우리 판(`limo_fire_sim`) |
+| **우리(김주영)** | 섀시 드라이버 확장 `limo_fire_base`, 탐사 `explorer`·`frontier_explorer`, 인식 `object_detector`·`object_map`, `object_goto`, RViz 탐사 패널, launch·config(`limo_fire_bringup`), URDF(`limo_fire_description`), 시뮬 우리 판(`limo_fire_sim`) |
 | **팀원** | 임무 BT `mission`(`limo_fire_bt`), 연기 모드 `smoke_mode`, ESP32 다리 `esp32_bridge`, 펌웨어 |
 | **남의 코드(base)** | WeGo 드라이버(Orbbec·YDLIDAR·`robot_localization`), Nav2(Humble apt), Cartographer(`cartographer_ros`), `robot_state_publisher`·`joint_state_publisher`, Webots + `webots_ros2_driver` + 교수님 `webots_ros2_limo`, RViz2, llama-server(llama.cpp + 우리 패치) |
 
@@ -49,8 +49,8 @@ LIMO Pro 화재 대응 로봇이 **실제로 돌 때** 어떤 launch 가 어떤 
 
 | 모드 | 언제 | 띄우는 것 | 주행 |
 |---|---|---|---|
-| ① 첫 지도 탐사 | 처음 한 번 | `robot.launch.xml` + `explore_fuel_rl.launch.xml stack:=true [perception:=true]` + llama-server | `low_rl` 의 A* 가 `/cmd_vel` 직접 (Nav2 없음) |
-| ② 순찰 | 매일 밤, 저장 지도 위 | `robot.launch.xml` + `navigation.launch.xml` + `yolo.launch.xml objects_file:=…` + `bt.launch.xml` | Nav2 (`navigate_to_pose`) |
+| ① 첫 지도 탐사 | 처음 한 번 | `robot.launch.xml` + `explore.launch.xml stack:=true [perception:=true]` + llama-server | `explorer` 의 A* 가 `/cmd_vel` 직접 (Nav2 없음) |
+| ② 순찰 | 매일 밤, 저장 지도 위 | `robot.launch.xml` + `navigation.launch.xml` + `perception.launch.xml objects_file:=…` + `bt.launch.xml` | Nav2 (`navigate_to_pose`) |
 | ③ 화재 대응 | 불을 봤을 때 | ② 와 같은 프로세스. BT 가 사건 → 신고 → 고급 모드(연기·물·탐사) 로 감 | Nav2, 연기 모드면 `smoke_mode` 가 위치 추정을 바꿈 |
 
 ---
@@ -70,14 +70,14 @@ robot.launch.xml  (항상 먼저)
 ├─ ekf_filter_node_odom     /odom + /imu → /odometry/filtered, TF odom→base_link
 └─ (esp32:=true) esp32_bridge, (viz:=true) rviz2
 
-① explore_fuel_rl.launch.xml stack:=true perception:=true
+① explore.launch.xml stack:=true perception:=true
 ├─ mapping.launch.xml: cartographer_node, cartographer_occupancy_grid_node
-├─ yolo.launch.xml: perception_container (component_container, 한 스레드) ← yolo_detector + object_mapper (intra-process)
+├─ perception.launch.xml: perception_container (component_container, 한 스레드) ← object_detector + object_map (intra-process)
 ├─ object_goto (mode explore)
-├─ low_rl (한 스레드)            ↔ HTTP llama-server :8171 (ROS 밖, 손으로 먼저 띄움)
-└─ (rviz:=true) rviz2 (explore_fuel_rl.rviz)
+├─ explorer (한 스레드)            ↔ HTTP llama-server :8171 (ROS 밖, 손으로 먼저 띄움)
+└─ (rviz:=true) rviz2 (explore.rviz)
 
-② navigation.launch.xml  (+ yolo.launch.xml, bt.launch.xml)
+② navigation.launch.xml  (+ perception.launch.xml, bt.launch.xml)
 ├─ nav2_container (component_container_isolated) ← controller_server, smoother_server, planner_server,
 │     behavior_server, bt_navigator, waypoint_follower, velocity_smoother, lifecycle_manager_navigation,
 │     map_server, amcl, lifecycle_manager_localization
@@ -86,11 +86,11 @@ robot.launch.xml  (항상 먼저)
 ├─ (rviz:=true) rviz2 (limo_fire.rviz)
 └─ bt.launch.xml: mission (BT 4.x, 한 스레드 실행기 + Groot2 :1667)
 
-save_map.launch.xml : map_saver_cli × 2 (src·install) + /object_mapper/save_to 두 번 → 끝나면 사라짐
+save_map.launch.xml : map_saver_cli × 2 (src·install) + /perception/save_objects_to 두 번 → 끝나면 사라짐
 record.launch.xml   : ros2 bag record (늘 같은 토픽 묶음)
 ```
 
-🤖 실물 기동 로그(2026-11-17, [`raw/real_bags/robot_launch_1117.txt`](raw/real_bags/robot_launch_1117.txt)): `jetson_clocks`·`robot_state_publisher`·`joint_state_publisher`·`limo_fire_base`·`component_container`(카메라)·`ydlidar_ros2_driver_node`·`ekf_node` 7 프로세스. 탐사 쪽([`explore_launch_1117.txt`](raw/real_bags/explore_launch_1117.txt))은 `cartographer_node`·`cartographer_occupancy_grid_node`·`component_container_mt`(그날은 멀티스레드 — 다음 날 한 스레드로 바꿈, Q6)·`object_goto`·`low_rl`, 컨테이너에 `/yolo_detector`·`/object_mapper` 적재.
+🤖 실물 기동 로그(2026-11-17, [`raw/real_bags/robot_launch_1117.txt`](raw/real_bags/robot_launch_1117.txt)): `jetson_clocks`·`robot_state_publisher`·`joint_state_publisher`·`limo_fire_base`·`component_container`(카메라)·`ydlidar_ros2_driver_node`·`ekf_node` 7 프로세스. 탐사 쪽([`explore_launch_1117.txt`](raw/real_bags/explore_launch_1117.txt))은 `cartographer_node`·`cartographer_occupancy_grid_node`·`component_container_mt`(그날은 멀티스레드 — 다음 날 한 스레드로 바꿈, Q6)·`object_goto`·`explorer`, 컨테이너에 `/perception/object_detector`·`/perception/object_map` 적재.
 
 #### 프로세스 → 스레드 (실물 노드)
 
@@ -102,8 +102,8 @@ record.launch.xml   : ros2 bag record (늘 같은 토픽 묶음)
 | `ekf_filter_node_odom` | 실행기 1 (30 Hz 타이머) | 융합 → `/odometry/filtered` + TF `odom→base_link` |
 | `cartographer_node` | 실행기 + Cartographer 뒤 작업 스레드(최적화) | SLAM → TF `map→odom`(50 Hz 설정), `/submap_list` |
 | `cartographer_occupancy_grid_node` | 실행기 | `/submap_list` → `/map` 1 Hz |
-| `perception_container` | **YOLO GPU 작업 스레드**(실행기 밖, WaitSet 으로 영상 직접 꺼냄) + 실행기 **1** (`object_mapper` 전부, TF 리스너 스레드 없음) + CUDA 스레드 | 탐지 → 마스크·탐지 → 깊이 짝 → 지도 위 물체 |
-| `low_rl` | 실행기 **1** (TF 도 이 실행기, 리스너 스레드 없음) | `/scan` 한 장 = 걸음 0.1 s, 비차단 HTTP |
+| `perception_container` | **YOLO GPU 작업 스레드**(실행기 밖, WaitSet 으로 영상 직접 꺼냄) + 실행기 **1** (`object_map` 전부, TF 리스너 스레드 없음) + CUDA 스레드 | 탐지 → 마스크·탐지 → 깊이 짝 → 지도 위 물체 |
+| `explorer` | 실행기 **1** (TF 도 이 실행기, 리스너 스레드 없음) | `/scan` 한 장 = 걸음 0.1 s, 비차단 HTTP |
 | `object_goto` | 실행기 1 (nav2 모드면 + TF 리스너 스레드) | 글 → 클래스 → (nav2) 설 자리 → `navigate_to_pose` |
 | `nav2_container` | **컴포넌트마다 실행기 스레드**(isolated) + 각 서버 안 TF 리스너 스레드 | 아래 Nav2 표 |
 | `mission` | `SingleThreadedExecutor` 를 틱 사이 `spin_some` + Groot2 ZMQ 스레드 | BT 10 Hz 틱 |
@@ -126,8 +126,8 @@ sim.launch.xml world:=limo_fire_maze [slam:=true] [nav:=true] [explore:=$(slam)]
 │   └─ robot_state_publisher (우리 URDF, platform:=webots)
 ├─ slam:=true  → mapping.launch.xml (cartographer × 2)
 ├─ nav:=true   → navigation.launch.xml (nav2_container + smoke_mode + object_goto nav2, slam 이면 map_server·amcl 없음)
-├─ explore     → explore_frontier
-├─ perception  → yolo.launch.xml (이 PC 는 못 띄움)
+├─ explore     → frontier_explorer
+├─ perception  → perception.launch.xml (이 PC 는 못 띄움)
 ├─ rviz        → viewer.launch.xml (limo_fire_rviz)
 └─ bt          → bt.launch.xml sim:=true (이 PC 는 못 띄움)
 ```
@@ -147,19 +147,19 @@ sim.launch.xml world:=limo_fire_maze [slam:=true] [nav:=true] [explore:=$(slam)]
 | `component_container_isolated` | **47** | 102 MB | `/nav2_container` + 컴포넌트 8: controller·smoother·planner·behavior·bt_navigator·waypoint_follower·velocity_smoother·lifecycle_manager_navigation (+ 숨은 노드 `global_costmap/global_costmap`·`local_costmap/local_costmap`·`bt_navigator_navigate_*_rclcpp_node`) |
 | `smoke_mode` | 14 | 34 MB | `/smoke_mode` |
 | `object_goto` | 14 | 34 MB | `/object_goto` (nav2 모드) |
-| `explore_frontier` | 14 | 35 MB | `/explore_frontier` |
+| `frontier_explorer` | 14 | 35 MB | `/explore/frontier_explorer` |
 | `rviz2` | 43 | 692 MB | `/limo_fire_rviz` (소프트웨어 렌더 llvmpipe 스레드 12 개 포함) |
 | 숨은 노드 | | | `/launch_ros_<pid>`(launch 자신), `/transform_listener_impl_*` × 9 (TF 리스너마다 하나) |
 
 노드 38 개, 토픽 99, 서비스 248(그중 파라미터 서비스 6 × 28 노드 = 168, 수명 주기 서비스 45), 액션 11 — `nodes.txt`·`topics.txt`·`services.txt`·`actions.txt`.
 
-#### 🧪 sim B — 모드 ① 그대로: Cartographer + `low_rl` (Nav2 없음) + `object_goto` explore
+#### 🧪 sim B — 모드 ① 그대로: Cartographer + `explorer` (Nav2 없음) + `object_goto` explore
 
-[`raw/sim_B_lowrl_explore/`](raw/sim_B_lowrl_explore). `sim.launch.xml slam:=true nav:=false explore:=false rviz:=false` + `low_rl.launch.xml use_sim_time:=true require_rc:=false upper:=slot0 dry_run:=false` + `object_goto mode:=explore`.
+[`raw/sim_B_lowrl_explore/`](raw/sim_B_lowrl_explore). `sim.launch.xml slam:=true nav:=false explore:=false rviz:=false` + `explorer.launch.xml use_sim_time:=true require_rc:=false upper:=slot0 dry_run:=false` + `object_goto mode:=explore`.
 
 | 프로세스 | 스레드 | RSS | 비고 |
 |---|---|---|---|
-| `low_rl` | 12 | 50 MB | 실행기 1 + DDS. `~/enable` 로 켬 → `/cmd_vel` 직접 |
+| `explorer` | 12 | 50 MB | 실행기 1 + DDS. `~/enable` 로 켬 → `/cmd_vel` 직접 |
 | `object_goto` | 12 | 29 MB | explore 모드: `/map`·TF·Nav2 클라이언트를 안 만듦 → sim A(nav2 모드) 14 스레드보다 2 개 적음 |
 | `cartographer_node` | 18 | 48 MB | |
 
@@ -205,7 +205,7 @@ QoS 는 `신뢰/지속` 으로: R = RELIABLE, BE = BEST_EFFORT, V = VOLATILE, TL
 | `/amcl` (모드 ②) | Nav2 | `scan_localization`(smoke_mode 가 넘김), `/map`, `/initialpose`, TF | `/amcl_pose`, `/particle_cloud` — **TF 는 안 냄** (`tf_broadcast: false`) | 수명 주기 | `nav2_params.yaml` amcl |
 | `/smoke_mode` | 팀원 | `/scan` BE, `/imu`, `/map`, `/ultrasonic/*`, `/amcl_pose`, `/initialpose` | **TF `map→odom`**(모드 ②, `publish_map_odom`), `scan_localization`·`scan_obstacles` BE, `/speed_limit`, `/smoke_mode/active`(TL)·`pose`·`bump`·`wall_fix`, `/initialpose`(연기 모드에서 나올 때) | 서버 `/smoke_mode/set` SetBool, 클라이언트 `*/clear_entirely_*_costmap` | `limo_fire_navigation/config/smoke_mode.yaml` (타이머 4 개: TF·스캔·속도 1 s·벽 맞추기, 모두 벽시계) |
 
-🧪 sim A 에서 `/scan` 구독자 = `cartographer_node`·`smoke_mode`·`limo_fire_rviz` (모두 BE), `/scan_obstacles`(smoke_mode BE) → local·global costmap, `/map`(occupancy_grid_node R/TL) → global_costmap·smoke_mode·object_goto·RViz(TL), **`explore_frontier` 만 R/V**(Q3).
+🧪 sim A 에서 `/scan` 구독자 = `cartographer_node`·`smoke_mode`·`limo_fire_rviz` (모두 BE), `/scan_obstacles`(smoke_mode BE) → local·global costmap, `/map`(occupancy_grid_node R/TL) → global_costmap·smoke_mode·object_goto·RViz(TL), **`frontier_explorer` 만 R/V**(Q3).
 🧪 sim C(저장 지도): `/map` 은 `map_server`(R/TL, 한 번) → global_costmap·amcl·smoke_mode·object_goto, `/scan_localization` 은 `smoke_mode`(BE) → `amcl`, `/amcl_pose` 는 `amcl`(R/TL) → `smoke_mode` — 그래서 `map → odom` 을 smoke_mode 가 계산해 낸다. 벽시계로 `/scan` 6.5 Hz 와 `/scan_localization`·`/scan_obstacles` 6.5 Hz 가 같다 = 중계가 장마다 하나씩 넘김([`raw/sim_C_patrol/hz.txt`](raw/sim_C_patrol/hz.txt)).
 
 ### b-3. Nav2 (모드 ② ③, 그리고 Nav2 판 프론티어 탐사) — base, 한 컨테이너
@@ -232,21 +232,21 @@ QoS 는 `신뢰/지속` 으로: R = RELIABLE, BE = BEST_EFFORT, V = VOLATILE, TL
 
 | 노드 | 받음 | 냄 | 서비스·액션 | 파라미터 | 스레드 |
 |---|---|---|---|---|---|
-| **`/low_rl`** (모드 ①) | `/scan` BE (= 걸음 시계), `/odom`(섀시 원값, EKF 아님), `/imu`, `/camera/depth/image_raw`+info BE, `/rc_state` BE(깊이 5), `/object_mapper/objects` R/TL, `~/instruction`, `~/target_class`, TF `map→base_link` (스캔 stamp 시각) | `/cmd_vel` 10 Hz (**`dry_run:=false` 일 때만 발행자 생성**), `~/cmd_debug`, `~/status` 1 Hz, `~/state`·`~/done`·`~/goto_status` (TL), `~/goal_marker`, `~/candidates`(+`_text`), `~/decider_image` | 서버 `~/enable` SetBool (리모컨 오토일 때만 켜짐), HTTP `POST /v1/systemone` → llama-server | `limo_fire_rl/config/low_rl.yaml` + 시뮬 공용 `train/explore/sim/config/env.yaml` | 실행기 1, 타이머 50 ms(입력 감시)·5 ms(TF 기다림 장) |
-| `/explore_frontier` (Nav2 판 탐사, 기준선·BT `ExploreFrontiers`) | `/map` R/V, TF | `~/state`·`~/done` (TL), `~/status`, `~/frontiers` | 서버 `~/enable` SetBool, 클라이언트 액션 `/navigate_to_pose`·`/spin` | `config/explore_frontier.yaml` (`occupied_thresh 65`) | 실행기 1 + TF 리스너 스레드, 200 ms 벽시계 타이머 |
-| `/yolo_detector` 📄 | `/camera/color/image_raw` BE (작업 스레드 WaitSet, 최근 장만) | `~/detections` Detection2DArray, `~/mask` mono8(먼저), `~/image`(구독자 있을 때만) | — | `limo_fire_perception/config/yolo_coco.yaml`·`yolo_fire.yaml` | GPU 작업 스레드 |
-| `/object_mapper` 📄 | `/yolo_detector/detections`+`/camera/depth/image_raw` (ApproximateTime 0.05 s), `~/mask`, depth `camera_info`, TF, `/clicked_point`, `~/save_to` | `~/objects` Detection3DArray **R/TL 10 Hz** (map 틀), `~/markers`, `~/summary`, `~/selected` | 서버 `~/clear` `~/save` `~/load` (Trigger) | 같은 파일 `object_mapper:` | 컨테이너 실행기 1, 20 ms 처리 타이머 |
-| `/object_goto` | `~/goal` String(사람 지시), `/object_mapper/objects`, `/low_rl/goto_status`, (nav2) `/map` + TF | `/low_rl/instruction`, `/low_rl/target_class`, `~/status`(TL), `~/target`, `~/overlay` | (nav2 모드) 클라이언트 액션 `/navigate_to_pose` | `limo_fire_navigation/config/object_goto.yaml` + `mode` | 실행기 1 (+ nav2 모드 TF 스레드) |
-| `/limo_fire_rviz` (RViz2) | 지도·스캔·경로·물체·상태 글 | `/goal_pose`(2D Goal Pose), `/initialpose`(2D Pose Estimate), `/clicked_point`(Publish Point) | 클라이언트 `/explore_frontier/enable` 또는 `/low_rl/enable` (탐사 패널) | `limo_fire_description/rviz/limo_fire.rviz`, `limo_fire_rl/rviz/explore_fuel_rl.rviz` | Qt + ROS 스레드 |
-| `/mission` 📄 (팀원) | `IsTopicAlive` 로 `/scan /odom /imu /odometry/filtered /camera/* /yolo_detector/detections`(generic 구독, SensorData), `/rc_state`, `/object_mapper/objects`(R/TL), `/map`, `/amcl_pose`, TF | `/mission/events`(JSON 한 줄, R 깊이 50), `/mission/overlay`, `/cmd_vel`(StopRobot 0), `/nozzle/command`, `/mission/call119`(꺼짐) | 서버 `/mission/request_survivor_search` SetBool; 클라이언트 액션 `/navigate_to_pose`, 서비스 `/lifecycle_manager_*/is_active`(Trigger)·`/smoke_mode/set`·`/explore_frontier/enable`·`/pump/set`·`/speaker/evacuation` | `limo_fire_bt/config/limo_fire_bt.yaml` (+ `_sim.yaml`), 트리 `behavior_trees/limo_fire_bt.xml` | 한 스레드, 10 Hz 틱 |
+| **`/explore/explorer`** (모드 ①) | `/scan` BE (= 걸음 시계), `/odom`(섀시 원값, EKF 아님), `/imu`, `/camera/depth/image_raw`+info BE, `/rc_state` BE(깊이 5), `/perception/objects` R/TL, `~/instruction`, `~/target_class`, TF `map→base_link` (스캔 stamp 시각) | `/cmd_vel` 10 Hz (**`dry_run:=false` 일 때만 발행자 생성**), `~/cmd_debug`, `~/status` 1 Hz, `~/state`·`~/done`·`~/goto_status` (TL), `~/goal_marker`, `~/candidates`(+`_text`), `~/decider_image` | 서버 `~/enable` SetBool (리모컨 오토일 때만 켜짐), HTTP `POST /v1/systemone` → llama-server | `limo_fire_explore/config/explorer.yaml` + 시뮬 공용 `train/explore/sim/config/env.yaml` | 실행기 1, 타이머 50 ms(입력 감시)·5 ms(TF 기다림 장) |
+| `/explore/frontier_explorer` (Nav2 판 탐사, 기준선·BT `ExploreFrontiers`) | `/map` R/V, TF | `~/state`·`~/done` (TL), `~/status`, `~/frontiers` | 서버 `~/enable` SetBool, 클라이언트 액션 `/navigate_to_pose`·`/spin` | `config/frontier_explorer.yaml` (`occupied_thresh 65`) | 실행기 1 + TF 리스너 스레드, 200 ms 벽시계 타이머 |
+| `/perception/object_detector` 📄 | `/camera/color/image_raw` BE (작업 스레드 WaitSet, 최근 장만) | `~/detections` Detection2DArray, `~/mask` mono8(먼저), `~/image`(구독자 있을 때만) | — | `limo_fire_perception/config/yolo_coco.yaml`·`yolo_fire.yaml` | GPU 작업 스레드 |
+| `/perception/object_map` 📄 | `/perception/detections`+`/camera/depth/image_raw` (ApproximateTime 0.05 s), `~/mask`, depth `camera_info`, TF, `/clicked_point`, `~/save_to` | `~/objects` Detection3DArray **R/TL 10 Hz** (map 틀), `~/markers`, `~/summary`, `~/selected` | 서버 `~/clear` `~/save` `~/load` (Trigger) | 같은 파일 `object_map:` | 컨테이너 실행기 1, 20 ms 처리 타이머 |
+| `/object_goto` | `~/goal` String(사람 지시), `/perception/objects`, `/explore/goto_status`, (nav2) `/map` + TF | `/explore/instruction`, `/explore/target_class`, `~/status`(TL), `~/target`, `~/overlay` | (nav2 모드) 클라이언트 액션 `/navigate_to_pose` | `limo_fire_navigation/config/object_goto.yaml` + `mode` | 실행기 1 (+ nav2 모드 TF 스레드) |
+| `/limo_fire_rviz` (RViz2) | 지도·스캔·경로·물체·상태 글 | `/goal_pose`(2D Goal Pose), `/initialpose`(2D Pose Estimate), `/clicked_point`(Publish Point) | 클라이언트 `/explore/frontier_explorer/enable` 또는 `/explore/enable` (탐사 패널) | `limo_fire_description/rviz/limo_fire.rviz`, `limo_fire_explore/rviz/explore.rviz` | Qt + ROS 스레드 |
+| `/mission` 📄 (팀원) | `IsTopicAlive` 로 `/scan /odom /imu /odometry/filtered /camera/* /perception/detections`(generic 구독, SensorData), `/rc_state`, `/perception/objects`(R/TL), `/map`, `/amcl_pose`, TF | `/mission/events`(JSON 한 줄, R 깊이 50), `/mission/overlay`, `/cmd_vel`(StopRobot 0), `/nozzle/command`, `/mission/call119`(꺼짐) | 서버 `/mission/request_survivor_search` SetBool; 클라이언트 액션 `/navigate_to_pose`, 서비스 `/lifecycle_manager_*/is_active`(Trigger)·`/smoke_mode/set`·`/explore/frontier_explorer/enable`·`/pump/set`·`/speaker/evacuation` | `limo_fire_bt/config/limo_fire_bt.yaml` (+ `_sim.yaml`), 트리 `behavior_trees/limo_fire_bt.xml` | 한 스레드, 10 Hz 틱 |
 
-🧪 sim B `low_rl` 실측([`raw/sim_B_lowrl_explore/node_info.txt`](raw/sim_B_lowrl_explore/node_info.txt)), 지시 흐름([`instruction_flow.txt`](raw/sim_B_lowrl_explore/instruction_flow.txt)): `/object_goto/goal "의자로 가"` → `/object_goto/status "'의자로 가' → 클래스 chair · 지도에 0 개 — 판단 모델이 후보(그 물체 옆 · 프론티어)에서 고름"` → `/low_rl/goto_status "지시: 의자로 가 — …"`.
+🧪 sim B `explorer` 실측([`raw/sim_B_lowrl_explore/node_info.txt`](raw/sim_B_lowrl_explore/node_info.txt)), 지시 흐름([`instruction_flow.txt`](raw/sim_B_lowrl_explore/instruction_flow.txt)): `/explore/object_goto/goal "의자로 가"` → `/explore/object_goto/status "'의자로 가' → 클래스 chair · 지도에 0 개 — 판단 모델이 후보(그 물체 옆 · 프론티어)에서 고름"` → `/explore/goto_status "지시: 의자로 가 — …"`.
 
 ### b-5. ROS 밖 프로세스
 
 | 프로세스 | 무엇 | 잇는 법 |
 |---|---|---|
-| llama-server (`127.0.0.1:8171`) | 판단 모델 d1-3B Q8 (LiquidAI), 우리 패치 2 개 | `low_rl` 이 HTTP POST, 비차단 소켓, 한도 8 s. `-lm dio -ngl 99 -c 4096 -np 1`, `LLAMA_DECISION_IMAGES_LAST=1` |
+| llama-server (`127.0.0.1:8171`) | 판단 모델 d1-3B Q8 (LiquidAI), 우리 패치 2 개 | `explorer` 이 HTTP POST, 비차단 소켓, 한도 8 s. `-lm dio -ngl 99 -c 4096 -np 1`, `LLAMA_DECISION_IMAGES_LAST=1` |
 | Groot2 | BT 모니터 | `mission` 이 ZMQ `:1667` 로 냄 |
 | Webots (`webots-bin`) | 물리·센서 렌더 | `webots_ros2_driver` 가 IPC(`ipc://<port>/LIMO`)로 붙음 |
 
@@ -258,12 +258,12 @@ QoS 는 `신뢰/지속` 으로: R = RELIABLE, BE = BEST_EFFORT, V = VOLATILE, TL
 
 | 액션 (타입) | 서버 | 클라이언트 | 목표 / 결과 / 피드백 | 언제 |
 |---|---|---|---|---|
-| `/navigate_to_pose` (`nav2_msgs/action/NavigateToPose`) | `bt_navigator` | 임무 BT `NavigateToWaypoint`·`SweepSmokeZone`, `object_goto`(nav2 모드), `explore_frontier`, RViz 2D Goal Pose(`/goal_pose` 토픽 → bt_navigator 가 **자기 자신에게** `/navigate_to_pose` 목표를 보냄 — 🧪 sim C `node_info` 에서 bt_navigator 가 이 액션의 서버이자 클라이언트) | 목표 `pose`(PoseStamped, map 틀), `behavior_tree`(빈 글 = 기본 트리) / 결과 `std_msgs/Empty` (Humble — 성공·실패는 액션 상태 코드로) / 피드백 `current_pose`, `navigation_time`, `estimated_time_remaining`, `number_of_recoveries`, `distance_remaining` | 순찰점마다, 물체 옆 설 자리로, 프론티어로 |
+| `/navigate_to_pose` (`nav2_msgs/action/NavigateToPose`) | `bt_navigator` | 임무 BT `NavigateToWaypoint`·`SweepSmokeZone`, `object_goto`(nav2 모드), `frontier_explorer`, RViz 2D Goal Pose(`/goal_pose` 토픽 → bt_navigator 가 **자기 자신에게** `/navigate_to_pose` 목표를 보냄 — 🧪 sim C `node_info` 에서 bt_navigator 가 이 액션의 서버이자 클라이언트) | 목표 `pose`(PoseStamped, map 틀), `behavior_tree`(빈 글 = 기본 트리) / 결과 `std_msgs/Empty` (Humble — 성공·실패는 액션 상태 코드로) / 피드백 `current_pose`, `navigation_time`, `estimated_time_remaining`, `number_of_recoveries`, `distance_remaining` | 순찰점마다, 물체 옆 설 자리로, 프론티어로 |
 | `/navigate_through_poses` | `bt_navigator` | (안 씀) | 목표 `poses[]` | |
 | `/compute_path_to_pose` (`ComputePathToPose`) | `planner_server` | bt_navigator 의 트리 | 목표 `goal`, `start`, `planner_id`, `use_start` / 결과 `path`, `planning_time` | 1 Hz 다시 계획 |
 | `/follow_path` (`FollowPath`) | `controller_server` | bt_navigator | 목표 `path`, `controller_id`, `goal_checker_id` / 피드백 `distance_to_goal`, `speed` | 경로 추종 20 Hz |
 | `/smooth_path` | `smoother_server` | bt_navigator | | |
-| `/spin` (`Spin`) | `behavior_server` | bt_navigator 회복, `explore_frontier`(시작 때 프론티어 없으면) | 목표 `target_yaw`, `time_allowance` / 결과 `total_elapsed_time` / 피드백 `angular_distance_traveled` | 회복·둘러보기 |
+| `/spin` (`Spin`) | `behavior_server` | bt_navigator 회복, `frontier_explorer`(시작 때 프론티어 없으면) | 목표 `target_yaw`, `time_allowance` / 결과 `total_elapsed_time` / 피드백 `angular_distance_traveled` | 회복·둘러보기 |
 | `/backup` `/drive_on_heading` `/wait` | `behavior_server` | bt_navigator 회복 트리 | | 🧪 sim A 에서 `backup failed`·`spin failed`(앞 막힘) 2 번씩 |
 | `/follow_waypoints` | `waypoint_follower` | (안 씀 — BT 가 순찰점을 하나씩 줌) | | |
 
@@ -273,8 +273,8 @@ QoS 는 `신뢰/지속` 으로: R = RELIABLE, BE = BEST_EFFORT, V = VOLATILE, TL
 
 | 서비스 (타입) | 서버 | 클라이언트 | 요청 / 응답 | 언제 |
 |---|---|---|---|---|
-| `/low_rl/enable` (`std_srvs/SetBool`) | `low_rl` | RViz 탐사 패널, 사람 | `data` / `success`, `message` (리모컨 오토 아님·`/rc_state` 없음이면 `success: false` + 까닭) | 탐사 켜기·끄기 (늘 꺼진 채 뜸) |
-| `/explore_frontier/enable` (SetBool) | `explore_frontier` | RViz 패널, 임무 BT `ExploreFrontiers` | 같음. 끄면 Nav2 목표 취소 | Nav2 판 탐사 |
+| `/explore/enable` (`std_srvs/SetBool`) | `explorer` | RViz 탐사 패널, 사람 | `data` / `success`, `message` (리모컨 오토 아님·`/rc_state` 없음이면 `success: false` + 까닭) | 탐사 켜기·끄기 (늘 꺼진 채 뜸) |
+| `/explore/frontier_explorer/enable` (SetBool) | `frontier_explorer` | RViz 패널, 임무 BT `ExploreFrontiers` | 같음. 끄면 Nav2 목표 취소 | Nav2 판 탐사 |
 | `/smoke_mode/set` (SetBool) | `smoke_mode` | 임무 BT `SweepSmokeZone`, 사람 | `data: true` 연기 모드 / 저장 지도·AMCL 자세·TF 없으면 거절 + 까닭 | 연기 속 주행 |
 | `/mission/request_survivor_search` (SetBool) | `mission` | 사람·웹 | `data` → 블랙보드 | 탐사 모드 요청 |
 | `/lifecycle_manager_navigation/is_active` (`std_srvs/Trigger`) | lifecycle manager | 임무 BT `WaitForLifecycleActive` | — / `success` | 시작 때 Nav2 준비 확인 |
@@ -284,7 +284,7 @@ QoS 는 `신뢰/지속` 으로: R = RELIABLE, BE = BEST_EFFORT, V = VOLATILE, TL
 | `/is_path_valid` (`nav2_msgs/IsPathValid`) | planner_server | | | |
 | `/set_initial_pose` (`nav2_msgs/SetInitialPose`), `/reinitialize_global_localization`·`/request_nomotion_update` (`std_srvs/Empty`) 🧪 sim C | `amcl` | 사람(토픽 `/initialpose` 가 보통 길) | 자세+공분산 | AMCL 초기화·입자 다시 뿌리기 |
 | `/map_server/load_map` (`nav2_msgs/LoadMap`: `map_url` → `map`, `result`), `/map_server/map` (`nav_msgs/GetMap`) 🧪 sim C | `map_server` | 사람 | | 지도 바꿔 읽기 |
-| `/object_mapper/save` `load` `clear` (Trigger) 📄 | `object_mapper` | 사람. 저장은 `save_map.launch.xml` 이 토픽 `/object_mapper/save_to`(String 경로)로도 | | 물체 지도 파일 |
+| `/perception/save_objects` `load` `clear` (Trigger) 📄 | `object_map` | 사람. 저장은 `save_map.launch.xml` 이 토픽 `/perception/save_objects_to`(String 경로)로도 | | 물체 지도 파일 |
 | `/map_saver/save_map` (`nav2_msgs/SaveMap`) | (map_saver_server 를 띄우면) | — 우리는 `map_saver_cli` 실행 파일을 씀 | `map_topic`, `map_url`, `image_format`, `map_mode`, `free_thresh`, `occupied_thresh` / `result` | 우리 `save_map.launch.xml` 은 CLI 두 번(src·install), 대기 10 s |
 | Cartographer `/finish_trajectory` (`FinishTrajectory`: `trajectory_id` → `status`), `/write_state` (`filename`, `include_unfinished_submaps` → `status`, `.pbstream` 저장), `/start_trajectory`, `/get_trajectory_states`, `/submap_query`, `/trajectory_query`, `/read_metrics`, `/tf2_frames` | `cartographer_node` | 사람 (우리 launch 는 안 부름) | | 궤적 끝내기·상태 저장(나중에 위치 추정만 할 때). 우리는 `/map` 을 `map_saver_cli` 로 PGM 저장 |
 | `/start_scan` `/stop_scan` (`std_srvs/Empty`) 📄 | YDLIDAR | 사람 | | 라이다 모터 |
@@ -330,20 +330,20 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 
 | # | 무엇이 | 토픽·서비스·액션 |
 |---|---|---|
-| 0 | 사람이 `robot.launch.xml` → llama-server(`-lm dio`) → `explore_fuel_rl.launch.xml stack:=true perception:=true [dry_run:=false]` | |
+| 0 | 사람이 `robot.launch.xml` → llama-server(`-lm dio`) → `explore.launch.xml stack:=true perception:=true [dry_run:=false]` | |
 | 1 | 섀시·라이다·카메라가 센서를 냄 | `/odom` 50 · `/imu` 100 · `/rc_state` 40 · `/scan` 10 · `/camera/color/image_raw`·`/camera/depth/image_raw` 30 Hz |
 | 2 | EKF 가 `/odom`+`/imu` 를 합쳐 TF 를 냄 | `/odometry/filtered` 30 Hz, TF `odom→base_link` |
 | 3 | Cartographer 가 스캔 맞추기로 위치를 고침 | 받음 `/scan` `/imu` `/odometry/filtered` → TF `map→odom` 50 Hz, `/submap_list` → `/map` 1 Hz(RViz·저장용) |
-| 4 | `low_rl` 이 늘 꺼진 채 뜸 (`~/state = idle`) | |
-| 5 | 사람이 리모컨 SWB 를 위로(오토), RViz 패널 버튼 | `/low_rl/enable` SetBool `true` → `success` (오토가 아니면 거절) |
+| 4 | `explorer` 이 늘 꺼진 채 뜸 (`~/state = idle`) | |
+| 5 | 사람이 리모컨 SWB 를 위로(오토), RViz 패널 버튼 | `/explore/enable` SetBool `true` → `success` (오토가 아니면 거절) |
 | 6 | 걸음마다(0.1 s, 스캔 한 장): 스캔 stamp 시각 TF `map→base_link` 를 얻으면 → 라이다·깊이로 자기 지도 갱신 → 프론티어 후보 최대 8 곳(판단 모델엔 6) | 받음 `/scan` `/odom` `/imu` 깊이, TF |
 | 7 | 목표 1 m 앞·실패·후보 크게 바뀜·최대 10 s 때만 위층에 물음 | HTTP `POST /v1/systemone` (지도 PNG 288 px + 후보 글) → 답 `answers.pick.choice` = 글자 하나 (약 1.6 s) |
 | 8 | 아래층이 로봇 지도 위 A* 경로를 따라 속도 명령 | `/cmd_vel` 10 Hz (`dry_run:=false` 일 때만), `~/cmd_debug` 늘 |
 | 9 | 섀시는 SWB 오토일 때만 따름 | UART |
-| 10 | (perception) YOLO → 물체 지도 | `/yolo_detector/mask`·`detections`(프로세스 안) → `object_mapper` ← 깊이 → `/object_mapper/objects` R/TL 10 Hz → `low_rl`·`object_goto` |
-| 11 | (지시) 사람이 글을 줌 | `/object_goto/goal "의자로 가"` → `/low_rl/instruction`·`/low_rl/target_class chair` → 판단 모델 후보에 물체 옆 설 자리 → 도착 시 `/low_rl/goto_status "도착: …"` → `object_goto` 가 그 지시 끝 |
+| 10 | (perception) YOLO → 물체 지도 | `/perception/mask`·`detections`(프로세스 안) → `object_map` ← 깊이 → `/perception/objects` R/TL 10 Hz → `explorer`·`object_goto` |
+| 11 | (지시) 사람이 글을 줌 | `/explore/object_goto/goal "의자로 가"` → `/explore/instruction`·`/explore/target_class chair` → 판단 모델 후보에 물체 옆 설 자리 → 도착 시 `/explore/goto_status "도착: …"` → `object_goto` 가 그 지시 끝 |
 | 12 | 끝: 대충 다 앎·지도 닫힘·진척 없음·시간 한도 | `~/state = done`, `~/done = true` |
-| 13 | 저장 | `save_map.launch.xml name:=<이름>` → `map_saver_cli` 가 `/map` 을 받아 PGM+YAML, `/object_mapper/save_to` 로 `<이름>_objects.txt` |
+| 13 | 저장 | `save_map.launch.xml name:=<이름>` → `map_saver_cli` 가 `/map` 을 받아 PGM+YAML, `/perception/save_objects_to` 로 `<이름>_objects.txt` |
 
 안전: `/rc_state` 0.5 s 끊김·SWB 내림 → 0 한 번 내고 `paused`. 라이다·TF·오도메트리 0.3 s 끊김 → 명령만 0, 돌아오면 이어 감.
 
@@ -351,26 +351,26 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 
 | # | 무엇이 | 토픽·서비스·액션 |
 |---|---|---|
-| 0 | `robot.launch.xml` + `navigation.launch.xml map:=…` + `yolo.launch.xml objects_file:=…` + `bt.launch.xml patrol_file:=…` | |
+| 0 | `robot.launch.xml` + `navigation.launch.xml map:=…` + `perception.launch.xml objects_file:=…` + `bt.launch.xml patrol_file:=…` | |
 | 1 | `map_server` 가 지도를 한 번 냄, lifecycle manager 가 map_server·amcl → Nav2 서버들을 configure → activate | `/map` R/TL, `manage_nodes`, bond |
 | 2 | 사람이 RViz 2D Pose Estimate | `/initialpose` → `amcl` |
 | 3 | `smoke_mode` 가 스캔을 넘기고 `map→odom` 을 냄 | `/scan` → `scan_localization`(AMCL), `scan_obstacles`(costmap); `/amcl_pose` → TF `map→odom` |
 | 4 | BT 시작: 깊이 정렬 확인 → Nav2 준비 확인 → 센서 주기 확인 → 리모컨 오토 확인 | `IsDepthAlignedToColor`, `/lifecycle_manager_*/is_active`, `IsTopicAlive`(`/scan` ≥ 7 Hz, `/odom` ≥ 35, `/imu` ≥ 70, `/odometry/filtered` ≥ 20, 영상 ≥ 20, 탐지 ≥ 10), `IsAutoMode`(`/rc_state`) — 실패면 `SENSOR_FAULT` 알림, 5 s 뒤 다시 |
 | 5 | 순찰점을 하나씩 | `LoadPatrolRoute` → `GetNextWaypoint` → `NavigateToWaypoint` = 액션 `/navigate_to_pose` |
 | 6 | bt_navigator 트리: 1 Hz 다시 계획 + 추종 + 회복 | `/compute_path_to_pose` → `/plan` → `/smooth_path` → `/follow_path` → `controller_server` → `/cmd_vel_nav` → `velocity_smoother` → `/cmd_vel`; 막히면 `clear_*costmap` → `/spin` → `/wait` → `/backup` (회복은 `/cmd_vel` 직접) |
-| 7 | 순찰 중 늘 불·연기 탐지 확인 | `IsFireDetected`/`IsSmokeDetected`: `/yolo_detector/detections` 1 s 안 5 장 이상(score ≥ 0.5) + 위치는 `/object_mapper/objects` |
+| 7 | 순찰 중 늘 불·연기 탐지 확인 | `IsFireDetected`/`IsSmokeDetected`: `/perception/detections` 1 s 안 5 장 이상(score ≥ 0.5) + 위치는 `/perception/objects` |
 
 ### e-3. 모드 ③ 화재 대응 (② 위에서 BT 가 갈래를 탐)
 
 | # | 무엇이 | 토픽·서비스·액션 |
 |---|---|---|
 | 1 | 불·연기 확인 → 순찰 멈춤 | Nav2 목표 취소, `StopRobot` → `/cmd_vel` 0 |
-| 2 | 사건 판별: 이미 처리한 자리(3 m 안, 300 s 안)면 같은 사건 | `IsSameIncident`, `/object_mapper/objects` |
+| 2 | 사건 판별: 이미 처리한 자리(3 m 안, 300 s 안)면 같은 사건 | `IsSameIncident`, `/perception/objects` |
 | 3 | 새 사건이면 기록·알림·신고 | `CreateIncident`, `RecordFireLocation`(사진·위치 `/tmp/limo_fire_incidents`), `NotifyAdmin` → `/mission/events` JSON `HAZARD_DETECTED`, `Call119`(`call119.enabled: false` 면 로그만) |
 | 4 | 고급 모드 고르기 | 연기 + 초음파 살아 있음 → 연기 모드; 작은불 + 펌프 서비스 + 서보 관절 → 물 모드; 불 근처 미탐사 + 위치 안정(`/amcl_pose` σ) → 탐사 모드 |
 | 4a | 연기 모드 | `SweepSmokeZone`: `/smoke_mode/set true` → (AMCL 스캔 끊김, costmap 가상 스캔, `map→odom` 붙잡음, `/speed_limit` 0.13 m/s) → 불 둘레 4 곳 `/navigate_to_pose` → 사람 세기(`/radar/people` 없으면 카메라 탐지) → `/smoke_mode/set false`(나올 때 `/initialpose` 로 AMCL 다시 맞춤) |
 | 4b | 물 모드 | `AimNozzle`(`/nozzle/command`, `/joint_states`) → `SprayWater`(`/pump/set` 3 s) → 열화상 온도 떨어짐 확인 → `StopPump` — 부품 대기 |
-| 4c | 탐사 모드 | `ExploreFrontiers`: `/explore_frontier/enable true` → `~/state == done` 까지 (Nav2 판 프론티어 탐사) |
+| 4c | 탐사 모드 | `ExploreFrontiers`: `/explore/frontier_explorer/enable true` → `~/state == done` 까지 (Nav2 판 프론티어 탐사) |
 | 5 | 고급 모드가 없거나 실패 | `BasicFallback`: 안전거리 감시 60 s(`MonitorFromSafeDistance`) → `FALLBACK_TO_BASIC` 알림 → 순찰 재개 |
 
 📄 BT 는 팀원이 Jazzy PC 에서 S1(순찰)·S2(큰불 → 신고 → 베이직 복귀 → 순찰 재개)·S3(같은 불 = 같은 사건)를 확인했다(2026-11-13~14, `limo_fire_bt/README.md`). S4~S7 은 아직.
@@ -389,8 +389,8 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 | `/wheel_odometry` | 4488 | 48.5 | `/motor_states` | 1796 | 19.4 |
 | `/rc_state` | 3593 | 38.9 | `/joint_states` | 924 | 10.0 |
 | `/trajectory_node_list` | 3034 | 32.8 | `/scan` | 900 | 9.7 |
-| `/cmd_vel` = `/low_rl/cmd_debug` | 391 | 4.2 (켠 동안만 10 Hz) | `/limo_status` | 179 | 1.9 |
-| `/map` | 101 | 1.09 | `/low_rl/status` | 39 | 0.42 (켠 동안 1 Hz) |
+| `/cmd_vel` = `/explore/cmd_debug` | 391 | 4.2 (켠 동안만 10 Hz) | `/limo_status` | 179 | 1.9 |
+| `/map` | 101 | 1.09 | `/explore/status` | 39 | 0.42 (켠 동안 1 Hz) |
 
 🧪 sim 벽시계 Hz(부하·소프트웨어 렌더로 실시간보다 느림): [`raw/sim_A_slam_explore/hz.txt`](raw/sim_A_slam_explore/hz.txt), [`raw/sim_B_lowrl_explore/hz.txt`](raw/sim_B_lowrl_explore/hz.txt), [`raw/sim_C_patrol/hz.txt`](raw/sim_C_patrol/hz.txt).
 
@@ -406,33 +406,33 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 **Q1. 라이다를 구독했는데 콜백이 한 번도 안 불린다. 무엇부터 보나?**
 - 문제: `/scan` 은 오는데(`ros2 topic hz` 는 됨) 내 노드만 못 받는다.
 - 원인: QoS 불일치. YDLIDAR 드라이버는 `/scan` 을 `SensorDataQoS`(BEST_EFFORT, 최선 전달) 로 낸다. 구독자가 RELIABLE(신뢰 전달) 을 요구하면 DDS 가 짝을 안 지어 조용히 아무것도 안 온다. 반대(발행 RELIABLE, 구독 BEST_EFFORT)는 맞는다.
-- 해결: `ros2 topic info -v /scan` 으로 양쪽 Reliability·Durability 를 본다. 센서 구독은 `rclcpp::SensorDataQoS()` 로. 이 저장소의 `/scan` 구독자(Cartographer·smoke_mode·RViz·low_rl)는 모두 BE 로 붙어 있다 🧪 `raw/sim_A_slam_explore/edges.txt`.
+- 해결: `ros2 topic info -v /scan` 으로 양쪽 Reliability·Durability 를 본다. 센서 구독은 `rclcpp::SensorDataQoS()` 로. 이 저장소의 `/scan` 구독자(Cartographer·smoke_mode·RViz·explorer)는 모두 BE 로 붙어 있다 🧪 `raw/sim_A_slam_explore/edges.txt`.
 - 다른 선택지의 문제: 발행 쪽을 RELIABLE 로 바꾸면 Wi-Fi·부하에서 재전송이 쌓여 지연이 커진다. 센서는 "늦은 값보다 새 값" 이 맞다.
 - ⚠ `/scan` QoS 로 실제 못 받은 사고 기록은 없다(원리 + 설정으로 답). 📁 `docs/sensor_topics.md` 라이다 절.
 
 **Q2. 노드를 몇 번 껐다 켰더니 `/rc_state` 가 안 들어온다. `ros2 topic echo` 에는 나온다.**
-- 문제: 2026-11-17 실물. 섀시 드라이버는 둔 채 `low_rl` 을 여러 번 다시 띄우자 새 `low_rl` 이 `/rc_state`(리모컨, 40 Hz) 를 못 받음 → 안전 규칙(0.5 s 못 받으면 멈춤)으로 로봇이 안 켜짐.
+- 문제: 2026-11-17 실물. 섀시 드라이버는 둔 채 `explorer` 을 여러 번 다시 띄우자 새 `explorer` 이 `/rc_state`(리모컨, 40 Hz) 를 못 받음 → 안전 규칙(0.5 s 못 받으면 멈춤)으로 로봇이 안 켜짐.
 - 원인: **끝내 못 가림** (기록에 그대로 적음). DDS 발견·짝짓기가 재시작 사이에 꼬인 것으로 의심.
 - 해결(`rc_watch.h`): ① 구독을 RELIABLE 깊이 20 → `SensorDataQoS().keep_last(5)`(BE 구독은 R·BE 발행자 모두와 맞음) ② 나이를 `steady_clock`(벽시계와 무관한 단조 시계) 으로 잼 — `use_sim_time` 과 무관 ③ **발행자가 있는데 `rc_resubscribe_s`(2 s) 동안 못 받으면 구독을 지우고 새로 만듦** ④ 못 받는 동안 `~/enable` 거절, `~/status` 에 나이·받은 수·발행자 수·다시 구독 수. 시험 `test/test_rc_watch.cpp`(받는 노드 5 번 다시 만들기).
 - 다른 선택지의 문제: "그냥 다시 띄우기" 는 실물 시연 중 운에 맡김. 안전 타임아웃을 늘리면 리모컨을 내려도 로봇이 늦게 섬.
-- 📁 커밋 2072d35, `src/limo_fire/limo_fire_rl/include/limo_fire_rl/rc_watch.h`, `limo_fire_rl/README.md` 실패 표.
+- 📁 커밋 2072d35, `src/limo_fire/limo_fire_explore/include/limo_fire_explore/rc_watch.h`, `limo_fire_explore/README.md` 실패 표.
 
 **Q3. 나중에 켠 노드가 지도·상태를 못 받는다(늦게 온 구독자).**
 - 원리: Durability TRANSIENT_LOCAL(TL, 마지막 값 보관) 발행자 + TL 구독자면 늦게 와도 마지막 값을 받는다. VOLATILE 구독자는 못 받는다.
-- 이 프로젝트: `/map`(Cartographer occupancy grid, map_server), `/robot_description`, `~/state`·`~/done`·`~/goto_status`, `/object_mapper/objects` 가 R/TL/1. RViz 탐사 패널은 켜자마자 `~/state` 를 알아야 버튼 색을 정하므로 TL 로 구독한다(`explore_panel.cpp`).
-- 🧪 `explore_frontier` 는 `/map` 을 `QoS(1).reliable()` = VOLATILE 로 구독한다(edges: `/explore_frontier[R,V]`). Cartographer 가 1 s 마다 다시 내므로 괜찮지만, 한 번만 내는 map_server `/map` 이었다면 켠 뒤 지도를 영영 못 받는다.
-- 대가: TL 은 프로세스 안 전달(intra-process)과 같이 못 쓴다 → `/object_mapper/objects` 는 같은 컨테이너라도 직렬화된다(`docs/runtime_io.md` 복사 표 5).
+- 이 프로젝트: `/map`(Cartographer occupancy grid, map_server), `/robot_description`, `~/state`·`~/done`·`~/goto_status`, `/perception/objects` 가 R/TL/1. RViz 탐사 패널은 켜자마자 `~/state` 를 알아야 버튼 색을 정하므로 TL 로 구독한다(`explore_panel.cpp`).
+- 🧪 `frontier_explorer` 는 `/map` 을 `QoS(1).reliable()` = VOLATILE 로 구독한다(edges: `/explore/frontier_explorer[R,V]`). Cartographer 가 1 s 마다 다시 내므로 괜찮지만, 한 번만 내는 map_server `/map` 이었다면 켠 뒤 지도를 영영 못 받는다.
+- 대가: TL 은 프로세스 안 전달(intra-process)과 같이 못 쓴다 → `/perception/objects` 는 같은 컨테이너라도 직렬화된다(`docs/runtime_io.md` 복사 표 5).
 
 **Q4. 탐지(YOLO) 결과와 깊이 영상을 어떻게 짝짓나? 시각이 정확히 같지 않다.**
 - 문제: 컬러와 깊이는 카메라 안에서 따로 찍혀 stamp 가 다르고, 탐지는 처리 시간만큼 늦게 나온다.
-- 해결: `object_mapper` 가 `message_filters` ApproximateTime(근사 시각 맞춤), 줄 10, **시각 차 ≤ `max_sync_dt` 0.05 s**. 마스크는 탐지와 같은 컬러 header 를 쓰므로 최근 10 장에서 **같은 stamp** 를 찾는다(YOLO 가 `~/mask` 를 `~/detections` 보다 먼저 냄).
+- 해결: `object_map` 가 `message_filters` ApproximateTime(근사 시각 맞춤), 줄 10, **시각 차 ≤ `max_sync_dt` 0.05 s**. 마스크는 탐지와 같은 컬러 header 를 쓰므로 최근 10 장에서 **같은 stamp** 를 찾는다(YOLO 가 `~/mask` 를 `~/detections` 보다 먼저 냄).
 - 결과: 결정적 재생 `1116_fuel_rl_1` 에서 2687 장 중 58 장(2.2 %)만 짝 못 지음. 부하 걸린 PC 실시간 재생에서는 23~49 %(입력이 12~18 fps 로 듬성듬성) — 로봇에서 다시 잴 것.
 - 다른 선택지의 문제: ExactTime 은 거의 영원히 짝이 안 남. 창을 넓히면(0.2 s) 로봇이 돌 때 다른 순간의 깊이를 써서 물체가 옆으로 번진다. 30 Hz 면 한 장 33 ms 라 0.05 s ≈ 1.5 장.
 - 📁 커밋 1059059, `limo_fire_perception/README.md` "스레드·메모리", `config/yolo_coco.yaml` `max_sync_dt`.
 
 **Q5. 처리보다 입력이 빠르면? 줄(queue) 은 어떻게 두나?**
 - 원칙: 센서·인식은 **가장 최근 것만**. 밀린 장을 다 처리하면 지연이 계속 쌓인다(지연 = 줄 길이 × 처리 시간).
-- 이 프로젝트: `yolo_detector` 작업 스레드가 WaitSet(대기 집합)으로 영상을 직접 꺼내 **가장 최근 장만** 처리, 밀린 장은 버림. `object_mapper` 작업 줄 `max_pending` 10, 넘치면 **가장 오래된 장** 버림. 구독 QoS 깊이도 작게(SensorData 5).
+- 이 프로젝트: `object_detector` 작업 스레드가 WaitSet(대기 집합)으로 영상을 직접 꺼내 **가장 최근 장만** 처리, 밀린 장은 버림. `object_map` 작업 줄 `max_pending` 10, 넘치면 **가장 오래된 장** 버림. 구독 QoS 깊이도 작게(SensorData 5).
 - 다른 선택지의 문제: QoS 깊이를 크게(100) 하면 지연이 수 초가 되고 메모리도 큼. 반대로 깊이 1 + RELIABLE 은 느린 구독자가 발행자를 막을 수 있다.
 - 📁 `limo_fire_perception/README.md`, 설계안 `limo_upper_keep/wt_rust/docs/onboard_rust.md`("가장 최근 하나" 칸).
 
@@ -440,27 +440,27 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 
 **Q6. 콜백 안에서 TF 를 기다리면 왜 안 되나? (단일 스레드 실행기에서 일어난 일)**
 - 문제: 2026-10-28 인식 컨테이너를 한 스레드(`component_container`)로 돌리자 5 s 에 18~20 장을 버림 → 멀티스레드(`component_container_mt`)로 바꿨더니 0 장. 2026-11-17 실물 기동 로그에도 `component_container_mt` 가 찍혀 있다 📁 `raw/real_bags/explore_launch_1117.txt`.
-- 진짜 원인(나중에 찾음): `object_mapper` 가 **콜백 안에서 TF 를 최대 0.2 s 기다림**. 한 스레드 실행기는 그동안 다른 콜백을 하나도 못 돌린다. 1116 재생에서 2500 콜백 중 71 번이 33 ms 넘게 막힘(최악 232 ms).
+- 진짜 원인(나중에 찾음): `object_map` 가 **콜백 안에서 TF 를 최대 0.2 s 기다림**. 한 스레드 실행기는 그동안 다른 콜백을 하나도 못 돌린다. 1116 재생에서 2500 콜백 중 71 번이 33 ms 넘게 막힘(최악 232 ms).
 - 해결(1059059): 다시 한 스레드. 받기 콜백은 짝을 작업 줄에 **넣기만**, 20 ms 노드 시계 타이머가 **그 시각 TF 가 이미 있는 장부터** 처리(`canTransform` 비차단), 0.2 s 넘으면 버림. TF 리스너 스레드도 없앰. RSS 85 → 52 MB, 스레드 16 → 15(멀티스레드판은 112 MB·27 스레드).
 - 다른 선택지의 문제: 멀티스레드 실행기는 증상만 숨긴다 — 콜백 그룹·뮤텍스가 필요하고, 막힌 스레드가 여전히 있으며 메모리·스레드가 는다. `lookupTransform(…, timeout)` 같은 기다림 API 는 TF 를 채울 별도 스레드가 있어야 동작한다(같은 스레드면 영원히 못 채움).
 - 📁 커밋 05f3a3b → 1059059, `limo_fire_perception/README.md`.
 
-**Q7. 탐사 노드(`low_rl`)는 왜 한 스레드인가? TF 는 언제 보나?**
+**Q7. 탐사 노드(`explorer`)는 왜 한 스레드인가? TF 는 언제 보나?**
 - 구조: `rclcpp::spin` 한 스레드. `/scan` 한 장 = 걸음 하나(0.1 s). 장과 그때의 `/odom`·`/imu`·깊이를 줄에 두고, **장 시각의** TF `map → base_link` 가 오면 처리(5 ms 벽시계 타이머가 비차단 `BufferCore::canTransform` 으로 다시 봄), `tf_timeout` 0.2 s 넘으면 그 장은 건너뜀. `TransformListener(..., spin_thread=false)` — 리스너 스레드 없음.
 - 판단 모델 HTTP 도 막지 않음: 비차단 소켓을 걸음마다 한 단계씩(연결 → 보내기 → 받기). 예전 작업 스레드 + 뮤텍스 판을 이것으로 바꿈.
 - 결과(커밋 4541e4c): 걸음 수 같음(889=889), TF 건너뜀 0, 평균 걸음 9.65 → 5.53 ms, 스레드 12 → 11.
 - 왜 좋은가: 한 스레드면 경쟁 상태가 없고, 녹화를 넣으면 **같은 결과가 비트 단위로** 나와 시뮬(`low_explore_check`)과 실물 노드를 비교할 수 있다.
-- 📁 `limo_fire_rl/src/low_rl_node.cpp`(174·245·407·416 줄 근처), `docs/runtime_io.md` 스레드 표.
+- 📁 `limo_fire_explore/src/explore/explorer_node.cpp`(174·245·407·416 줄 근처), `docs/runtime_io.md` 스레드 표.
 
 **Q8. 한 노드인데 스레드가 왜 14 개인가?**
-- 🧪 `raw/sim_A_slam_explore/threads.txt`: `object_goto`·`explore_frontier`·`smoke_mode` 처럼 실행기 하나짜리 노드도 14 스레드, Nav2 컨테이너(isolated) 47, RViz 43, Cartographer 18.
+- 🧪 `raw/sim_A_slam_explore/threads.txt`: `object_goto`·`frontier_explorer`·`smoke_mode` 처럼 실행기 하나짜리 노드도 14 스레드, Nav2 컨테이너(isolated) 47, RViz 43, Cartographer 18.
 - 까닭: rclcpp 실행기 1 개 외에 **Fast DDS 가 받기·이벤트·발견·타이머 스레드를 따로** 띄운다(+ rcl 로깅). `component_container_isolated` 는 컴포넌트마다 실행기 스레드를 하나씩 더 둔다. TF 리스너는 기본으로 스레드 하나(+ 숨은 노드 `transform_listener_impl_*` — 🧪 `nodes.txt` 에 9 개).
 - 그래서 "한 스레드 노드" 는 "콜백이 한 스레드에서 차례로 돈다" 는 뜻이지 프로세스 스레드가 1 개라는 뜻이 아니다.
 
 **Q9. TF 가 "extrapolation into the future/past" 를 낸다.**
 - 원인 후보: ① 요청 시각의 TF 가 아직 안 옴(발행 주기보다 최신을 물음) ② 두 컴퓨터 시계가 다름(PC 에서 RViz) ③ `use_sim_time` 이 노드마다 다름(벽시계 vs `/clock`) ④ TF 버퍼보다 오래된 시각.
-- 이 프로젝트의 선택: 섀시 메시지 stamp 는 **시리얼을 받은 순간 `now()`**, 라이다는 드라이버 시각. `low_rl` 은 **스캔 stamp 의 TF** 를 기다렸다 쓴다(최신 TF 를 쓰면 회전 중 스캔이 휘어 지도에 번짐). Cartographer `pose_publish_period_sec` 5 ms → 20 ms(50 Hz)로 TF 트래픽을 줄임(02ec95e).
-- 🧪 sim B 에서 실제로 났다: `low_rl` 이 `TF map → base_link (장 시각) 없음: Lookup would require extrapolation into the future. Requested time 25.1 but the latest data is at time 24.9 — 이 장 건너뜀` 을 9 번 냄(시뮬이 실시간의 0.3 배로 느려 Cartographer `map→odom` 이 스캔보다 늦게 옴). 설계대로 그 장만 건너뛰고 다음 장으로 감 — 막고 기다리지 않음 📁 `raw/sim_B_lowrl_explore/launch_log_summary.txt`.
+- 이 프로젝트의 선택: 섀시 메시지 stamp 는 **시리얼을 받은 순간 `now()`**, 라이다는 드라이버 시각. `explorer` 은 **스캔 stamp 의 TF** 를 기다렸다 쓴다(최신 TF 를 쓰면 회전 중 스캔이 휘어 지도에 번짐). Cartographer `pose_publish_period_sec` 5 ms → 20 ms(50 Hz)로 TF 트래픽을 줄임(02ec95e).
+- 🧪 sim B 에서 실제로 났다: `explorer` 이 `TF map → base_link (장 시각) 없음: Lookup would require extrapolation into the future. Requested time 25.1 but the latest data is at time 24.9 — 이 장 건너뜀` 을 9 번 냄(시뮬이 실시간의 0.3 배로 느려 Cartographer `map→odom` 이 스캔보다 늦게 옴). 설계대로 그 장만 건너뛰고 다음 장으로 감 — 막고 기다리지 않음 📁 `raw/sim_B_lowrl_explore/launch_log_summary.txt`.
 - 반대 방향의 해법도 있다: `smoke_mode` 는 `map → odom` 을 **stamp = now() + 1.0 s 로 앞날짜**를 찍어 20 Hz 로 냄(`transform_tolerance` 1.0, AMCL 과 같은 방식) — 늦게 묻는 노드도 extrapolation 없이 받게. 🧪 sim C 에서 이 변환은 같은 stamp 가 반복(dup 150/235)되는데, 벽시계 20 Hz 타이머가 느린 시뮬 시계보다 자주 돌아서다 📁 `raw/sim_C_patrol/tf_frames.txt`, `smoke_mode_node.cpp` 407 줄.
 - PC·로봇이면 `timedatectl` 로 NTP(시간 동기) 확인 — 로봇 NTP 설정은 ⚠ "확인 필요" 로 남아 있음. 📁 `limo_fire_bringup/README.md` (가) 절.
 
@@ -473,7 +473,7 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 
 **Q11. 같은 프로세스에 올리면 복사가 없어지나? (intra-process, zero-copy)**
 - 조건: 같은 프로세스 + `use_intra_process_comms: true` + `unique_ptr` 로 publish + VOLATILE + KEEP_LAST. 그러면 포인터만 넘긴다.
-- 이 프로젝트: `perception_container` 안 `yolo_detector → object_mapper` 의 `~/detections`·`~/mask` 만 복사 없음. 카메라 영상은 카메라가 **다른 컨테이너**라 DDS 로 온다.
+- 이 프로젝트: `perception_container` 안 `object_detector → object_map` 의 `~/detections`·`~/mask` 만 복사 없음. 카메라 영상은 카메라가 **다른 컨테이너**라 DDS 로 온다.
 - 카메라를 같이 못 올린 까닭: Orbbec 드라이버가 TRANSIENT_LOCAL 발행자(`/camera/depth_to_color` 등)를 만들어, intra-process 를 켜면 rclcpp 가 노드 생성을 거부. 또 YOLO 가 죽으면 카메라도 같이 죽는다(장애 격리). 📁 `robot.launch.xml` 주석, 커밋 05f3a3b.
 - 다른 선택지의 문제: 다 한 컨테이너 = 한 노드가 죽으면 다 죽음, TL 토픽은 어차피 직렬화.
 
@@ -486,7 +486,7 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 **Q13. Jetson 에서 판단 모델 서버가 "NvMap error 12" 로 죽는다. 메모리는 남아 보이는데?**
 - 원인: llama-server 기본 mmap 이면 모델 파일 2.9 GB 가 **page cache** 에 남은 채 같은 내용을 GPU 버퍼로 또 잡는다. Jetson(Orin, CPU·GPU 메모리 공유)은 **GPU 할당 때 page cache 를 못 비워** KV 캐시 할당이 실패.
 - 해결: `-lm dio`(DirectIO, page cache 우회) 로 띄우고, free 3 GB 밑이면 먼저 `sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`. 인식 쪽도 줄였지만(GPU 4~7 MB·CPU 20~35 MB) "OOM 을 막기엔 작다" 고 기록 — RViz 를 로봇 밖에서 띄우고 TensorRT 작업 메모리를 줄이는 게 더 큼.
-- 📁 커밋 f211b2b, `limo_fire_rl/README.md` "위층 판단 모델 띄우기".
+- 📁 커밋 f211b2b, `limo_fire_explore/README.md` "위층 판단 모델 띄우기".
 
 **Q14. 판단 모델 답이 5 s 걸려 로봇이 서 있다. 어떻게 1.6 s 로 줄였나?**
 - 측정: 예전 긴 꼴(384 px 지도 + 카메라 2×2, 2789 토큰) 5.0~5.6 s → 짧은 꼴(1140 토큰, 지도 288 px, 카메라 없음, 결정 기록 4) **처음 2.2 s / 이어서 1.58 s**.
@@ -498,7 +498,7 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 **Q15. 판단 모델 서버가 죽으면 로봇도 서나?**
 - 아니다. 답 실패(시간 끝 8 s·꼴 틀림·없는 글자·후보 사라짐)가 `fail_max` 3 번 잇따르면 규칙(점수 1 등 후보)이 바로 대신 고르고 계속 탐사, 요청은 계속 보내 살아나면 다시 판단 모델로. 시뮬 주입 11 가지 × 2 장면 × 씨앗 2 = 44 판 확인.
 - llama-server 를 ROS 노드가 아니라 **따로 프로세스(HTTP)** 로 둔 까닭: 요청 1.5~2.2 s 에 HTTP 비용은 ms 수준이고, 서버가 죽어도 탐사 노드는 안 죽는다.
-- 📁 커밋 2072d35, `limo_fire_rl/README.md` 실패 표.
+- 📁 커밋 2072d35, `limo_fire_explore/README.md` 실패 표.
 
 ### 탐사·주행 설계
 
@@ -512,27 +512,27 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 **Q17. 뒤로 물러나는 회복 동작이 많다. (물러나기 몫)**
 - 기록: `real_obj_1` 64 s 중 **20 %** 가 −0.05 m/s 물러나기(복구 BackUp 6 s 한 번 + RPP 충돌 검사에 걸릴 때마다 물러남), 그때 라이다 최소 거리 0.53~0.90 m. ⚠ "24 %" 라는 수치는 기록에서 못 찾음(가까운 것: 시뮬에서 RL 이 닫힘 시간 23~24 % 짧았음 — `archive/rl/train/explore/mdp/README.md`).
 - 🧪 이번 Webots 실행에서도 Nav2 회복이 그대로 보였다: `RegulatedPurePursuitController detected collision ahead!` 38 번, `Starting point in lethal space` 10 번, `spin failed`·`backup failed`(앞이 막혀 Collision Ahead 로 끝) 각 2 번 — `raw/sim_A_slam_explore/launch_log_summary.txt`.
-- 🧪 그 결과 Nav2 판 프론티어 탐사(`explore_frontier`)는 이번 실행에서 `탐사 끝 (all_blacklisted) — 214.9 s, 목표 29 · 도착 0 · 포기 5`, 지도 29.6 m² 로 끝났다 — 목표마다 Nav2 가 포기해 블랙리스트에 쌓임 📁 `raw/sim_A_slam_explore/explore_frontier_log.txt`. 같은 미로에서 저장 지도 순찰 목표(sim C)는 회복 0 번으로 15.9 s(시뮬 시각)에 SUCCEEDED 📁 `raw/sim_C_patrol/nav_goal.txt` — SLAM 중(지도가 계속 바뀌고 미지 칸이 많음)이 더 어렵다.
-- 우리 노드도 같은 미로에서 막혔다: 🧪 sim B `low_rl` 이 켠 지 30 s 만에 `paused — 닿음 (신호 4: 멈춤)` — 명령을 내는데 바퀴·자이로가 안 움직이면 "닿음" 으로 보고 멈춘 뒤 사람이 다시 켜야 함(`contact_resume_s` 0). 시뮬이 느린 탓도 있어 실물 판단은 아님 📁 `raw/sim_B_lowrl_explore/launch_log_summary.txt`.
+- 🧪 그 결과 Nav2 판 프론티어 탐사(`frontier_explorer`)는 이번 실행에서 `탐사 끝 (all_blacklisted) — 214.9 s, 목표 29 · 도착 0 · 포기 5`, 지도 29.6 m² 로 끝났다 — 목표마다 Nav2 가 포기해 블랙리스트에 쌓임 📁 `raw/sim_A_slam_explore/explore/frontier_explorer_log.txt`. 같은 미로에서 저장 지도 순찰 목표(sim C)는 회복 0 번으로 15.9 s(시뮬 시각)에 SUCCEEDED 📁 `raw/sim_C_patrol/nav_goal.txt` — SLAM 중(지도가 계속 바뀌고 미지 칸이 많음)이 더 어렵다.
+- 우리 노드도 같은 미로에서 막혔다: 🧪 sim B `explorer` 이 켠 지 30 s 만에 `paused — 닿음 (신호 4: 멈춤)` — 명령을 내는데 바퀴·자이로가 안 움직이면 "닿음" 으로 보고 멈춘 뒤 사람이 다시 켜야 함(`contact_resume_s` 0). 시뮬이 느린 탓도 있어 실물 판단은 아님 📁 `raw/sim_B_lowrl_explore/launch_log_summary.txt`.
 - 원인: 좁은 덕트 미로 + 팽창 반경 0.45 m(`inflation_radius`)·`cost_scaling` 때문에 로봇 중심이 치명 칸(lethal) 에 들어가 계획이 실패 → 회복 트리(clear costmap → spin → wait → backup).
 - 해결 방향: 우리 A* 추종기는 "막히면 뒤로 물러나지 않고 그 목표를 빼고 다시 묻기"(`task_sup.h` Goto: stall 이면 못 감). Nav2 쪽은 팽창·footprint 값을 미로 폭에 맞춰야 함.
 - 다른 선택지의 문제: 팽창을 너무 줄이면 벽을 긁고, 회복을 끄면 막힌 채 영원히 섬.
 
 **Q18. Nav2 를 쓰지 왜 자체 추종기를 만들었나? 언제 Nav2 를 쓰나?**
-- Nav2 를 쓰는 곳: **저장 지도 순찰·화재 출동**(모드 ②③) — `map_server` + AMCL + costmap + 계획·추종·회복, 임무 BT 가 `navigate_to_pose` 로 부름. 물체로 가기 nav2 모드, 프론티어 탐사 노드(`explore_frontier`)도 Nav2 를 부름.
-- 자체 A* 를 쓰는 곳: **첫 지도 탐사**(모드 ①, `low_rl`). 까닭: 시뮬(`train/explore`)과 **같은 C++ 코드**라 녹화를 넣으면 시뮬 결과와 비트 단위로 같음 → 시뮬에서 수천 판 잰 것을 실물에 그대로 믿을 수 있음. 판단 모델 후보(프론티어 6 곳)·물체 후보·사람 따라가기를 같은 지도에서 다룸. 깊이 장애물을 0.1 s 마다 지도에 더해 라이다보다 낮은 가구도 피함.
+- Nav2 를 쓰는 곳: **저장 지도 순찰·화재 출동**(모드 ②③) — `map_server` + AMCL + costmap + 계획·추종·회복, 임무 BT 가 `navigate_to_pose` 로 부름. 물체로 가기 nav2 모드, 프론티어 탐사 노드(`frontier_explorer`)도 Nav2 를 부름.
+- 자체 A* 를 쓰는 곳: **첫 지도 탐사**(모드 ①, `explorer`). 까닭: 시뮬(`train/explore`)과 **같은 C++ 코드**라 녹화를 넣으면 시뮬 결과와 비트 단위로 같음 → 시뮬에서 수천 판 잰 것을 실물에 그대로 믿을 수 있음. 판단 모델 후보(프론티어 6 곳)·물체 후보·사람 따라가기를 같은 지도에서 다룸. 깊이 장애물을 0.1 s 마다 지도에 더해 라이다보다 낮은 가구도 피함.
 - 다른 선택지의 문제: Nav2 를 쓰면 시뮬 쪽에 Nav2 를 흉내 내야 하고 비트 비교가 불가능. 반대로 자체 추종기는 Nav2 의 회복·costmap 층·속도 평활을 다시 만들어야 함.
-- 둘을 **동시에 켜면 `/cmd_vel` 발행자가 둘** → 명령이 섞임. 그래서 `explore_fuel_rl.launch.xml` 은 Nav2 를 안 띄운다(Q34).
+- 둘을 **동시에 켜면 `/cmd_vel` 발행자가 둘** → 명령이 섞임. 그래서 `explore.launch.xml` 은 Nav2 를 안 띄운다(Q34).
 
 **Q19. 탐사 노드는 Cartographer `/map` 을 왜 안 읽나?**
-- `low_rl` 은 라이다·깊이로 **자기 지도**를 만들고 Cartographer 에서는 TF `map → odom`(위치 보정)만 받는다. `/odom` 도 EKF 결과가 아니라 섀시 원래 값.
+- `explorer` 은 라이다·깊이로 **자기 지도**를 만들고 Cartographer 에서는 TF `map → odom`(위치 보정)만 받는다. `/odom` 도 EKF 결과가 아니라 섀시 원래 값.
 - 까닭: 시뮬 관측과 같게(시뮬에는 Cartographer 가 없음). 1 Hz `/map` 을 기다리면 0.1 s 걸음과 안 맞음. 깊이 장애물 층을 더해야 함.
 - 대가: 지도가 두 벌(Cartographer = 저장·RViz 용, 노드 지도 = 결정용). 저장은 Cartographer 쪽(`save_map.launch.xml`).
 - 📁 `docs/runtime_io.md` 첫 절.
 
 **Q20. 프론티어 탐사(Nav2 판)에서 로봇이 벽을 무시하고 7 분 넘게 돌았다.**
 - 원인: Cartographer occupancy 값이 벽에서도 최대 87 정도인데 costmap 정적 층 `lethal_cost_threshold` 기본 100 → **전역 costmap 에 벽이 하나도 없음**.
-- 해결: 문턱 65(= Cartographer `occupied_thresh` 0.65 와 같게, 2026-11-11). `explore_frontier.yaml` `occupied_thresh: 65` 도 같은 값.
+- 해결: 문턱 65(= Cartographer `occupied_thresh` 0.65 와 같게, 2026-11-11). `frontier_explorer.yaml` `occupied_thresh: 65` 도 같은 값.
 - 교훈: 지도 만든 쪽과 읽는 쪽의 "막힘" 정의를 맞춰야 한다. 📁 `docs/simulation.md` Nav2 표.
 
 ### TF·좌표
@@ -570,7 +570,7 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 
 **Q26. 실물·시뮬·ROS 판(Humble/Jazzy)마다 파라미터가 다르다. 파일을 어떻게 나누나?**
 - 층: `nav2_params.yaml`(실물 기준, WeGo 값) → `nav2_$(env ROS_DISTRO).yaml`(판 차이: Jazzy 는 플러그인 이름 `::`, TwistStamped `/cmd_vel`, 초음파 층 뺌) → `params_override`(시뮬 `nav2_sim.yaml`: `use_sim_time`·`odom_topic`·AMCL 초기 자세만). 뒤 파일이 앞을 덮는다.
-- 임무 BT 도 같은 방식: `limo_fire_bt.yaml` 위에 `limo_fire_bt_sim.yaml`(토픽 바꿔 읽기 `/odometry/filtered:=/odom`, `/yolo_detector/detections:=/gt/detections`, 주기 문턱 8 Hz, 리모컨 검사 끔).
+- 임무 BT 도 같은 방식: `limo_fire_bt.yaml` 위에 `limo_fire_bt_sim.yaml`(토픽 바꿔 읽기 `/odometry/filtered:=/odom`, `/perception/detections:=/gt/detections`, 주기 문턱 8 Hz, 리모컨 검사 끔).
 - 규칙: 주기·포트·임계값은 `config/*.yaml`, 코드에 박지 않음(CLAUDE.md). 📁 커밋 fc84923.
 
 **Q27. XML launch 에서 include 인자가 다른 include 로 새어 나갔다.**
@@ -590,7 +590,7 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 
 **Q30. 지도 저장이 가끔 실패한다(대시보드 "맵 저장").**
 - 원인: `map_saver_cli` 기본 대기 2 s, `/map` 은 1 s 마다(Cartographer) → 발견·첫 메시지까지 2 s 를 넘기면 실패.
-- 해결: `save_map_timeout` 10 s, src·install 두 곳에 저장(다시 빌드 없이 navigation 이 새 지도 읽음), 물체 지도도 `/object_mapper/save_to` 로 같이 저장. 📁 `save_map.launch.xml`, 커밋 d5068ff.
+- 해결: `save_map_timeout` 10 s, src·install 두 곳에 저장(다시 빌드 없이 navigation 이 새 지도 읽음), 물체 지도도 `/perception/save_objects_to` 로 같이 저장. 📁 `save_map.launch.xml`, 커밋 d5068ff.
 
 **Q31. 카메라가 30 Hz 인데 YOLO 가 21 ms 나 걸린다(장을 쉬지 않고 연달아 넣으면 10.3 ms).**
 - 원인: 33 ms 마다 한 장이면 장 사이에 GPU 클럭이 내려감(DVFS, 동적 클럭).
@@ -605,7 +605,7 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 - 📁 `limo_fire_bringup/README.md` (가) 절.
 
 **Q34. 리모컨·탐사 노드·Nav2 가 모두 `/cmd_vel` 을 내면? 로봇을 어떻게 안전하게 세우나?**
-- 구조: 섀시는 리모컨 SWB 가 위(오토)일 때만 `/cmd_vel` 을 따름(하드웨어 쪽 안전). `low_rl` 은 `dry_run: true` 가 기본이라 `/cmd_vel` 발행자 자체를 안 만듦(`~/cmd_debug` 에만), 켜기는 `~/enable`(SetBool) 이고 리모컨 오토가 아니면 거절, `/rc_state` 0.5 s 끊기면 멈춤(0 한 번)·꺼짐.
+- 구조: 섀시는 리모컨 SWB 가 위(오토)일 때만 `/cmd_vel` 을 따름(하드웨어 쪽 안전). `explorer` 은 `dry_run: true` 가 기본이라 `/cmd_vel` 발행자 자체를 안 만듦(`~/cmd_debug` 에만), 켜기는 `~/enable`(SetBool) 이고 리모컨 오토가 아니면 거절, `/rc_state` 0.5 s 끊기면 멈춤(0 한 번)·꺼짐.
 - Nav2 판: controller → `cmd_vel_nav` → velocity_smoother → `/cmd_vel`. 🧪 그런데 회복 동작(behavior_server 의 spin·backup)은 **smoother 를 거치지 않고 `/cmd_vel` 에 바로** 낸다(edges: `/cmd_vel` 발행자 behavior_server × 4 + velocity_smoother).
 - 겹침 방지: 탐사 launch 는 Nav2 를 안 띄움, 임무 BT 는 멈출 때 `haltTree()` 로 Nav2 목표 취소·`StopRobot` 0 발행. 정석 대안은 `twist_mux`(우선순위 섞기) — 이 저장소엔 없음.
 
@@ -637,7 +637,7 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 
 **Q40. 이 시스템을 처음 보는 사람이 "왜 로봇이 안 움직이지?" 를 풀 때 차례는?**
 1. 리모컨 SWB 위(오토)? `ros2 topic echo /rc_state --field buttons`(buttons[1] == 2).
-2. 탐사가 켜졌나? `/low_rl/state`(또는 `/explore_frontier/state`) == running, `~/status` 한 줄의 까닭.
+2. 탐사가 켜졌나? `/explore/state`(또는 `/explore/frontier_explorer/state`) == running, `~/status` 한 줄의 까닭.
 3. `dry_run:=false` 인가(아니면 `/cmd_vel` 발행자 없음 — `ros2 topic info /cmd_vel`).
 4. 입력이 오나: `/scan` 10 Hz, TF `map→base_link`(`ros2 run tf2_ros tf2_echo map base_link`).
 5. 판단 모델: `~/status` 의 "판단 모델: 보냄·답·시간 끝".

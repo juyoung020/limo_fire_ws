@@ -63,7 +63,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 |---|---|---|---|
 | 탐사 (`limo_fire_explore`) | `/explore/explorer` | `/explore/status` `/explore/state` `/explore/done` `/explore/goal_marker` `/explore/candidates` `/explore/decider_image` `/explore/instruction` `/explore/target_class` `/explore/goto_status`, 서비스 `/explore/enable` | `explore.launch.xml` · `explorer.launch.xml` |
 | 탐사 (`limo_fire_explore`) | `/explore/frontier_explorer` | `/explore/frontier_explorer/{state,status,done,frontiers}`, 서비스 `…/enable` | `frontier_explorer.launch.xml` |
-| 탐사 (`limo_fire_navigation`) | `/explore/object_goto` | `/explore/explore/object_goto/{goal,status,target,overlay}` | `explore.launch.xml perception:=true` |
+| 탐사 (`limo_fire_navigation`) | `/explore/object_goto` | `/explore/object_goto/{goal,status,target,overlay}` | `explore.launch.xml perception:=true` |
 | 인식 (`limo_fire_perception`) | `/perception/object_detector` | `/perception/detections` `/perception/mask` `/perception/detection_image` | `perception.launch.xml` |
 | 인식 (`limo_fire_perception`) | `/perception/object_map` | `/perception/objects` `/perception/markers` `/perception/summary`, 서비스 `/perception/{clear,save,load}_objects`, 토픽 `/perception/save_objects_to` | `perception.launch.xml` |
 
