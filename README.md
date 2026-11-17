@@ -70,6 +70,7 @@
 | 보고·안내 | rosbridge 웹 앱, 오프라인 음성 안내 |
 
 자세한 설계와 실험 계획은 [스펙·구현 방향](docs/spec.md)에 있다.
+노드·스레드마다 무엇을 받고 내는지(토픽·QoS·주기·상태 값)는 [실행 구조](docs/runtime_io.md), 센서 토픽은 [센서 토픽](docs/sensor_topics.md).
 
 강화학습(위층 후보 고르기 + 아래층 속도 직접, PPO)으로 탐사하려던 계획은 실물에서 시뮬과의 격차가 크고 A* 아래층이 훨씬 빠르고 잘 돼서
 2026-11-16 에 그만뒀다. 그때의 코드·결과·영상은 [archive/rl](archive/rl/README.md).
@@ -164,7 +165,7 @@ limo_fire_ws/            ROS 2 워크스페이스 (여기서 colcon build)
 └── env.sh               워크스페이스 환경 (conda 빼고 ROS 2 + install)
 ```
 
-패키지별 역할까지 담은 전체 구조와 URDF·TF 규약은 [규약](docs/conventions.md)에 있다.
+패키지별 역할까지 담은 전체 구조와 URDF·TF 규약은 [규약](docs/conventions.md), 실행 중 프로세스·스레드·토픽 입출력은 [실행 구조](docs/runtime_io.md)에 있다.
 
 ## 시뮬레이션
 

@@ -68,3 +68,6 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 
 - 표준 타입 우선(`sensor_msgs/Image`, `sensor_msgs/Range`, `sensor_msgs/JointState`, `std_srvs/SetBool` …). 맞는 게 없을 때만 `limo_fire_msgs` 에 만든다.
 - 헤더 `frame_id` 는 URDF 링크 이름과 같게.
+- 노드 사이 상태 알림은 사람이 읽는 한글 한 줄 `std_msgs/String`(`~/status`, `~/goto_status`), 켜짐 상태는 짧은 영문 값 `~/state`(`idle`·`running`·`paused`·`done`, TRANSIENT_LOCAL)로 낸다. 다른 노드가 글을 보고 갈래를 정할 때는 앞말만 본다(예: `object_goto` 는 `도착` 으로 시작하는 글).
+- 지도 위 물체는 `vision_msgs/Detection3DArray`(`map` 틀): `id` = `<클래스>-<번호>`, `results[0].hypothesis.class_id` = 클래스 이름 글, `results[0].pose.covariance[35]` = 마지막으로 본 뒤 지난 초. 칸마다의 뜻은 [runtime_io.md](runtime_io.md#object_mapper-limo_fire_perceptionsrcobject_mapper_nodecpp-같은-설정-파일의-object_mapper-칸).
+- 실행 중인 노드·스레드가 주고받는 토픽 전체(타입·QoS·주기·frame_id·상태 값)는 [실행 구조 — 스레드·토픽 입출력](runtime_io.md) 한 곳에 둔다. 토픽을 더하거나 바꾸면 그 표도 같이 고친다.
