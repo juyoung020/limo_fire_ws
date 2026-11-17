@@ -296,11 +296,8 @@ Orin 메모리 어림 (기본: yolo_coco + 매퍼, 로봇에서 RViz 안 켬):
 - 엔진 작업 메모리 줄이기 (로봇에서 잴 것): 같은 ONNX 로 `trtexec … --memPoolSize=workspace:256M` 엔진을 만들어 노드 로그의 TensorRT 작업 메모리와 `추론 … ms` 를 지금 엔진과 견준다.
   빌드 작업 공간 기본은 GPU 메모리 전체라, 작업 메모리 = 활성 메모리 + 고른 전술의 스크래치(그 한도 안)다(같은 TensorRT 문서).
 
-## 인식 벤치마크 (`perception_benchmark`)
+## 인식 벤치마크 (보관)
 
-Webots 정답(같은 카메라의 Recognition 분할, `limo_fire_sim`)과 장마다 비교해 상자·마스크 P·R·F1·mAP50·mAP50-95·IoU, 크기별 재현율, 속도, 물체 지도 P·R·F1·위치 오차를 표로 낸다.
-짝짓기·AP 는 학습기와 같은 `include/limo_fire_perception/det_metrics.hpp`. 실행·지표 정의·결과는 [docs/benchmarks](../../../docs/benchmarks/README.md).
-
-```bash
-ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze benchmark:=true
-```
+Webots 정답과 장마다 비교하던 `perception_benchmark` 노드(2026-10-29 결과는 [docs/benchmarks](../../../docs/benchmarks/README.md))는 2026-11-18 에
+[archive/perception_benchmark](../../../archive/perception_benchmark/) 로 옮겼다 (빌드·`sim.launch.xml benchmark:=` 에서 빠짐).
+짝짓기·AP 는 학습기와 같이 쓰는 `include/limo_fire_perception/det_metrics.hpp` 에 그대로 있다.

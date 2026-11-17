@@ -2,8 +2,11 @@
 
 Webots 맵에서 로봇이 순찰하는 동안 YOLO 결과를 장마다 정답과 비교해 지표를 낸다. 결과 표는 이 폴더에 `<날짜>_<맵>.md` 로 쌓인다.
 
+> 2026-11-18: 측정 노드 `perception_benchmark` 를 [archive/perception_benchmark](../../archive/perception_benchmark/) 로 옮겼다 — 빌드와 `sim.launch.xml` 의
+> `benchmark:=` 인자에서 빠졌다. 아래는 그때(2026-10-29) 실행법·결과 기록이다. 다시 쓰려면 노드를 `limo_fire_perception` 에 되돌리고 빌드 대상·launch 를 다시 넣는다.
+
 ```bash
-ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze benchmark:=true   # 로봇은 RViz 목표·순찰로 움직인다
+ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze benchmark:=true   # (보관 전) 로봇은 RViz 목표·순찰로 움직인다
 ros2 service call /perception_benchmark/report std_srvs/srv/Trigger                 # 지금까지 표 쓰기 (끌 때도 씀)
 ```
 

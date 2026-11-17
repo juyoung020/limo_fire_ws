@@ -33,7 +33,6 @@ flowchart LR
 ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze                   # 저장 지도 + AMCL + Nav2
 ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze slam:=true        # 지도 만들기 (Cartographer)
 ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=true  # + YOLO·물체 지도
-ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze benchmark:=true   # + 인식 벤치마크
 ```
 
 ## Nav2 설정 (`limo_fire_navigation/config/nav2_params.yaml`, 실물·시뮬 공용)
@@ -54,7 +53,7 @@ WeGo 값으로 시작했지만 덕트호스 미로에서 막혀 바꿨다. **모
 
 ## 운용 화면 (`limo_fire_description` `viewer.launch.xml` · `rviz/limo_fire.rviz`)
 
-지도 만들기·주행·인식·벤치마크 어디서나 이 화면 하나를 띄운다.
+지도 만들기·주행·인식 어디서나 이 화면 하나를 띄운다.
 
 - 왼쪽: YOLO 탐지 영상(분할 마스크 덧칠 + 테두리), 고른 물체 사진(Selected). 오른쪽: 로봇 중심 지도, 물체 아이콘·현황판, Nav2 경로, AMCL 입자. costmap 은 Displays 에서 켠다.
 - 툴바 도구:
