@@ -7,6 +7,8 @@
 //   d1_cache -m d1-3B-Q8_0.gguf --mmproj mmproj.gguf --out cache.bin  req1.json [req2.json …]   (또는 --list 파일)
 //   --list 파일은 줄마다 "<요청 경로> [정답 선택지 번호]" (번호 없으면 −1)
 //   출력 (작은 끝, 표본마다): u32 n_opt · u32 n_tok(label 토큰 수) · i32 target · u32 group[n_opt] · i32 tok[n_tok] · f32 logit[n_tok] (llama 가 낸 값) · f32 h[5][2048]
+//   <out>.idx: 캐시에 들어간 표본마다 "<목록 차례> <요청 경로>" 한 줄 (실패한 요청은 빠지므로 라벨 파일을 이것으로 맞춤 — lora_train --soft)
+//   --mmproj-gpu: 그림 인코더를 GPU 로 (기본 CPU — GPU 메모리를 아낄 때)
 //   --full-from L (예: 27): 학습을 L 층부터 할 때 — L 층 입력 l_out-(L−1) 을 시퀀스 전체로 <out>.seq 에 따로 (표본마다 u32 T · f16 h[T][2048], 같은 차례).
 //     자리(position)는 0 … T−1 이라고 봄 (그림 조각도 1 차원 자리 — 아니면 실패로 셈)
 #include <algorithm>
@@ -67,6 +69,7 @@ std::string slurp(const std::string& p) { std::ifstream f(p, std::ios::binary); 
 int main(int argc, char** argv) {
   std::string model, mmproj, out, list, lora;   // --lora: LoRA GGUF 를 켜고 돌림 (lora_export 결과 확인용 — 은닉은 28 층 입력이라 LoRA 와 무관, 로짓만 달라짐)
   std::vector<std::string> reqs;
+  bool mm_gpu = false;
   std::vector<int> tgt;
   int ngl = 99, nctx = 8192, full_from = -1;
   for (int i = 1; i < argc; ++i) {
@@ -79,6 +82,7 @@ int main(int argc, char** argv) {
     else if (k == "-ngl") ngl = std::stoi(argv[++i]);
     else if (k == "-c") nctx = std::stoi(argv[++i]);
     else if (k == "--full-from") full_from = std::stoi(argv[++i]);
+    else if (k == "--mmproj-gpu") mm_gpu = true;
     else reqs.push_back(k);
   }
   tgt.assign(reqs.size(), -1);
@@ -113,7 +117,7 @@ int main(int argc, char** argv) {
     if (!ad || llama_set_adapters_lora(ctx, &ad, 1, &sc) != 0) { std::fprintf(stderr, "LoRA 를 못 붙임\n"); return 1; }
   }
   mtmd_context_params mcp = mtmd_context_params_default();
-  mcp.use_gpu = false;   // 그림 인코더는 CPU (GPU 메모리 아낌 — 캐시는 한 번만 만듦)
+  mcp.use_gpu = mm_gpu;   // 기본 CPU (GPU 메모리 아낌 — 캐시는 한 번만 만듦), --mmproj-gpu 면 GPU
   mcp.media_marker = get_media_marker();   // 서버와 같은 표지 (server-context.cpp)
   { common_params cpar; mcp.image_min_tokens = cpar.image_min_tokens; mcp.image_max_tokens = cpar.image_max_tokens; mcp.batch_max_tokens = cpar.mtmd_batch_max_tokens; }
   mtmd_context* mctx = mtmd_init_from_file(mmproj.c_str(), m, mcp);
@@ -122,6 +126,7 @@ int main(int argc, char** argv) {
   dc.init(m);
   const mtmd_helper_init_opt iopt = mtmd_helper_init_opt_default();
   std::FILE* fo = std::fopen(out.c_str(), "wb");
+  std::FILE* fx = std::fopen((out + ".idx").c_str(), "w");
   std::FILE* fs = full_from > 0 ? std::fopen((out + ".seq").c_str(), "wb") : nullptr;
   const int n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(m));
   long n_ok = 0;
@@ -187,6 +192,7 @@ int main(int argc, char** argv) {
       for (llama_token t : labels) { const float v = (t >= 0 && t < n_vocab) ? lg[t] : 0.f; std::fwrite(&v, 4, 1, fo); }
       std::fwrite(cap.last.data(), 4, cap.last.size(), fo);
       if (fs) { const uint32_t T = (uint32_t)n_past; std::fwrite(&T, 4, 1, fs); std::fwrite(cap.full.data(), 2, cap.full.size(), fs); }
+      std::fprintf(fx, "%zu %s\n", ri, rp.c_str());
       ++n_ok;
       std::fprintf(stderr, "%s: 선택지 %u · 라벨 토큰 %u · 프롬프트 %d\n", rp.c_str(), no, nt, (int)n_past);
     } catch (const std::exception& e) {
@@ -194,6 +200,7 @@ int main(int argc, char** argv) {
     }
   }
   std::fclose(fo);
+  std::fclose(fx);
   if (fs) std::fclose(fs);
   std::fprintf(stderr, "표본 %ld / %zu\n", n_ok, reqs.size());
   mtmd_free(mctx);

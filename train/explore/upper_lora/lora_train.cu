@@ -8,6 +8,8 @@
 //   lora_train --model d1.gguf --train a.bin --val b.bin --out adapter.bin [--r 8] [--alpha 16] [--lr 1e-3] [--epochs 5] [--batch 16] [--mats in,out,gate,up,down] [--pred p.txt]
 //   --attn: 27 층(마지막 attention)부터 학습 — 캐시마다 d1_cache --full-from 27 의 <캐시>.seq (l_out-26 시퀀스 전체 f16) 가 옆에 있어야 함.
 //           27 층 행렬 q · k · v · o · gate · up · down 에도 LoRA (--mats27). 27 층은 표본마다(길이 T 가 달라서) 돌리고, 역전파 때 다시 계산(활성 저장 안 함)
+//   --soft s.txt [--val-soft v.txt]: 부드러운 정답 (줄마다 "<요청 경로> n q_0 … q_{n-1}", tools/cov_labels.py) — 캐시 옆 <캐시>.idx 로 표본과 맞춤.
+//           손실 = −Σ q_o log p_o (교차 엔트로피, 기울기 p − q), 맞춤 = argmax p == argmax q, target = argmax q
 //              [--shuffle-aug]  선택지 차례 섞기 증강은 캐시 단계에서(다른 차례로 만든 요청을 같이 캐시) — 여기서는 표본을 그대로 씀
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
@@ -39,6 +41,7 @@ struct Sample {
   double dref = 0;           // 기준 모델(시작 어댑터)의 (log p_win − log p_lose)
   double beta = 0.1;
   std::vector<int> grp, tok;
+  std::vector<float> q;   // --soft: 부드러운 정답 (선택지마다, 합 1) — 비면 target 한 칸
   std::vector<float> h;   // [5][D]
   int T = 0;               // --attn: 시퀀스 길이
   std::vector<uint16_t> xs;   // --attn: l_out-26 [T][D] f16
@@ -56,6 +59,35 @@ void read_seq(const std::string& path, std::vector<Sample>& S) {
   uint32_t extra;
   if (std::fread(&extra, 4, 1, f) == 1) throw std::runtime_error("시퀀스 캐시 표본 수가 캐시와 다름: " + path);
   std::fclose(f);
+}
+// --soft: <캐시>.idx(줄마다 "<목록 차례> <요청 경로>")와 부드러운 정답 파일을 요청 경로로 맞춤
+void read_soft(const std::string& cache, const std::string& soft, std::vector<Sample>& S) {
+  std::map<std::string, std::vector<float>> Q;
+  std::FILE* f = std::fopen(soft.c_str(), "r");
+  if (!f) throw std::runtime_error("부드러운 정답 파일을 못 엶: " + soft);
+  char buf[4096];
+  int n;
+  while (std::fscanf(f, "%4095s %d", buf, &n) == 2) {
+    std::vector<float> q((size_t)n);
+    for (auto& v : q) if (std::fscanf(f, "%f", &v) != 1) throw std::runtime_error("부드러운 정답 줄이 짧음");
+    Q[buf] = q;
+  }
+  std::fclose(f);
+  std::FILE* fx = std::fopen((cache + ".idx").c_str(), "r");
+  if (!fx) throw std::runtime_error("캐시 차례 파일을 못 엶: " + cache + ".idx");
+  long ri;
+  size_t i = 0;
+  while (std::fscanf(fx, "%ld %4095s", &ri, buf) == 2) {
+    if (i >= S.size()) throw std::runtime_error("캐시 차례 파일이 표본보다 김");
+    auto it = Q.find(buf);
+    if (it == Q.end()) throw std::runtime_error(std::string("부드러운 정답에 없는 요청: ") + buf);
+    if ((int)it->second.size() != S[i].no) throw std::runtime_error(std::string("선택지 수가 다름: ") + buf);
+    S[i].q = it->second;
+    S[i].target = (int)(std::max_element(S[i].q.begin(), S[i].q.end()) - S[i].q.begin());
+    ++i;
+  }
+  std::fclose(fx);
+  if (i != S.size()) throw std::runtime_error("캐시 차례 파일 줄 수가 표본 수와 다름");
 }
 std::vector<Sample> read_cache(const std::string& path) {
   std::vector<Sample> S;
@@ -525,6 +557,12 @@ double run(Model& M, const std::vector<const Sample*>& S, bool backward, int* co
       for (double v : sc) std::fprintf(M.pred, " %.5f", std::exp(v - mx) / den);
       std::fprintf(M.pred, "\n");
     }
+    if (!x.q.empty()) {   // 부드러운 정답: −Σ q log p
+      for (int o = 0; o < x.no; ++o) loss += -x.q[o] * (sc[o] - mx - std::log(den));
+      ok += std::max_element(sc.begin(), sc.end()) - sc.begin() == x.target;
+      for (int o = 0; o < x.no; ++o) dlg[(size_t)s * M.nE + am[o]] += (float)((std::exp(sc[o] - mx) / den - x.q[o]) / B);
+      continue;
+    }
     loss += -(sc[x.target] - mx - std::log(den));
     ok += std::max_element(sc.begin(), sc.end()) - sc.begin() == x.target;
     for (int o = 0; o < x.no; ++o) dlg[(size_t)s * M.nE + am[o]] += (float)((std::exp(sc[o] - mx) / den - (o == x.target)) / B);
@@ -658,12 +696,13 @@ double ref_loss(const d1::Weights& W, const d1::Lora& lo, const Sample& s, const
   const double mx = *std::max_element(sc.begin(), sc.end());
   double den = 0;
   for (double v : sc) den += std::exp(v - mx);
+  if (!s.q.empty()) { double l = 0; for (int o = 0; o < s.no; ++o) l += -s.q[o] * (sc[o] - mx - std::log(den)); return l; }
   return -(sc[s.target] - mx - std::log(den));
 }
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string model, gc, train, val, out = "adapter.bin", mats = "in,out,gate,up,down", init, pairs, vpairs, predf, mats27 = "q,k,v,o,gate,up,down";
+  std::string soft, vsoft, model, gc, train, val, out = "adapter.bin", mats = "in,out,gate,up,down", init, pairs, vpairs, predf, mats27 = "q,k,v,o,gate,up,down";
   bool attn = false;
   float beta = 0.1f;
   int r = 8, epochs = 5, batch = 16;
@@ -676,6 +715,8 @@ int main(int argc, char** argv) {
     else if (k == "--epochs") epochs = std::stoi(nx());
     else if (k == "--pred") predf = nx();
     else if (k == "--attn") attn = true;
+    else if (k == "--soft") soft = nx();
+    else if (k == "--val-soft") vsoft = nx();
     else if (k == "--mats27") mats27 = nx();
     else if (k == "--init") init = nx(); else if (k == "--pairs") pairs = nx(); else if (k == "--val-pairs") vpairs = nx(); else if (k == "--beta") beta = std::stof(nx()); else if (k == "--batch") batch = std::stoi(nx()); else if (k == "--mats") mats = nx();
     else { std::fprintf(stderr, "모르는 인자 %s\n", k.c_str()); return 2; }
@@ -694,6 +735,7 @@ int main(int argc, char** argv) {
   if (!gc.empty()) {   // ---- 기울기 검사: 작은 r, 무작위 A·B, 표본 2 개
     std::vector<Sample> S = read_cache(gc);
     if (attn) read_seq(gc + ".seq", S);
+    if (!soft.empty()) read_soft(gc, soft, S);   // 부드러운 정답 손실의 기울기도 견줌
     S.resize(std::min<size_t>(2, S.size()));
     for (auto& s : S) if (s.target < 0) s.target = 0;
     std::vector<int> toks;
@@ -764,6 +806,8 @@ int main(int argc, char** argv) {
   // ---- 학습
   std::vector<Sample> TR = read_cache(train), VA = val.empty() ? std::vector<Sample>() : read_cache(val);
   if (attn) { read_seq(train + ".seq", TR); if (!val.empty()) read_seq(val + ".seq", VA); }
+  if (!soft.empty()) read_soft(train, soft, TR);
+  if (!vsoft.empty() && !val.empty()) read_soft(val, vsoft, VA);
   // 선호 쌍 (--pairs: 줄마다 "<캐시 표본 번호> <이긴 선택지> <진 선택지>") — 쌍마다 표본을 하나씩 만듦
   const auto to_pairs = [&](std::vector<Sample>& V, const std::string& pf) {
     if (pf.empty()) return;

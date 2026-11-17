@@ -13,6 +13,9 @@
 #include <atomic>
 #include <thread>
 #include <deque>
+#include <fstream>
+#include <map>
+#include <sstream>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -498,6 +501,72 @@ std::string jesc(const std::string& s) {
 }
 }  // namespace
 
+// --render: 갈래 굴리기가 남긴 원시 상태(jsonl 줄 + .map.bin)로 요청 본문을 지금 노드 꼴로 다시 그림 (lxd::Upper::render_cand — 노드와 같은 함수).
+// 후보 글 꼴(--compact · --px · --log-k …)이 바뀌어도 갈래를 다시 굴리지 않고 학습 요청을 만듦. 글자 차례 = jsonl cand 차례 (max_cands 로 앞에서 자름).
+// 값은 jsonl 에 적힌 자릿수(자세 0.1 mm · 후보 1e-3)로 돌아오므로 경계 값은 드물게 반올림이 달라질 수 있음 — --render-check 로 원래 .req.json 과 견줌.
+int render_main(Cfg& C, const std::vector<std::string>& files, const std::string& outdir, bool check) {
+  using nlohmann::json;
+  const sim::EnvCfg& c = C.hc.cfg;
+  std::map<std::string, sim::World> W;
+  long n = 0, same = 0;
+  for (const std::string& jf : files) {
+    std::ifstream in(jf);
+    const std::string base = jf.substr(0, jf.size() - 6);   // .jsonl 뺌
+    const std::string bn = base.substr(base.find_last_of('/') + 1);
+    for (std::string line; std::getline(in, line);) {
+      if (line.empty()) continue;
+      const json d = json::parse(line);
+      const std::string scene = d["scene"];
+      if (!W.count(scene)) W.emplace(scene, sim::build_world(scene, sim::load_scene(scene), C.hc));
+      const sim::World& w = W.at(scene);
+      const long req = d["req"];
+      // 지도: 아는 칸 범위 → 전체 판 (밖은 모름)
+      std::vector<int16_t> lm((size_t)c.size * c.size, sim::kUnknown);
+      {
+        std::FILE* g = std::fopen((base + "_r" + std::to_string(req) + ".map.bin").c_str(), "rb");
+        if (!g) throw std::runtime_error("map.bin 없음: " + base);
+        int32_t hd[5];
+        if (std::fread(hd, 4, 5, g) != 5) throw std::runtime_error("map.bin 짧음");
+        std::vector<int32_t> ages((size_t)hd[4]);
+        if (hd[4] && std::fread(ages.data(), 4, ages.size(), g) != ages.size()) throw std::runtime_error("map.bin 짧음");
+        std::vector<int16_t> m((size_t)hd[2] * hd[3]);
+        if (!m.empty() && std::fread(m.data(), 2, m.size(), g) != m.size()) throw std::runtime_error("map.bin 짧음");
+        std::fclose(g);
+        for (int y = 0; y < hd[3]; ++y)
+          for (int x = 0; x < hd[2]; ++x) lm[(size_t)(hd[1] + y) * c.size + hd[0] + x] = m[(size_t)y * hd[2] + x];
+      }
+      std::vector<cand::Cand> cands;
+      for (const auto& q : d["cand"]) {
+        cand::Cand k;
+        k.id = q["id"]; k.age = q["age"]; k.vp = q["vp"]; k.anc = q["anc"]; k.len_m = q["len_m"]; k.turn_rad = q["turn_rad"]; k.t_s = q["t_s"]; k.bearing = q["bearing"];
+        k.gain_m2 = q["gain_m2"]; k.marg_m2 = q["marg_m2"]; k.score = q["score"]; k.open_m = q["open_m"]; k.clear_m = q["clear_m"]; k.path_clear_m = q["path_clear_m"];
+        k.same_room = q["same_room"]; k.room_left = q["room_left"]; k.cur = q["cur"]; k.kept = q["kept"]; k.chosen = q["chosen"]; k.aborts = q["aborts"];
+        k.last_fail = q["last_fail"]; k.since_fail_s = q["since_fail_s"]; k.fail_near = q["fail_near"]; k.in_avoid = q["in_avoid"]; k.visited = q["visited"];
+        cands.push_back(k);
+      }
+      cand::Mem M;
+      for (const auto& t : d["mem"]["trail"]) M.trail.push_back(cand::Mem::Pose{t[0], t[1], t[2], t[3]});
+      for (const auto& t : d["mem"]["goals"]) M.goals.push_back(cand::Mem::Goal{t[0], t[1], t[2], t[3], t[4], t[5]});
+      for (const auto& t : d["mem"]["fails"]) M.fails.push_back(cand::Mem::Fail{t[0], t[1], t[2], t[3]});
+      std::vector<lxd::Dec> decs;
+      for (const auto& t : d["decisions"]) decs.push_back(lxd::Dec{t[0], t[1], t[2], t[3], t[4], t[5]});
+      lxd::Req r;
+      const std::deque<std::pair<int, std::vector<int16_t>>> hist;
+      if (!lxd::Upper::render_cand(C.dp, cands, M, decs, hist, nullptr, d["step"], d["x"], d["y"], d["th"], c, w, lm.data(), &r)) continue;
+      const std::string name = bn + "_r" + std::to_string(req) + ".req.json";
+      if (check) {
+        std::ifstream o(base + "_r" + std::to_string(req) + ".req.json");
+        std::stringstream ss; ss << o.rdbuf();
+        same += ss.str() == r.body;
+      }
+      if (!outdir.empty()) { std::ofstream o(outdir + "/" + name, std::ios::binary); o << r.body; }
+      ++n;
+    }
+  }
+  std::printf("다시 그림 %ld 요청%s\n", n, check ? (" · 원래와 바이트 같음 " + std::to_string(same)).c_str() : "");
+  return 0;
+}
+
 int main(int argc, char** argv) {
   setenv("SIM_EXACT", "1", 0);
   std::string scene, out, base = "slot0";
@@ -506,6 +575,11 @@ int main(int argc, char** argv) {
   double period = 3.0, latency = 2.6, horizon = 600.0;
   int mode = 1;   // 위층 요청 차례 — 실물 노드 decider_mode 기본(event)과 같게
   int every = 3, reps = 4, max_req = 0, snap_a = -1, gpu_n = 0;
+  std::vector<std::string> render_files;
+  std::string render_out;
+  bool render_check = false;
+  lxd::Params rp;   // --render 의 꼴 (기본 = 노드 기본)
+  bool rp_set = false;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     auto nx = [&]() -> std::string { if (i + 1 >= argc) throw std::runtime_error(a + " 뒤에 값"); return argv[++i]; };
@@ -524,7 +598,20 @@ int main(int argc, char** argv) {
     else if (a == "--env") env_path = nx();
     else if (a == "--snap-test") snap_a = std::stoi(nx());
     else if (a == "--gpu") gpu_n = std::stoi(nx());
+    else if (a == "--render") { while (i + 1 < argc && argv[i + 1][0] != '-') render_files.push_back(argv[++i]); }
+    else if (a == "--render-out") render_out = nx();
+    else if (a == "--render-check") render_check = true;
+    else if (a == "--compact") { rp.compact = std::stoi(nx()) != 0; rp_set = true; }
+    else if (a == "--px") { rp.px = std::stoi(nx()); rp_set = true; }
+    else if (a == "--log-k") { rp.log_k = std::stoi(nx()); rp_set = true; }
+    else if (a == "--max-cands") { rp.max_cands = std::stoi(nx()); rp_set = true; }
     else scene = a;
+  }
+  if (!render_files.empty()) {   // 다시 그리기만 (장면은 jsonl 줄에서)
+    C.hc = sim::load_env_cfg(env_path);
+    C.dp = rp; C.dp.cand = true;
+    (void)rp_set;
+    return render_main(C, render_files, render_out, render_check);
   }
   if (scene.empty() || out.empty() || base != "slot0") {
     std::fprintf(stderr, "dec_rollout <장면.scene> --seed 1 --out p [--people 0] [--period 3.0] [--latency 2.6] [--every 3] [--reps 4] [--horizon 600] [--max-req 0] [--base slot0] [--mode event|periodic] [--threads 8]\n");
@@ -605,25 +692,25 @@ int main(int argc, char** argv) {
         for (const auto& m : s.past) std::fwrite(m.data(), 2, m.size(), g);
         std::fclose(g);
       }
-      std::fprintf(f, "{\"scene\":\"%s\",\"seed\":%llu,\"people\":%d,\"req\":%ld,\"step\":%d,\"x\":%.4f,\"y\":%.4f,\"th\":%.5f,\"res\":%.4f,\"ox\":%.4f,\"oy\":%.4f,\"gw\":%d,"
+      std::fprintf(f, "{\"scene\":\"%s\",\"seed\":%llu,\"people\":%d,\"req\":%ld,\"step\":%d,\"x\":%.9g,\"y\":%.9g,\"th\":%.9g,\"res\":%.4f,\"ox\":%.4f,\"oy\":%.4f,\"gw\":%d,"
                       "\"cand_ver\":\"cand-v4-967adc5\",\"mode\":\"%s\",\"period_steps\":%d,\"lat_steps\":%d,\"horizon_s\":%.1f,\"base\":{\"done\":%d,\"t\":%.2f},\"mem\":{\"trail\":[",
                    jesc(scene).c_str(), (unsigned long long)C.seed, C.people, s.id, s.step, s.x, s.y, s.th, c.res, C.worlds[0].ox, C.worlds[0].oy, C.worlds[0].gw, C.dp.mode ? "event" : "periodic", C.dp.period_steps, C.lat,
                    horizon, b.done, b.t);
-      for (size_t q = 0; q < s.mem.trail.size(); ++q) { const auto& t = s.mem.trail[q]; std::fprintf(f, "%s[%.3f,%.3f,%.4f,%d]", q ? "," : "", t.x, t.y, t.th, t.step); }
+      for (size_t q = 0; q < s.mem.trail.size(); ++q) { const auto& t = s.mem.trail[q]; std::fprintf(f, "%s[%.9g,%.9g,%.9g,%d]", q ? "," : "", t.x, t.y, t.th, t.step); }
       std::fprintf(f, "],\"goals\":[");
-      for (size_t q = 0; q < s.mem.goals.size(); ++q) { const auto& t = s.mem.goals[q]; std::fprintf(f, "%s[%d,%.3f,%.3f,%d,%d,%d]", q ? "," : "", t.id, t.x, t.y, t.start, t.end, t.why); }
+      for (size_t q = 0; q < s.mem.goals.size(); ++q) { const auto& t = s.mem.goals[q]; std::fprintf(f, "%s[%d,%.9g,%.9g,%d,%d,%d]", q ? "," : "", t.id, t.x, t.y, t.start, t.end, t.why); }
       std::fprintf(f, "],\"fails\":[");
-      for (size_t q = 0; q < s.mem.fails.size(); ++q) { const auto& t = s.mem.fails[q]; std::fprintf(f, "%s[%.3f,%.3f,%d,%d]", q ? "," : "", t.x, t.y, t.why, t.step); }
+      for (size_t q = 0; q < s.mem.fails.size(); ++q) { const auto& t = s.mem.fails[q]; std::fprintf(f, "%s[%.9g,%.9g,%d,%d]", q ? "," : "", t.x, t.y, t.why, t.step); }
       std::fprintf(f, "]},\"kf\":[");
       for (size_t q = 0; q < s.kf.size(); ++q) std::fprintf(f, "%s[%d,%.3f,%.3f,%.4f]", q ? "," : "", (int)s.kf[q][0], s.kf[q][1], s.kf[q][2], s.kf[q][3]);
       std::fprintf(f, "],\"decisions\":[");
-      for (size_t q = 0; q < s.decs.size(); ++q) { const auto& d = s.decs[q]; std::fprintf(f, "%s[%d,%d,%.3f,%.3f,%d,%d]", q ? "," : "", d.step, d.id, d.x, d.y, d.kept, d.src); }
+      for (size_t q = 0; q < s.decs.size(); ++q) { const auto& d = s.decs[q]; std::fprintf(f, "%s[%d,%d,%.9g,%.9g,%d,%d]", q ? "," : "", d.step, d.id, d.x, d.y, d.kept, d.src); }
       std::fprintf(f, "],\"cand\":[");
       for (size_t L = 0; L < s.cands.size(); ++L) {
         const cand::Cand& q = s.cands[L];
-        std::fprintf(f, "%s{\"id\":%d,\"age\":%d,\"vp\":%d,\"anc\":%d,\"len_m\":%.3f,\"turn_rad\":%.4f,\"t_s\":%.3f,\"bearing\":%.4f,\"gain_m2\":%.3f,\"marg_m2\":%.3f,\"score\":%.5f,"
-                        "\"open_m\":%.3f,\"clear_m\":%.3f,\"path_clear_m\":%.3f,\"same_room\":%d,\"room_left\":%d,\"cur\":%d,\"kept\":%d,\"chosen\":%d,\"aborts\":%d,\"last_fail\":%d,"
-                        "\"since_fail_s\":%.2f,\"fail_near\":%d,\"in_avoid\":%d,\"visited\":%d,\"out\":[",
+        std::fprintf(f, "%s{\"id\":%d,\"age\":%d,\"vp\":%d,\"anc\":%d,\"len_m\":%.9g,\"turn_rad\":%.9g,\"t_s\":%.9g,\"bearing\":%.9g,\"gain_m2\":%.9g,\"marg_m2\":%.9g,\"score\":%.9g,"
+                        "\"open_m\":%.9g,\"clear_m\":%.9g,\"path_clear_m\":%.9g,\"same_room\":%d,\"room_left\":%d,\"cur\":%d,\"kept\":%d,\"chosen\":%d,\"aborts\":%d,\"last_fail\":%d,"
+                        "\"since_fail_s\":%.9g,\"fail_near\":%d,\"in_avoid\":%d,\"visited\":%d,\"out\":[",
                      L ? "," : "", q.id, q.age, q.vp, q.anc, q.len_m, q.turn_rad, q.t_s, q.bearing, q.gain_m2, q.marg_m2, q.score, q.open_m, q.clear_m, q.path_clear_m, q.same_room,
                      q.room_left, q.cur, q.kept, q.chosen, q.aborts, q.last_fail, q.since_fail_s, q.fail_near, q.in_avoid, q.visited);
         for (int rp = 0; rp < reps; ++rp)

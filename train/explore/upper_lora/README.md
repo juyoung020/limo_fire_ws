@@ -115,6 +115,31 @@ GPU 길: 기준 판 106 s 를 2.7 s, 갈래 600 판(요청 28 개 × 후보 × 4
 기본 모델은 규칙보다 느리고 fuel 보다는 빠르다. 차이는 큰 집(HSSD 20 쌍: event −0.094, 최대 6 −0.061)과 처음 1 분(쉬운 두 장면 AUC90 −0.14)에서 나고, 실물 방은 차이가 거의 없다(1 분 안에 거의 다 보임).
 후보를 줄이거나 거리순으로 주면 event 기본보다 AUC180 +0.025 안팎 낫지만 둘을 합쳐도 더 늘지 않음. 끝 코드: 규칙은 32 판 중 30 판이 '대충 다 앎'·닫힘, 판단 모델 event 는 24 판 (나머지 부딪힘 4 · 진척 없음 4).
 
+## 요청 꼴과 지연 (2026-11-17, 로봇 Orin · Q8 · `-lm dio` · `-c 4096 -np 1`, 실물 노드 robot.launch 가 도는 중에, 5 번 중앙값)
+
+실물 시험(5cd0a0b 기본: 긴 꼴 + 지도 384 px + 카메라 2 × 2, images-last 없음)에서 답 하나 5 s 가 나와 꼴별로 쟀다.
+요청은 같은 HSSD 상태 두 개(라벨 굴리기 원시 상태를 `dec_rollout --render` 로 다시 그림): warm = 같은 꼴의 앞 요청 뒤 다음 요청(실제 연속 결정), cold = 다른 요청 뒤 처음.
+
+| 꼴 | 토큰 (PC) | images-last 끔 cold / warm | images-last 켬 cold / warm |
+|---|---|---|---|
+| 긴 꼴 + 지도 384 + 카메라 2 × 2 (옛 노드 기본) | 2789 | 5605 / 5611 ms | 5656 / 5031 ms |
+| 긴 꼴 + 지도 384 | 2502 | 4427 / 4428 | 4461 / 3881 |
+| 짧은 키 + 지도 384 (옛 compact) | 1587 | 3070 / 3057 | 3138 / 2726 |
+| 짧은 키 + 힌트를 후보 앞 (지도 320) | 1543 | 4060 / 3142 (흔들림 큼) | 2991 / 2354 |
+| **v1 꼴: 짧은 키 · 힌트 앞 · 최근 목표 목록 뺌 · 결정 기록 4 · 지도 288** | 1140 | 2189 / 2208 | **2203 / 1582** |
+| 같은 꼴, 지도 256 · 320 | 1123 · 1159 | 2087 / 2074 · 2328 / 2327 | 2207 / 1590 · 2351 / 1714 |
+
+토큰마다 약 1.6 ms (Orin 프롬프트 처리) — 차이는 거의 글 길이에서 난다. 그림은 (px/32)² 토큰(288 → 81)이라 작게 줄여도 이득이 작다.
+images-last + checkpoint 패치는 바뀌지 않는 앞부분(템플릿 · 설명 글 · 힌트)을 다시 안 써 warm 에서 약 0.6 s 를 줄인다.
+그래서 기본을 v1 꼴로 바꿈 (`scripts/low_decider.h` Params: compact · px 288 · log_k 4 · cam 0 — 노드 `config/low_rl.yaml` · `low_explore_check` · `dec_rollout` 이 같은 값):
+최근 목표 목록은 지도 사진의 ✓ · × 표시와 결정 기록이 같은 것을 말해 뺐고, 카메라 2 × 2 는 라벨 시뮬에 실물 카메라가 없어 v1 학습에서 빠짐(카메라 판은 v2 — 라벨에 키프레임 자세가 있음).
+서버는 `LLAMA_DECISION_IMAGES_LAST=1` 로 띄우고(노드 README), 학습 캐시(`d1_cache`)도 같은 값으로 만든다.
+로봇 스크립트: 라벨 상태를 꼴마다 다시 그려 올리고 서버 설정마다 띄워 재고 PID 로 끔 (결과 로봇 `~/decider_test/lat_results/lat_fmt*_1117.tsv`).
+
+`dec_rollout --render <jsonl…> --render-out <폴더> [--compact 0|1] [--px N] [--log-k K] [--max-cands K] [--render-check]`: 라벨 굴리기가 남긴 원시 상태(후보 필드 · 판 기억 · 결정 · 지도 .map.bin · 자세)를
+노드와 같은 함수(`lxd::Upper::render_cand` — 노드 `build_cand` 가 부르는 것)로 다시 그림. 그 뒤로 jsonl 은 float 를 `%.9g` 로 적어 다시 그린 요청이 원래와 바이트 같음
+(procthor_00016 요청 8/8). 그 전 라벨(labels_61628bb, 자릿수 1e-3)은 604 개 중 196 개가 바이트 같고, 나머지는 frontier_width 등 0.1 반올림 경계와 지도 화살표 위치의 작은 차이.
+
 ## llama-server 패치 (판단 모델 앞부분 캐시 — `patches/`)
 
 기준: llama.cpp 31953bc (판단 모델 판, `tools/server/server-context.cpp` md5 fa397489…, PC `~/models/decision/runtime/llama.cpp` · 로봇 `~/decider_test/llama.cpp` 같은 소스). `patch -p1 < …` 뒤 `cmake --build build --target llama-server`.

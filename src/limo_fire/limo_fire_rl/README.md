@@ -158,12 +158,14 @@ ros2 topic echo /low_rl/done            # true 면 끝 (지도 닫힘)
 이미 page cache 가 차 있으면(free 3 GB 아래) 한 번 비우고 띄운다 (`sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`):
 
 ```bash
-cd ~/decider_test && nohup ./llama.cpp/build/bin/llama-server -m models/d1-3B-Q8_0.gguf --mmproj models/mmproj-d1-3B-Q8_0.gguf \
+cd ~/decider_test && LLAMA_DECISION_IMAGES_LAST=1 nohup ./llama.cpp/build/bin/llama-server -m models/d1-3B-Q8_0.gguf --mmproj models/mmproj-d1-3B-Q8_0.gguf \
   --host 127.0.0.1 --port 8171 -ngl 99 -c 4096 -np 1 -lm dio > server_dec.log 2>&1 &
 # 뜰 때까지 (모델 읽기 약 1 분): grep -m1 "listening" server_dec.log
 ros2 launch limo_fire_rl explore_fuel_rl.launch.xml upper:=decider [dry_run:=false] [rviz:=true]
 ```
 
+서버는 `train/explore/upper_lora/patches/` 의 두 패치(판단 요청 checkpoint · 그림을 글 뒤로)를 넣은 빌드에 `LLAMA_DECISION_IMAGES_LAST=1` 로 띄운다 — 결정마다 같은 앞부분(템플릿 · 설명 글 · 힌트)을 다시 계산하지 않음. 미세조정 v1(LoRA)도 이 차례로 학습한다.
+요청 꼴 기본은 짧은 꼴(`decider_compact: true`, 지도 288 px, 결정 기록 4, 카메라 없음 `decider_cam: 0`): 로봇 Orin 에서 요청 하나 약 1.6 s(앞 요청 뒤) · 2.2 s(처음) — 예전 기본(긴 꼴 + 카메라 2 × 2)은 5.0–5.6 s (`upper_lora/README.md` "요청 꼴과 지연").
 기본은 사건 때만 묻고(`decider_mode: event`) 요청에 후보를 6 개까지 넣는다(`decider_max_cands: 6`) — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 가장 빨랐고, 라벨 굴리기(`dec_rollout`)·`low_explore_check --upper decider` 기본도 같은 값.
 상태는 `~/status` 끝에 "판단 모델: 보냄 · 답 (마지막 ms) · 시간 끝 · 실패 · 후보 안 맞음 · slot0 대신". 서버가 없거나 답이 늦으면 slot0 차례로 계속 돈다 (멈추지 않음).
 카메라 그림(시뮬 `--decider-input all`)은 시뮬 장면에 광선을 쏴 칠한 그림이라 실물에는 같은 것이 없어 쓰지 않는다 (`decider_input` text · image · both).

@@ -11,15 +11,16 @@ low_rl:
     decider_max_cands: 6      # 요청에 넣는 후보 수 상한 (0 = 다) — 시뮬 위층 비교에서 6 이 가장 빠름 (upper_lora/README), 라벨 굴리기(dec_rollout)와 같은 값
     decider_timeout: 8.0      # s, 이보다 늦은 답은 버림 (지금 목표 그대로)
     decider_input: both       # 지도 사진 + 후보 글 (combine_run --decider-input both). all(카메라 그림)은 시뮬 장면을 광선으로 칠한 그림이라 실물에 없음
-    decider_px: 384
+    decider_px: 288           # 지도 사진 한 변 — 그림 약 81 토큰
+    decider_compact: true     # 짧은 꼴(짧은 키 · 힌트를 후보 앞 · 최근 목표 목록 뺌): 로봇 Orin 요청 약 2 s (긴 꼴 + 카메라는 약 5.6 s) — 미세조정 v1 이 이 꼴로 학습됨
     decider_prompt: 1
     decider_match_r: 1.5      # m, 답의 후보 칸 → 지금 후보 (기다리는 동안 후보 칸이 옮겨감 — 0.5 면 답의 절반쯤 버림)
     decider_cand: true        # 판단 모델 후보 = scripts/cand_view.h (기억 필드 · 안정 번호로 답 맞춤). false = 예전 hier 8 칸
     decider_hint: true        # 글의 "Rules of thumb" (가까운 쪽으로 쏠리게 함 — 평가에서 빼고도 잼)
     decider_mem_image: true   # 지도 사진에 지나온 길(60 s, 보라 — 옅을수록 오래됨) · 지난 목표(✓ 닿음 · × 실패 · 회색 고리 바꿈 · 파란 고리 지금)
     decider_image: A          # A = 지금 지도 한 장 · B = 한 사진을 2 × 2 칸으로 (지금 · 5 · 15 · 30 s 전, 같은 범위 · 토큰 수 같음)
-    decider_cam: 4            # 둘째 사진: 앞 4 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 2 × 2 (실물 컬러 · 정렬 깊이로 가려짐 검사, scripts/cam_memory.h) — 0 = 끔
-    decider_log_k: 8          # 결정 기록: 최근 K 결정(언제 · 고른 후보의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 최근)로 — 0 = 끔
+    decider_cam: 0            # 0 = 끔 (기본 — 미세조정 v1 은 카메라 없이 학습: 라벨 시뮬에 실물 카메라가 없음, 카메라 판은 v2). n 이면 둘째 사진: 앞 4 후보마다 그 자리를 가장 잘 본 지난 카메라 장면 2 × 2 (실물 컬러 · 정렬 깊이로 가려짐 검사, scripts/cam_memory.h) — 0 = 끔
+    decider_log_k: 4          # 결정 기록: 최근 K 결정(언제 · 고른 후보의 지금 글자 · 이어 감/바꿈 · 결과)을 글로, 그 목표 자리를 지도에 번호(1 = 최근)로 — 0 = 끔
     color_topic: /camera/color/image_raw
     color_info_topic: /camera/color/camera_info
     cam_base_h: 0.147         # base_link 의 바닥 위 높이 (m) — 카메라 높이 = 이것 + tf base_link→camera_link z

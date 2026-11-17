@@ -135,10 +135,11 @@ int main(int argc, char** argv) {
   int steps = 1500, people = 0;
   uint64_t seed = 1;
   bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true, node_obs = false;
-  int dec_img = 0, dec_logk = 8;
+  int dec_img = 0, dec_logk = lxd::Params{}.log_k;   // 기본은 노드와 같은 lxd::Params
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
   int dec_mode = 1, dec_max = 6, dec_order = 0;   // 실물 노드 기본과 같게 (decider_mode event · decider_max_cands 6)
-  bool dec_compact = false, dec_memf = true;
+  bool dec_compact = lxd::Params{}.compact, dec_memf = true;
+  int dec_px = lxd::Params{}.px;
   std::string dec_input = "both", dec_url;
   std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
   bool dec_fake_a = false;   // --ep-log: 판 끝마다 한 줄 (판 · 끝 코드 · 시각 s · 위층 결정 · 목표 바뀜) — --max-ep N 판에서 멈춤
@@ -189,6 +190,7 @@ int main(int argc, char** argv) {
     else if (a == "--dec-period") dec_period = std::stod(nx());
     else if (a == "--dec-mode") dec_mode = nx() == "event" ? 1 : 0;
     else if (a == "--dec-compact") dec_compact = std::stoi(nx()) != 0;
+    else if (a == "--dec-px") dec_px = std::stoi(nx());
     else if (a == "--dec-memf") dec_memf = std::stoi(nx()) != 0;
     else if (a == "--dec-max") dec_max = std::stoi(nx());
     else if (a == "--dec-order") dec_order = nx() == "dist" ? 1 : 0;
@@ -266,7 +268,7 @@ int main(int argc, char** argv) {
     lxd::Params dp;
     dp.period_steps = std::max(1, (int)std::lround(dec_period / dt));
     dp.mode = dec_mode;
-    dp.compact = dec_compact; dp.mem_fields = dec_memf; dp.max_cands = dec_max; dp.order = dec_order;
+    dp.compact = dec_compact; dp.px = dec_px; dp.mem_fields = dec_memf; dp.max_cands = dec_max; dp.order = dec_order;
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
     dp.cand = dec_cand; dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img; dp.log_k = dec_logk;
