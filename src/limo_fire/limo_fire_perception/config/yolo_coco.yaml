@@ -40,5 +40,11 @@ object_mapper:
     # 실내 로봇에 없는 COCO 클래스는 지도에 안 올림: 1116 실험실 녹화(1116_fuel_rl_1)에서 truck·bus·airplane·car·train 이 모두 큰 가구를 잘못 본 것
     ignore_classes: [airplane, bus, train, truck, car, boat, motorcycle, traffic_light, stop_sign, parking_meter, fire_hydrant, bird, horse, sheep, cow, elephant, bear, zebra, giraffe, skis, snowboard, surfboard, kite]
     class_colors: ["#3380ff", "#55e07d", "#9731e0", "#c6b74b", "#31c3e0", "#e055a0", "#52c62b", "#5b55e0", "#e06b31", "#4bc698", "#d231e0", "#c3e055", "#2b79c6", "#e05572", "#31e040", "#7a4bc6", "#e0a631", "#55e0da", "#c62b9f", "#94e055", "#314ee0", "#c65b4b", "#31e07a", "#b855e0", "#c6c62b", "#55b7e0", "#e03179", "#5ac64b", "#4f31e0", "#e09555", "#2bc6a0", "#e055da", "#a5e031", "#4b79c6", "#e0313f", "#55e072", "#7a2bc6", "#e0c455", "#31d0e0", "#c64b98", "#6ae031", "#555ae0", "#c6532b", "#55e0a1", "#c431e0", "#b6c64b", "#3196e0", "#e0557c", "#2bc62c", "#7e55e0", "#e09831", "#4bc6b8", "#e031c2", "#9fe055", "#2b51c6", "#e05c55", "#31e06d", "#994bc6", "#e0d331", "#55c2e0", "#c62b78", "#71e055", "#4131e0", "#c67a4b", "#31e0a7", "#db55e0", "#9ec62b", "#5593e0", "#e0314c", "#4bc65c", "#7b31e0", "#e0b955", "#2bc5c6", "#e055b6", "#78e031", "#4b59c6", "#e05031", "#55e096", "#a12bc6", "#d9e055"]   # class_names 순서의 지도 색 (색상환을 황금각으로 돌려 이웃 클래스끼리 다르게) — icons/ 배지와 같은 색
+    # 지도 갱신: 보여야 하는데(시야 안 · 3 m 안 · 앞이 안 가림) 20 장 이어 못 보면 뺌. 1116_fuel_rl_1 녹화 재생: 8 이면 의자 1 개가 (가끔 못 잡는 YOLO 때문에)
+    # 빠지고, 20 이면 의자 5 개 모두 남고 떠난 사람 2 명만 빠짐 — 잠정 (사람·동물은 아래 dynamic_ttl)
+    neg_misses: 20
+    neg_max_depth: 3.0
+    dynamic_classes: [person, cat, dog, bird]
+    dynamic_ttl: 10.0     # s, 움직이는 클래스는 이만큼 안 보이면 뺌
     objects_file: ""      # 물체 지도 파일. 있으면 켤 때 읽음 (navigation.launch.xml 이 저장 지도 옆 <이름>_objects.txt 를 줌)
 

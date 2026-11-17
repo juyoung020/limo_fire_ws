@@ -296,6 +296,14 @@ public:
       extras_.push_back(std::move(ex));
     }
     cell_size_ = declare_parameter<double>("cell_size", 0.05);
+    // 지도 갱신: 보여야 하는데 neg_misses 장 연속 못 보면 뺌 (시야 가장자리 neg_margin 비율 · neg_max_depth m 밖 · neg_occl_m 넘게 앞이 가린 것은 셈 안 함)
+    neg_misses_ = declare_parameter<int>("neg_misses", 20);
+    neg_max_depth_ = declare_parameter<double>("neg_max_depth", 3.0);
+    neg_margin_ = declare_parameter<double>("neg_margin", 0.1);
+    neg_occl_m_ = declare_parameter<double>("neg_occl_m", 0.3);
+    // 움직이는 클래스: dynamic_ttl 초 안 보이면 뺌
+    dynamic_ = declare_parameter<std::vector<std::string>>("dynamic_classes", std::vector<std::string>{"person", "cat", "dog", "bird"});
+    dynamic_ttl_ = declare_parameter<double>("dynamic_ttl", 10.0);
     // 바닥 광선 거리 (가상 깊이). base_height = base_link 의 바닥 위 높이 (limo_pro_base.xacro 0.145 m)
     base_height_ = declare_parameter<double>("base_height", 0.145);
     base_rows_frac_ = declare_parameter<double>("base_rows_frac", 0.05);
@@ -336,6 +344,9 @@ private:
     sensor_msgs::msg::Image::SharedPtr view;  // 대표 사진 (view_quality 가 가장 큰 장면)
     double view_quality = 0;
     double raw_quality = 0, raw_t = -1e9;   // 원본 사진(object_views)으로 마지막 낸 것의 품질 · 시각
+    int misses = 0;          // 보여야 할 때 못 본 수 (지도 갱신 — 다시 보면 0)
+    bool gone = false;       // 없어짐 (못 본 수 neg_misses 번 · 움직이는 클래스는 dynamic_ttl 초) — 표시·목록·저장에서 뺌, 같은 자리 탐지는 새 물체로
+    bool deleted = false;    // 없어진 물체 마커를 지웠음
   };
 
   // 대표 사진을 잘라 올 장면: 결과 영상이 오면 같은 시각 것을 잘라 물체에 붙인다
@@ -444,7 +455,8 @@ private:
     const vision_msgs::msg::Detection2DArray::ConstSharedPtr & dets,
     const sensor_msgs::msg::Image::ConstSharedPtr & depth, int source)
   {
-    if (!info_ || dets->detections.empty()) {return;}
+    if (!info_) {return;}
+    if (dets->detections.empty() && source >= 0) {return;}   // 빈 장은 주 탐지기 것만 (못 봄 셈은 한 번만)
     if (depth->encoding != "16UC1" && depth->encoding != "32FC1") {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "지원하지 않는 깊이 형식: %s", depth->encoding.c_str());
       return;
@@ -471,6 +483,7 @@ private:
       }
     }
 
+    std::vector<size_t> seen_now;   // 이 장에서 다시 본 물체 (못 봄 셈에서 뺌)
     vision_msgs::msg::Detection3DArray inst;
     inst.header.stamp = dets->header.stamp;
     inst.header.frame_id = map_frame_;
@@ -509,7 +522,7 @@ private:
       tf2::doTransform(p_cam, p_map, tf);
       const double view_yaw = std::atan2(p_map.point.y - tf.transform.translation.y,
           p_map.point.x - tf.transform.translation.x);
-      const size_t idx = add(cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw,
+      const size_t idx = add_seen(seen_now, cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw,
           d.results[0].hypothesis.score, m.area, d.bbox.size_x * m.z / fx);
       if (mask && i < 255) {footprint(*depth, *mask, static_cast<uint8_t>(i + 1), d.bbox, sx, sy, fx, fy, cx, cy, tf, landmarks_[idx]);}
       // 이 장의 물체 하나 (~/instances): 쓴 위치(map) · 밑점 · 너비·높이(마스크 크기 × 거리) · 깊이 출처와 두 깊이 차이
@@ -553,6 +566,7 @@ private:
       }
     }
     if (!inst.detections.empty()) {inst_pub_->publish(inst);}
+    if (source < 0) {negative_evidence(*depth, tf, sx, sy, fx, fy, cx, cy, seen_now);}
     take_views();
   }
 
@@ -649,7 +663,7 @@ private:
     double best_d = merge_radii_[cls];
     for (auto & l : landmarks_) {
       const double dist = std::hypot(l.x - x, l.y - y);
-      if (l.cls == cls && dist < best_d) {best = &l; best_d = dist;}
+      if (!l.gone && l.cls == cls && dist < best_d) {best = &l; best_d = dist;}
     }
     if (!best) {
       landmarks_.push_back({cls, 0, x, y, z, yaw, 1, score, area, ext, t_now});
@@ -799,6 +813,59 @@ private:
     }
   }
 
+  template<typename ... A>
+  size_t add_seen(std::vector<size_t> & seen, A ... a)
+  {
+    const size_t i = add(a ...);
+    seen.push_back(i);
+    landmarks_[i].misses = 0;
+    return i;
+  }
+
+  // 지도 갱신 (못 본 증거): 지도에 올라간 물체 가운데 이 장에서 보여야 하는데(카메라 시야 안 · neg_max_depth 안 · 그 픽셀 깊이가 물체보다 앞에 가리는 게 없음)
+  // 다시 못 본 것은 misses 를 늘리고, neg_misses 번이면 없어짐. 움직이는 클래스(dynamic_classes)는 dynamic_ttl 초 안 보이면 없어짐.
+  void negative_evidence(const sensor_msgs::msg::Image & depth, const geometry_msgs::msg::TransformStamped & tf, double sx, double sy,
+    double fx, double fy, double cx, double cy, const std::vector<size_t> & seen)
+  {
+    tf2::Transform T;
+    tf2::fromMsg(tf.transform, T);
+    const tf2::Transform inv = T.inverse();
+    const double t_now = now().seconds();
+    for (size_t i = 0; i < landmarks_.size(); ++i) {
+      Landmark & l = landmarks_[i];
+      if (l.gone || l.number == 0) {continue;}
+      if (std::find(dynamic_.begin(), dynamic_.end(), class_names_[l.cls]) != dynamic_.end() && t_now - l.last_seen > dynamic_ttl_) {
+        l.gone = true;
+        RCLCPP_INFO(get_logger(), "지도에서 뺌 (움직이는 클래스 %.0f s 안 보임): %s-%d", t_now - l.last_seen, class_names_[l.cls].c_str(), l.number);
+        continue;
+      }
+      if (std::find(seen.begin(), seen.end(), i) != seen.end()) {continue;}
+      const tf2::Vector3 pc = inv * tf2::Vector3(l.x, l.y, l.z);
+      if (pc.z() < min_depth_ || pc.z() > neg_max_depth_) {continue;}
+      const double u = fx * pc.x() / pc.z() + cx, v = fy * pc.y() / pc.z() + cy;
+      const double mu = neg_margin_ * info_->width, mv = neg_margin_ * info_->height;
+      if (u < mu || v < mv || u >= info_->width - mu || v >= info_->height - mv) {continue;}
+      // 그 픽셀 둘레 깊이 가운데 값: 물체보다 neg_occl_m 넘게 앞이면 가려짐(셈 안 함), 비었으면 모름
+      std::vector<float> ds;
+      for (int dy = -3; dy <= 3; ++dy) {
+        for (int dx = -3; dx <= 3; ++dx) {
+          const int px = std::clamp(static_cast<int>((u + dx * 2) * sx), 0, static_cast<int>(depth.width) - 1);
+          const int py = std::clamp(static_cast<int>((v + dy * 2) * sy), 0, static_cast<int>(depth.height) - 1);
+          const uint8_t * row = depth.data.data() + static_cast<size_t>(py) * depth.step;
+          const float d = depth.encoding == "16UC1" ? reinterpret_cast<const uint16_t *>(row)[px] * 0.001f : reinterpret_cast<const float *>(row)[px];
+          if (std::isfinite(d) && d > 0.05f) {ds.push_back(d);}
+        }
+      }
+      if (ds.size() < 10) {continue;}
+      std::nth_element(ds.begin(), ds.begin() + ds.size() / 2, ds.end());
+      if (ds[ds.size() / 2] < pc.z() - neg_occl_m_) {continue;}
+      if (++l.misses >= neg_misses_) {
+        l.gone = true;
+        RCLCPP_INFO(get_logger(), "지도에서 뺌 (보여야 하는데 %d 번 못 봄): %s-%d (%.2f, %.2f)", l.misses, class_names_[l.cls].c_str(), l.number, l.x, l.y);
+      }
+    }
+  }
+
   // 물체 지도 파일: 머리 줄 + 물체마다 한 줄 "클래스 번호 x y z yaw 본횟수 최고점수 넓이 너비 마지막본시각" (map 좌표, m · rad · s).
   // 지도에 올라간 것(number > 0)만 쓴다. 대표 사진은 쓰지 않는다
   bool save(const std::string & path)
@@ -808,7 +875,7 @@ private:
     f << "# limo_fire object map v1 (frame " << map_frame_ << ", cell " << cell_size_ << " m): class number x y z yaw hits best_score area ext last_seen n_cells gx,gy,count ...\n";
     int n = 0;
     for (const auto & l : landmarks_) {
-      if (l.number == 0) {continue;}
+      if (l.number == 0 || l.gone) {continue;}
       char buf[256];
       std::snprintf(buf, sizeof(buf), "%s %d %.3f %.3f %.3f %.3f %d %.3f %.4f %.3f %.1f %zu", class_names_[l.cls].c_str(), l.number,
         l.x, l.y, l.z, l.yaw, l.hits, l.best_score, l.area, l.ext, l.last_seen, l.cells.size());
@@ -966,7 +1033,7 @@ private:
     const double t = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     // 배지가 겹치면 서로 밀어 표시 자리만 벌린다 (배지 + 이름표 높이만큼, 몇 번 반복). 물체 자리에서 너무 멀어지지 않게 icon_size 까지만
     std::vector<size_t> on;
-    for (size_t i = 0; i < landmarks_.size(); ++i) {if (landmarks_[i].number > 0) {on.push_back(i);}}
+    for (size_t i = 0; i < landmarks_.size(); ++i) {if (landmarks_[i].number > 0 && !landmarks_[i].gone) {on.push_back(i);}}
     std::vector<double> px(on.size()), py(on.size());
     for (size_t k = 0; k < on.size(); ++k) {px[k] = landmarks_[on[k]].x; py[k] = landmarks_[on[k]].y;}
     const double need = icon_size_ * 1.15 + std::fabs(label_offset_[1]) * 0.6;
@@ -990,6 +1057,21 @@ private:
       if (!moved) {break;}
     }
     visualization_msgs::msg::MarkerArray arr;
+    for (size_t i = 0; i < landmarks_.size(); ++i) {   // 없어진 물체의 마커를 한 번 지움 (id = 번호 × 10 + 부품)
+      Landmark & l = landmarks_[i];
+      if (!l.gone || l.deleted) {continue;}
+      l.deleted = true;
+      for (int part = 0; part < 10; ++part) {
+        for (const char * ns : {style_of(class_names_[l.cls]).name, "labels"}) {
+          Marker m;
+          m.header.frame_id = map_frame_;
+          m.ns = ns;
+          m.id = static_cast<int>(i) * 10 + part;
+          m.action = Marker::DELETE;
+          arr.markers.push_back(m);
+        }
+      }
+    }
     for (size_t k = 0; k < on.size(); ++k) {
       append_markers(landmarks_[on[k]], on[k], t, arr, px[k] - landmarks_[on[k]].x, py[k] - landmarks_[on[k]].y);
     }
@@ -1005,7 +1087,7 @@ private:
     out.header.stamp = now();
     out.header.frame_id = map_frame_;
     for (const auto & l : landmarks_) {
-      if (l.number == 0) {continue;}
+      if (l.number == 0 || l.gone) {continue;}
       auto & d = out.detections.emplace_back();
       d.header = out.header;
       d.id = class_names_[l.cls] + "-" + std::to_string(l.number);
@@ -1044,7 +1126,7 @@ private:
     struct Row {int count = 0; double nearest = 1e9; int nearest_no = 0; double nearest_area = 0;};
     std::vector<Row> rows(class_names_.size());
     for (const auto & l : landmarks_) {
-      if (l.number == 0) {continue;}
+      if (l.number == 0 || l.gone) {continue;}
       Row & r = rows[l.cls];
       r.count++;
       const double d = std::hypot(l.x - rx, l.y - ry);
@@ -1134,6 +1216,9 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_srv_, load_srv_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr save_to_sub_;
   int n_main_ = 0;
+  int neg_misses_ = 20;
+  double neg_max_depth_ = 3.0, neg_margin_ = 0.1, neg_occl_m_ = 0.3, dynamic_ttl_ = 10.0;
+  std::vector<std::string> dynamic_;
   double base_height_ = 0.145, base_rows_frac_ = 0.05, fuse_tol_m_ = 0.3, fuse_tol_frac_ = 0.15;
   std::vector<std::string> prefer_floor_;
   FILE * depth_csv_ = nullptr;

@@ -193,6 +193,9 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
   이름표는 마스크 무게중심(가운데 점)에 둔다. 상자만 내는 엔진이면 잰 너비 지름의 원.
 - **밑점**: 마스크 3D 점 가운데 가장 낮은 10 % 의 평균(map). `/object_mapper/objects` 의 `results[0].pose` 에 담는다 (불이면 불 밑동). `bbox.center` 는 가운데 점, `bbox.size.x` 는 너비(m).
   깊이가 비는 픽셀(불꽃은 깊이가 자주 빔)은 버리고, 남은 점이 10 개 안 되면 밑점을 갱신하지 않는다.
+- **지도 갱신 (없어진 물체 빼기)**: 지도에 올라간 물체가 이 장에서 보여야 하는데(카메라 시야 가장자리 10 % 안쪽 · 3 m 안 · 그 픽셀 깊이가 물체보다 0.3 m 넘게 앞이 아님)
+  못 잡으면 못 본 수를 늘리고 다시 보면 0, `neg_misses`(20) 번이면 지도에서 뺀다(마커·목록·저장에서 빠지고, 같은 자리 탐지는 새 물체로). 사람·동물(`dynamic_classes`)은
+  `dynamic_ttl`(10 s) 안 보이면 뺀다. 1116_fuel_rl_1 녹화 재생: 8 이면 의자 하나가 잘못 빠졌고 20 이면 의자 5 개가 남고 떠난 사람 2 명만 빠짐. 옮긴 물체 다시 등록은 아직 실물로 못 봄.
 - **물체 지도 파일**: 한 줄에 물체 하나 — 클래스 · 번호 · 가운데 x y z · 방향 · 본 횟수 · 최고 점수 · 넓이 · 너비 · 마지막 본 시각 · 발자국 칸(`gx,gy,횟수`). map 좌표.
   `objects_file` 이 있으면 켤 때 읽고(저장한 지도로 다시 돌 때), `~/save` 는 그 파일에, `~/save_to`(std_msgs/String 경로)는 준 경로에 쓴다.
   `limo_fire_bringup save_map.launch.xml` 이 지도와 같은 이름으로 `<이름>_objects.txt` 를 옆에 저장한다. 다시 돌 때 `objects_file:=…/<이름>_objects.txt`.
