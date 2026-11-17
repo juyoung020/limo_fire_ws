@@ -8,6 +8,8 @@
 // 그래프 안 조건 노드로 물체가 있을 때만 마스크 커널을 돌린다.
 // (원형 가지를 엔진 둘로 나눠 건너뛰는 것도 쟀지만, 탐지 있는 장이 0.5 ms 느려져 한 엔진으로 둔다 — README)
 //
+// 결과 영상(마스크 덧칠)용 버퍼·그래프는 처음 want_vis 로 submit 할 때 만들고(보는 쪽이 없으면 안 만듦), release_vis() 로 푼다.
+//
 // 비동기: submit() 은 GPU 에 일을 걸고 바로 돌아오고, collect() 가 그 결과를 기다린다(CPU 는 잠듦, 바쁜 대기 안 함).
 // 동시에 걸 수 있는 장 수는 kSlots. 한 장의 결과를 CPU 가 쓰는 동안 다음 장을 GPU 가 돌릴 수 있다.
 #pragma once
@@ -56,7 +58,8 @@ public:
   // 결과 영상에 쓸 클래스 색 (RGB). 클래스 번호 % 색 수
   void set_class_colors(const std::vector<cv::Vec3b> & rgb);
 
-  // RGB(CV_8UC3) 한 장을 GPU 에 건다. want_vis 면 마스크 덧칠한 결과 영상도 만든다. 돌려준 슬롯 번호를 collect() 에 준다
+  // RGB(CV_8UC3) 한 장을 GPU 에 건다. want_vis 면 마스크 덧칠한 결과 영상도 만든다 (처음이면 그 버퍼·그래프를 만듦 —
+  // 다른 슬롯이 아직 collect 안 됐으면 이 장은 결과 영상 없이). 돌려준 슬롯 번호를 collect() 에 준다
   int submit(const cv::Mat & rgb, bool want_vis = false);
   // 그 슬롯이 끝날 때까지 기다려 결과를 낸다
   YoloResult collect(int slot);
@@ -68,6 +71,12 @@ public:
   int num_classes() const {return num_classes_;}
   bool has_masks() const {return nm_ > 0;}
   bool uint8_input() const {return in_u8_;}
+  // 결과 영상 버퍼·그래프가 있는지 / 푼다 (모든 슬롯이 collect 된 뒤에만 — 아니면 false). 이전 결과의 vis 보기는 무효
+  bool vis_enabled() const {return vis_ready_;}
+  bool release_vis();
+  // GPU 메모리 (켤 때 잰 값): TensorRT 활성(작업) 메모리 바이트, 사람이 읽는 한 줄 요약
+  int64_t activation_bytes() const;
+  std::string memory_report() const;
   // 그래프 꼴: 0 = 그래프 없음, 1 = 그래프(마스크 커널 항상), 2 = 그래프 + 조건 노드(물체 있을 때만 마스크 커널)
   int graph_mode() const {return graph_mode_;}
 
@@ -78,6 +87,8 @@ private:
   void configure(int img_w, int img_h);
   void release_image_buffers();
   bool capture(Slot & s, bool vis, bool conditional, cudaGraphExec_t & exec);
+  bool enable_vis(Slot & s);
+  bool any_busy() const;
   // 한 장 처리. 조건 노드를 쓰면 앞(탐지)·뒤(마스크)를 나눠 담는다
   void enqueue_front(Slot & s, bool set_cond, unsigned long long cond);
   void enqueue_masks(void * stream);
@@ -128,6 +139,9 @@ private:
   std::vector<std::unique_ptr<Slot>> slots_;
   int next_slot_ = 0;
   int graph_mode_ = 0;
+  bool vis_ready_ = false;
+  // cudaMemGetInfo 로 잰 늘어난 양 (MB). Jetson 은 CPU·GPU 가 같은 메모리라 다른 프로세스 때문에 조금 흔들린다
+  double mem_engine_mb_ = 0, mem_context_mb_ = 0, mem_buffers_mb_ = 0, mem_vis_mb_ = 0;
 
   float conf_;
   float nms_iou_;

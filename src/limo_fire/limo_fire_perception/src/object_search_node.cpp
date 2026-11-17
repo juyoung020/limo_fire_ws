@@ -69,7 +69,8 @@ public:
     save_to_sub_ = create_subscription<std_msgs::msg::String>("~/save_to", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {save(m->data);});
     // 사진 묶음은 작업 타이머에서 한 번에 (콜백을 막지 않게, 장 수가 많으면 max_batch 씩)
     timer_ = create_wall_timer(std::chrono::milliseconds(200), [this]() {drain();});
-    RCLCPP_INFO(get_logger(), "SigLIP2 준비: 벡터 %d 차원, 물체마다 사진 %d 장, 글 틀 '%s'", net_->dim(), per_obj_, prompt_.c_str());
+    RCLCPP_INFO(get_logger(), "SigLIP2 준비: 벡터 %d 차원, 물체마다 사진 %d 장, 글 틀 '%s', TensorRT 작업 메모리 %.1f MB (그림·글 같이 씀, 따로면 %.1f MB)",
+      net_->dim(), per_obj_, prompt_.c_str(), net_->shared_scratch_bytes() / 1048576.0, net_->separate_scratch_bytes() / 1048576.0);
   }
 
 private:

@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -81,7 +82,9 @@ static std::unique_ptr<TrtSiglip::Net> load_net(nvinfer1::IRuntime & rt, const s
   auto n = std::make_unique<TrtSiglip::Net>();
   n->engine.reset(rt.deserializeCudaEngine(blob.data(), blob.size()));
   if (!n->engine) {throw std::runtime_error("SigLIP2 엔진 역직렬화 실패: " + path);}
-  n->ctx.reset(n->engine->createExecutionContext());
+  // 작업 메모리는 TrtSiglip 이 두 엔진에 같이 준다 (setDeviceMemoryV2)
+  n->ctx.reset(n->engine->createExecutionContext(nvinfer1::ExecutionContextAllocationStrategy::kUSER_MANAGED));
+  if (!n->ctx) {throw std::runtime_error("SigLIP2 실행 문맥을 못 만듦: " + path);}
   for (int i = 0; i < n->engine->getNbIOTensors(); ++i) {
     const char * name = n->engine->getIOTensorName(i);
     if (n->engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
@@ -115,12 +118,22 @@ TrtSiglip::TrtSiglip(const std::string & vision_engine, const std::string & text
   runtime_.reset(nvinfer1::createInferRuntime(logger_));
   vis_ = load_net(*runtime_, vision_engine, max_batch_, 3u * side_ * side_, dim_);
   txt_ = load_net(*runtime_, text_engine, 1, static_cast<size_t>(text_len_) * dim_, dim_);
+  // 두 엔진은 차례로만 도니 작업 메모리 한 덩이(둘 중 큰 것)를 같이 쓴다
+  const int64_t vb = vis_->engine->getDeviceMemorySizeV2(), tb = txt_->engine->getDeviceMemorySizeV2();
+  separate_bytes_ = vb + tb;
+  scratch_bytes_ = std::max<int64_t>(std::max(vb, tb), 1);
+  check(cudaMalloc(&scratch_, static_cast<size_t>(scratch_bytes_)), "malloc scratch");
+  vis_->ctx->setDeviceMemoryV2(scratch_, scratch_bytes_);
+  txt_->ctx->setDeviceMemoryV2(scratch_, scratch_bytes_);
   if (vis_->in_type != nvinfer1::DataType::kFLOAT) {throw std::runtime_error("SigLIP2 그림 엔진 입력은 float32 여야 함");}
   if (txt_->in_type != nvinfer1::DataType::kFLOAT) {throw std::runtime_error("SigLIP2 글 엔진 입력은 float32 token_embeds [1,64,768] 여야 함");}
 }
 
 TrtSiglip::~TrtSiglip()
 {
+  vis_.reset();   // 작업 메모리를 쓰는 문맥을 먼저 지운다
+  txt_.reset();
+  if (scratch_) {cudaFree(scratch_);}
   if (table_) {munmap(const_cast<uint16_t *>(table_), table_bytes_);}
 }
 

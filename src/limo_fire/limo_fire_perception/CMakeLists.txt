@@ -12,6 +12,18 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../../cmake/cuda_strict.cmake)   # 장치 �
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
+# 빌드 종류를 안 주면(colcon 기본) 최적화 없이(-O0) 빌드된다 — 물체 지도의 픽셀 반복이 몇 배 느려서 Release 를 기본으로
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+# Jetson Orin(Cortex-A78AE): 그 코어에 맞춘 명령(NEON SIMD 포함)으로 자동 벡터화. PC(x86)는 그대로
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-mcpu=cortex-a78ae HAS_MCPU_A78AE)
+  if(HAS_MCPU_A78AE)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-mcpu=cortex-a78ae>)
+  endif()
+endif()
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall> $<$<COMPILE_LANGUAGE:CXX>:-Wextra> $<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>)
 
 find_package(ament_cmake REQUIRED)

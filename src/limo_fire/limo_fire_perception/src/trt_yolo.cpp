@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -45,9 +46,17 @@ void free_host(T *& p)
 {
   if (p) {cudaFreeHost(p); p = nullptr;}
 }
+
+// 지금 남은 GPU 메모리 (MB). 앞뒤 차이로 무엇이 얼마나 썼는지 본다
+double free_mb()
+{
+  size_t f = 0, t = 0;
+  cudaMemGetInfo(&f, &t);
+  return f / 1048576.0;
+}
 }  // namespace
 
-// 슬롯마다 따로 가지는 것: CPU 쪽 고정(pinned) 메모리, 끝났음을 알리는 이벤트, 그 슬롯 주소로 담은 그래프(결과 영상 없음·있음)
+// 슬롯마다 따로 가지는 것: CPU 쪽 고정(pinned) 메모리, 끝났음을 알리는 이벤트, 그 슬롯 주소로 담은 그래프(결과 영상 없음·있음 — 있음은 처음 쓸 때 만듦)
 struct TrtYolo::Slot
 {
   uint8_t * h_img = nullptr;
@@ -80,12 +89,18 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
     throw std::runtime_error("엔진 파일을 열 수 없음: " + engine_path);
   }
   std::vector<char> blob((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  const double m0 = free_mb();
   runtime_.reset(nvinfer1::createInferRuntime(logger_));
   engine_.reset(runtime_->deserializeCudaEngine(blob.data(), blob.size()));
   if (!engine_) {
     throw std::runtime_error("엔진 역직렬화 실패 (이 기기·TensorRT 버전에서 만든 엔진인지 확인): " + engine_path);
   }
+  blob = std::vector<char>();   // 엔진 파일 사본(수십 MB)을 바로 돌려준다
+  const double m1 = free_mb();
   context_.reset(engine_->createExecutionContext());
+  const double m2 = free_mb();
+  mem_engine_mb_ = m0 - m1;
+  mem_context_mb_ = m1 - m2;
 
   nvinfer1::DataType proto_type = nvinfer1::DataType::kFLOAT;
   for (int i = 0; i < engine_->getNbIOTensors(); ++i) {
@@ -181,6 +196,29 @@ TrtYolo::TrtYolo(const std::string & engine_path, float conf_threshold, float nm
   }
 }
 
+int64_t TrtYolo::activation_bytes() const
+{
+  return engine_->getDeviceMemorySizeV2();
+}
+
+std::string TrtYolo::memory_report() const
+{
+  char buf[256];
+  std::snprintf(buf, sizeof(buf),
+    "GPU 메모리(대략): 엔진 %.0f MB, 실행 문맥 %.0f MB (TensorRT 작업 메모리 %.1f MB), 영상 버퍼·그래프 %.0f MB, 결과 영상 %s",
+    mem_engine_mb_, mem_context_mb_, activation_bytes() / 1048576.0, mem_buffers_mb_,
+    vis_ready_ ? (std::to_string(static_cast<int>(mem_vis_mb_ + 0.5)) + " MB").c_str() : "안 씀");
+  return buf;
+}
+
+bool TrtYolo::any_busy() const
+{
+  for (const auto & s : slots_) {
+    if (s->busy) {return true;}
+  }
+  return false;
+}
+
 TrtYolo::~TrtYolo()
 {
   if (stream_) {cudaStreamSynchronize(static_cast<cudaStream_t>(stream_));}
@@ -231,18 +269,18 @@ void TrtYolo::release_image_buffers()
   free_device(d_img_);
   free_device(d_ids_);
   free_device(d_vis_);
+  vis_ready_ = false;
 }
 
 void TrtYolo::configure(int img_w, int img_h)
 {
-  for (const auto & s : slots_) {
-    if (s->busy) {
-      throw std::runtime_error("영상 크기가 바뀌었는데 아직 collect 하지 않은 슬롯이 있음");
-    }
+  if (any_busy()) {
+    throw std::runtime_error("영상 크기가 바뀌었는데 아직 collect 하지 않은 슬롯이 있음");
   }
   auto st = static_cast<cudaStream_t>(stream_);
   check_cuda(cudaStreamSynchronize(st), "sync");
   release_image_buffers();
+  const double m0 = free_mb();
   img_w_ = img_w;
   img_h_ = img_h;
 
@@ -263,7 +301,6 @@ void TrtYolo::configure(int img_w, int img_h)
   }
   if (has_masks()) {
     check_cuda(cudaMalloc(&d_ids_, ids_bytes), "cudaMalloc ids");
-    check_cuda(cudaMalloc(&d_vis_, img_bytes), "cudaMalloc vis");
   }
   for (auto & s : slots_) {
     check_cuda(cudaMallocHost(&s->h_img, img_bytes), "cudaMallocHost img");
@@ -275,31 +312,29 @@ void TrtYolo::configure(int img_w, int img_h)
     }
     if (has_masks()) {
       check_cuda(cudaMallocHost(&s->h_ids, ids_bytes), "cudaMallocHost ids");
-      check_cuda(cudaMallocHost(&s->h_vis, img_bytes), "cudaMallocHost vis");
     }
   }
 
-  // 한 번 그대로 돌려 TensorRT 가 준비를 끝내게 한 뒤(그래프에 담기 전 필요), 슬롯·결과 영상 유무마다 그래프에 담는다.
-  // 조건 노드 그래프 → 일반 그래프 → 그래프 없음 순으로 되는 것을 쓴다
+  // 한 번 그대로 돌려 TensorRT 가 준비를 끝내게 한 뒤(그래프에 담기 전 필요), 슬롯마다 그래프(결과 영상 없음)에 담는다.
+  // 결과 영상 있는 그래프는 처음 쓸 때(enable_vis). 조건 노드 그래프 → 일반 그래프 → 그래프 없음 순으로 되는 것을 쓴다
   std::memset(slots_[0]->h_img, 114, img_bytes);
   enqueue_front(*slots_[0], false, 0);
   if (has_masks()) {enqueue_masks(stream_);}
-  enqueue_back(*slots_[0], has_masks());
+  enqueue_back(*slots_[0], false);
   check_cuda(cudaStreamSynchronize(st), "warmup");
 
+  graph_mode_ = 0;
   for (int mode : {2, 1}) {
     if (mode == 2 && !(end2end_ && has_masks())) {
       continue;
     }
     bool ok = true;
     for (auto & s : slots_) {
-      for (int v = 0; v < (has_masks() ? 2 : 1) && ok; ++v) {
-        ok = capture(*s, v == 1, mode == 2, s->exec[v]);
-      }
+      ok = ok && capture(*s, false, mode == 2, s->exec[0]);
     }
     if (ok) {
       graph_mode_ = mode;
-      return;
+      break;
     }
     for (auto & s : slots_) {
       for (auto & e : s->exec) {
@@ -308,7 +343,55 @@ void TrtYolo::configure(int img_w, int img_h)
     }
     std::cerr << "[TrtYolo] " << (mode == 2 ? "조건 노드 그래프" : "CUDA 그래프") << "를 못 만들어 다음 방식으로" << std::endl;
   }
-  graph_mode_ = 0;
+  mem_buffers_mb_ = m0 - free_mb();
+}
+
+// 결과 영상 버퍼(장치 1 장 + 슬롯마다 고정 메모리 1 장)를 만들고, 그래프 꼴이 있으면 슬롯마다 결과 영상 있는 그래프를 담는다.
+// 모든 슬롯이 비어 있어야 한다 (GPU 가 놀 때). s = 지금 걸 슬롯 — 준비 실행은 이 슬롯 버퍼에만 써서 다른 슬롯의 결과 보기를 건드리지 않는다
+bool TrtYolo::enable_vis(Slot & s)
+{
+  if (vis_ready_) {return true;}
+  if (!has_masks() || any_busy()) {return false;}
+  auto st = static_cast<cudaStream_t>(stream_);
+  check_cuda(cudaStreamSynchronize(st), "sync");
+  const double m0 = free_mb();
+  const size_t img_bytes = static_cast<size_t>(img_w_) * img_h_ * 3;
+  check_cuda(cudaMalloc(&d_vis_, img_bytes), "cudaMalloc vis");
+  for (auto & sl : slots_) {
+    check_cuda(cudaMallocHost(&sl->h_vis, img_bytes), "cudaMallocHost vis");
+  }
+  // 결과 영상 커널을 한 번 그대로 돌려(지연 로딩되는 커널을 그래프에 담기 전에 올림) 준비
+  enqueue_back(s, true);
+  check_cuda(cudaStreamSynchronize(st), "vis warmup");
+  if (graph_mode_ > 0) {
+    bool ok = true;
+    for (auto & sl : slots_) {
+      ok = ok && capture(*sl, true, graph_mode_ == 2, sl->exec[1]);
+    }
+    if (!ok) {   // 결과 영상 있는 장만 그래프 없이 건다
+      for (auto & sl : slots_) {
+        if (sl->exec[1]) {cudaGraphExecDestroy(sl->exec[1]); sl->exec[1] = nullptr;}
+      }
+      std::cerr << "[TrtYolo] 결과 영상 그래프를 못 만들어 그 장은 그래프 없이" << std::endl;
+    }
+  }
+  vis_ready_ = true;
+  mem_vis_mb_ = m0 - free_mb();
+  return true;
+}
+
+bool TrtYolo::release_vis()
+{
+  if (!vis_ready_) {return true;}
+  if (any_busy()) {return false;}
+  check_cuda(cudaStreamSynchronize(static_cast<cudaStream_t>(stream_)), "sync");
+  for (auto & sl : slots_) {
+    if (sl->exec[1]) {cudaGraphExecDestroy(sl->exec[1]); sl->exec[1] = nullptr;}
+    free_host(sl->h_vis);
+  }
+  free_device(d_vis_);
+  vis_ready_ = false;
+  return true;
 }
 
 bool TrtYolo::capture(Slot & s, bool vis, bool conditional, cudaGraphExec_t & exec)
@@ -452,7 +535,7 @@ int TrtYolo::submit(const cv::Mat & rgb, bool want_vis)
       std::memcpy(s.h_img + row * y, rgb.ptr(y), row);
     }
   }
-  s.vis = want_vis && has_masks();
+  s.vis = want_vis && has_masks() && enable_vis(s);
   auto st = static_cast<cudaStream_t>(stream_);
   if (s.exec[s.vis ? 1 : 0]) {
     check_cuda(cudaGraphLaunch(s.exec[s.vis ? 1 : 0], st), "cudaGraphLaunch");

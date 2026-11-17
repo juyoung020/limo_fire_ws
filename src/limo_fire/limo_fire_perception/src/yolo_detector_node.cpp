@@ -2,15 +2,15 @@
 // 분할(-seg) 엔진이면 물체 번호 영상(~/mask, mono8, 값 = detections 안 순서 + 1, 0 = 배경)도 같은 시각으로 낸다 (물체가 있을 때만)
 // 파라미터는 config/*.yaml (엔진 경로·문턱·클래스 이름·토픽)
 //
-// 구독 콜백은 가장 최근 영상만 남기고 바로 돌아온다. 추론은 작업 스레드 하나가 한다:
+// 영상은 실행기(executor) 콜백이 아니라 작업 스레드 하나가 WaitSet 으로 직접 받고 추론까지 한다:
 //   결과 기다림(CPU 잠듦) → 다음 영상이 와 있으면 GPU 에 먼저 걸고 → 앞 장 결과 발행 (GPU 와 겹침)
-// 밀리면 오래된 영상은 버린다 (늦은 탐지보다 최신 탐지)
+// 그래서 한 스레드 컨테이너에서 다른 노드(object_mapper 등) 콜백이 길어져도 영상 받기가 밀리지 않는다.
+// 밀리면 오래된 영상은 버린다 (늦은 탐지보다 최신 탐지). 받은 영상 메시지는 몇 개를 돌려 써서 장마다 큰 할당을 하지 않는다
+// 결과 영상(~/image)은 구독자가 있을 때만 만들고, vis_release_s 초 동안 없으면 그 GPU 버퍼·그래프를 푼다
 // 컴포넌트라 카메라 드라이버·object_mapper 와 한 프로세스에 올리면 영상·탐지·마스크를 복사 없이 주고받는다
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -42,6 +42,7 @@ public:
     const auto iou = declare_parameter<double>("nms_iou", 0.5);
     class_names_ = declare_parameter<std::vector<std::string>>("class_names");
     publish_image_ = declare_parameter<bool>("publish_image", true);
+    vis_release_ = std::chrono::duration<double>(declare_parameter<double>("vis_release_s", 5.0));
     const auto image_topic = declare_parameter<std::string>("image_topic", "/camera/color/image_raw");
 
     yolo_ = std::make_unique<TrtYolo>(engine, static_cast<float>(conf), static_cast<float>(iou));
@@ -51,10 +52,10 @@ public:
       colors.emplace_back(s[0], s[1], s[2]);
     }
     yolo_->set_class_colors(colors);
-    RCLCPP_INFO(get_logger(), "엔진 %s: 입력 %dx%d %s, 출력 %s, 클래스 이름 %zu 개",
+    RCLCPP_INFO(get_logger(), "엔진 %s: 입력 %dx%d %s, 출력 %s, 클래스 이름 %zu 개, TensorRT 작업 메모리 %.1f MB",
       engine.c_str(), yolo_->input_width(), yolo_->input_height(),
       yolo_->uint8_input() ? "uint8 RGB(전처리 엔진 안)" : "float",
-      yolo_->end2end() ? "end2end(NMS 없음)" : "raw(+NMS)", class_names_.size());
+      yolo_->end2end() ? "end2end(NMS 없음)" : "raw(+NMS)", class_names_.size(), yolo_->activation_bytes() / 1048576.0);
     if (!yolo_->end2end() && yolo_->num_classes() != static_cast<int>(class_names_.size())) {
       RCLCPP_WARN(get_logger(), "모델 클래스 %d 개 != class_names %zu 개", yolo_->num_classes(), class_names_.size());
     }
@@ -66,27 +67,20 @@ public:
     }
     // 신뢰(RELIABLE) 발행이면 RViz·rqt 의 신뢰/최선 구독 둘 다 받는다
     img_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", rclcpp::QoS(1));
-    // 카메라 드라이버(실물 Orbbec, Webots 플러그인) 둘 다 받도록 SensorData(BEST_EFFORT)
+    // 카메라 드라이버(실물 Orbbec, Webots 플러그인) 둘 다 받도록 SensorData(BEST_EFFORT).
+    // 실행기에 안 올리는 콜백 그룹에 두고 작업 스레드가 WaitSet 으로 꺼낸다 (카메라는 다른 프로세스라 프로세스 안 전달은 끔)
+    rclcpp::SubscriptionOptions so;
+    so.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive, false);
+    so.use_intra_process_comm = rclcpp::IntraProcessSetting::Disable;
     sub_ = create_subscription<sensor_msgs::msg::Image>(
-      image_topic, rclcpp::SensorDataQoS(),
-      [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
-        {
-          std::lock_guard<std::mutex> lk(mtx_);
-          if (latest_) {++dropped_;}
-          latest_ = std::move(msg);
-        }
-        cv_.notify_one();
-      });
+      image_topic, rclcpp::SensorDataQoS(), [](sensor_msgs::msg::Image::ConstSharedPtr) {}, so);
+    wait_set_.add_subscription(sub_);
     worker_ = std::thread([this] {run();});
   }
 
   ~YoloDetectorNode() override
   {
-    {
-      std::lock_guard<std::mutex> lk(mtx_);
-      stop_ = true;
-    }
-    cv_.notify_one();
+    stop_ = true;   // 작업 스레드는 WaitSet 을 100 ms 마다 깨어 본다
     if (worker_.joinable()) {worker_.join();}
   }
 
@@ -102,14 +96,32 @@ private:
     Clock::time_point t_submit;
   };
 
-  // 가장 최근 영상 하나를 가져온다. wait 이면 올 때까지 잔다
+  // 다른 곳(Frame)이 안 쥐고 있는 받기용 메시지 (데이터 버퍼를 다시 써서 장마다 921 KB 할당을 안 함)
+  std::shared_ptr<sensor_msgs::msg::Image> spare_msg()
+  {
+    for (auto & m : pool_) {
+      if (m.use_count() == 1) {return m;}
+    }
+    pool_.push_back(std::make_shared<sensor_msgs::msg::Image>());
+    return pool_.back();
+  }
+
+  // 와 있는 영상을 모두 꺼내 가장 최근 것 하나를 돌려준다 (앞 것은 버린 수로 셈). wait 이면 올 때까지 잔다 (멈춤 확인하려고 100 ms 마다 깸)
   sensor_msgs::msg::Image::ConstSharedPtr take_latest(bool wait)
   {
-    std::unique_lock<std::mutex> lk(mtx_);
-    if (wait) {
-      cv_.wait(lk, [this] {return stop_ || latest_;});
+    std::shared_ptr<sensor_msgs::msg::Image> latest = std::move(held_);
+    held_.reset();
+    while (wait && !latest && !stop_ && rclcpp::ok()) {
+      if (wait_set_.wait(std::chrono::milliseconds(100)).kind() == rclcpp::WaitResultKind::Ready) {break;}
     }
-    return std::move(latest_);
+    for (;;) {
+      auto m = spare_msg();
+      rclcpp::MessageInfo info;
+      if (!sub_->take(*m, info)) {break;}
+      if (latest) {++dropped_;}
+      latest = std::move(m);
+    }
+    return latest;
   }
 
   bool to_rgb(const sensor_msgs::msg::Image::ConstSharedPtr & msg, cv::Mat & rgb)
@@ -143,14 +155,16 @@ private:
       return false;
     }
     if (in_use && in_use->rgb.size() != f.rgb.size()) {
-      std::lock_guard<std::mutex> lk(mtx_);
-      if (!latest_) {latest_ = msg;}
+      held_ = std::const_pointer_cast<sensor_msgs::msg::Image>(msg);   // 앞 장을 다 쓴 뒤 다시 건다
       return false;
     }
     f.msg = std::move(msg);
     f.t_submit = Clock::now();
     f.vis = image_wanted();
+    if (f.vis) {t_vis_wanted_ = f.t_submit;}
+    const bool had_vis = yolo_->vis_enabled();
     f.slot = yolo_->submit(f.rgb, f.vis);
+    if (!had_vis && yolo_->vis_enabled()) {RCLCPP_INFO(get_logger(), "결과 영상 구독자가 생겨 GPU 덧칠을 켬 — %s", yolo_->memory_report().c_str());}
     return true;
   }
 
@@ -174,6 +188,14 @@ private:
         continue;
       }
       const double ms = std::chrono::duration<double, std::milli>(Clock::now() - cur.t_submit).count();
+      if (!logged_memory_) {
+        RCLCPP_INFO(get_logger(), "%s", yolo_->memory_report().c_str());
+        logged_memory_ = true;
+      }
+      // 결과 영상을 vis_release_s 동안 아무도 안 보면 그 GPU 버퍼·그래프를 푼다 (이 장은 결과 영상이 없고 다른 슬롯도 비어 있을 때)
+      if (res.vis.empty() && yolo_->vis_enabled() && Clock::now() - t_vis_wanted_ > vis_release_ && yolo_->release_vis()) {
+        RCLCPP_INFO(get_logger(), "결과 영상 구독자가 없어 GPU 덧칠 버퍼를 풂");
+      }
       // 다음 장을 먼저 GPU 에 걸어 두고 이 장을 발행한다
       bool have_next = false;
       if (auto msg = take_latest(false)) {
@@ -200,12 +222,8 @@ private:
     const auto now = Clock::now();
     if (now - t_log_ > std::chrono::seconds(5)) {
       const double sec = std::chrono::duration<double>(now - t_log_).count();
-      size_t dropped;
-      {
-        std::lock_guard<std::mutex> lk(mtx_);
-        dropped = dropped_;
-        dropped_ = 0;
-      }
+      const size_t dropped = dropped_;
+      dropped_ = 0;
       static const char * modes[] = {"그래프 없음", "CUDA 그래프", "CUDA 그래프 + 조건 노드"};
       RCLCPP_INFO(get_logger(), "추론 %.1f ms (평균, 걸기→결과), %.1f 장/초, 버린 영상 %zu, 탐지 %zu 개, %s",
         ms_avg_, t_log_.time_since_epoch().count() ? frames_ / sec : 0.0, dropped, dets.size(),
@@ -293,21 +311,25 @@ private:
   std::unique_ptr<TrtYolo> yolo_;
   std::vector<std::string> class_names_;
   bool publish_image_;
+  std::chrono::duration<double> vis_release_{5.0};
+  Clock::time_point t_vis_wanted_{};
+  bool logged_memory_ = false;
   double ms_avg_ = 0;
   size_t frames_ = 0;
   Clock::time_point t_log_{};
 
-  std::mutex mtx_;
-  std::condition_variable cv_;
-  sensor_msgs::msg::Image::ConstSharedPtr latest_;
+  // 작업 스레드만 쓰는 것
+  rclcpp::WaitSet wait_set_;
+  std::vector<std::shared_ptr<sensor_msgs::msg::Image>> pool_;   // 받기용 메시지 (돌려 씀)
+  std::shared_ptr<sensor_msgs::msg::Image> held_;   // 크기가 바뀌어 다음에 걸 영상
   size_t dropped_ = 0;
   std::atomic<bool> stop_{false};
-  std::thread worker_;
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_;
   rclcpp::Publisher<vision_msgs::msg::Detection2DArray>::SharedPtr det_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr img_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mask_pub_;
+  std::thread worker_;   // 맨 뒤: 위 멤버가 다 만들어진 뒤 시작, 먼저 멈춤(소멸자)
 };
 
 }  // namespace limo_fire_perception

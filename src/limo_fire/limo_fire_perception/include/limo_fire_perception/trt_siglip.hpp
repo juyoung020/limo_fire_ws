@@ -5,6 +5,7 @@
 //              표(fp32 786 MB)를 GPU 엔진에 두면 Orin 8 GB 에 판단 모델과 같이 못 올라가서 (README "SigLIP2")
 //   둘 다 L2 로 나눈 뒤 내적 = cos. 점수 = sigmoid(logit_scale · cos + logit_bias) (SigLIP 시그모이드 손실과 같은 꼴)
 // 엔진 만들기는 README "SigLIP2". B 는 엔진의 최적 프로필 안(그림 1~8, 글 1).
+// 두 엔진은 동시에 돌지 않으므로(호출이 겹치면 안 됨 — 한 스레드에서 부를 것) TensorRT 작업 메모리 한 덩이를 같이 쓴다.
 #pragma once
 
 #include <memory>
@@ -31,6 +32,9 @@ public:
   std::vector<float> embed_text(const std::vector<int64_t> & ids);
   int dim() const {return dim_;}
   int max_batch() const {return max_batch_;}
+  // 같이 쓰는 TensorRT 작업 메모리 (바이트) · 나눠 썼으면 들었을 합
+  int64_t shared_scratch_bytes() const {return scratch_bytes_;}
+  int64_t separate_scratch_bytes() const {return separate_bytes_;}
   struct Net;   // 엔진 하나 (trt_siglip.cpp)
 
 private:
@@ -41,6 +45,8 @@ private:
   Logger logger_;
   std::unique_ptr<nvinfer1::IRuntime> runtime_;
   std::unique_ptr<Net> vis_, txt_;
+  void * scratch_ = nullptr;
+  int64_t scratch_bytes_ = 0, separate_bytes_ = 0;
   int dim_ = 768, max_batch_ = 8, side_ = 224, text_len_ = 64;
   const uint16_t * table_ = nullptr;   // mmap 한 토큰 표 (fp16)
   size_t table_bytes_ = 0, vocab_ = 0;

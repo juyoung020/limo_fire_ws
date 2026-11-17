@@ -4,8 +4,15 @@
 // 분할 모델이면 같은 시각의 물체 번호 영상(yolo_detector/mask)으로 물체 픽셀만 골라 위치·거리·(불) 넓이를 잰다. 없으면 상자로
 // 물체마다 가장 크게·확실하게 찍힌 장면(탐지 결과 영상을 상자 둘레만 잘라낸 것)을 두고, RViz Publish Point 로 아이콘을 누르면
 // 그 사진을 ~/selected 로 낸다 (선택한 물체는 흰 고리, 현황판에 정보)
+//
+// 한 스레드 컨테이너에서 다른 콜백을 막지 않게: 탐지·깊이 짝이 오면 받기 콜백은 작업 줄(max_pending 장, 넘치면 가장 오래된 장을 버림 —
+// 늘 최신 쪽이 남음)에 넣고 바로 돌아오고, 처리는 process_period 타이머가 그 시각 TF 가 있는 장부터 한다(tf_wait 지나도 없으면 버림).
+// TF 도 이 노드의 콜백으로 받는다(따로 스레드 없음). 깊이 영상 받기 메시지는 몇 개를 돌려 써서 장마다 큰 할당을 하지 않는다.
+// stats_period 마다 짝 못 지은 탐지 비율(탐지↔깊이 max_sync_dt)·줄 지연·처리 시간을 로그로 낸다
+// 결과 영상(대표 사진)·원본 영상(물체 찾기 사진)은 그것을 쓰는 쪽(~/selected · ~/object_views 구독자)이 있을 때만 구독한다
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -17,11 +24,13 @@
 #include <unordered_map>
 #include <vector>
 
+#include <message_filters/pass_through.h>
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <rclcpp/message_memory_strategy.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 #include <rviz_2d_overlay_msgs/msg/overlay_text.hpp>
@@ -42,6 +51,31 @@ namespace limo_fire_perception
 namespace
 {
 using visualization_msgs::msg::Marker;
+
+// 받기 메시지를 돌려 쓰는 메모리 전략: 아무도(동기화 줄·작업 줄) 안 쥔 메시지에 다음 장을 역직렬화한다 → 영상 버퍼를 장마다 새로 할당하지 않음.
+// 다 쥐고 있으면(최대 max 개) 새로 만든다. 실행기 스레드에서만 부른다
+template<class MsgT>
+class PooledMessages : public rclcpp::message_memory_strategy::MessageMemoryStrategy<MsgT>
+{
+public:
+  explicit PooledMessages(size_t max) : max_(max) {}
+  std::shared_ptr<MsgT> borrow_message() override
+  {
+    for (auto & m : pool_) {
+      if (m.use_count() == 1) {return m;}
+    }
+    if (pool_.size() < max_) {
+      pool_.push_back(std::make_shared<MsgT>());
+      return pool_.back();
+    }
+    return std::make_shared<MsgT>();
+  }
+  void return_message(std::shared_ptr<MsgT> & msg) override {msg.reset();}
+
+private:
+  size_t max_;
+  std::vector<std::shared_ptr<MsgT>> pool_;
+};
 
 // 클래스마다 지도 표시: 지도 위 짧은 이름(RViz 글꼴은 영문만), 현황판 한글 이름, 색
 struct Style
@@ -148,7 +182,9 @@ class ObjectMapperNode : public rclcpp::Node
 {
 public:
   explicit ObjectMapperNode(const rclcpp::NodeOptions & options)
-  : Node("object_mapper", options), tf_buffer_(get_clock()), tf_listener_(tf_buffer_)
+  : Node("object_mapper", options), tf_buffer_(get_clock()),
+    tf_listener_(tf_buffer_, this, false, tf2_ros::DynamicListenerQoS(), tf2_ros::StaticListenerQoS(), tf_sub_options(false),
+      tf_sub_options(true))
   {
     map_frame_ = declare_parameter<std::string>("map_frame", "map");
     robot_frame_ = declare_parameter<std::string>("robot_frame", "base_link");
@@ -212,27 +248,17 @@ public:
         masks_.push_back(msg);
         if (masks_.size() > 10) {masks_.pop_front();}
       });
-    // 대표 사진: 탐지 결과 영상(마스크 덧칠·상자·이름). 탐지보다 늦게 올 수 있어 최근 몇 장을 두고 시각으로 맞춘다
-    view_sub_ = create_subscription<sensor_msgs::msg::Image>(
-      declare_parameter<std::string>("view_topic", "/yolo_detector/image"), 5,
-      [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
-        views_.push_back(msg);
-        if (views_.size() > 10) {views_.pop_front();}
-        take_views();
-      });
-    // 물체 찾기용 원본 사진 (object_search 노드가 SigLIP2 로 넣음). 끄면 원본 영상을 구독하지 않음
+    // 대표 사진: 탐지 결과 영상(마스크 덧칠·상자·이름). 탐지보다 늦게 올 수 있어 최근 몇 장을 두고 시각으로 맞춘다.
+    // ~/selected 를 보는 쪽(RViz Selected 칸)이 있을 때만 구독한다 — 이 구독이 있으면 yolo_detector 가 매 장 결과 영상을 GPU 에서 칠해 내므로
+    view_topic_ = declare_parameter<std::string>("view_topic", "/yolo_detector/image");
+    // 물체 찾기용 원본 사진 (object_search 노드가 SigLIP2 로 넣음). ~/object_views 구독자(object_search)가 있을 때만 원본 영상을 구독한다
     if (declare_parameter<bool>("publish_object_views", true)) {
       object_view_ratio_ = declare_parameter<double>("object_view_ratio", 0.7);
       object_view_period_ = declare_parameter<double>("object_view_period", 1.0);
       views_pub_ = create_publisher<sensor_msgs::msg::Image>("~/object_views", 10);
-      raw_sub_ = create_subscription<sensor_msgs::msg::Image>(
-        declare_parameter<std::string>("color_topic", "/camera/color/image_raw"), rclcpp::SensorDataQoS(),
-        [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
-          raws_.push_back(msg);
-          if (raws_.size() > 10) {raws_.pop_front();}
-          take_raw();
-        });
+      color_topic_ = declare_parameter<std::string>("color_topic", "/camera/color/image_raw");
     }
+    keep_images_ = static_cast<size_t>(std::max<int64_t>(1, declare_parameter<int>("keep_images", 10)));
     // RViz Publish Point 로 누른 곳에서 가장 가까운 물체를 고른다
     selected_pub_ = create_publisher<sensor_msgs::msg::Image>("~/selected", rclcpp::QoS(1).transient_local(), latched);
     click_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
@@ -269,11 +295,18 @@ public:
     if (!objects_file_.empty()) {load(objects_file_);}
 
     // 탐지와 깊이 영상은 시각이 정확히 같지 않으므로 가까운 것끼리 짝짓는다
-    const auto qos = rclcpp::SensorDataQoS().get_rmw_qos_profile();
     det_sub_.subscribe(this, declare_parameter<std::string>("detections_topic", "/yolo_detector/detections"));
-    depth_sub_.subscribe(this, declare_parameter<std::string>("depth_topic", "/camera/depth/image_raw"), qos);
+    det_sub_.registerCallback([this](const vision_msgs::msg::Detection2DArray::ConstSharedPtr &) {++st_.dets;});
+    // 깊이: 카메라 드라이버(다른 프로세스)가 내므로 역직렬화한다 — 받기 메시지를 돌려 써서(동기화 줄 10 + 작업 줄 + 여유) 장마다 할당을 안 함
+    depth_sub_ = create_subscription<sensor_msgs::msg::Image>(
+      declare_parameter<std::string>("depth_topic", "/camera/depth/image_raw"), rclcpp::SensorDataQoS(),
+      [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {++st_.depths; depth_in_.add(msg);}, rclcpp::SubscriptionOptions(),
+      std::make_shared<PooledMessages<sensor_msgs::msg::Image>>(32));
     const double sync_dt = declare_parameter<double>("max_sync_dt", 0.05);
-    sync_ = std::make_shared<message_filters::Synchronizer<Policy>>(Policy(10), det_sub_, depth_sub_);
+    // 탐지 시각의 TF 를 기다리는 한도(s), 작업 줄 장 수 한도 (넘으면 가장 오래된 장을 버림)
+    tf_wait_ = declare_parameter<double>("tf_wait", 0.2);
+    max_pending_ = static_cast<size_t>(std::max<int64_t>(1, declare_parameter<int>("max_pending", 10)));
+    sync_ = std::make_shared<message_filters::Synchronizer<Policy>>(Policy(10), det_sub_, depth_in_);
     // 회전 중에 다른 순간의 깊이와 짝지어지면 엉뚱한 곳에 찍히므로 시각 차이를 제한한다
     sync_->setMaxIntervalDuration(rclcpp::Duration::from_seconds(sync_dt));
     sync_->registerCallback(std::bind(&ObjectMapperNode::on_pair, this, std::placeholders::_1, std::placeholders::_2, -1));
@@ -290,7 +323,7 @@ public:
           raw->masks.push_back(msg);
           if (raw->masks.size() > 10) {raw->masks.pop_front();}
         });
-      ex->sync = std::make_shared<message_filters::Synchronizer<Policy>>(Policy(10), ex->det, depth_sub_);
+      ex->sync = std::make_shared<message_filters::Synchronizer<Policy>>(Policy(10), ex->det, depth_in_);
       ex->sync->setMaxIntervalDuration(rclcpp::Duration::from_seconds(sync_dt));
       ex->sync->registerCallback(std::bind(&ObjectMapperNode::on_pair, this, std::placeholders::_1, std::placeholders::_2, static_cast<int>(k)));
       extras_.push_back(std::move(ex));
@@ -301,9 +334,19 @@ public:
     neg_max_depth_ = declare_parameter<double>("neg_max_depth", 3.0);
     neg_margin_ = declare_parameter<double>("neg_margin", 0.1);
     neg_occl_m_ = declare_parameter<double>("neg_occl_m", 0.3);
-    // 움직이는 클래스: dynamic_ttl 초 안 보이면 뺌
+    // 움직이는 클래스(사람·동물): 위치·발자국은 가장 최근 장 것(dynamic_alpha 1 = 그대로 — 평균하면 걷는 사람을 늦게 따라감),
+    // 같은 물체로 볼 거리는 merge 반경 + dynamic_speed × 못 본 시간 (dynamic_max_radius 까지 — 잠깐 가려졌다 다시 나와도 같은 번호),
+    // 시야 안에서 dynamic_neg_misses 번 못 보면 · 시야 밖이면 dynamic_ttl 초 안 보이면 뺌
     dynamic_ = declare_parameter<std::vector<std::string>>("dynamic_classes", std::vector<std::string>{"person", "cat", "dog", "bird"});
-    dynamic_ttl_ = declare_parameter<double>("dynamic_ttl", 10.0);
+    dynamic_ttl_ = declare_parameter<double>("dynamic_ttl", 3.0);
+    dynamic_alpha_ = std::clamp(declare_parameter<double>("dynamic_alpha", 1.0), 0.05, 1.0);
+    dynamic_speed_ = declare_parameter<double>("dynamic_speed", 1.5);
+    dynamic_max_radius_ = declare_parameter<double>("dynamic_max_radius", 2.0);
+    dynamic_neg_misses_ = declare_parameter<int>("dynamic_neg_misses", 5);
+    // 정지 물체가 merge 반경 안에서 옮겨짐: 지금 자리에서 max(move_dist, 너비/2) 넘게 떨어진 측정이 move_frames 번 이어지면
+    // 그 자리로 옮기고 발자국·밑점을 새로 쌓는다 (평균만 하면 천천히 끌려가고 옛 자리 발자국이 남음). 0 이면 끔
+    move_dist_ = declare_parameter<double>("move_dist", 0.5);
+    move_frames_ = declare_parameter<int>("move_frames", 10);
     // 바닥 광선 거리 (가상 깊이). base_height = base_link 의 바닥 위 높이 (limo_pro_base.xacro 0.145 m)
     base_height_ = declare_parameter<double>("base_height", 0.145);
     base_rows_frac_ = declare_parameter<double>("base_rows_frac", 0.05);
@@ -322,11 +365,54 @@ public:
     footprint_max_z_ = declare_parameter<double>("footprint_max_z", 2.0);
 
     // 불 위험 반경 깜빡임·로봇까지 거리 갱신 (벽시계 기준이라 시뮬이 멈춰도 표시는 돈다)
-    timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {publish();});
+    timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {update_lazy_subs(); publish();});
+    // 작업 줄 처리: 노드 시계 타이머 (시뮬이면 시뮬 시간 — 받은 시각·tf_wait 와 같은 시계)
+    proc_timer_ = rclcpp::create_timer(this, get_clock(),
+        rclcpp::Duration::from_seconds(declare_parameter<double>("process_period", 0.02)), [this]() {drain_jobs();});
+    stats_period_ = declare_parameter<double>("stats_period", 10.0);
+    update_lazy_subs();
     publish_summary();
   }
 
 private:
+  // TF 리스너 구독: /tf_static 은 transient_local 이라 프로세스 안 전달(volatile 만 됨)을 끈다
+  static rclcpp::SubscriptionOptions tf_sub_options(bool is_static)
+  {
+    auto o = is_static ? tf2_ros::detail::get_default_transform_listener_static_sub_options<>() :
+      tf2_ros::detail::get_default_transform_listener_sub_options<>();
+    o.use_intra_process_comm = rclcpp::IntraProcessSetting::Disable;
+    return o;
+  }
+
+  // TF 를 기다리는 탐지·깊이 짝 (마스크·camera_info 는 받은 때 것으로 묶어 둠)
+  struct Job
+  {
+    vision_msgs::msg::Detection2DArray::ConstSharedPtr dets;
+    sensor_msgs::msg::Image::ConstSharedPtr depth, mask;
+    sensor_msgs::msg::CameraInfo::ConstSharedPtr info;
+    int source;
+    rclcpp::Time t;   // 받은 때 (노드 시계 — 시뮬 시계면 시뮬 시간으로 기다림)
+    std::chrono::steady_clock::time_point t_in;   // 받은 때 (줄 지연 재기)
+  };
+
+  // 받기·처리 통계 (log_stats 가 stats_period 마다 내고 비움)
+  struct Stats
+  {
+    size_t dets = 0, depths = 0, pairs = 0, pairs_main = 0, n = 0, no_tf = 0, overflow = 0;
+    double q_sum = 0, q_max = 0, p_sum = 0, p_max = 0, age_sum = 0, age_max = 0;
+    std::chrono::steady_clock::time_point t0{};
+    void add_job(double q_ms, double p_ms, double age_ms)
+    {
+      ++n;
+      q_sum += q_ms;
+      q_max = std::max(q_max, q_ms);
+      p_sum += p_ms;
+      p_max = std::max(p_max, p_ms);
+      age_sum += age_ms;
+      age_max = std::max(age_max, age_ms);
+    }
+  };
+
   struct Landmark
   {
     int cls;
@@ -345,6 +431,9 @@ private:
     double view_quality = 0;
     double raw_quality = 0, raw_t = -1e9;   // 원본 사진(object_views)으로 마지막 낸 것의 품질 · 시각
     int misses = 0;          // 보여야 할 때 못 본 수 (지도 갱신 — 다시 보면 0)
+    int moved = 0;           // 처음 자리(ax, ay)에서 멀리 잰 측정이 이어진 수 (정지 물체 옮겨짐 판정)
+    double ax = 0, ay = 0;   // 그 이어짐이 시작될 때의 자리 (평균이 끌려가도 이 자리와 견줌)
+    double mx = 0, my = 0, mz = 0;   // 그 측정들의 평균 (옮겨진 자리)
     bool gone = false;       // 없어짐 (못 본 수 neg_misses 번 · 움직이는 클래스는 dynamic_ttl 초) — 표시·목록·저장에서 뺌, 같은 자리 탐지는 새 물체로
     bool deleted = false;    // 없어진 물체 마커를 지웠음
   };
@@ -389,23 +478,47 @@ private:
     return it == class_names_.end() ? -1 : static_cast<int>(it - class_names_.begin());
   }
 
+  // 깊이 한 픽셀 (m). u16 = 16UC1(mm), 아니면 32FC1(m)
+  static float depth_px(const uint8_t * row, int x, bool u16)
+  {
+    return u16 ? reinterpret_cast<const uint16_t *>(row)[x] * 0.001f : reinterpret_cast<const float *>(row)[x];
+  }
+
+  // 마스크 한 줄 [x0, x1] 에 id 픽셀이 있는지 — 분기 없는 OR 모음이라 컴파일러가 SIMD(NEON·SSE)로 16 칸씩 본다.
+  // 물체가 없는 줄을 통째로 건너뛰려고
+  static bool row_has(const uint8_t * row, int x0, int x1, uint8_t id)
+  {
+    unsigned acc = 0;
+    for (int x = x0; x <= x1; ++x) {acc |= static_cast<unsigned>(row[x] == id);}
+    return acc != 0;
+  }
+
+  // 마스크 열 x → 깊이 영상 열 (min(x · sx, 깊이 너비 − 1)). 픽셀마다 곱·변환하지 않게 크기가 바뀔 때만 다시 만든다
+  const int * depth_cols(int mask_w, double sx, int depth_w)
+  {
+    if (dxs_.size() != static_cast<size_t>(mask_w) || dxs_sx_ != sx || dxs_dw_ != depth_w) {
+      dxs_.resize(static_cast<size_t>(mask_w));
+      for (int x = 0; x < mask_w; ++x) {dxs_[static_cast<size_t>(x)] = std::min(static_cast<int>(x * sx), depth_w - 1);}
+      dxs_sx_ = sx;
+      dxs_dw_ = depth_w;
+    }
+    return dxs_.data();
+  }
+
   // 상자 가운데 부분 깊이의 하위 depth_percentile 값 (m). 얇은 물체 뒤의 벽이 섞여도 앞쪽(물체)을 고른다. 유효한 값이 없으면 NaN
-  double box_depth(const sensor_msgs::msg::Image & depth, double cx, double cy, double w, double h) const
+  double box_depth(const sensor_msgs::msg::Image & depth, double cx, double cy, double w, double h)
   {
     const int x0 = std::max(0, static_cast<int>(cx - w * box_shrink_ / 2));
     const int x1 = std::min(static_cast<int>(depth.width) - 1, static_cast<int>(cx + w * box_shrink_ / 2));
     const int y0 = std::max(0, static_cast<int>(cy - h * box_shrink_ / 2));
     const int y1 = std::min(static_cast<int>(depth.height) - 1, static_cast<int>(cy + h * box_shrink_ / 2));
-    std::vector<float> vals;
+    const bool u16 = depth.encoding == "16UC1";
+    auto & vals = vals_;
+    vals.clear();
     for (int y = y0; y <= y1; ++y) {
       const uint8_t * row = depth.data.data() + static_cast<size_t>(y) * depth.step;
       for (int x = x0; x <= x1; ++x) {
-        float d;
-        if (depth.encoding == "16UC1") {
-          d = reinterpret_cast<const uint16_t *>(row)[x] * 0.001f;
-        } else {
-          d = reinterpret_cast<const float *>(row)[x];
-        }
+        const float d = depth_px(row, x, u16);
         if (std::isfinite(d) && d >= min_depth_ && d <= max_depth_) {vals.push_back(d);}
       }
     }
@@ -415,42 +528,67 @@ private:
     return vals[k];
   }
 
-  // 마스크 픽셀의 무게중심과 그 픽셀들 깊이의 mask_depth_percentile 값. 유효한 깊이가 적으면 false
-  bool mask_measure(const sensor_msgs::msg::Image & depth, const sensor_msgs::msg::Image & mask, uint8_t id,
-    const vision_msgs::msg::BoundingBox2D & box, double sx, double sy, double fx, double fy, Measure & m) const
+  // 분할 마스크에서 한 물체(id)의 픽셀을 상자 안에서 한 번만 훑어, 위치·거리(mask_measure)·밑동(floor_ray)·발자국(footprint)이 같이 쓴다
+  struct MaskScan
   {
-    const int x0 = std::max(0, static_cast<int>(box.center.position.x - box.size_x / 2));
-    const int x1 = std::min(static_cast<int>(mask.width) - 1, static_cast<int>(box.center.position.x + box.size_x / 2));
-    const int y0 = std::max(0, static_cast<int>(box.center.position.y - box.size_y / 2));
-    const int y1 = std::min(static_cast<int>(mask.height) - 1, static_cast<int>(box.center.position.y + box.size_y / 2));
-    std::vector<float> vals;
-    double su = 0, sv = 0;
-    size_t n = 0;
-    for (int y = y0; y <= y1; ++y) {
+    int x0, x1, y0, y1;            // 상자 안 픽셀 범위
+    size_t n = 0;                  // 물체 픽셀 수
+    double su = 0, sv = 0;         // 픽셀 좌표 합 (무게중심)
+    int ymin = -1, ymax = -1, xmin = 1 << 30, xmax = -1;
+    // vals_ = 물체 픽셀의 유효 깊이 전부, pts_ = 그중 footprint_stride 칸마다의 (x, y, 깊이)
+  };
+  void scan_mask(const sensor_msgs::msg::Image & depth, const sensor_msgs::msg::Image & mask, uint8_t id,
+    const vision_msgs::msg::BoundingBox2D & box, double sx, double sy, MaskScan & sc)
+  {
+    sc = MaskScan{};
+    sc.x0 = std::max(0, static_cast<int>(box.center.position.x - box.size_x / 2));
+    sc.x1 = std::min(static_cast<int>(mask.width) - 1, static_cast<int>(box.center.position.x + box.size_x / 2));
+    sc.y0 = std::max(0, static_cast<int>(box.center.position.y - box.size_y / 2));
+    sc.y1 = std::min(static_cast<int>(mask.height) - 1, static_cast<int>(box.center.position.y + box.size_y / 2));
+    const int x0 = sc.x0, x1 = sc.x1;
+    const int st = std::max(1, footprint_stride_);
+    const bool u16 = depth.encoding == "16UC1";
+    const int * dxs = depth_cols(static_cast<int>(mask.width), sx, static_cast<int>(depth.width));
+    vals_.clear();
+    pts_.clear();
+    for (int y = sc.y0; y <= sc.y1; ++y) {
       const uint8_t * mrow = mask.data.data() + static_cast<size_t>(y) * mask.step;
+      if (!row_has(mrow, x0, x1, id)) {continue;}
       const int dy = std::min(static_cast<int>(y * sy), static_cast<int>(depth.height) - 1);
       const uint8_t * drow = depth.data.data() + static_cast<size_t>(dy) * depth.step;
+      const bool grid_row = (y - sc.y0) % st == 0;
+      if (sc.ymin < 0) {sc.ymin = y;}
+      sc.ymax = y;
       for (int x = x0; x <= x1; ++x) {
         if (mrow[x] != id) {continue;}
-        su += x;
-        sv += y;
-        ++n;
-        const int dx = std::min(static_cast<int>(x * sx), static_cast<int>(depth.width) - 1);
-        const float d = depth.encoding == "16UC1" ?
-          reinterpret_cast<const uint16_t *>(drow)[dx] * 0.001f : reinterpret_cast<const float *>(drow)[dx];
-        if (std::isfinite(d) && d >= min_depth_ && d <= max_depth_) {vals.push_back(d);}
+        sc.su += x;
+        sc.sv += y;
+        ++sc.n;
+        sc.xmin = std::min(sc.xmin, x);
+        sc.xmax = std::max(sc.xmax, x);
+        const float d = depth_px(drow, dxs[x], u16);
+        if (!(std::isfinite(d) && d >= min_depth_ && d <= max_depth_)) {continue;}
+        vals_.push_back(d);
+        if (grid_row && (x - x0) % st == 0) {pts_.push_back({static_cast<float>(x), static_cast<float>(y), d});}
       }
     }
+  }
+
+  // 마스크 픽셀의 무게중심과 그 픽셀들 깊이의 mask_depth_percentile 값. 유효한 깊이가 적으면 false
+  bool mask_measure(const MaskScan & sc, double fx, double fy, Measure & m)
+  {
+    auto & vals = vals_;
     if (vals.size() < 10) {return false;}
     const auto k = static_cast<size_t>(mask_depth_percentile_ * (vals.size() - 1));
     std::nth_element(vals.begin(), vals.begin() + k, vals.end());
-    m.u = su / n;
-    m.v = sv / n;
+    m.u = sc.su / sc.n;
+    m.v = sc.sv / sc.n;
     m.z = vals[k];
-    m.area = n * m.z * m.z / (fx * fy);   // 픽셀 하나 = (z/fx)·(z/fy) m²
+    m.area = sc.n * m.z * m.z / (fx * fy);   // 픽셀 하나 = (z/fx)·(z/fy) m²
     return true;
   }
 
+  // 탐지·깊이 짝: TF 를 기다리지 않고 작업 줄에 넣는다 (같은 시각 마스크·camera_info 는 지금 것으로 묶음)
   void on_pair(
     const vision_msgs::msg::Detection2DArray::ConstSharedPtr & dets,
     const sensor_msgs::msg::Image::ConstSharedPtr & depth, int source)
@@ -461,20 +599,6 @@ private:
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "지원하지 않는 깊이 형식: %s", depth->encoding.c_str());
       return;
     }
-    // 탐지 좌표는 컬러 영상 기준. 깊이 해상도가 다르면 비율로 맞춘다
-    const double sx = static_cast<double>(depth->width) / info_->width;
-    const double sy = static_cast<double>(depth->height) / info_->height;
-    const double fx = info_->k[0], fy = info_->k[4], cx = info_->k[2], cy = info_->k[5];
-
-    geometry_msgs::msg::TransformStamped tf;
-    try {
-      tf = tf_buffer_.lookupTransform(map_frame_, depth->header.frame_id, depth->header.stamp,
-          rclcpp::Duration::from_seconds(0.2));
-    } catch (const tf2::TransformException & e) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "TF 없음: %s", e.what());
-      return;
-    }
-
     // 같은 시각 마스크 (분할 모델일 때). 영상 크기가 탐지 기준(camera_info)과 같아야 쓴다
     sensor_msgs::msg::Image::ConstSharedPtr mask;
     for (const auto & mk : (source < 0 ? masks_ : extras_[static_cast<size_t>(source)]->masks)) {
@@ -482,9 +606,90 @@ private:
         mask = mk;
       }
     }
+    ++st_.pairs;
+    if (source < 0) {++st_.pairs_main;}
+    jobs_.push_back({dets, depth, mask, info_, source, now(), std::chrono::steady_clock::now()});
+    if (jobs_.size() > max_pending_) {
+      jobs_.pop_front();
+      ++st_.overflow;
+      ++n_overflow_;
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "작업 줄이 %zu 장을 넘어 오래된 장을 버림 (지금까지 %zu 장)",
+        max_pending_, n_overflow_);
+    }
+  }
 
-    std::vector<size_t> seen_now;   // 이 장에서 다시 본 물체 (못 봄 셈에서 뺌)
-    vision_msgs::msg::Detection3DArray inst;
+  // 타이머: 앞에서부터 그 시각 TF 가 있는 장을 처리한다. 없으면 tf_wait 까지 기다리고(뒤 장도 차례를 지켜 기다림), 지나면 버린다
+  void drain_jobs()
+  {
+    while (!jobs_.empty()) {
+      const Job & j = jobs_.front();
+      std::string err;
+      if (!tf_buffer_.canTransform(map_frame_, j.depth->header.frame_id, tf2_ros::fromMsg(j.depth->header.stamp), &err)) {
+        if ((now() - j.t).seconds() < tf_wait_) {break;}
+        ++n_no_tf_;
+        ++st_.no_tf;
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "TF 없음 (지금까지 %zu 장): %s", n_no_tf_, err.c_str());
+        jobs_.pop_front();
+        continue;
+      }
+      const Job job = std::move(jobs_.front());
+      jobs_.pop_front();
+      geometry_msgs::msg::TransformStamped tf;
+      try {
+        // tf2::TimePoint 판(BufferCore)으로: rclcpp::Time 판은 기다림 없는 부름에도 "따로 스레드 없음" 오류를 찍는다
+        tf = tf_buffer_.lookupTransform(map_frame_, job.depth->header.frame_id, tf2_ros::fromMsg(job.depth->header.stamp));
+      } catch (const tf2::TransformException & e) {
+        ++n_no_tf_;
+        ++st_.no_tf;
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "TF 없음 (지금까지 %zu 장): %s", n_no_tf_, e.what());
+        continue;
+      }
+      const auto t0 = std::chrono::steady_clock::now();
+      process(job, tf);
+      const auto t1 = std::chrono::steady_clock::now();
+      st_.add_job(std::chrono::duration<double, std::milli>(t0 - job.t_in).count(),
+        std::chrono::duration<double, std::milli>(t1 - t0).count(),
+        (now() - rclcpp::Time(job.dets->header.stamp, get_clock()->get_clock_type())).seconds() * 1e3);
+    }
+    log_stats();
+  }
+
+  // stats_period 마다 한 줄: 탐지↔깊이 짝(ApproximateTime, max_sync_dt) 못 지은 탐지 비율, 줄 지연(받음 → 처리 시작, steady 시계)·
+  // 탐지 시각부터 처리 끝까지 나이, 장당 처리 시간, 버린 장
+  void log_stats()
+  {
+    const auto t = std::chrono::steady_clock::now();
+    if (st_.t0 == std::chrono::steady_clock::time_point{}) {st_.t0 = t; return;}
+    const double sec = std::chrono::duration<double>(t - st_.t0).count();
+    if (stats_period_ <= 0 || sec < stats_period_) {return;}
+    const double miss = st_.dets > 0 ? 100.0 * (1.0 - std::min<double>(1.0, double(st_.pairs_main) / st_.dets)) : 0.0;
+    RCLCPP_INFO(get_logger(),
+      "%.0f s: 탐지 %zu · 깊이 %zu 장 → 짝 %zu (짝 못 지은 탐지 %.1f %%), 처리 %zu 장 — 줄 지연 평균 %.1f · 최대 %.1f ms, "
+      "처리 평균 %.2f · 최대 %.2f ms, 탐지 시각부터 나이 평균 %.0f · 최대 %.0f ms, 버림: TF 없음 %zu · 줄 넘침 %zu",
+      sec, st_.dets, st_.depths, st_.pairs, miss, st_.n, st_.n ? st_.q_sum / st_.n : 0.0, st_.q_max,
+      st_.n ? st_.p_sum / st_.n : 0.0, st_.p_max, st_.n ? st_.age_sum / st_.n : 0.0, st_.age_max, st_.no_tf, st_.overflow);
+    st_ = Stats{};
+    st_.t0 = t;
+  }
+
+  void process(const Job & job, const geometry_msgs::msg::TransformStamped & tf)
+  {
+    const auto & dets = job.dets;
+    const auto & depth = job.depth;
+    const auto & mask = job.mask;
+    const auto & info = *job.info;
+    const int source = job.source;
+    t_obs_ = job.t.seconds();   // 이 장의 시각 = 받은 때 (처리가 타이머로 늦어져도 마지막 본 시각·못 본 시간은 받은 때 기준)
+    // 탐지 좌표는 컬러 영상 기준. 깊이 해상도가 다르면 비율로 맞춘다
+    const double sx = static_cast<double>(depth->width) / info.width;
+    const double sy = static_cast<double>(depth->height) / info.height;
+    const double fx = info.k[0], fy = info.k[4], cx = info.k[2], cy = info.k[5];
+
+    auto & seen_now = seen_now_;   // 이 장에서 다시 본 물체 (못 봄 셈에서 뺌)
+    seen_now.clear();
+    // 프로세스 안 구독자에게 복사 없이 넘기려고 unique_ptr 로 낸다 (const& 발행은 프로세스 안 전달이 켜져 있으면 늘 복사)
+    auto inst_msg = std::make_unique<vision_msgs::msg::Detection3DArray>();
+    auto & inst = *inst_msg;
     inst.header.stamp = dets->header.stamp;
     inst.header.frame_id = map_frame_;
     for (size_t i = 0; i < dets->detections.size(); ++i) {
@@ -493,14 +698,17 @@ private:
       const int cls = class_index(d.results[0].hypothesis.class_id);
       if (cls < 0 || std::find(ignored_.begin(), ignored_.end(), class_names_[cls]) != ignored_.end()) {continue;}
       Measure m{d.bbox.center.position.x, d.bbox.center.position.y, 0.0, 0.0};
-      const bool mask_ok = mask && i < 255 && mask_measure(*depth, *mask, static_cast<uint8_t>(i + 1), d.bbox, sx, sy, fx, fy, m);
+      const bool scanned = mask && i < 255;
+      MaskScan sc;
+      if (scanned) {scan_mask(*depth, *mask, static_cast<uint8_t>(i + 1), d.bbox, sx, sy, sc);}
+      const bool mask_ok = scanned && mask_measure(sc, fx, fy, m);
       if (!mask_ok) {
         m.z = box_depth(*depth, m.u * sx, m.v * sy, d.bbox.size_x * sx, d.bbox.size_y * sy);
       }
       // 바닥 광선 거리 (가상 깊이): 마스크 밑동 픽셀을 지나는 카메라 광선이 바닥면과 만나는 곳까지의 광축 거리.
       // 불꽃처럼 깊이 카메라가 비거나 틀리는 물체를 위해 — 바닥에 선 물체에서만 맞음
       Base b;
-      const bool base_ok = mask && i < 255 && floor_ray(*mask, static_cast<uint8_t>(i + 1), d.bbox, fx, fy, cx, cy, tf, b);
+      const bool base_ok = scanned && floor_ray(*mask, static_cast<uint8_t>(i + 1), sc, fx, fy, cx, cy, tf, b);
       const double z_mask = m.z;
       std::string src = std::isfinite(m.z) ? (mask_ok ? "mask" : "box") : "none";
       if (base_ok) {
@@ -524,7 +732,7 @@ private:
           p_map.point.x - tf.transform.translation.x);
       const size_t idx = add_seen(seen_now, cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw,
           d.results[0].hypothesis.score, m.area, d.bbox.size_x * m.z / fx);
-      if (mask && i < 255) {footprint(*depth, *mask, static_cast<uint8_t>(i + 1), d.bbox, sx, sy, fx, fy, cx, cy, tf, landmarks_[idx]);}
+      if (scanned) {footprint(fx, fy, cx, cy, tf, landmarks_[idx]);}   // scan_mask 의 pts_ (그 뒤 box_depth 만 vals_ 를 씀)
       // 이 장의 물체 하나 (~/instances): 쓴 위치(map) · 밑점 · 너비·높이(마스크 크기 × 거리) · 깊이 출처와 두 깊이 차이
       {
         auto & o = inst.detections.emplace_back();
@@ -548,15 +756,15 @@ private:
       const double quality = d.bbox.size_x * d.bbox.size_y * d.results[0].hypothesis.score;
       // 원본 사진: 지금까지 낸 것의 object_view_ratio 배보다 좋고 object_view_period 초가 지났으면 (여러 장 — 보는 방향마다)
       Landmark & lm = landmarks_[idx];
-      if (views_pub_ && quality > object_view_ratio_ * lm.raw_quality && now().seconds() - lm.raw_t > object_view_period_) {
+      if (raw_sub_ && quality > object_view_ratio_ * lm.raw_quality && t_obs_ - lm.raw_t > object_view_period_) {
         const double rx = 0.1 * d.bbox.size_x, ry = 0.1 * d.bbox.size_y;
         raw_pending_.push_back({dets->header.stamp, idx,
             static_cast<int>(d.bbox.center.position.x - d.bbox.size_x / 2 - rx), static_cast<int>(d.bbox.center.position.y - d.bbox.size_y / 2 - ry),
             static_cast<int>(d.bbox.center.position.x + d.bbox.size_x / 2 + rx), static_cast<int>(d.bbox.center.position.y + d.bbox.size_y / 2 + ry), quality});
-        lm.raw_t = now().seconds();
+        lm.raw_t = t_obs_;
         take_raw();
       }
-      if (quality > landmarks_[idx].view_quality) {
+      if (view_sub_ && quality > landmarks_[idx].view_quality) {
         const double mx = view_margin_ * d.bbox.size_x, my = view_margin_ * d.bbox.size_y;
         pending_.push_back({dets->header.stamp, idx,
             static_cast<int>(d.bbox.center.position.x - d.bbox.size_x / 2 - mx),
@@ -565,8 +773,8 @@ private:
             static_cast<int>(d.bbox.center.position.y + d.bbox.size_y / 2 + my), quality});
       }
     }
-    if (!inst.detections.empty()) {inst_pub_->publish(inst);}
-    if (source < 0) {negative_evidence(*depth, tf, sx, sy, fx, fy, cx, cy, seen_now);}
+    if (!inst.detections.empty()) {inst_pub_->publish(std::move(inst_msg));}
+    if (source < 0) {negative_evidence(*depth, info, tf, sx, sy, fx, fy, cx, cy, seen_now);}
     take_views();
   }
 
@@ -584,7 +792,7 @@ private:
         auto c = crop(*img, it->x0, it->y0, it->x1, it->y1);
         Landmark & l = landmarks_[it->index];
         c->header.frame_id = class_names_[l.cls] + "-" + std::to_string(l.number);
-        views_pub_->publish(*c);
+        views_pub_->publish(std::make_unique<sensor_msgs::msg::Image>(std::move(*c)));
         l.raw_quality = std::max(l.raw_quality, it->quality);
       }
       it = (img || stale) ? raw_pending_.erase(it) : std::next(it);
@@ -639,7 +847,8 @@ private:
     geometry_msgs::msg::PointStamped p = click;
     if (click.header.frame_id != map_frame_) {
       try {
-        p = tf_buffer_.transform(click, map_frame_, tf2::durationFromSec(0.2));
+        // 기다리지 않음 (TF 는 이 노드 콜백으로 받으므로 기다리면 안 옴) — 가장 최근 TF 로
+        tf2::doTransform(click, p, tf_buffer_.lookupTransform(map_frame_, click.header.frame_id, tf2::TimePointZero));
       } catch (const tf2::TransformException & e) {
         RCLCPP_WARN(get_logger(), "누른 곳을 %s 로 못 바꿈: %s", map_frame_.c_str(), e.what());
         return;
@@ -656,21 +865,72 @@ private:
   }
 
   // 물체 목록에 넣고 그 물체의 번호(landmarks_ 안 위치)를 돌려준다
+  // 움직이는 클래스(dynamic_classes)인지 (클래스 번호로 기억)
+  bool is_dynamic(int cls)
+  {
+    while (dyn_cls_.size() < class_names_.size()) {
+      const auto & n = class_names_[dyn_cls_.size()];
+      dyn_cls_.push_back(std::find(dynamic_.begin(), dynamic_.end(), n) != dynamic_.end());
+    }
+    return dyn_cls_[static_cast<size_t>(cls)];
+  }
+
   size_t add(int cls, double x, double y, double z, double yaw, double score, double area, double ext)
   {
-    const double t_now = now().seconds();
+    const double t_now = t_obs_;   // 이 장을 받은 때 (process)
+    const bool dyn = is_dynamic(cls);
     Landmark * best = nullptr;
     double best_d = merge_radii_[cls];
     for (auto & l : landmarks_) {
+      // 움직이는 것은 뺀 지 dynamic_ttl 안이면 다시 살린다 (잠깐 못 잡아 빠졌다 다시 보여도 같은 번호)
+      const bool revivable = dyn && l.gone && l.number > 0 && t_now - l.last_seen < dynamic_ttl_;
+      if ((l.gone && !revivable) || l.cls != cls) {continue;}
       const double dist = std::hypot(l.x - x, l.y - y);
-      if (!l.gone && l.cls == cls && dist < best_d) {best = &l; best_d = dist;}
+      if (dyn) {   // 움직이는 것: 못 본 동안 움직였을 만큼 넓게, 그중 가장 가까운 것
+        const double r = std::min(merge_radii_[cls] + dynamic_speed_ * std::max(0.0, t_now - l.last_seen), dynamic_max_radius_);
+        if (dist < r && (!best || dist < best_d)) {best = &l; best_d = dist;}
+      } else if (dist < best_d) {
+        best = &l;
+        best_d = dist;
+      }
     }
     if (!best) {
       landmarks_.push_back({cls, 0, x, y, z, yaw, 1, score, area, ext, t_now});
       return landmarks_.size() - 1;
     }
-    // 처음 몇 번은 평균, 그 뒤로는 천천히 따라간다 (멀리서 본 부정확한 값이 남지 않게)
-    const double a = 1.0 / std::min(best->hits + 1, 20);
+    // 처음 몇 번은 평균, 그 뒤로는 천천히 따라간다 (멀리서 본 부정확한 값이 남지 않게). 움직이는 것은 최근 값(dynamic_alpha)
+    const double a = dyn ? dynamic_alpha_ : 1.0 / std::min(best->hits + 1, 20);
+    const double move_thr = std::max(move_dist_, 0.5 * best->ext);
+    if (!dyn && move_frames_ > 0 && best->moved == 0 && best_d > move_thr) {
+      best->ax = best->x;
+      best->ay = best->y;
+    }
+    if (!dyn && move_frames_ > 0 && (best_d > move_thr || best->moved > 0) && std::hypot(x - best->ax, y - best->ay) > move_thr) {
+      // 처음 자리에서 멀리 잰 측정이 이어지면 옮겨진 것: 그 측정들의 평균 자리로 옮기고 발자국·밑점을 새로 쌓음
+      const double k = 1.0 / (best->moved + 1);
+      best->mx += k * (x - best->mx);
+      best->my += k * (y - best->my);
+      best->mz += k * (z - best->mz);
+      if (++best->moved >= move_frames_) {
+        RCLCPP_INFO(get_logger(), "옮겨짐: %s-%d (%.2f, %.2f) → (%.2f, %.2f)", class_names_[cls].c_str(), best->number, best->x, best->y,
+          best->mx, best->my);
+        best->x = best->mx;
+        best->y = best->my;
+        best->z = best->mz;
+        best->cells.clear();
+        best->base_n = 0;
+        best->moved = 0;
+        best->last_seen = t_now;
+        return static_cast<size_t>(best - landmarks_.data());
+      }
+    } else {
+      best->moved = 0;
+    }
+    if (best->gone) {
+      best->gone = false;
+      best->deleted = false;
+      RCLCPP_INFO(get_logger(), "다시 봄: %s-%d", class_names_[cls].c_str(), best->number);
+    }
     best->x += a * (x - best->x);
     best->y += a * (y - best->y);
     best->z += a * (z - best->z);
@@ -696,28 +956,16 @@ private:
     double w_px = 0, h_px = 0;    // 마스크 너비·높이 (픽셀)
   };
   // 마스크 맨 아래 base_rows_frac 줄의 가운데 열 → 카메라 광선 → 바닥면(map 높이 floor_z: 로봇 base_link 높이 − base_height) 과 만나는 점
-  bool floor_ray(const sensor_msgs::msg::Image & mask, uint8_t id, const vision_msgs::msg::BoundingBox2D & box,
-    double fx, double fy, double cx, double cy, const geometry_msgs::msg::TransformStamped & tf, Base & b) const
+  bool floor_ray(const sensor_msgs::msg::Image & mask, uint8_t id, const MaskScan & sc,
+    double fx, double fy, double cx, double cy, const geometry_msgs::msg::TransformStamped & tf, Base & b)
   {
-    const int x0 = std::max(0, static_cast<int>(box.center.position.x - box.size_x / 2));
-    const int x1 = std::min(static_cast<int>(mask.width) - 1, static_cast<int>(box.center.position.x + box.size_x / 2));
-    const int y0 = std::max(0, static_cast<int>(box.center.position.y - box.size_y / 2));
-    const int y1 = std::min(static_cast<int>(mask.height) - 1, static_cast<int>(box.center.position.y + box.size_y / 2));
-    int ymin = -1, ymax = -1, xmin = 1 << 30, xmax = -1;
-    for (int y = y0; y <= y1; ++y) {
-      const uint8_t * row = mask.data.data() + static_cast<size_t>(y) * mask.step;
-      for (int x = x0; x <= x1; ++x) {
-        if (row[x] != id) {continue;}
-        if (ymin < 0) {ymin = y;}
-        ymax = y;
-        xmin = std::min(xmin, x);
-        xmax = std::max(xmax, x);
-      }
-    }
+    const int x0 = sc.x0, x1 = sc.x1;
+    const int ymin = sc.ymin, ymax = sc.ymax, xmin = sc.xmin, xmax = sc.xmax;
     if (ymax < 0 || ymax - ymin < 3) {return false;}
     if (ymax >= static_cast<int>(mask.height) - 2) {return false;}   // 밑동이 영상 아래 끝에 잘리면 진짜 밑동이 아님
     const int ylo = ymax - std::max(1, static_cast<int>(base_rows_frac_ * (ymax - ymin)));
-    std::vector<int> xs;
+    auto & xs = xs_;
+    xs.clear();
     for (int y = ylo; y <= ymax; ++y) {
       const uint8_t * row = mask.data.data() + static_cast<size_t>(y) * mask.step;
       for (int x = x0; x <= x1; ++x) {if (row[x] == id) {xs.push_back(x);}}
@@ -758,43 +1006,29 @@ private:
   }
 
   // 분할 마스크 픽셀(footprint_stride 칸마다)을 깊이로 3D 점 → map → 바닥 칸(cell_size)에 센다. 물체 깊이(가운데 값) ± 0.5 m 밖 점(배경)은 버림
-  void footprint(const sensor_msgs::msg::Image & depth, const sensor_msgs::msg::Image & mask, uint8_t id,
-    const vision_msgs::msg::BoundingBox2D & box, double sx, double sy, double fx, double fy, double cx, double cy,
-    const geometry_msgs::msg::TransformStamped & tf, Landmark & l) const
+  void footprint(double fx, double fy, double cx, double cy, const geometry_msgs::msg::TransformStamped & tf, Landmark & l)
   {
-    const int x0 = std::max(0, static_cast<int>(box.center.position.x - box.size_x / 2));
-    const int x1 = std::min(static_cast<int>(mask.width) - 1, static_cast<int>(box.center.position.x + box.size_x / 2));
-    const int y0 = std::max(0, static_cast<int>(box.center.position.y - box.size_y / 2));
-    const int y1 = std::min(static_cast<int>(mask.height) - 1, static_cast<int>(box.center.position.y + box.size_y / 2));
-    const int st = std::max(1, footprint_stride_);
-    std::vector<std::array<float, 3>> pts;
-    std::vector<float> zs;
-    for (int y = y0; y <= y1; y += st) {
-      const uint8_t * mrow = mask.data.data() + static_cast<size_t>(y) * mask.step;
-      const int dy = std::min(static_cast<int>(y * sy), static_cast<int>(depth.height) - 1);
-      const uint8_t * drow = depth.data.data() + static_cast<size_t>(dy) * depth.step;
-      for (int x = x0; x <= x1; x += st) {
-        if (mrow[x] != id) {continue;}
-        const int dx = std::min(static_cast<int>(x * sx), static_cast<int>(depth.width) - 1);
-        const float d = depth.encoding == "16UC1" ?
-          reinterpret_cast<const uint16_t *>(drow)[dx] * 0.001f : reinterpret_cast<const float *>(drow)[dx];
-        if (!std::isfinite(d) || d < min_depth_ || d > max_depth_) {continue;}
-        pts.push_back({static_cast<float>(x), static_cast<float>(y), d});
-        zs.push_back(d);
-      }
-    }
+    const auto & pts = pts_;
+    auto & zs = zs_;
+    zs.clear();
+    for (const auto & p : pts) {zs.push_back(p[2]);}
     if (zs.size() < 5) {return;}
     std::nth_element(zs.begin(), zs.begin() + zs.size() / 2, zs.end());
     const float zmed = zs[zs.size() / 2];
     tf2::Transform T;
     tf2::fromMsg(tf.transform, T);
-    std::vector<tf2::Vector3> kept;
+    auto & kept = kept_;
+    kept.clear();
+    const bool dyn = is_dynamic(l.cls);
+    if (dyn) {l.cells.clear();}   // 움직이는 것: 발자국은 이 장 것만 (지나온 자리가 남지 않게)
+    // 점마다 나누지 않게 역수를 곱한다 (마지막 비트가 다를 수 있음 — README "스레드·메모리" 에 확인 결과)
+    const double ifx = 1.0 / fx, ify = 1.0 / fy, icell = 1.0 / cell_size_;
     for (const auto & p : pts) {
       if (std::fabs(p[2] - zmed) > 0.5f) {continue;}
-      const tf2::Vector3 v = T * tf2::Vector3((p[0] - cx) * p[2] / fx, (p[1] - cy) * p[2] / fy, p[2]);
+      const tf2::Vector3 v = T * tf2::Vector3((p[0] - cx) * p[2] * ifx, (p[1] - cy) * p[2] * ify, p[2]);
       kept.push_back(v);
       if (v.z() > footprint_max_z_) {continue;}
-      const int64_t gx = static_cast<int64_t>(std::floor(v.x() / cell_size_)), gy = static_cast<int64_t>(std::floor(v.y() / cell_size_));
+      const int64_t gx = static_cast<int64_t>(std::floor(v.x() * icell)), gy = static_cast<int64_t>(std::floor(v.y() * icell));
       uint16_t & c = l.cells[cell_key(gx, gy)];
       if (c < 65535) {++c;}
     }
@@ -805,7 +1039,7 @@ private:
       double x = 0, y = 0, z = 0;
       for (size_t k = 0; k < n; ++k) {x += kept[k].x(); y += kept[k].y(); z += kept[k].z();}
       x /= n; y /= n; z /= n;
-      const double a = 1.0 / std::min(l.base_n + 1, 20);
+      const double a = dyn ? dynamic_alpha_ : 1.0 / std::min(l.base_n + 1, 20);
       l.bx += a * (x - l.bx);
       l.by += a * (y - l.by);
       l.bz += a * (z - l.bz);
@@ -824,17 +1058,20 @@ private:
 
   // 지도 갱신 (못 본 증거): 지도에 올라간 물체 가운데 이 장에서 보여야 하는데(카메라 시야 안 · neg_max_depth 안 · 그 픽셀 깊이가 물체보다 앞에 가리는 게 없음)
   // 다시 못 본 것은 misses 를 늘리고, neg_misses 번이면 없어짐. 움직이는 클래스(dynamic_classes)는 dynamic_ttl 초 안 보이면 없어짐.
-  void negative_evidence(const sensor_msgs::msg::Image & depth, const geometry_msgs::msg::TransformStamped & tf, double sx, double sy,
-    double fx, double fy, double cx, double cy, const std::vector<size_t> & seen)
+  void negative_evidence(const sensor_msgs::msg::Image & depth, const sensor_msgs::msg::CameraInfo & info,
+    const geometry_msgs::msg::TransformStamped & tf, double sx, double sy, double fx, double fy, double cx, double cy,
+    const std::vector<size_t> & seen)
   {
+    const bool u16 = depth.encoding == "16UC1";
     tf2::Transform T;
     tf2::fromMsg(tf.transform, T);
     const tf2::Transform inv = T.inverse();
-    const double t_now = now().seconds();
+    const double t_now = t_obs_;   // 이 장을 받은 때 (process)
     for (size_t i = 0; i < landmarks_.size(); ++i) {
       Landmark & l = landmarks_[i];
       if (l.gone || l.number == 0) {continue;}
-      if (std::find(dynamic_.begin(), dynamic_.end(), class_names_[l.cls]) != dynamic_.end() && t_now - l.last_seen > dynamic_ttl_) {
+      const bool dyn = is_dynamic(l.cls);
+      if (dyn && t_now - l.last_seen > dynamic_ttl_) {
         l.gone = true;
         RCLCPP_INFO(get_logger(), "지도에서 뺌 (움직이는 클래스 %.0f s 안 보임): %s-%d", t_now - l.last_seen, class_names_[l.cls].c_str(), l.number);
         continue;
@@ -843,23 +1080,24 @@ private:
       const tf2::Vector3 pc = inv * tf2::Vector3(l.x, l.y, l.z);
       if (pc.z() < min_depth_ || pc.z() > neg_max_depth_) {continue;}
       const double u = fx * pc.x() / pc.z() + cx, v = fy * pc.y() / pc.z() + cy;
-      const double mu = neg_margin_ * info_->width, mv = neg_margin_ * info_->height;
-      if (u < mu || v < mv || u >= info_->width - mu || v >= info_->height - mv) {continue;}
+      const double mu = neg_margin_ * info.width, mv = neg_margin_ * info.height;
+      if (u < mu || v < mv || u >= info.width - mu || v >= info.height - mv) {continue;}
       // 그 픽셀 둘레 깊이 가운데 값: 물체보다 neg_occl_m 넘게 앞이면 가려짐(셈 안 함), 비었으면 모름
-      std::vector<float> ds;
+      auto & ds = vals_;
+      ds.clear();
       for (int dy = -3; dy <= 3; ++dy) {
         for (int dx = -3; dx <= 3; ++dx) {
           const int px = std::clamp(static_cast<int>((u + dx * 2) * sx), 0, static_cast<int>(depth.width) - 1);
           const int py = std::clamp(static_cast<int>((v + dy * 2) * sy), 0, static_cast<int>(depth.height) - 1);
           const uint8_t * row = depth.data.data() + static_cast<size_t>(py) * depth.step;
-          const float d = depth.encoding == "16UC1" ? reinterpret_cast<const uint16_t *>(row)[px] * 0.001f : reinterpret_cast<const float *>(row)[px];
+          const float d = depth_px(row, px, u16);
           if (std::isfinite(d) && d > 0.05f) {ds.push_back(d);}
         }
       }
       if (ds.size() < 10) {continue;}
       std::nth_element(ds.begin(), ds.begin() + ds.size() / 2, ds.end());
       if (ds[ds.size() / 2] < pc.z() - neg_occl_m_) {continue;}
-      if (++l.misses >= neg_misses_) {
+      if (++l.misses >= (dyn ? dynamic_neg_misses_ : neg_misses_)) {
         l.gone = true;
         RCLCPP_INFO(get_logger(), "지도에서 뺌 (보여야 하는데 %d 번 못 봄): %s-%d (%.2f, %.2f)", l.misses, class_names_[l.cls].c_str(), l.number, l.x, l.y);
       }
@@ -880,10 +1118,17 @@ private:
       std::snprintf(buf, sizeof(buf), "%s %d %.3f %.3f %.3f %.3f %d %.3f %.4f %.3f %.1f %zu", class_names_[l.cls].c_str(), l.number,
         l.x, l.y, l.z, l.yaw, l.hits, l.best_score, l.area, l.ext, l.last_seen, l.cells.size());
       f << buf;
+      // 발자국 칸은 (gx, gy) 순으로 (해시 표 순서는 정해져 있지 않아 같은 지도도 파일이 달라짐)
+      std::vector<std::array<int32_t, 3>> cs;
+      cs.reserve(l.cells.size());
       for (const auto & kv : l.cells) {
         int32_t gx, gy;
         cell_of(kv.first, gx, gy);
-        f << ' ' << gx << ',' << gy << ',' << kv.second;
+        cs.push_back({gx, gy, kv.second});
+      }
+      std::sort(cs.begin(), cs.end());
+      for (const auto & c : cs) {
+        f << ' ' << c[0] << ',' << c[1] << ',' << c[2];
       }
       f << '\n';
       ++n;
@@ -928,8 +1173,9 @@ private:
 
   // 물체 하나 = 바닥 원판 + 종류별 3D 모양 + 라벨. id 는 물체 번호 * 10 + 부품 번호로 고정해 깜빡임 없이 덮어쓴다
   // dx, dy: 배지·이름표만 옮기는 표시 오프셋 (겹침 피하기 — 물체 위치·발자국은 그대로)
-  void append_markers(const Landmark & l, size_t index, double t, visualization_msgs::msg::MarkerArray & arr, double dx = 0.0, double dy = 0.0) const
+  void append_markers(const Landmark & l, size_t index, double t, visualization_msgs::msg::MarkerArray & arr, double dx = 0.0, double dy = 0.0)
   {
+    const bool dyn_fp = is_dynamic(l.cls);
     const Style & s = style_of(class_names_[l.cls]);
     const int base_id = static_cast<int>(index) * 10;
     auto make = [&](int part, int type, double z, double sx, double sy, double sz, std_msgs::msg::ColorRGBA c,
@@ -991,7 +1237,7 @@ private:
     cells.pose.position.x = 0.0;
     cells.pose.position.y = 0.0;
     for (const auto & kv : l.cells) {
-      if (kv.second < footprint_min_count_) {continue;}
+      if (kv.second < (dyn_fp ? 1 : footprint_min_count_)) {continue;}   // 움직이는 것은 이 장 칸뿐이라 한 번 본 칸도
       int32_t gx, gy;
       cell_of(kv.first, gx, gy);
       geometry_msgs::msg::Point pt;
@@ -1026,6 +1272,38 @@ private:
     label.ns = "labels";
     label.text = text;
     arr.markers.push_back(label);
+  }
+
+  // 결과 영상·원본 영상 구독은 쓰는 쪽이 있을 때만 (없으면 영상 복사·역직렬화와 yolo_detector 결과 영상 칠하기가 안 일어남)
+  void update_lazy_subs()
+  {
+    const bool want_view = selected_pub_->get_subscription_count() + selected_pub_->get_intra_process_subscription_count() > 0;
+    if (want_view && !view_sub_) {
+      view_sub_ = create_subscription<sensor_msgs::msg::Image>(view_topic_, 5,
+        [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
+          views_.push_back(msg);
+          if (views_.size() > keep_images_) {views_.pop_front();}
+          take_views();
+        });
+    } else if (!want_view && view_sub_) {
+      view_sub_.reset();
+      views_.clear();
+      pending_.clear();
+    }
+    const bool want_raw = views_pub_ &&
+      views_pub_->get_subscription_count() + views_pub_->get_intra_process_subscription_count() > 0;
+    if (want_raw && !raw_sub_) {
+      raw_sub_ = create_subscription<sensor_msgs::msg::Image>(color_topic_, rclcpp::SensorDataQoS(),
+        [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
+          raws_.push_back(msg);
+          if (raws_.size() > keep_images_) {raws_.pop_front();}
+          take_raw();
+        });
+    } else if (!want_raw && raw_sub_) {
+      raw_sub_.reset();
+      raws_.clear();
+      raw_pending_.clear();
+    }
   }
 
   void publish()
@@ -1218,7 +1496,12 @@ private:
   int n_main_ = 0;
   int neg_misses_ = 20;
   double neg_max_depth_ = 3.0, neg_margin_ = 0.1, neg_occl_m_ = 0.3, dynamic_ttl_ = 10.0;
+  double dynamic_alpha_ = 1.0, dynamic_speed_ = 1.5, dynamic_max_radius_ = 2.0;
+  int dynamic_neg_misses_ = 5;
+  double move_dist_ = 0.5;
+  int move_frames_ = 10;
   std::vector<std::string> dynamic_;
+  std::vector<bool> dyn_cls_;   // 클래스 번호 → 움직이는 클래스
   double base_height_ = 0.145, base_rows_frac_ = 0.05, fuse_tol_m_ = 0.3, fuse_tol_frac_ = 0.15;
   std::vector<std::string> prefer_floor_;
   FILE * depth_csv_ = nullptr;
@@ -1235,11 +1518,29 @@ private:
   unsigned tick_ = 0;
   sensor_msgs::msg::CameraInfo::ConstSharedPtr info_;
   std::deque<sensor_msgs::msg::Image::ConstSharedPtr> masks_;
+  std::deque<Job> jobs_;
+  Stats st_;
+  double stats_period_ = 10.0;
+  double t_obs_ = 0;   // 처리 중인 장을 받은 때 (s, 노드 시계)
+  double tf_wait_ = 0.2;
+  size_t max_pending_ = 10, keep_images_ = 10;
+  size_t n_no_tf_ = 0, n_overflow_ = 0;   // TF 가 없어·줄이 넘쳐 버린 장 수
+  std::string view_topic_, color_topic_;
+  // 장마다 다시 쓰는 작업 버퍼 (할당을 줄이려고 — 한 스레드에서만 씀)
+  std::vector<float> vals_, zs_;
+  std::vector<int> xs_;
+  std::vector<size_t> seen_now_;
+  std::vector<std::array<float, 3>> pts_;
+  std::vector<tf2::Vector3> kept_;
+  std::vector<int> dxs_;   // 마스크 열 → 깊이 열 (depth_cols)
+  double dxs_sx_ = 0;
+  int dxs_dw_ = 0;
 
   message_filters::Subscriber<vision_msgs::msg::Detection2DArray> det_sub_;
-  message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub_;
+  message_filters::PassThrough<sensor_msgs::msg::Image> depth_in_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
   std::shared_ptr<message_filters::Synchronizer<Policy>> sync_;
-  std::vector<std::unique_ptr<Extra>> extras_;   // depth_sub_ 뒤에 둠 (먼저 지워져야 함)
+  std::vector<std::unique_ptr<Extra>> extras_;   // depth_in_ 뒤에 둠 (먼저 지워져야 함)
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_, view_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr click_sub_;
@@ -1248,7 +1549,7 @@ private:
   rclcpp::Publisher<rviz_2d_overlay_msgs::msg::OverlayText>::SharedPtr overlay_pub_;
   rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr objects_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr clear_srv_;
-  rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr timer_, proc_timer_;
 };
 
 }  // namespace limo_fire_perception
