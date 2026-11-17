@@ -184,6 +184,9 @@ struct SearchBuf {
   const uint8_t* cam = nullptr;     // vis 가 있을 때 계획기가 더 막는 칸 (sim 깊이 카메라 층 — 칸마다 한 바이트, 줄 = MapView::stride, 0 아님 = 막힘)
   int32_t* pre = nullptr;           // 호스트 전용 지름길 ((w + 2) × h 칸): 있으면 vis 의 plan_ok 원판 검사를 줄마다 막힘(지도 막힘 + cam) 누적 수로 —
                                     //   칸마다 (2r+1)² 대신 2r+1 번, 줄 누적은 번지기가 처음 건드릴 때만 (값 같음, 시뮬·실물). GPU 는 안 줌
+  // 걸음 사이 칸 판정 기억 (호스트 전용 — mdp/frontier_cache.h FrontierCache 가 지도 · 깊이 층 차이로 바뀐 칸 둘레만 무효로 함, vis 가 있을 때만):
+  uint8_t* pc = nullptr;            //   칸마다 plan_ok (0 = 아직 모름 → 셈, 1 = 못 섬, 2 = 섬)
+  const uint8_t* fc = nullptr;      //   칸마다 frontier_cell (0 · 1, 늘 맞는 값)
 };
 
 struct SearchResult {
@@ -225,7 +228,7 @@ DEV Frontier build(const MapView& m, int init, int rx, int ry, Robot rb, SearchB
       const int u = x + dx, v = y + dy;
       if (u < 0 || v < 0 || u >= m.w || v >= m.h) continue;
       const int j = v * m.w + u;
-      if ((b.flag[j] & 2) || !(b.flag[j] & 1) || !frontier_cell(m, u, v)) continue;
+      if ((b.flag[j] & 2) || !(b.flag[j] & 1) || !(b.fc ? b.fc[j] != 0 : frontier_cell(m, u, v))) continue;
       b.flag[j] |= 2;
       b.qb[tail++] = j;
     }
@@ -299,9 +302,18 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
   const auto plan_ok = [&](int x, int y) {
     uint8_t& f = b.flag[y * m.w + x];
     if (f & 8) return (f & 16) != 0;
-    const bool ok = !b.vis ? standable(m, x, y, rb)
-                    : fast ? disc_clear(x, y)
-                           : (standable(m, x, y, rc) && !(b.cam && byte_near(b.cam, m.stride, m, x, y, rc)));
+    bool ok;
+    if (!b.vis) {
+      ok = standable(m, x, y, rb);
+    } else {
+      uint8_t* pc = b.pc ? &b.pc[y * m.w + x] : nullptr;   // 걸음 사이 기억 (있으면)
+      if (pc && *pc) {
+        ok = *pc == 2;
+      } else {
+        ok = fast ? disc_clear(x, y) : (standable(m, x, y, rc) && !(b.cam && byte_near(b.cam, m.stride, m, x, y, rc)));
+        if (pc) *pc = ok ? 2 : 1;
+      }
+    }
     f |= ok ? 24 : 8;
     return ok;
   };
@@ -368,7 +380,7 @@ DEV SearchResult frontier_search(const MapView& m, int rx, int ry, Robot rb, int
   for (int i = 0; i < tail; ++i) {
     const int idx = b.qa[i];
     const int x = idx % m.w, y = idx / m.w;
-    if (!frontier_cell(m, x, y)) continue;
+    if (!(b.fc ? b.fc[idx] != 0 : frontier_cell(m, x, y))) continue;
     r.n_cells += 1;
     if (b.flag[idx] & 2) continue;
     b.flag[idx] |= 2;

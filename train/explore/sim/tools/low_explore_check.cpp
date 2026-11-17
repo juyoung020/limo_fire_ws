@@ -134,7 +134,8 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml";
   int steps = 1500, people = 0;
   uint64_t seed = 1;
-  bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true, node_obs = false;
+  bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true, node_obs = false, fc_on = true;
+  int fc_check = 0;
   int dec_img = 0, dec_logk = lxd::Params{}.log_k;   // 기본은 노드와 같은 lxd::Params
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
   int dec_mode = 1, dec_max = 6, dec_order = 0;   // 실물 노드 기본과 같게 (decider_mode event · decider_max_cands 6)
@@ -180,7 +181,9 @@ int main(int argc, char** argv) {
     else if (a == "--cand-known") co.known_frac = std::stof(nx());
     // 위층 결정 때마다 후보 생성(scripts/cand_view.h)을 두 쪽에서 — 비트 비교 · 시간 · 안정성 (주행은 그대로)
     else if (a == "--close-lidar") close_lidar = true;   // 닫힘을 라이다 지도만으로 (EnvCfg::low_explore 2 — 실물 노드 close_lidar)
-    else if (a == "--node-obs") node_obs = true;   // 실물 쪽 RobotEnv 를 노드처럼 쓰는 관측만 (set_obs — 그림 끔, cand_view 후보 위층이면 계층형 후보도 끔) — 그래도 시뮬과 같은지
+    else if (a == "--node-obs") node_obs = true;
+    else if (a == "--fc-check") fc_check = std::stoi(nx());   // 실물 쪽 걸음 사이 프론티어 칸 판정 기억을 N 걸음마다 처음부터 다시 센 값과 견줌 (frontier_cache.h)
+    else if (a == "--no-fc") fc_on = false;                   // 실물 쪽 기억 끔 (걸음마다 처음부터)   // 실물 쪽 RobotEnv 를 노드처럼 쓰는 관측만 (set_obs — 그림 끔, cand_view 후보 위층이면 계층형 후보도 끔) — 그래도 시뮬과 같은지
     else if (a == "--dec-cand") dec_cand = std::stoi(nx()) != 0;   // 판단 모델 후보: 1 = cand_view.h (기본) · 0 = hier 8 칸
     else if (a == "--dec-hint") dec_hint = std::stoi(nx()) != 0;
     else if (a == "--dec-mem-image") dec_mimg = std::stoi(nx()) != 0;
@@ -260,7 +263,8 @@ int main(int argc, char** argv) {
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
     lp.use_cand = use_cand || (use_dec && dec_cand);
-    if (node_obs) robot.set_obs(false, !lp.use_cand);   // low_rl_node 와 같은 규칙 (obs_all false)
+    if (node_obs) robot.set_obs(false, !lp.use_cand);
+    robot.set_frontier_cache(fc_on, fc_check);   // low_rl_node 와 같은 규칙 (obs_all false)
     lp.cand = co;
     lp.cand_commit = cand_commit;
     lxc::Ctl cs(lp), cr(lp);
@@ -744,8 +748,9 @@ int main(int argc, char** argv) {
                   g_end[cand::kStall], g_end[cand::kOffPath]);
       std::printf("최근 실패 후보로 다시 감 %ld 번%s\n", g_refail, use_cand && g_refail > 0 ? " — 규칙(upper cand)은 0 이어야: 틀림" : "");
     }
-    std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_prepare %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번 · 후보 찾기 재사용 %ld)\n", n_step ? t_step / n_step : 0.0,
-                n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec, n_reuse);
+    std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_prepare %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번 · 후보 찾기 재사용 %ld · 칸 기억 전체 %ld 점검 %ld 다름 %ld)\n", n_step ? t_step / n_step : 0.0,
+                n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec, n_reuse, robot.frontier_cache().n_full, robot.frontier_cache().n_check,
+                robot.frontier_cache().n_bad);
     std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 경로 다름 %ld · 아래층 명령·판 끝 다름 %ld\n", d_dec, d_path, d_cmd);
     const bool ok = d_dec == 0 && d_path == 0 && d_cmd == 0 && d_body == 0 && !(use_cand && g_refail > 0);   // 후보 규칙이 최근 실패 후보를 다시 고르면 틀림
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");

@@ -8,6 +8,7 @@
 namespace limo_fire_rl {
 
 RobotEnv::RobotEnv(const sim::EnvHostCfg& hc) {
+  keep_.use_cache = true;   // 걸음 사이 프론티어 칸 판정 기억 (set_frontier_cache)
   b_.cfg = hc.cfg;
   sim::EnvCfg& c = b_.cfg;
   c.action_mode = sim::kActPath;   // 계층형 (후보·경로 계획)

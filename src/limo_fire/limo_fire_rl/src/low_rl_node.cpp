@@ -136,6 +136,8 @@ class LowRlNode : public rclcpp::Node {
     // decider_cand false)만. obs_all true = 시뮬과 같은 관측 전부 (low_explore_check 가 시뮬 == 실물로 비교하는 것과 같게 — 점검용)
     const bool obs_all = declare_parameter<bool>("obs_all", false);
     env_->set_obs(obs_all, obs_all || !lp_.use_cand);
+    // 걸음 사이 프론티어 칸 판정 기억 (mdp/frontier_cache.h — 값 같음). frontier_check_every > 0: 그 걸음마다 처음부터 다시 센 값과 견줌 (점검용, 느림)
+    env_->set_frontier_cache(declare_parameter<bool>("frontier_cache", true), (int)declare_parameter<int>("frontier_check_every", 0));
     if (upper_ == "slot0" && slot_vp) lp_.fuel = fu::slot_view(fo);
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
     if (upper_ == "decider") {

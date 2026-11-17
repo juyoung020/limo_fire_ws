@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "env.h"
+#include "frontier_cache.h"   // mdp/ — 걸음 사이 칸 판정 기억 (ReachKeep::cache)
 
 namespace sim {
 
@@ -21,6 +22,9 @@ struct ReachKeep {
   const uint32_t* trail = nullptr;
   const uint8_t* cam = nullptr;
   bool valid = false;
+  // 걸음 사이 칸 판정 기억 (mdp/frontier_cache.h — plan_ok · frontier_cell · 프론티어 칸 수). use_cache 면 reach_obs 가 걸음마다 바뀐 칸 둘레만 고쳐 씀
+  bool use_cache = false;
+  mdp::FrontierCache cache;
 };
 
 // 도달 가능한 프론티어 요약 (mdp/frontier.h reach_summary = 기준선 frontier_search 그대로). GPU 는 env_kernel.cu reach_block — 같은 값.
@@ -36,9 +40,6 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh,
   if (e.kb_x1 >= 0) {   // 아는 칸이 있을 때
     const int16_t* L = b.lmap + (size_t)env * c.size * c.size;
     const mdp::MapView mv{L, c.size, m.gw, m.gh};
-    int n_tot = 0;   // 지도 전체 프론티어 칸 (모두 건드린 범위 안)
-    for (int y = e.kb_y0; y <= e.kb_y1; ++y)
-      for (int x = e.kb_x0; x <= e.kb_x1; ++x) n_tot += mdp::frontier_cell(mv, x, y) ? 1 : 0;
     thread_local ReachKeep own;
     ReachKeep& K = keep ? *keep : own;
     std::vector<uint8_t>& flag = K.flag;
@@ -61,6 +62,16 @@ inline void reach_obs(const EnvBatch& b, const EnvState& e, int env, Shared& sh,
       // 깊이 카메라 층 (계층형 cam_on). 합친 탐사 low_explore 2 는 안 씀 — 닫힘은 로봇 지도(라이다)로만 (mdp/frontier.h 머리글 "합친 탐사의 닫힘", 켜야 씀)
       sb.cam = b.cvox && c.low_explore != 2 ? b.cvox + (size_t)env * c.size * c.size : nullptr;
       sb.pre = pre.data();   // 원판 검사 지름길 (값 같음 — GPU reach_block 과 비트 비교는 env_verify)
+    }
+    int n_tot = 0;   // 지도 전체 프론티어 칸 (모두 건드린 범위 안)
+    if (keep && keep->use_cache) {   // 걸음 사이 기억: 바뀐 칸 둘레만 고침 (값 같음 — frontier_cache.h)
+      mdp::cache_update(keep->cache, mv, sb.cam, sb.rbc.r < 0 ? mdp::obsgen::reach_robot(c) : sb.rbc, e.kb_x0, e.kb_y0, e.kb_x1, e.kb_y1);
+      sb.pc = keep->cache.pc.data();
+      sb.fc = keep->cache.fc.data();
+      n_tot = (int)keep->cache.n_front;
+    } else {
+      for (int y = e.kb_y0; y <= e.kb_y1; ++y)
+        for (int x = e.kb_x0; x <= e.kb_x1; ++x) n_tot += mdp::frontier_cell(mv, x, y) ? 1 : 0;
     }
     // reach_summary 와 같음: 문턱 1 로 모든 덩어리를 out 에, 문턱은 고를 때
     const mdp::SearchResult r = mdp::frontier_search(mv, rx, ry, mdp::obsgen::reach_robot(c), 1, sb, out.data(), (int)out.size());

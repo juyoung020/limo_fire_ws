@@ -102,6 +102,9 @@ class RobotEnv {
   void set_obs(bool cells, bool hier) { obs_cells_ = cells; obs_hier_ = hier; }
   // 이 걸음 관측의 프론티어 찾기 결과 (후보 뽑기 cand::build 가 같은 입력이면 다시 안 찾음). 깊이 층이 바뀌면(low_prepare) 무효 — nullptr
   const sim::ReachKeep* reach_keep() const { return keep_.valid ? &keep_ : nullptr; }
+  // 걸음 사이 프론티어 칸 판정 기억 (mdp/frontier_cache.h — 기본 켬, 값은 같음). every > 0: 그 걸음마다 기억 전체를 처음부터 다시 센 값과 견줌 (다르면 n_bad · 전부 다시)
+  void set_frontier_cache(bool on, int check_every = 0) { keep_.use_cache = on; keep_.cache.check_every = check_every; }
+  const mdp::FrontierCache& frontier_cache() const { return keep_.cache; }
 
  private:
   void obs();

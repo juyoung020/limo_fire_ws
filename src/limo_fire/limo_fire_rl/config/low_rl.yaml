@@ -42,6 +42,8 @@ low_rl:
     depth_timeout: 0.5        # s, 이보다 오래된 깊이 영상은 안 씀 (구멍 0) — 잠정
     camera_layer: true        # 깊이 카메라 장애물 층 (학습과 같음)
     obs_all: false            # true = 걸음마다 시뮬과 같은 관측 전부 (위층 관측 그림 · 계층형 후보) — 점검용. false 면 위층이 쓰는 것만 (걸음 시간 ↓)
+    frontier_cache: true      # 걸음 사이 프론티어 칸 판정 기억 (바뀐 칸 둘레만 다시 — 값 같음, 걸음 시간 ↓). false = 걸음마다 처음부터
+    frontier_check_every: 0   # > 0 이면 그 걸음마다 기억을 처음부터 다시 센 값과 견줌 (점검용 — 다르면 고치고 셈)
     contact_resume_s: 0.0     # > 0 이면 닿음으로 멈춘 뒤 이 시간 뒤 저절로 다시 켬 (0 = ~/enable true 를 따로)
     max_speed: -1.0           # m/s, 음수 = 시뮬 한도 그대로 (자르지 않음)
     # 닿음 정의 (SIM_CON_MASK 71 = 라이다 1 · 깊이 2 · 멈춤 4 · 가속 64, SIM_CON_STALL 2, SIM_CON_ACC 15 m/s²) — 그만둔 아래층 RL 학습(low_w3)에서 정한 값 그대로
