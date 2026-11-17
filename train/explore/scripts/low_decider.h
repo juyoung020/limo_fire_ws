@@ -41,6 +41,11 @@ struct Params {
   int mode = 0;             // 0 = periodic (period_steps 마다) · 1 = event: 목표에 다가감(남은 길 ≤ approach_m — 미리 물어 닿기 전에 답) · 목표 실패 · 후보가 크게 바뀜
                             //   (지금 목표 덩어리가 사라짐 · 점수가 switch_ratio 배 넘는 새 1 순위) · 마지막으로 보낸 지 max_steps 넘음 일 때만 물음 (후보 모드)
   float approach_m = 1.0f;
+  // 답이 늦어 규칙이 대신 고르는 것 줄이기 (2026-11-17 — 시뮬 지연 1.6 s 에서 대신 고른 까닭의 대부분이 "답이 오기 전에 목표에 닿음"):
+  float ask_lead_s = 1.0f;  // event: 남은 길 / ask_v ≤ 답 지연(걸음으로 잰 것의 이동 평균) + 이것 이면 미리 물음 (approach_m 과 함께 — 먼저 닿는 쪽)
+  float ask_v = 0.98f;      // m/s — 남은 길 → 남은 시간 (fuel · cand 가는 시간 v_eff 와 같은 잰 값)
+  int delay0_steps = 20;    // 답 지연 첫 어림 (걸음 — 2 s, 로봇 Orin v1 꼴 1.5–2.2 s)
+  int hold_extra = 5;       // 목표가 죽었는데 답이 오는 중이면 (보낸 뒤 지연 어림 + 이것) 걸음까지 기다림 — 규칙이 대신 고르지 않음. < 0 = 바로 대신 (옛 동작)
   float switch_ratio = 1.5f;
   int max_steps = 100;      // event 모드 최대 간격 (걸음 — 10 s)
   int log_k = 4;
@@ -123,12 +128,14 @@ class Upper {
       hist_.emplace_back(s.step, std::vector<int16_t>(v.lmap, v.lmap + (size_t)v.c->size * v.c->size));
       if (hist_.size() > 31) hist_.pop_front();
     }
-    bool changed = false;
+    bool changed = false, picked_obj = false;   // picked_obj: 이번 걸음 답이 물체 후보 — 노드가 그 자리로 가므로 목표가 죽은 게 아님
     Answer a;
     while (tr.poll(&a)) {
       if (!wait_ || a.id != req_.id) { ++n_late_; continue; }
       wait_ = false;
       last_ms_ = a.ms;
+      delay_ema_ = n_delay_ == 0 ? (double)(s.step - req_.step) : 0.7 * delay_ema_ + 0.3 * (double)(s.step - req_.step);   // 걸음으로 잰 답 지연
+      ++n_delay_;
       if (s.step - req_.step > p_.timeout_steps) { ++n_timeout_; continue; }
       if (!a.ok) { ++n_fail_; last_err_ = a.err; continue; }
       const int k = a.choice[0] - 'A';
@@ -139,7 +146,7 @@ class Upper {
       last_ans_step_ = s.step;
       if (p_.cand && req_.ids[(size_t)k] <= kObjId0) {   // 물체 후보: 노드가 그 설 자리로 감 (take_object_pick)
         const size_t oi = (size_t)(kObjId0 - req_.ids[(size_t)k]);
-        if (oi < obj_req_.size()) { obj_last_ = obj_req_[oi]; obj_pick_ = true; }
+        if (oi < obj_req_.size()) { obj_last_ = obj_req_[oi]; obj_pick_ = true; picked_obj = true; }
         continue;
       }
       if (p_.cand) {   // 후보 모드: 지금 목록을 새로 만들고 안정 번호로, 없으면 서는 자리 match_r 안
@@ -159,7 +166,19 @@ class Upper {
     }
     if (wait_ && s.step - req_.step > p_.timeout_steps) { wait_ = false; ++n_timeout_; }
     bool urgent = false;
-    if (!changed && ctl.due(s) && (ctl.redo_pending() || !ctl.live(s))) {   // 기다리지 않고 slot0 차례로 (combine_run 의 slot0 위층과 같은 고름)
+    const bool dead = !changed && !picked_obj && ctl.due(s) && (ctl.redo_pending() || !ctl.live(s));
+    // 목표가 죽었는데 오는 답이 없으면 지금 묻고 (판 처음 포함), 답이 오는 중이면 보낸 뒤 지연 어림 + hold_extra 걸음까지 기다림: 목표는 판단 모델 답이 정함.
+    // 그 사이 아래층은 지금 명령 그대로 (닿았으면 제자리 · 막혔으면 막힘 처리 그대로). 요청을 못 만들면 (후보 0 · 1 개) 바로 규칙
+    if (dead && !wait_ && p_.hold_extra >= 0) send_req(v, F, ctl, tr, last_send_ < 0 ? "start" : "goal failed or lost");
+    const bool hold = dead && p_.hold_extra >= 0 && wait_ && s.step - req_.step <= (int)(delay_ema() + 0.5) + p_.hold_extra;
+    if (hold) ++n_hold_;
+    if (dead && !hold) {   // 기다리지 않고 slot0 차례로 (combine_run 의 slot0 위층과 같은 고름)
+      {   // 셈: 왜 목표가 죽었나 (끝난 목표의 까닭 cand::Why · 9 = 끝 기록 없이 경로·목표 칸 사라짐) · 답이 오는 중이었나
+        int w9 = 9;
+        if (p_.cand && ctl.redo_pending() && !ctl.cand_mem().goals.empty() && ctl.cand_mem().goals.back().end >= 0) w9 = ctl.cand_mem().goals.back().why;
+        ++n_fb_why_[w9 >= 0 && w9 < 10 ? w9 : 9];
+        n_fb_wait_ += wait_;
+      }
       if (p_.cand) { ctl.build_cands(v); const int prev = ctl.cur_id(); *cmd = ctl.go_cand(v, -1, why); note_dec(v, ctl, prev, 1); }   // 후보 모드 규칙(cand_pick)
       else *cmd = ctl.decide_slot(v, -1, why);
       changed = true;
@@ -170,25 +189,30 @@ class Upper {
     if (!wait_) {
       if (urgent) trig = "goal failed or lost";
       else if (last_send_ < 0) trig = "start";
+      else if (instr_new_ && ctl.due(s)) trig = "new instruction";   // 지시가 바뀜: 지금 목표로 몰면서 바로 물음 (노드는 이 걸음에 물체 목록을 새로 채움)
       else if (p_.mode == 0) { if (s.step - last_send_ >= p_.period_steps) trig = "period"; }
       else trig = event_trigger(v, ctl);
     }
-    if (!trig.empty()) {
-      last_send_ = s.step;
-      Req r;
-      if (p_.cand ? build_cand(v, ctl, &r) : build(v, F, ctl, &r)) {
-        r.id = ++next_id_;
-        r.step = s.step;
-        r.why = trig;
-        last_trig_ = trig;
-        ++n_trig_[trig];
-        req_ = r;
-        wait_ = true;
-        ++n_sent_;
-        tr.send(req_);
-      }
-    }
+    if (!trig.empty()) send_req(v, F, ctl, tr, trig);
     return changed;
+  }
+  // 요청 하나 만들어 보냄 (못 만들면 — 후보 0 · 1 개 — 안 보냄, wait_ 그대로 거짓)
+  void send_req(const lxc::View& v, const float* F, lxc::Ctl& ctl, Transport& tr, const std::string& trig) {
+    const sim::EnvState& s = *v.s;
+    last_send_ = s.step;
+    Req r;
+    if (p_.cand ? build_cand(v, ctl, &r) : build(v, F, ctl, &r)) {
+      instr_new_ = false;
+      r.id = ++next_id_;
+      r.step = s.step;
+      r.why = trig;
+      last_trig_ = trig;
+      ++n_trig_[trig];
+      req_ = r;
+      wait_ = true;
+      ++n_sent_;
+      tr.send(req_);
+    }
   }
   // event 모드: 물을 까닭 (없으면 빈 글)
   std::string event_trigger(const lxc::View& v, lxc::Ctl& ctl) {
@@ -200,7 +224,9 @@ class Upper {
       const int pi = std::max(0, std::min((int)s.p_i, (int)s.p_n - 1));
       double len = std::hypot(s.wp[2 * pi] + 0.5 - rx, s.wp[2 * pi + 1] + 0.5 - ry);
       for (int k = pi; k + 1 < s.p_n; ++k) len += std::hypot((double)(s.wp[2 * k + 2] - s.wp[2 * k]), (double)(s.wp[2 * k + 3] - s.wp[2 * k + 1]));
-      if (len * v.c->res <= p_.approach_m) { approach_goal_ = ctl.cmd().target; return "approaching goal"; }
+      const double dt_s = (double)v.c->substeps * v.c->dt;   // 걸음 시간 (s)
+      const bool soon = p_.ask_lead_s >= 0.f && len * v.c->res / p_.ask_v <= delay_ema() * dt_s + p_.ask_lead_s;   // 답보다 먼저 닿을 듯
+      if (len * v.c->res <= p_.approach_m || soon) { approach_goal_ = ctl.cmd().target; return "approaching goal"; }
     }
     if (p_.cand && v.lmap) {   // 1 s 결정 차례마다 후보를 새로 만들어 견줌
       const cand::Out& co = ctl.build_cands(v);
@@ -575,9 +601,16 @@ class Upper {
     }
     return best;
   }
-  void restart() { const Params p = p_; const camm::Memory* c = cam_; *this = Upper(p); cam_ = c; }
+  // 새 판: 답 지연 어림은 서버 성질이라 이어 감 (판마다 첫 어림 delay0 으로 돌아가지 않게)
+  void restart() { const Params p = p_; const camm::Memory* c = cam_; const double de = delay_ema_; const long nd = n_delay_; *this = Upper(p); cam_ = c; delay_ema_ = de; n_delay_ = nd; }
   bool waiting() const { return wait_; }
-  void set_instruction(const std::string& t) { p_.instruction = t; }
+  // 지시가 바뀌면 다음 결정 차례에 바로 물음 ("new instruction"). 옛 지시로 만든 요청을 기다리는 중이면 그 답은 버림 (늦은 답으로 셈)
+  void set_instruction(const std::string& t) {
+    if (t == p_.instruction) return;
+    p_.instruction = t;
+    instr_new_ = true;
+    wait_ = false;
+  }
   void set_known_objects(const std::vector<std::string>& k) { p_.known_objects = k; }
   void set_objects(const std::vector<Params::Obj>& o) { p_.objects = o; }
   // 판단 모델이 물체 후보를 골랐으면 그 설 자리 (한 번 꺼내면 지움) — 노드는 ~/goto 처럼 그 자리로 감
@@ -590,6 +623,11 @@ class Upper {
   long n_fail() const { return n_fail_; }
   long n_nomatch() const { return n_nomatch_; }
   long n_fallback() const { return n_fallback_; }
+  long n_fb_why(int k) const { return n_fb_why_[k]; }   // 규칙이 대신 고른 까닭별 수 (cand::Why · 9 = 경로·목표 칸 사라짐)
+  long n_fb_wait() const { return n_fb_wait_; }         // 그중 답이 오는 중이던 수
+  long n_src(int k) const { return n_src_[k]; }        // 후보 모드 결정 수: 0 판단 모델 답 · 1 규칙
+  long n_hold() const { return n_hold_; }               // 목표가 죽었지만 답을 기다린 걸음 수
+  double delay_ema() const { return n_delay_ ? delay_ema_ : (double)p_.delay0_steps; }   // 답 지연 어림 (걸음)
   long n_late() const { return n_late_; }
   double last_ms() const { return last_ms_; }
   const std::string& last_choice() const { return last_choice_; }   // 마지막으로 받아 쓴 답 글자 (없으면 빈 글)
@@ -608,6 +646,7 @@ class Upper {
     } else d.id = -1;
     d.kept = d.id >= 0 && d.id == prev_id;
     decs_.push_back(d);
+    ++n_src_[src ? 1 : 0];
   }   // 카메라 키프레임 기억 (부르는 쪽이 걸음마다 채움 — 실물 노드)   // 요청 꼴만 바꿈 (갈래 굴리기: 기준 응답기는 그림을 안 봄 — 지도 없이 글만)
 
  private:
@@ -617,7 +656,7 @@ class Upper {
   Params::Obj obj_last_;
   bool obj_pick_ = false;
   Req req_;
-  bool wait_ = false;
+  bool wait_ = false, instr_new_ = false;
   int last_send_ = -1;
   int approach_goal_ = -1, gone_id_ = -1, better_id_ = -1;
   long n_pick_failed_ = 0, n_pick_top_ = 0;
@@ -626,6 +665,8 @@ class Upper {
   const camm::Memory* cam_ = nullptr;
   std::vector<Dec> decs_;
   std::deque<std::pair<int, std::vector<int16_t>>> hist_;   // 꼴 B 지난 지도 (걸음, 지도)
+  long n_fb_why_[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, n_fb_wait_ = 0, n_src_[2] = {0, 0}, n_hold_ = 0, n_delay_ = 0;
+  double delay_ema_ = 0;
   long next_id_ = 0, n_sent_ = 0, n_ans_ = 0, n_timeout_ = 0, n_fail_ = 0, n_nomatch_ = 0, n_fallback_ = 0, n_late_ = 0;
   double last_ms_ = 0;
   std::string last_choice_;

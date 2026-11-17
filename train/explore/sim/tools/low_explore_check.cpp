@@ -62,7 +62,13 @@ struct FakeModel : lxd::Transport {
   limo_fire_rl::DeciderClient* real = nullptr;   // 진짜 서버 (시뮬 쪽만 — 답을 기다림)
   std::vector<lxd::Answer>* log = nullptr;       // 진짜 답 기록 (시뮬 쪽이 씀, 실물 쪽이 같은 차례로 읽음)
   size_t replay = 0;
+  FILE* blog = nullptr;   // DEC_BODY_LOG=파일: 시뮬 쪽 요청마다 "걸음 본문해시 까닭" 한 줄 (빌드 사이 요청 비교)
   void send(const lxd::Req& r) override {
+    if (blog) {
+      uint64_t hb = 1469598103934665603ull;
+      for (unsigned char ch : r.body) { hb ^= ch; hb *= 1099511628211ull; }
+      std::fprintf(blog, "%d %016llx %s\n", r.step, (unsigned long long)hb, r.why.c_str());
+    }
     if (real || log) {
       lxd::Answer a;
       if (real) {
@@ -138,6 +144,8 @@ int main(int argc, char** argv) {
   int fc_check = 0;
   int dec_img = 0, dec_logk = lxd::Params{}.log_k;   // 기본은 노드와 같은 lxd::Params
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
+  int dec_hold = lxd::Params{}.hold_extra;
+  float dec_lead = lxd::Params{}.ask_lead_s;
   int dec_mode = 1, dec_max = 6, dec_order = 0;   // 실물 노드 기본과 같게 (decider_mode event · decider_max_cands 6)
   bool dec_compact = lxd::Params{}.compact, dec_memf = true;
   int dec_px = lxd::Params{}.px;
@@ -200,6 +208,8 @@ int main(int argc, char** argv) {
     else if (a == "--dec-max") dec_max = std::stoi(nx());
     else if (a == "--dec-order") dec_order = nx() == "dist" ? 1 : 0;
     else if (a == "--dec-latency") dec_lat = std::stod(nx());
+    else if (a == "--dec-hold") dec_hold = std::stoi(nx());     // 목표가 죽었는데 답이 오는 중이면 기다릴 덤 걸음 (lxd::Params::hold_extra, −1 = 바로 규칙 — 옛 동작)
+    else if (a == "--dec-lead") dec_lead = std::stof(nx());     // event: 남은 시간이 답 지연 + 이것(s) 이하면 미리 물음 (Params::ask_lead_s, −1 = 끔 — 옛 동작)
     else if (a == "--dec-input") dec_input = nx();
     else if (a == "--dec-match") dec_match = std::stod(nx());
     else if (a == "--dec-url") dec_url = nx();
@@ -276,6 +286,8 @@ int main(int argc, char** argv) {
     lxd::Params dp;
     dp.period_steps = std::max(1, (int)std::lround(dec_period / dt));
     dp.mode = dec_mode;
+    dp.hold_extra = dec_hold;
+    dp.ask_lead_s = dec_lead;
     dp.compact = dec_compact; dp.px = dec_px; dp.mem_fields = dec_memf; dp.max_cands = dec_max; dp.order = dec_order;
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
@@ -299,6 +311,7 @@ int main(int argc, char** argv) {
     FakeModel ms, mr;
     ms.lat = mr.lat = std::max(0, (int)std::lround(dec_lat / dt));
     ms.first = mr.first = dec_fake_a;
+    if (const char* bl = std::getenv("DEC_BODY_LOG")) ms.blog = std::fopen(bl, "a");
     long l_fb0 = 0, l_rw = 0, l_sent0 = 0, l_pf0 = 0, l_pt0 = 0, l_ans0 = 0;
     std::vector<std::vector<float>> l_cov;   // 덮음 값들, 1 s 마다 (판 끝까지)
     covm::Coverage cov;
@@ -312,6 +325,7 @@ int main(int argc, char** argv) {
       ms.log = mr.log = &real_log;
     }
     long d_body = 0, n_ans = 0, n_sent_all = 0, n_nomatch_all = 0, n_fb_all = 0;
+    long fbw_all[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, fb_wait_all = 0, src_all[2] = {0, 0}, hold_all = 0;   // 판단 모델: 규칙이 대신 고른 까닭 · 답 오는 중 · 결정 출처
     fu::Diag dgs;
     cs.set_diag(&dgs);
     FILE* lf = logp.empty() ? nullptr : std::fopen(logp.c_str(), "w");
@@ -371,6 +385,8 @@ int main(int argc, char** argv) {
       cs.restart(); cr.restart();
       cms = cand::Mem(); cmr = cand::Mem(); hist.clear(); hhist.clear();
       n_sent_all += us.n_sent(); n_nomatch_all += us.n_nomatch(); n_fb_all += us.n_fallback();
+      for (int q = 0; q < 10; ++q) fbw_all[q] += us.n_fb_why(q);
+      fb_wait_all += us.n_fb_wait(); src_all[0] += us.n_src(0); src_all[1] += us.n_src(1); hold_all += us.n_hold();
       us.restart(); ur.restart();
       prev_cell = -2;
       cs.set_geom(w.gw, hc.cfg.res); cr.set_geom(w.gw, hc.cfg.res);
@@ -741,6 +757,13 @@ int main(int argc, char** argv) {
     if (use_dec)
       std::printf("판단 모델: 주기 %d 걸음 · 지연 %d 걸음 · 보냄 %ld · 답 적용 %ld · 후보 안 맞음 %ld · slot0 대신 %ld · 본문 다름 %ld | ", dp.period_steps, ms.lat, n_sent_all + us.n_sent(), n_ans,
                   n_nomatch_all + us.n_nomatch(), n_fb_all + us.n_fallback(), d_body);
+    if (use_dec) {
+      for (int q = 0; q < 10; ++q) fbw_all[q] += us.n_fb_why(q);
+      fb_wait_all += us.n_fb_wait(); src_all[0] += us.n_src(0); src_all[1] += us.n_src(1);
+      std::fprintf(stderr, "DECSRC 답 %ld 규칙 %ld · 기다림 %ld 걸음 · 대신 까닭: 닿음 %ld 막힘 %ld 다가가지못함 %ld 경로끝밖 %ld 경로없음 %ld 그밖 %ld · 답 오는 중 %ld\n", src_all[0], src_all[1], hold_all + us.n_hold(),
+                   fbw_all[cand::kReached], fbw_all[cand::kStall], fbw_all[cand::kTimeout], fbw_all[cand::kOffPath], fbw_all[cand::kNoPath],
+                   fbw_all[9] + fbw_all[cand::kNone] + fbw_all[cand::kContact] + fbw_all[cand::kNoGain] + fbw_all[cand::kSwitched], fb_wait_all);
+    }
     std::printf(use_dec ? "관측 %ld 번 · 판 %ld · 위층 결정 %ld (판단 모델 후보 %ld · slot0 차례 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld · 다가가지 못함 %ld\n" : "관측 %ld 번 · 판 %ld · 위층 결정 %ld (fuel %ld · slot0 대신 %ld · 목표 없음 %ld) · 목표 바뀜 %ld · 통과 %ld · 막힘 신호 %ld · 다가가지 못함 %ld\n", n_obs, n_ep, n_dec, why_n[0], why_n[1],
                 why_n[2], n_sw, cs.n_reach(), cs.n_stall(), cs.n_far());
     if (cand_on && c_dec) {

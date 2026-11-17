@@ -146,6 +146,8 @@ class LowRlNode : public rclcpp::Node {
     if (upper_ == "decider") {
       dp.period_steps = std::max(1, (int)std::lround(dec_period / dt()));
       dp.mode = dec_mode_s == "event" ? 1 : 0;   // periodic (decider_period 마다) · event (목표에 다가감 · 실패 · 후보 크게 바뀜 · 최대 간격 — scripts/low_decider.h)
+      dp.hold_extra = (int)declare_parameter<int>("decider_hold_extra", dp.hold_extra);      // 목표가 죽었는데 답이 오는 중이면 (지연 어림 + 이것) 걸음까지 기다림 (−1 = 바로 규칙)
+      dp.ask_lead_s = (float)declare_parameter<double>("decider_ask_lead_s", dp.ask_lead_s);  // event: 남은 시간 ≤ 답 지연 + 이것 (s) 이면 미리 물음 (−1 = 끔)
       dp.timeout_steps = std::max(1, (int)std::lround(dec_timeout / dt()));
       dec_up_ = std::make_unique<lxd::Upper>(dp);
       dp_cand_ = dp.cand;
@@ -227,6 +229,7 @@ class LowRlNode : public rclcpp::Node {
         say_goto("지시: " + instruction_ + " — 판단 모델이 후보(지도에 있는 그 물체 옆 · 프론티어) 중에서 고름");
       }
       if (dec_up_) dec_up_->set_instruction(instruction_);
+      obj_dirty_ = true;   // 다음 걸음에 물체 후보를 새로 채움 (판단 모델이 "new instruction" 으로 바로 물을 때 같이 들어가게)
     });
     // 물체 지도 (limo_fire_perception object_mapper): 지시가 있을 때 판단 모델 글에 아는 물체를 넣음
     sub_objects_ = create_subscription<vision_msgs::msg::Detection3DArray>("/object_mapper/objects", rclcpp::QoS(1).transient_local(),
@@ -522,7 +525,8 @@ class LowRlNode : public rclcpp::Node {
         sim::LowCmd cmd;
         int why = 0;
         if (dp_cam_ > 0 && cam_.due(env_->state().step)) push_keyframe();
-        if (!instruction_.empty() && objects_ && env_->state().step % lp_.decide_steps == 0) {
+        if (!instruction_.empty() && objects_ && (env_->state().step % lp_.decide_steps == 0 || obj_dirty_)) {
+          obj_dirty_ = false;
           dec_up_->set_known_objects(known_objects());
           // 지시에 맞는 물체(클래스 = ~/target_class) → 판단 모델 후보 목록의 물체 후보 (설 자리는 Upper::object_spots 가 탐사 지도에서)
           std::vector<lxd::Params::Obj> ob;
@@ -978,6 +982,7 @@ class LowRlNode : public rclcpp::Node {
   double obj_stale_s_ = 600.0;
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
+  bool obj_dirty_ = false;   // 지시가 바뀌어 물체 후보를 이번 걸음에 새로 채울 것
   bool goto_active_ = false, goto_resume_ = false, facing_ = false, face_valid_ = false;
   double face_x_ = 0.0, face_y_ = 0.0, face_tol_ = 0.15, face_timeout_s_ = 5.0, face_w_min_ = 0.4, facing_t0_ = 0.0;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_face_;
