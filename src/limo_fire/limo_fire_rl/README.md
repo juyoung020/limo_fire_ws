@@ -8,7 +8,7 @@
 | 노드 | 무엇 | 켜기 |
 |---|---|---|
 | `explore_frontier` | 프론티어 탐사 (아래 "프론티어 탐사") — 탐사 기준선과 같은 찾기·고르기 | 멈춘 채 뜸 → 버튼 |
-| `low_rl` | 위층 판단 모델(또는 fuel · slot0) + 아래층 A* 경로 추종 (아래 "합친 탐사") — Nav2 없음 | 멈춘 채 뜸 → 버튼 (리모컨 오토일 때만) |
+| `low_rl` | 위층 판단 모델(또는 cand · fuel · slot0) + 아래층 A* 경로 추종 (아래 "합친 탐사") — Nav2 없음 | 멈춘 채 뜸 → 버튼 (리모컨 오토일 때만) |
 
 탐사 강화학습(RL 정책 노드 `explore_rl`, 아래층 RL 정책 `lower:=rl`)은 2026-11-16 에 그만두고 [archive/rl](../../../archive/rl/README.md) 로 옮겼다
 (실물에서 시뮬과의 격차가 컸고, A* 경로 추종 아래층이 훨씬 빠르고 잘 됐다). 그때의 이 README 는 `archive/rl/src/limo_fire/limo_fire_rl/README.md`.
@@ -62,23 +62,25 @@ ros2 topic echo /explore_frontier/state
 > 실행: ① 로봇 page cache 비우기(`sync && echo 3 | sudo -n tee /proc/sys/vm/drop_caches` — Orin GPU 메모리 확보) → ② 아래 "판단 모델" 절의 llama-server →
 > ③ `robot.launch.xml` → ④ `ros2 launch limo_fire_rl explore_fuel_rl.launch.xml stack:=true rviz:=true dry_run:=false` → 리모컨 SWB 위 + 패널 버튼. 멈춤은 SWB 내림.
 
-시뮬 `combine_run --upper decider|fuel|slot0` 와 **같은 코드·같은 값**으로 로봇이 탐사한다. 위층이 로봇이 쌓은 지도에서 목표를 고르고(판단 모델은 `decider_period` 마다,
-fuel · slot0 는 1 s 마다), 아래층 규칙 추종기(로봇 지도 A* `plan_ref.h` + 경로 추종 `path_step_*` — `RobotEnv::low_act` 계층형 가지)가 0.1 s 마다 `/cmd_vel` 을 낸다.
+시뮬(`low_explore_check` · `combine_run`)과 **같은 코드·같은 값**으로 로봇이 탐사한다. 위층이 로봇이 쌓은 지도에서 목표를 고르고(결정 차례 1 s — 판단 모델은 그중 사건 때만 묻는다), 아래층 규칙 추종기(로봇 지도 A* `plan_ref.h` + 경로 추종 `path_step_*` — `RobotEnv::low_act` 계층형 가지)가 0.1 s 마다 `/cmd_vel` 을 낸다.
 Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`)만 준다. 관측 설정은 `train/explore/sim/config/env.yaml` 그대로.
 
-| 차례 | 실물 노드 | 시뮬 (`train/explore/scripts/combine_run.cpp`) |
+| 차례 | 실물 노드 | 시뮬 (`train/explore/sim/tools/low_explore_check` · `scripts/combine_run`) |
 |---|---|---|
 | 설정 | `RobotEnv` 합친 탐사 모드 — 목표는 위층, 탐사 판 끝 규칙, 막힘은 신호만 | `low_rl 1` · `low_explore 1` |
 | 결정 때 | 걸음 % 10 == 0 또는 다시 결정 | 같음 |
-| `upper:=decider` (기본) | 판단 모델(d1-3B, zero-shot)이 hier 후보 8 개 중 고름 — `scripts/low_decider.h` (시뮬 `combine_run --upper decider --decider-input both` 와 같은 요청: 지도 사진 + 후보 글). `decider_period`(기본 3 s — 로봇 답 약 2.6 s + 여유)마다 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면(막힘·통과·경로 없음) 기다리지 않고 slot0 차례로 바로. `decider_timeout`(8 s) 넘은 답은 버림 | `--upper decider` |
+| `upper:=decider` (기본) | 판단 모델(d1-3B, zero-shot)이 `scripts/cand_view.h` 후보 앞 6 개 중 고름 — `scripts/low_decider.h` (요청: 지도 사진 + 후보 글). 사건 때만(`decider_mode: event` — 목표에 1 m 다가감 · 목표 실패 · 후보 크게 바뀜 · 10 s 최대 간격) 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면 기다리지 않고 slot0 차례로 바로. `decider_timeout`(8 s) 넘은 답은 버림. `decider_mode: periodic` 이면 `decider_period`(3 s)마다 | `low_explore_check --upper decider` |
+| `upper:=cand` | `cand_view.h` 0 번 후보, 지금 목표 번호가 있으면 붙듦 — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 판단 모델보다 빠름 | `low_explore_check --upper cand` |
 | `upper:=fuel` | fuel (시간 + 전역 + 시점, v 0.981 · ω 3.232 · t0 0.10, 붙들기 0.2, 시점은 로봇에서 0.75 m 밖·모름에서 0.21 m — `config/low_rl.yaml`, `scripts/README` "실물 1116"). 덩어리 없음: 피하지 않는 첫 후보(slot0). 시점 자격 되는 덩어리가 없음: 목표 없음 | `--upper fuel` |
-| `upper:=slot0` | 피하지 않는 첫 후보, 같은 덩어리면 그대로(stick) — A/B 용. `slot_vp:=true` 면 그 덩어리의 시점(`fu::slot_view`) — 시뮬에서 나빠 기본 끔 | `--upper slot0` |
+| `upper:=slot0` | 피하지 않는 첫 후보, 같은 덩어리면 그대로(stick) — A/B 용. `slot_vp: true` 면 그 덩어리의 시점(`fu::slot_view`) — 시뮬에서 나빠 기본 끔 | `--upper slot0` |
 | 아래층 | 규칙 추종기: 후보 번호(slot0 · 판단 모델) 또는 목표 칸(fuel)까지 A* 경로를 짜 따라감, 막히면 복구(물러나기·목표 포기 — `hier_path.h`) | 같은 함수 |
 | 목표 없음 | 규칙 추종기의 제자리 회전 | 같음 |
 | 다시 결정 | 통과 · 경로 끝 밖 · 경로 없음 · 막힘 신호 → fuel 기억 비움(경로 끝 밖·없음·막힘은 그 칸 0.5 m 를 10 s 피함) | 같음 |
-| 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `~/done` true. `close_lidar:=true` 면 닫힘을 라이다 지도만으로 — 깊이 카메라 층에만 막힌 프론티어는 안 닫힘 (`mdp/frontier.h`, 시뮬에서 나빠 기본 끔) | `finish_step` |
+| 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `~/done` true. `close_lidar: true` 면 닫힘을 라이다 지도만으로 — 깊이 카메라 층에만 막힌 프론티어는 안 닫힘 (`mdp/frontier.h`, 시뮬에서 나빠 기본 끔) | `finish_step` |
 
 위층 결정·목표 넘기기는 `train/explore/scripts/low_explore_ctl.h` 하나를 노드와 확인 도구가 같이 쓴다.
+launch 인자는 `upper` · `dry_run` · `record` · `decider_url` · `decider_period` 등뿐이고, 나머지 값(아래 `camera_layer` · `close_lidar` · `slot_vp` · `contact_resume_s` · `decider_mode` …)은
+`config/low_rl.yaml` 에서 바꾼다.
 
 **멈춤 조건 (명령을 0 으로)**
 
@@ -87,7 +89,7 @@ Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`
 | 처음 · `~/enable false` | 명령 0 (`idle`). `~/enable true` 로 켬 — **리모컨이 오토일 때만 켜진다** |
 | 리모컨이 오토가 아님 (`/rc_state` `buttons[1]` ≠ 2 — SWB 위가 2) 또는 `/rc_state` 0.5 s 넘게 안 옴 | 명령 0 · 꺼짐 (`paused`). **다시 오토로 바꿔도 저절로 안 감 — `~/enable true` 를 다시** |
 | 라이다·TF·오도메트리 0.3 s 넘게 안 옴 | 명령 0, 돌아오면 이어 감 |
-| 닿음 (`train/explore/sim/include/contact.h` `sense_step` — 라이다·깊이·멈춤·IMU 수평 가속 > 15 m/s², 마스크 71 · 멈춤 2 걸음 — 그만둔 RL 학습 low_w3 의 값) | 명령 0 · 꺼짐. `contact_resume_s:=1.0` 이면 1 s 뒤 저절로 켬 (기본 0 = `~/enable` 따로) |
+| 닿음 (`train/explore/sim/include/contact.h` `sense_step` — 라이다·깊이·멈춤·IMU 수평 가속 > 15 m/s², 마스크 71 · 멈춤 2 걸음 — 그만둔 RL 학습 low_w3 의 값) | 명령 0 · 꺼짐. `contact_resume_s: 1.0` 이면 1 s 뒤 저절로 켬 (기본 0 = `~/enable` 따로) |
 | 끝 (위 표) | 명령 0 · `done` |
 
 - `dry_run:=true`(기본): `/cmd_vel` 발행자를 아예 안 만들고 같은 명령을 `~/cmd_debug`(TwistStamped)에만. dry run 에서는 닿음의 "멈춤" 신호(명령 대비 바퀴 정지)를 뺀다 — 명령이 안 나가 늘 참.
@@ -98,13 +100,13 @@ Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`
 
 | 확인 (이 PC, 2026-11-16) | 결과 |
 |---|---|
-| `train/explore/sim/tools/low_explore_check` — CPU 시뮬과 `RobotEnv` 가 각자 위층 결정, 시뮬 라이다 장·감각·깊이를 `RobotEnv` 에 넣고 걸음마다 비교 | bookstore · small-house, 씨앗 1~3, 사람 0 · 2, 800~2500 걸음: 위층 명령 · 아래층 관측(그림·1D) · 명령 · 판 끝 **비트 같음** (목표 없는 걸음 포함). RL 을 뺀 뒤(2026-11-16) 위층 slot0 · fuel · 판단 모델(가짜 응답기) × 씨앗 1 · 2 × 사람 2 × 1500 걸음 다시: 모두 비트 같음, 출력도 뺀 앞과 같음 |
-| `low_explore_check … --upper decider [--dec-latency 2.6] [--dec-period 3.0] [--dec-match 1.5] [--dec-url http://…]` — 판단 모델 위층(`scripts/low_decider.h`)을 가짜 응답기(본문 해시로 글자, 지연 뒤 걸음에 답)로 두 쪽이 같이; `--dec-url` 이면 진짜 llama-server 답을 지연 걸음 뒤에 (시뮬로 평가) | bookstore · small-house, 씨앗 1~3, 사람 0 · 2, 지연 0 · 2.6 · 7.5 s, 1200~2500 걸음: 요청 본문 · 위층 명령 · 아래층 관측 · 명령 · 판 끝 **비트 같음**. 답의 후보 칸 맞춤 반경 0.5 m 면 답의 40 ~ 55 % 를 버려 기본 1.5 m (버림 10 ~ 25 %) |
-| `train/explore/sim/tools/low_explore_replay` — 노드 녹화(`record:=`)를 `RobotEnv` + 위층만으로 다시 돌려 결정마다 까닭(주기·통과·경로 없음·막힘)·목표·뜀·목표 없음 까닭·닫힘을 적음, 지도 그림(`--pgm`) | 그때 설정(`--fuel-hyst 0 --fuel-vp-min 0 --fuel-vp-clear 0`)으로 `1116_fuel_rl_1` 659 / 659 · `1116_slot0_1`(`--upper slot0`) 86 / 86 관측 비트 같음 (531e7fc 위 — 2a17a5a 부터 그 전 녹화는 구조체 크기가 달라 안 읽힘) |
-| 녹화 `1104_M_cmd_mix` (깊이 정렬) 에 `explore_fuel_rl.launch.xml` dry run (`map_frame:=odom`, `use_sim_time:=true`, 그때 위층 fuel + 아래층 RL) | 발행자에 `/cmd_vel` 없음. 켬 뒤 결정 141 · 통과 24. x86 한 코어: 걸음 7.3 · 관측 2.1 · 위층 평균 12 ms (최대 22) |
+| `train/explore/sim/tools/low_explore_check` — CPU 시뮬과 `RobotEnv` 가 각자 위층 결정, 시뮬 라이다 장·감각·깊이를 `RobotEnv` 에 넣고 걸음마다 비교 | bookstore · small-house, 씨앗 1~3, 사람 0 · 2, 800~2500 걸음: 위층 명령 · 준비 뒤 경로(목표 칸 · 경로 점) · 명령 · 판 끝 **비트 같음** (목표 없는 걸음 포함). 위층 slot0 · fuel · cand · 판단 모델(가짜 응답기) 모두. `--node-obs` 면 실물 쪽을 노드와 같은 관측 설정으로 |
+| `low_explore_check … --upper decider [--dec-latency 2.6] [--dec-mode event] [--dec-max 6] [--dec-match 1.5] [--dec-url http://…]` — 판단 모델 위층(`scripts/low_decider.h`)을 가짜 응답기(본문 해시로 글자, 지연 뒤 걸음에 답)로 두 쪽이 같이; `--dec-url` 이면 진짜 llama-server 답을 지연 걸음 뒤에 (시뮬로 평가) | bookstore · small-house, 씨앗 1~3, 사람 0 · 2, 지연 0 · 2.6 · 7.5 s, 1200~2500 걸음: 요청 본문 · 위층 명령 · 아래층 관측 · 명령 · 판 끝 **비트 같음**. 답의 후보 칸 맞춤 반경 0.5 m 면 답의 40 ~ 55 % 를 버려 기본 1.5 m (버림 10 ~ 25 %) |
+| `train/explore/sim/tools/low_explore_replay` — 노드 녹화(`record:=`)를 `RobotEnv` + 위층만으로 다시 돌려 결정마다 까닭(주기·통과·경로 없음·막힘)·목표·뜀·목표 없음 까닭·닫힘을 적음, 지도 그림(`--pgm`) | 그때 설정(`--fuel-hyst 0 --fuel-vp-min 0 --fuel-vp-clear 0`)으로 `1116_fuel_rl_1` 659 / 659 · `1116_slot0_1`(`--upper slot0`) 86 / 86 관측 비트 같음 (531e7fc 위). 녹화 꼴은 판 4(`sim/tools/low_node_rec.h`), 옛 판 1~3 도 읽지만 그 뒤 위층·깊이 층이 바뀌어 1116 녹화의 명령은 지금 코드와 다름 |
+| 녹화 `1104_M_cmd_mix` (깊이 정렬) 에 `explore_fuel_rl.launch.xml` dry run (`map_frame:=odom`, `use_sim_time:=true`, 그때 위층 fuel + 아래층 RL) | 발행자에 `/cmd_vel` 없음. 켬 뒤 결정 141 · 통과 24. x86 한 코어: 걸음 7.3 · 관측 2.1 · 위층 평균 12 ms (최대 22) — 그 뒤(2026-11-17, 한 스레드 · 안 쓰는 관측 끔) `1116_fuel_rl_1` dry run 걸음 5.53 · 위층 8.9 ms |
 | 리모컨 (녹화 대신 손으로 낸 `/rc_state`) | 수동(1) → paused · 다시 오토(2) → 그대로 paused · `~/enable` → running · 안 옴 → paused · 안 오는데 `~/enable` → 거절 |
 
-젯슨 Orin Nano 빌드·시간·정지 dry run 은 아직 이 README 에 적지 않음 (그쪽 확인 뒤).
+젯슨 Orin Nano (2026-11-17, 한 스레드): 걸음 약 5.9 ms · 위층 결정 약 9.5 ms — 0.1 s 걸음 안에 넉넉히 듦.
 
 ### 실행 (로봇)
 
@@ -145,9 +147,9 @@ ros2 topic echo /low_rl/done            # true 면 끝 (지도 닫힘)
 
 ### 깊이 카메라 층을 볼 것
 
-깊이 카메라 장애물 층(env.yaml `camera_obstacles`)은 후보·닫힘에서 막힌 곳을 뺀다. 실물 깊이가 시뮬 모델과 다르면(정렬 꺼짐·카메라 숙임 바뀜)
+깊이 카메라 장애물 층(env.yaml `camera_obstacles`, 걸음 0.1 s 마다 갱신 — `update_every_step`)은 후보·닫힘에서 막힌 곳을 뺀다. 층 전용 촘촘한 깊이 격자(`layer_grid`)는 시뮬에서 끝 무렵 길이 더 막혀 기본 끔. 실물 깊이가 시뮬 모델과 다르면(정렬 꺼짐·카메라 숙임 바뀜)
 바닥이 장애물로 찍혀 후보가 사라지고 **아직 안 본 곳이 있는데 "탐사 끝"** 이 난다 (옛 `explore_rl` 노드로 1103 녹화에서 확인 — 정렬 끈 깊이는 33 s 에 거짓 닫힘).
-의심되면 `camera_layer:=false` 로 끈다.
+의심되면 `camera_layer: false` 로 끈다.
 
 ### 위층 판단 모델 (`upper:=decider`) 띄우기
 
@@ -159,7 +161,7 @@ ros2 topic echo /low_rl/done            # true 면 끝 (지도 닫힘)
 cd ~/decider_test && nohup ./llama.cpp/build/bin/llama-server -m models/d1-3B-Q8_0.gguf --mmproj models/mmproj-d1-3B-Q8_0.gguf \
   --host 127.0.0.1 --port 8171 -ngl 99 -c 4096 -np 1 -lm dio > server_dec.log 2>&1 &
 # 뜰 때까지 (모델 읽기 약 1 분): grep -m1 "listening" server_dec.log
-ros2 launch limo_fire_rl explore_fuel_rl.launch.xml upper:=decider [decider_period:=3.0] [dry_run:=false] [rviz:=true]
+ros2 launch limo_fire_rl explore_fuel_rl.launch.xml upper:=decider [dry_run:=false] [rviz:=true]
 ```
 
 기본은 사건 때만 묻고(`decider_mode: event`) 요청에 후보를 6 개까지 넣는다(`decider_max_cands: 6`) — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 가장 빨랐고, 라벨 굴리기(`dec_rollout`)·`low_explore_check --upper decider` 기본도 같은 값.

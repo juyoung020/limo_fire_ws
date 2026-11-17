@@ -11,7 +11,7 @@ baselines/frontier/
 ├── src/frontier_explorer.cpp
 ├── tools/frontier_check.cu       mdp/frontier.h CPU == GPU 비트 비교
 └── CMakeLists.txt                sim/ 을 add_subdirectory 로 가져와 frontier_run·frontier_check 빌드
-../../mdp/frontier.h              칸 종류·닫힘·프론티어 찾기 (호스트·장치 공용, RL 관측도 같은 함수)
+../../mdp/frontier.h              칸 종류·닫힘·프론티어 찾기 (호스트·장치 공용, 실물 노드·합친 탐사도 같은 함수)
 ../../scripts/frontier_run.cpp    장면 × 판을 돌려 학습 뷰어 실행 폴더로
 ```
 

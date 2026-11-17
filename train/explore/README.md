@@ -24,14 +24,16 @@ explore/
         │  limo_fire_rl low_rl_node.cpp                                        │  sim/src/env_ref.cpp (CPU) · env_kernel.cu (GPU)
         ▼                                                                      ▼
   RobotEnv (limo_fire_rl/robot_env.h) ─────── 같은 함수 ───────  Env (sim/include/env.h · env_api.h)
-    지도 갱신(Cartographer 꼴) · 닫힘 판정 · 위층 관측 · 깊이 카메라 장애물 층            (mdp/frontier.h · observations.h · sim/include/obs_ref.h)
+    지도 갱신(Cartographer 꼴) · 닫힘 판정 · 깊이 카메라 장애물 층(걸음 0.1 s 마다)      (mdp/frontier.h · observations.h · sim/include/obs_ref.h)
         │
         ▼
-  후보: 판단 모델 = scripts/cand_view.h (덩어리마다 서는 자리, ≤ 8 곳) · slot0 = 환경 hier 후보 (mdp/frontier.h) · fuel = 자기 덩어리 시점
+  후보: cand · 판단 모델 = scripts/cand_view.h (덩어리마다 서는 자리 ≤ 8 곳, 판단 모델 요청엔 앞 6 곳) · slot0 = 환경 hier 후보 (mdp/frontier.h) · fuel = 자기 덩어리 시점
         │
         ▼
-  위층 (scripts/low_explore_ctl.h lxc::Ctl — 1 Hz, 막힌 칸 피하기·목표 이어 가기)
-    decider  판단 모델 (scripts/low_decider.h · decider.cpp — 사진·후보 표를 llama-server 에, 비동기 · 기본)
+  위층 (scripts/low_explore_ctl.h lxc::Ctl — 결정 차례 1 s · 실패 때 바로, 막힌 칸 피하기·목표 이어 가기)
+    decider  판단 모델 (scripts/low_decider.h · decider.cpp — 사진·후보 표를 llama-server 에, 비동기 · 실물 기본).
+             사건 때만 묻는다(event: 목표에 다가감 · 실패 · 후보 크게 바뀜 · 10 s 최대 간격), 답을 기다리는 동안 지금 목표로
+    cand     cand_view 0 번 후보 (규칙 — 시뮬 위층 비교에서 가장 빠름, upper_lora/README "위층 비교")
     fuel     시간 비용 순회의 첫 목적지 (scripts/fuel_upper.h)
     slot0    피하지 않는 첫 후보 (기준선)
         │  LowCmd (목표 칸 · follow)
@@ -51,5 +53,5 @@ explore/
 
 탐사 강화학습(신경망 `network/`, PPO `ppo/`, 학습기 `scripts/train.cpp`, 두 층 계획 `ROADMAP.md`)은 2026-11-16 에 그만두고
 [archive/rl](../../archive/rl/README.md) 로 옮겼다 — 실물 LIMO 에서 시뮬과의 격차가 컸고 A* 아래층이 훨씬 빠르고 잘 됐다.
-시뮬에 남아 있던 아래층 정책 길(정책 명령·보상·자동 목표·사람 추적·학습 전용 관측)도 걷어냈다. `mdp/` 의 보상·커리큘럼 코드는 시뮬 걸음이
-아직 같이 계산해 그대로 두었다(판 끝 코드·관측과 한 몸이라 떼면 시뮬 결과가 바뀜 — 지금 도구는 보상을 안 읽음).
+시뮬에 남아 있던 아래층 정책 길(정책 명령·관측·자동 목표·사람 추적)과 `mdp/` 의 보상·커리큘럼·그래프 모드도 2026-11-17 에 걷어냈다
+(판 끝 코드·끝 조건은 `mdp/episode.h`, 옮긴 목록은 archive/rl README).

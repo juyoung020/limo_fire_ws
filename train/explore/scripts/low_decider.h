@@ -1,5 +1,5 @@
 // 합친 탐사의 위층을 판단 모델(llama-server /v1/systemone, zero-shot)에 맡기는 길 — 느린 주기 · 비동기. 실물 노드(limo_fire_rl low_rl upper:=decider)와
-// 시뮬(combine_run --upper decider --decider-period · --decider-latency)이 같은 코드로 돈다 (sim = real).
+// 시뮬(low_explore_check --upper decider --dec-period · --dec-latency, dec_rollout)이 같은 코드로 돈다 (sim = real).
 //
 // 요청 (combine_run --upper decider --decider-input both 와 같은 꼴 — decider.h): 유효 후보(빈 칸 아님 · 피하는 칸 아님) = hier 후보 8 칸 중 차례대로,
 //   글자 A … = 유효 후보 차례, 후보 특징 = 위층 관측 mdp::hier::F_* (거리 · 방위 · 크기 · 예상 관측량 · 지금 목표), 지도 사진 = 로봇 자기 지도 + 글자 동그라미.

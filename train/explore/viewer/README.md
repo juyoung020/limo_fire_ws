@@ -79,7 +79,7 @@ target/release/trainview --root /tmp/tv/runs
 | `time/` | `iterations`(필수), `total_timesteps`(필수, 단조 증가), `time_elapsed`(안 넣으면 runfolder 가 넣음), `fps`, `iter_ms`, `rollout_ms`, `update_ms`, `iterations_merged`(runfolder 가 넣음) |
 | `rollout/` 모집단 | `n_episodes`(합 — 가중치 분모), `ep_rew_mean`, `ep_len_mean`, `success_rate`, `collision_rate`, `truncation_rate`, `declare_rate`, `declare_short_rate`, `step_reward_mean` |
 | `rollout/` 탐사 지표 | `coverage_mean`(판 끝 덮은 비율, 정답 맵 기준), `coverage_at_declare_mean`(선언한 판만), `t95_mean`(95 % 덮음 도달 시간 s, 도달한 판만), `t95_reached_rate`, `path_len_mean`(m), `known_area_mean`(정책 지도에서 안 넓이 m²) |
-| `reward/<항>` | 판당 그 보상 항 합 평균. 항 이름은 `mdp/rewards.h` 가 정한다(아직 미정 — 무엇이든 받음). `run.json reward_terms` 에 같은 이름 |
+| `reward/<항>` | 판당 그 보상 항 합 평균. 항 이름은 그때 `mdp/rewards.h`(지금 `archive/rl`)가 정했다(무엇이든 받음). `run.json reward_terms` 에 같은 이름 |
 | `train/` | `policy_gradient_loss`, `value_loss`, `entropy_loss`(= −엔트로피), `approx_kl`, `clip_fraction`, `explained_variance`, `grad_norm`, `learning_rate`, `loss`, `std`, `log_std`, `std/<v\|vy\|w>`, `entropy/<v\|vy\|w\|declare>`, `advantage_std`, `advantage_mean`, `value_mean`, `declare_logit_mean`, `declare_prob_mean` |
 | `eval/` | `n_episodes`, `mean_reward`, `mean_ep_length`, `success_rate`, `collision_rate`, `truncation_rate`, `declare_short_rate`, `coverage_mean`, `coverage_at_declare_mean`, `t95_mean`, `t95_reached_rate`, `path_len_mean`, `frontier_t95_mean`(같은 맵 프론티어 기준선); `eval_reward/<항>` |
 | 그 밖 | `curriculum/stage`, `curriculum/<무엇>/<단계>`, `gpu/mem_used_mb`, `log/<무엇>_dropped`(0 이어야 함), `ts`(runfolder 가 넣음) |
@@ -170,6 +170,6 @@ rw.finish(path, line);  run.episode(line);
 
 ## 남은 일
 
-- 진짜 러너(`ppo/runner.cpp`)가 아직 없다. 보상 항 이름·덮음 정의·성공 기준·안전 시간은 `mdp` 에서 정해지면 run.json 에 싣는다(뷰어 코드는 안 바뀜).
+- RL 러너는 만들지 않고 그만뒀다(2026-11-16). 지금 실행 폴더를 쓰는 것은 프론티어 기준선 `frontier_run` 뿐이다.
 - 프론티어 기준선(`eval/frontier_t95_mean`, 평가 표 `ref_t95`)은 기준선 코드가 생기면 러너가 채운다.
 - 라이다를 매 걸음 다 싣는 것이 재생 파일 크기의 대부분이다. 판이 많아지면 몇 걸음마다로 줄일지 정한다.

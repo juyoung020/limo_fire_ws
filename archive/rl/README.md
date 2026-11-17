@@ -45,15 +45,15 @@
 | `train/explore/mdp/graph.h` · `sim/include/graph_env.h` · `sim/tools/graph_check.cu` | 그래프 모드(HEADER·ARiADNE 식 노드 그래프 관측·결정) — 시뮬 커널·참조판·`env_verify --graph`·`env_bench --graph`·env.yaml `action.graph` 도 뺌 |
 | `train/explore/scripts/oracle_run.cpp` | 정답 지도를 아는 허용 상한 (커리큘럼 문턱 측정) |
 | `train/explore/mdp/rewards.h` · `curriculums.h` | 보상 항·커리큘럼(단계 오르내림) — 판 끝 코드·끝 조건은 `mdp/episode.h` 로 남김. 시뮬의 보상 버퍼·`Env::get_reward`·`get_terms`·단계별 맵 고르기·오차 배율도 뺌 (`get_done` 으로) |
-| `sim/include/low_rl.h` 의 아래층 관측(`lowrl_pack` · `lowrl_img`, `mdp::low`) | 그만둔 정책의 입력 꼴 — 실물 노드 녹화(`sim/tools/low_node_rec.h`)는 판 2 로 바꿈 (판 1 녹화는 새 코드가 건너뛰며 읽음, 그때 코드로 읽으려면 `e5a7c74`). EnvCfg 의 빈 칸(`gone_rl_*`)·커리큘럼·그래프·단독 과제 칸도 지움 |
+| `sim/include/low_rl.h` 의 아래층 관측(`lowrl_pack` · `lowrl_img`, `mdp::low`) | 그만둔 정책의 입력 꼴 — 실물 노드 녹화(`sim/tools/low_node_rec.h`)는 판 2 로 바꿈 (지금 판 4 — 판 1 녹화는 새 코드가 RL 칸을 건너뛰며 읽음, 그때 코드로 읽으려면 `e5a7c74`). EnvCfg 의 빈 칸(`gone_rl_*`)·커리큘럼·그래프·단독 과제 칸도 지움 |
 | (코드에서만 뺌) | `frontier_run` 의 계층형 규칙 정책 판(`slot0` · `graph_*` · `cand_*` — 기준선 `nav2` · `fast` 는 그대로), 아래층 단독 과제 모드(`low_explore 0` — 목표 수·시간으로 판을 끝내던 학습 판) |
 
 같은 커밋에서 지금 코드에서 뺀 것: `low_rl` 노드의 `lower:=rl` · `checkpoint` · `upper:=topic`(RL 아래층에서만 돌던 시험용), `combine_run --policy`(와 그것만 쓰던
 `--hold` · `--rule-near` · slot0 갈래), `low_explore_check --ckpt/--lower`, `room_run --ckpt`, RViz 탐사 패널의 `/explore_rl` 항목, 위층 목표 넘기기의 RL 가지(`low_explore_ctl.h`).
 
-**제자리에 남긴 것** (지금 코드가 쓰므로): 시뮬(`train/explore/sim`)과 그 안의 아래층 RL 걸음(`low_rl.h` — 규칙 추종기·막힘 신호·닿음이 같은 구조체를 씀),
-`mdp/` 의 보상·커리큘럼(시뮬 걸음이 같이 계산 — 떼면 시뮬 결과가 바뀜), `RobotEnv` 의 아래층 관측 모드와 `low_mov.h`(합친 탐사 노드가 같은 걸음 차례로 부름 —
-시뮬과 비트 같음을 지키려고 그대로), 학습 뷰어(`train/explore/viewer` — 프론티어 기준선 실행 폴더도 봄), 위층 판단 모델 LoRA(`train/explore/upper_lora`, 지도 학습 — DPO 부분 포함).
+**제자리에 남긴 것** (지금 코드가 쓰므로): 시뮬(`train/explore/sim`)과 그 안의 걸음 차례 `low_rl.h`(이름만 RL — 경로 계획 차례 · 막힘 신호 · 닿음),
+학습 뷰어(`train/explore/viewer` — 프론티어 기준선 실행 폴더도 봄), 위층 판단 모델 LoRA(`train/explore/upper_lora`, 지도 학습 — DPO 부분 포함).
+처음(2026-11-16)에는 `mdp/` 보상·커리큘럼과 `RobotEnv` 아래층 관측 모드 · `low_mov.h` 도 남겼으나 2026-11-17 정리(위 표 · `e5a7c74`)에서 뺐다.
 
 ## 되살리기
 
@@ -71,4 +71,4 @@ cmake --build build_rl -j8 --target train low_policy_run combine_run
 
 - 학습 실행 폴더: `train/explore/runs/` (이 PC 약 38 GB — `explore_h*` 위층, `low_*` 아래층, `low_w3/ckpt/model_*.bin` 등 체크포인트·로그·평가)
 - 로봇의 체크포인트: `~/ckpt/low_w3_36000.bin`
-- 실물 녹화: `~/limo_bags/1116_*` (RL 아래층 노드 녹화 `1116_fuel_rl_1_node.bin` · `1116_slot0_1_node.bin` 은 녹화 꼴이 같은 `531e7fc` 판의 `low_explore_replay` 로 다시 돌린다 — `2a17a5a` 부터 구조체 크기가 달라 안 읽힘)
+- 실물 녹화: `~/limo_bags/1116_*` (RL 아래층 노드 녹화 `1116_fuel_rl_1_node.bin` · `1116_slot0_1_node.bin` 은 지금 `low_explore_replay` 로도 읽히지만 명령까지 그때와 같게 다시 돌리려면 `531e7fc` 판으로)

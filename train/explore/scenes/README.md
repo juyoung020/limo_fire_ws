@@ -1,4 +1,4 @@
-# scenes — 탐사 RL 학습·시험 맵 묶음
+# scenes — 탐사 시뮬 학습·시험 맵 묶음
 
 옛 ROADMAP(`archive/explore_roadmap_1104`) S2. 장면 파일(`.scene`, 형식 2 — `sim/include/scene_host.h`)과 목록은 다시 만들 수 있는 생성물이라 저장소에 넣지 않는다(.gitignore). 아래 명령으로 같은 씨앗이면 같은 묶음이 나온다.
 
@@ -12,7 +12,7 @@
 | `src/procthor_10k/` | 받은 데이터 (아래) |
 | `hssd_train/`·`hssd_test/` | HSSD 3D 메시 집 (`hssd_<id>_l<층>.scene` + `list.tsv` 같은 꼴). 학습 목록에 넣을지는 따로 정함 — 아래 "HSSD 메시 장면" |
 
-## 크기 등급 (커리큘럼이 고르는 값)
+## 크기 등급 (그만둔 RL 커리큘럼이 고르던 값)
 
 갈 수 있는 바닥 넓이(`build_world` 의 `n_floor × 0.05²`) 기준. 문턱은 `sim/tools/scene_list.cpp` `grade_of`.
 
