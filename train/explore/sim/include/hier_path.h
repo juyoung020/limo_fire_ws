@@ -787,7 +787,27 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
     if (va < vc) why_bind = kLowApproach;
     vc = dm::minf(vc, va);
   }
-  float wc = vc * curv;
+  // 섀시 turn_gain (drive.h turn_gain — 실물 1116 A* 녹화에서 잰 값: 달리며 낸 ω 가 명령의 g(|v|) 배, |v| 0.6 m/s 0.73 · 1.0 m/s 0.10):
+  // 경로 곡률 κ 를 따라가려면 명령 ω = v κ / g(v). 그것이 ω 한도(w_max — 섀시 제자리 ω 3.1 rad/s 까지)를 넘으면 v 를 줄임 (v κ / g(v) ≤ w_max — g 는 v 에 줄어
+  // 같은 κ 에서 v 를 줄이면 늘 풀림, 반 나누기 16 번). 돌며 가기(curved_follow — 제자리 회전 문턱이 nav2 0.785 보다 큼)일 때만, 모형이 없으면(n_tg 0)
+  // 옛 RPP 그대로 (ω = v κ 를 자름)
+  float wc;
+  if (c.drive.n_tg > 0 && c.rot_min_angle > 0.8f) {
+    const float ak = dm::absf(curv);
+    const auto need = [&](float v) { return v * ak / dm::maxf(turn_gain(c.drive, v), 0.05f); };
+    if (need(vc) > c.w_max) {
+      float lo = 0.f, hi = vc;
+      for (int it = 0; it < 16; ++it) {
+        const float mid = 0.5f * (lo + hi);
+        if (need(mid) <= c.w_max) lo = mid; else hi = mid;
+      }
+      vc = lo;
+      why_bind = kLowCurv;
+    }
+    wc = curv >= 0.f ? need(vc) : -need(vc);
+  } else {
+    wc = vc * curv;
+  }
   wc = dm::maxf(-c.w_max, dm::minf(c.w_max, wc));
   *vc_o = vc;
   *wc_o = wc;

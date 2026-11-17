@@ -108,6 +108,15 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     c.decide_steps = (int)std::lround(dp / pv);
     if (c.decide_steps < 1 || std::fabs(c.decide_steps * pv - dp) > 1e-4f) throw std::runtime_error(path + ": action.path.period 는 velocity.period 의 배수");
     c.path_v = ap["v"].as<float>();
+    // 돌며 가기 (env.yaml action.path.curved_follow): 켜면 제자리 회전 문턱 · 회전 ω · ω 한도를 nav2_params(기준선 Nav2 판 0.785 · 1.0 · 1.0) 대신 아래 값으로.
+    // 끄면 nav2_params 그대로 = 2026-11-17 전 추종기 (turn_gain 맞춤도 꺼짐 — hier_path.h path_follow 가 문턱으로 가름)
+    if (ap["curved_follow"] && ap["curved_follow"].as<bool>()) {
+      c.rot_min_angle = need(ap, "rotate_to_heading_min_angle", path).as<float>();
+      c.rot_w = need(ap, "rotate_to_heading_angular_vel", path).as<float>();
+      c.w_max = need(ap, "max_angular_vel", path).as<float>();
+      if (!(c.rot_min_angle > 0.8f) || c.w_max > need(y, "drive", path)["max"][1].as<float>())
+        throw std::runtime_error(path + ": curved_follow 는 rotate_to_heading_min_angle > 0.8 · max_angular_vel ≤ drive.max ω");
+    }
     c.cand_v2 = ap["candidates_v2"] && ap["candidates_v2"].as<bool>() ? 1 : 0;
     if (const char* g = std::getenv("SIM_CAND_V2")) c.cand_v2 = g[0] == '1' ? 1 : 0;   // 앞뒤 비교
     {   // 아래층 계측·단독 과제 (include/low_task.h). 스위치는 도구가 켠다 — 여기선 값만
