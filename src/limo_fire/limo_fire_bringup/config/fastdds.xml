@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fast DDS(Humble 기본 RMW rmw_fastrtps_cpp, Fast DDS 2.6) 참가자 설정: 공유 메모리 칸(segment)을 영상 몇 장이 들어가게 키움.
+     env.sh 가 FASTRTPS_DEFAULT_PROFILES_FILE 로 고른다 — 보내는 쪽(카메라)·받는 쪽(/app) 모두 env.sh 를 source 한 셸에서 띄울 것.
+     로봇(~/wego_ws 가 있는 컴퓨터)은 같은 내용에 UDP 를 이 컴퓨터 안(127.0.0.1)으로만 묶은 fastdds_localhost.xml 을 쓴다.
+
+     왜: 기본 공유 메모리 칸은 참가자마다 512 KB 인데 컬러 640×480 rgb8 = 921 KB, 깊이 16UC1 = 614 KB 가 1 장보다 크다.
+       보내는 참가자가 자기 칸에 쓰고 받는 쪽이 읽으므로(칸은 보내는 쪽 것) 칸이 작으면 다 읽기 전에 덮여 장이 빠진다.
+       Fast DDS 문서: "Setting a segment_size close to or smaller than the data size poses a high risk of data loss,
+       since the write operation will overwrite the buffer during a single send operation."
+       (https://fast-dds.docs.eprosima.com/en/v2.6.10/fastdds/transport/shared_memory/shared_memory.html)
+       ROS Discourse "Shared memory transport in FastDDS for Image publisher has lower frame rate than UDP transport"
+       (https://discourse.openrobotics.org/t/39874): 4.1 MB 영상이 기본 칸에서 5.5 fps → 칸 4198400 B 로 25 fps.
+     4 MB = 컬러 + 깊이 한 벌(1.5 MB)의 두 배 넘게. 이 PC 합성 시험(docs/runtime_io.md "DDS 설정"): 기본 칸은 깊이 1~3 % · CPU 가 몰리면 컬러 40~50 % 이상 빠짐, 4 MB 는 0.
+     전송 둘은 Humble 기본(UDPv4 + 공유 메모리)과 같다 — 칸 크기만 다름. 같은 컴퓨터 안은 공유 메모리, 발견·다른 컴퓨터는 UDP.
+     (한 장을 64 KB 조각으로 나눠 보내는 것은 그대로다: 참가자의 최대 메시지 = 전송들 가운데 가장 작은 값 = UDP 65500 B)
+     주의: ROS_LOCALHOST_ONLY=1 과 같이 쓰지 않는다 — rmw_fastrtps 가 이 파일 전송 위에 자기 것(UDP 127.0.0.1 + 512 KB 칸)을 더 붙여
+     칸이 둘이 되고 UDP 범위도 섞인다(rmw_fastrtps_shared_cpp participant.cpp). env.sh 가 끈다. -->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>shm_4mb</transport_id>
+        <type>SHM</type>
+        <segment_size>4194304</segment_size>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>udp</transport_id>
+        <type>UDPv4</type>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="limo_fire" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>shm_4mb</transport_id>
+          <transport_id>udp</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>

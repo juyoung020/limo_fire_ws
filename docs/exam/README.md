@@ -602,9 +602,12 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 **Q32. 깊이 주기가 19~25 Hz 로 떨어진다.**
 - 원인: 로봇 CPU 부하(Webots·RViz 와 같이, 정렬 켬). 안 쓰는 포인트 클라우드 2 개·IR 을 끄자 19 → 30 Hz, 드라이버 CPU 42 → 35 %.
 - 대응: 쓰는 스트림만 켬, RViz 는 PC 에서(젯슨 RViz 106 % → 10 fps 제한 76 %), 구독은 BE·최근 것만, BT 의 `IsTopicAlive` 문턱(실물 20 Hz, 시뮬 8 Hz) 으로 감시. 📁 `docs/sensor_topics.md`, `docs/simulation.md`.
+- 받는 쪽에서 빠지는 것도 있다: Fast DDS 공유 메모리 칸 기본 512 KB 가 영상 한 장(깊이 614 KB · 컬러 921 KB)보다 작아, 받는 쪽이 늦으면 칸이 덮여 그 장이 버려진다.
+  이 PC 합성 시험에서 기본 칸은 깊이 1~3 % 빠지고, 두 프로세스를 코어 2 개에 몰면 컬러가 14.5~18.5 Hz, 1 개면 거의 0 장. 칸 4 MB(`limo_fire_bringup/config/fastdds.xml`, `env.sh` 가 고름)면 모두 30 Hz.
+  보내는 쪽 칸이 기준이라 카메라도 `env.sh` 셸에서 띄워야 한다. `ROS_LOCALHOST_ONLY=1` 을 같이 켜면 rmw 가 기본 칸을 더 붙여 섞인다 → 로봇은 UDP 를 127.0.0.1 로 묶은 `fastdds_localhost.xml`. 📁 `docs/runtime_io.md` "DDS 설정".
 
 **Q33. PC 에서 로봇 토픽이 하나도 안 보인다.**
-- 차례로: ① `ROS_LOCALHOST_ONLY=1`(로봇 env.sh 가 WeGo 대시보드와 같게 켬) → 로봇 터미널마다 0 으로 하고 노드 다시 켜기 ② `ROS_DOMAIN_ID` 같게(이번 시험도 다른 사람 시뮬과 안 섞이게 93 을 씀 🧪 `00_when.txt`) ③ 방화벽(UDP 7400 + 250×도메인) ④ 같은 서브넷 — Tailscale 은 멀티캐스트를 안 넘겨 Fast DDS 발견이 안 됨 → Discovery Server(`fastdds discovery`, `ROS_DISCOVERY_SERVER`) ⚠ 아직 안 해 봄.
+- 차례로: ① 로봇 env.sh 가 이 컴퓨터 안에서만 통하는 DDS 설정(`fastdds_localhost.xml` = WeGo 대시보드의 `ROS_LOCALHOST_ONLY=1` 과 같은 범위)을 고름 → 로봇 터미널마다 `FASTRTPS_DEFAULT_PROFILES_FILE` 을 `fastdds.xml` 로 하고 노드 다시 켜기 ② `ROS_DOMAIN_ID` 같게(이번 시험도 다른 사람 시뮬과 안 섞이게 93 을 씀 🧪 `00_when.txt`) ③ 방화벽(UDP 7400 + 250×도메인) ④ 같은 서브넷 — Tailscale 은 멀티캐스트를 안 넘겨 Fast DDS 발견이 안 됨 → Discovery Server(`fastdds discovery`, `ROS_DISCOVERY_SERVER`) ⚠ 아직 안 해 봄.
 - 📁 `limo_fire_bringup/README.md` (가) 절.
 
 **Q34. 리모컨·탐사 노드·Nav2 가 모두 `/cmd_vel` 을 내면? 로봇을 어떻게 안전하게 세우나?**

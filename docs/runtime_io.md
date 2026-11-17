@@ -89,7 +89,8 @@ flowchart LR
 
 - 시뮬(`sim.launch.xml perception:=true`)은 인식만 `limo_fire_perception/perception.launch.xml`(자기 컨테이너 `/perception_container`)로 띄운다 — 탐사 노드 없이.
 - 저장 지도 주행(`navigation.launch.xml`)의 "○○ 로 가" 는 `limo_fire_navigation object_goto`(따로 프로세스, Nav2 액션). `/app` 과 같이 띄우지 않는다(둘 다 `/explore/goal` 을 받음).
-- `env.sh` 는 RMW 를 정하지 않으므로 Humble 기본(Fast DDS)이다. 프로세스 사이는 DDS(직렬화 → 공유 메모리·UDP → 역직렬화), `/app` 안은 프로세스 안 전달(포인터).
+- `env.sh` 는 RMW 를 정하지 않으므로 Humble 기본(Fast DDS 2.6)이다. 프로세스 사이는 DDS(직렬화 → 공유 메모리·UDP → 역직렬화), `/app` 안은 프로세스 안 전달(포인터).
+  `env.sh` 가 `FASTRTPS_DEFAULT_PROFILES_FILE` 로 공유 메모리 칸을 4 MB 로 키운 설정을 고른다(아래 "DDS 설정") — 카메라와 `/app` 을 모두 `env.sh` 셸에서 띄운다.
 
 ## 스레드 — 무엇을 받아 무엇을 내나
 
@@ -124,6 +125,39 @@ flowchart LR
 
 4 번(깊이 두 번)은 남겨 둔다: 깊이를 한 번 받아 나눠 주는 중계 노드를 둬도 Humble rclcpp 는 밖에서 온 메시지를 프로세스 안으로 넘길 때 한 번 복사하므로
 (`any_subscription_callback.hpp` `create_ros_unique_ptr_from_ros_shared_ptr_message`) 복사 수가 같고 노드·토픽만 는다. 역직렬화도 영상은 거의 `memcpy` 하나다.
+
+### DDS 설정 — 공유 메모리 칸 4 MB (`limo_fire_bringup/config/fastdds.xml`)
+
+같은 컴퓨터 안 프로세스 사이(카메라 → `/app`)는 Fast DDS 공유 메모리로 간다. 보내는 참가자가 **자기 칸(segment)** 에 쓰고 받는 쪽이 읽는데,
+칸 기본값 512 KB 가 영상 한 장(컬러 921 KB · 깊이 614 KB)보다 작아 받는 쪽이 다 읽기 전에 덮이면 그 장은 빠진다.
+Fast DDS 문서: "Setting a segment_size close to or smaller than the data size poses a high risk of data loss"
+([Shared Memory Transport, 2.6](https://fast-dds.docs.eprosima.com/en/v2.6.10/fastdds/transport/shared_memory/shared_memory.html)),
+같은 일을 겪은 사례 [ROS Discourse #39874](https://discourse.openrobotics.org/t/shared-memory-transport-in-fastdds-for-image-publisher-has-lower-frame-rate-than-udp-transport/39874) (4.1 MB 영상 5.5 → 25 fps).
+
+| 파일 | 전송 | 쓰는 곳 |
+|---|---|---|
+| `fastdds.xml` | 공유 메모리 칸 4 MB + UDPv4 (Humble 기본과 같은 둘, 칸만 큼) | PC (`env.sh` 기본) |
+| `fastdds_localhost.xml` | 위와 같고 UDP 를 `127.0.0.1` 로만 | 로봇 (`~/wego_ws` 가 있으면 `env.sh` 가 고름) = 옛 `ROS_LOCALHOST_ONLY=1` 과 같은 범위 |
+
+- `ROS_LOCALHOST_ONLY=1` 은 같이 쓰지 않는다(`env.sh` 가 끔): rmw_fastrtps 가 XML 위에 자기 전송(UDP 127.0.0.1 + 512 KB 칸)을 더 붙여 칸이 둘이 된다
+  (rmw_fastrtps_shared_cpp `participant.cpp`, 이 PC 에서 발행 프로세스에 4 MB·512 KB 칸이 같이 붙는 것을 봄).
+- 64 KB 조각으로 나눠 보내는 것은 그대로다(참가자의 최대 메시지 = 전송들 가운데 가장 작은 것 = UDP 65500 B). 칸을 키우면 조각 여러 장이 덮이지 않고 칸에 남는다.
+- 칸은 참가자(프로세스)마다 하나씩 `/dev/shm/fastrtps_*` 4 MB (쓴 만큼만 메모리를 씀).
+- 대시보드로 띄운 WeGo 드라이버처럼 `env.sh` 없이 뜬 발행자는 기본 칸 그대로다 — 카메라는 `robot.launch.xml` 로 띄운다.
+
+**확인 (이 PC, 합성 카메라)**: 다른 프로세스가 640×480 깊이 16UC1 + 컬러 rgb8 을 30 Hz(R / V / 10, 카메라와 같은 QoS)로 내고, 받는 프로세스가 깊이 구독 2 개 + 컬러 1 개
+(SensorData, `/app` 과 같음)로 받은 때 − stamp 를 잼. 도구는 저장소 밖 보조(`depth_bench`, rclcpp 컴포넌트 둘).
+
+| 조건 | 기본 (512 KB) 받은 장 · 빠진 비율 | 4 MB 받은 장 · 빠진 비율 |
+|---|---|---|
+| 코어 제한 없음 (30 s × 5 번) | 깊이 29.2~29.6 Hz (1.3~2.8 % 빠짐) · 컬러 29.6~29.8 Hz (0.6~1.2 %) | **30.0 · 30.0 Hz (0 %)** 5 번 모두 |
+| 두 프로세스를 코어 2 개에 (`taskset -c 2,3`, 20 s × 2 번) | 깊이 28.7 · 29.4 Hz · **컬러 14.5 · 18.5 Hz (38~52 % 빠짐)** | 30.0 · 30.0 Hz (0 %) |
+| 코어 1 개에 (`taskset -c 2`, 30 s × 3 번) | **거의 0 장** (깊이 0 · 0 · 6 장, 컬러 0 · 0 · 1 장) | 30.0 · 30.0 Hz (0 %) |
+
+- 받은 장의 지연(중앙 0.5~0.9 ms)·CPU(한 코어 기준 발행 2.2~3.7 %, 받기 2.3~3.0 %)는 둘이 잡음 안에서 같다 — 얻는 것은 **빠지는 장이 없어짐**이다. 받는 쪽 CPU 가 몰릴수록(로봇: YOLO·판단 모델·RViz) 기본 칸의 손실이 커진다.
+- 전송 확인: 발행 프로세스를 `strace -f -e sendmsg,sendto` 로 7 s 보면 UDP 는 43~64 번 · 14~22 KB(발견만, 60 KB 넘는 것 0) — 영상 1.5 MB × 30 장/초는 모두 공유 메모리로 감.
+  칸 크기는 `/proc/<발행 PID>/maps` 의 `/dev/shm/fastrtps_*` 파일 크기: 기본 549 408 B, 이 설정 4 219 424 B. 공유 메모리 덤프(`rtps_dump_file`)의 데이터 조각은 65 528 B.
+- 범위 확인: `fastdds_localhost.xml` ↔ `ROS_LOCALHOST_ONLY=1` 참가자는 양쪽으로 받음(150 장/5 s), 기본 참가자와는 0 장 — `ROS_LOCALHOST_ONLY=1` ↔ 기본도 0 장이라 옛 동작과 같음. 이 판의 UDP 목적지는 127.0.0.1 · 239.255.0.1 뿐.
 
 ### 앞(11-18 이름 정리) · 뒤(이 구조) — PC 녹화 재생 (`1116_fuel_rl_1`, `--clock`, 켬 dry run, 40 s 평균)
 

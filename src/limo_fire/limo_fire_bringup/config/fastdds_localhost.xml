@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- fastdds.xml 과 같고 UDP 를 이 컴퓨터 안(127.0.0.1)으로만: 로봇용 (= ROS_LOCALHOST_ONLY=1 과 같은 범위, WeGo 대시보드와 같음).
+     ROS_LOCALHOST_ONLY=1 을 같이 켜면 rmw 가 기본 전송(512 KB 칸)을 더 붙여 섞이므로, 그 대신 이 파일로 같은 범위를 정한다
+     (ROS_LOCALHOST_ONLY=1 참가자와는 양쪽으로 통하고, 기본 참가자와는 안 통함 — 옛 동작과 같음).
+     PC 에서 로봇 토픽을 보려면 로봇 터미널에서 export FASTRTPS_DEFAULT_PROFILES_FILE=<저장소>/src/limo_fire/limo_fire_bringup/config/fastdds.xml
+     (limo_fire_bringup/README "PC 에서 로봇 보기"). 까닭·출처는 fastdds.xml 머리말. -->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>shm_4mb</transport_id>
+        <type>SHM</type>
+        <segment_size>4194304</segment_size>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>udp_localhost</transport_id>
+        <type>UDPv4</type>
+        <interfaceWhiteList>
+          <address>127.0.0.1</address>
+        </interfaceWhiteList>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="limo_fire" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>shm_4mb</transport_id>
+          <transport_id>udp_localhost</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>

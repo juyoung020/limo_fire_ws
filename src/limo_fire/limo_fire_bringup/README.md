@@ -3,7 +3,7 @@
 실물 LIMO Pro 켜기. WeGo 대시보드 버튼이 하던 일(`~/limo_ros2_start_shortcut/bashes/*.sh` → `wego` 패키지 launch)을 우리 XML launch 로 옮겼다. 값은 WeGo 그대로다.
 
 ```bash
-source ~/limo_fire_ws/env.sh                                   # 실물이면 ~/wego_ws 드라이버 + ROS_LOCALHOST_ONLY=1
+source ~/limo_fire_ws/env.sh                                   # DDS 설정(config/fastdds*.xml), 실물이면 ~/wego_ws 드라이버 + 이 컴퓨터 안에서만
 ros2 launch limo_fire_bringup robot.launch.xml [viz:=true]     # 1. 센서·구동 (항상 먼저)
 ros2 launch limo_fire_bringup mapping.launch.xml               # 2-a. 지도 만들기 (Cartographer + RViz)
 ros2 launch limo_fire_bringup save_map.launch.xml [name:=map]  #      지도 저장
@@ -43,9 +43,11 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=<맵>        # 시뮬: 1(sim
 1. **같은 네트워크**: 로봇과 PC 가 같은 Wi-Fi(같은 서브넷)에 있어야 한다. ROS 2 Humble 기본 DDS(Fast DDS)는 서로를 UDP 멀티캐스트로 찾는다.
    테일스케일(Tailscale)은 멀티캐스트를 넘기지 않아 그대로는 못 찾는다 — 테일스케일로만 이을 때는 Fast DDS 디스커버리 서버
    (`fastdds discovery -i 0 -p 11811` 를 로봇에서, 양쪽에 `export ROS_DISCOVERY_SERVER=<로봇 IP>:11811`)를 써야 한다(이 저장소에서 아직 안 해 봄 — **확인 필요**).
-2. **`ROS_LOCALHOST_ONLY` 끄기 (로봇)**: `env.sh` 는 로봇(`~/wego_ws` 가 있는 컴퓨터)에서 `ROS_LOCALHOST_ONLY=1` 을 켠다(WeGo 대시보드와 같은 설정,
-   [hardware.md](../../../docs/hardware.md) "기동"). 이러면 로봇 밖에서 토픽이 하나도 안 보인다. 로봇의 **1·2 터미널 모두** `env.sh` 다음에
-   `export ROS_LOCALHOST_ONLY=0` 을 하고 띄운다(이미 떠 있는 노드는 껐다 다시 켜야 바뀜). 대시보드로 켠 WeGo 노드는 여전히 로봇 안에서만 보인다.
+2. **로봇 밖으로 열기 (로봇)**: `env.sh` 는 로봇(`~/wego_ws` 가 있는 컴퓨터)에서 `config/fastdds_localhost.xml`(UDP 를 127.0.0.1 로만 —
+   WeGo 대시보드의 `ROS_LOCALHOST_ONLY=1` 과 같은 범위, [hardware.md](../../../docs/hardware.md) "기동")을 고른다. 이러면 로봇 밖에서 토픽이 하나도 안 보인다.
+   로봇의 **1·2 터미널 모두** `env.sh` 다음에 `export FASTRTPS_DEFAULT_PROFILES_FILE=$HOME/limo_fire_ws/src/limo_fire/limo_fire_bringup/config/fastdds.xml`
+   을 하고 띄운다(이미 떠 있는 노드는 껐다 다시 켜야 바뀜). `ROS_LOCALHOST_ONLY=1` 은 켜지 않는다(공유 메모리 설정과 섞임 — [runtime_io.md "DDS 설정"](../../../docs/runtime_io.md#dds-설정--공유-메모리-칸-4-mb-limo_fire_bringupconfigfastddsxml)).
+   대시보드로 켠 WeGo 노드는 여전히 로봇 안에서만 보인다.
 3. **`ROS_DOMAIN_ID` 맞추기**: 로봇과 PC 가 같은 값이어야 한다. 로봇이 따로 정하지 않았으면 0 (지금 로봇 값은 **확인 필요**: 로봇에서 `echo $ROS_DOMAIN_ID`).
    같은 Wi-Fi 에 다른 팀 로봇·시뮬이 있으면 둘 다 겹치지 않는 값으로(예: `export ROS_DOMAIN_ID=57`) — 1·2·3 터미널 모두.
 4. **방화벽**: PC 에 ufw 가 켜져 있으면 로봇에서 오는 DDS UDP 를 막는다. `sudo ufw status` 로 보고, 켜져 있으면 `sudo ufw allow in proto udp from <로봇 IP>`.
@@ -66,7 +68,7 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=<맵>        # 시뮬: 1(sim
 
 ### (나) 젯슨에서 바로 (모니터 꽂음)
 
-`ROS_LOCALHOST_ONLY=1` 그대로 된다(모두 로봇 안). 위 차례에서 3 을 로봇 터미널에서 띄우거나 2 를 `stack:=true rviz:=true` 로.
+`env.sh` 그대로 된다(모두 로봇 안). 위 차례에서 3 을 로봇 터미널에서 띄우거나 2 를 `stack:=true rviz:=true` 로.
 RViz 는 젯슨 CPU 를 많이 쓴다(화면 갱신 10 fps 에서 76 %, [docs/simulation.md "운용 화면"](../../../docs/simulation.md#운용-화면-limo_fire_description-viewerlaunchxml--rvizlimo_firerviz)) —
 YOLO·탐사를 같이 돌릴 때는 (가) 를 권한다. 로봇의 `install/` 에 `limo_fire_rviz` 가 빌드돼 있어야 패널이 뜬다(`colcon build --packages-select limo_fire_rviz limo_fire_explore`).
 
@@ -84,7 +86,7 @@ YOLO·탐사를 같이 돌릴 때는 (가) 를 권한다. 로봇의 `install/` �
 ### 안 될 때
 
 - **패널이 안 보임**: Panels → Add New Panel 에 `limo_fire_rviz/ExplorePanel` 이 없으면 그 터미널이 `install/setup.bash` 를 안 읽었거나 `limo_fire_rviz` 를 안 빌드한 것. 있으면 추가하고 File → Save Config.
-- **`/map` 이 없음 · 지도가 안 그려짐**: PC 에서 `ros2 topic list` 에 `/map` 이 없으면 네트워크 문제(위 1~4: `ROS_LOCALHOST_ONLY`·`ROS_DOMAIN_ID`·방화벽·같은 Wi-Fi). 로봇에서도 없으면 2 번 터미널(Cartographer) 로그를 본다.
+- **`/map` 이 없음 · 지도가 안 그려짐**: PC 에서 `ros2 topic list` 에 `/map` 이 없으면 네트워크 문제(위 1~4: 로봇 DDS 범위(`fastdds_localhost.xml`)·`ROS_DOMAIN_ID`·방화벽·같은 Wi-Fi). 로봇에서도 없으면 2 번 터미널(Cartographer) 로그를 본다.
 - **TF 없음 (Global Status: Error, Fixed Frame map 없음)**: 1 번(EKF `odom → base_link`)과 2 번(Cartographer `map → odom`)이 떠 있는지. `/scan` 이 와야 Cartographer 가 `map` 을 낸다.
 - **버튼이 꺼져 있음 · "노드 없음"**: `ros2 service list | grep enable` 에 `/explore/frontier_explorer/enable` 이 있어야 한다. 없으면 2 번에 탐사 노드가 안 떴거나 네트워크 문제.
   있는데 눌러도 안 움직이면 `ros2 topic echo /explore/frontier_explorer/status` 를 본다("Nav2 navigate_to_pose 서버 없음" → Nav2 가 안 떴음, "TF 없음" → 위 TF).
