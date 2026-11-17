@@ -5,9 +5,6 @@ object_goto:
     stand_band: 0.6        # m, 설 자리 고리 폭 (stand_dist ~ stand_dist + stand_band)
     robot_radius: 0.25     # m, 설 자리 둘레 빈 칸 반경 (LIMO 외접 반경 0.21 + 여유) — 잠정
     occupied_threshold: 50 # 지도 값이 이 이상이면 막힘 (nav2 map_server occupied_thresh 0.65 → 65 보다 낮게, 모름(-1)은 막힘)
-    query_wait: 3.0        # s, 설명 검색(SigLIP2) 답 기다림
-    query_min_score: 0.003 # 설명 검색 1 위 점수 하한 (SigLIP2 시그모이드 확률). 1116 녹화 물체 45 개에서 맞는 1 위 점수 0.006~0.27 (README) — 잠정
-    requery_s: 5.0         # s, 지도에 없을 때 설명 검색을 다시 하는 간격
     # 한글 이름 = 물체 지도 클래스 이름 (COCO 80 종 · 화재 7 종). 영문 클래스 이름은 그대로 써도 된다
     aliases: ["사람=person", "의자=chair", "소파=couch", "침대=bed", "식탁=dining_table", "책상=dining_table", "변기=toilet",
               "티비=tv", "TV=tv", "노트북=laptop", "마우스=mouse", "리모컨=remote", "키보드=keyboard", "휴대폰=cell_phone", "핸드폰=cell_phone",

@@ -234,41 +234,6 @@ PY
 
 `config/yolo_coco.yaml` 의 `engine_path` 는 파일 이름만 쓴다 — `models/` 의 엔진이 `colcon build` 때 설치 폴더로 복사되고 노드가 거기서 찾는다.
 
-## 설명 글로 물체 찾기 — SigLIP2 (`object_search`, 2026-11-17)
-
-"빨간 컵", "소화기 옆 의자", "모니터" 같은 글로 지도 위 물체를 점수순으로 찾는다. 모델: [google/siglip2-base-patch16-224](https://huggingface.co/google/siglip2-base-patch16-224)
-(고정 해상도 — NVIDIA 문서상 naflex 판은 ONNX·TensorRT 로 못 내보냄: [SigLIP 2 object embeddings](https://docs.nvidia.com/vss/latest/models/clip-object-embeddings.html)). 다국어로 학습돼 한글 글도 된다.
-
-- `object_mapper` 가 물체마다 좋은 원본 사진(상자 + 10 % 여백)을 `~/object_views`(frame_id = 물체 이름)로 내고, `object_search` 가 SigLIP2 그림 벡터로 바꿔 물체마다 최근 좋은 사진 4 장을 둔다.
-- 글(`/object_mapper/query`) → `"a photo of {글}."` → C++ 토크나이저(Gemma BPE, `siglip_tokenizer.hpp` — HF tokenizers 와 8 개 시험 글 모두 같은 토큰) → 글 벡터.
-  물체 점수 = 그 물체 사진들 중 가장 높은 sigmoid(112.67·cos − 16.77). 여러 방향 사진을 평균하면 오히려 나빠진다는 보고([Oxford, arXiv 2412.01539](https://arxiv.org/html/2412.01539v1))가 있어 최댓값.
-  결과 `/object_mapper/query_result`(점수순 Detection3DArray). `object_goto` 가 이름·별칭에 없는 글을 여기로 묻는다.
-- 글 탑의 토큰 표(256000 × 768, fp32 786 MB)는 GPU 엔진에서 빼 `siglip2_tok_emb.f16`(393 MB) 을 mmap 하고 요청 토큰 64 줄만 읽는다 — Orin 8 GB 에 판단 모델과 같이 올리려고.
-  엔진은 그림(약 93 M 개 값)·글 몸통(약 85 M) 둘.
-- 확인 (PC, 같은 가중치 PyTorch): 1116_fuel_rl_1 녹화에서 YOLO 가 찾은 물체 45 장(의자 21 · 사람 18 · TV 4 · 여행가방 2)으로 글 검색 1 위 —
-  chair·의자·a person·사람·television·모니터 6 개 맞음, suitcase·여행 가방 틀림(녹화의 '여행가방' 2 장이 실제로는 다른 물체로 보임). 맞는 1 위 점수 0.006~0.27 → `object_goto query_min_score` 0.003.
-  글 탑을 둘로 나눈 것은 원래 `get_text_features` 와 출력이 같음(최대 차 0.0).
-- 그림·글 엔진은 차례로만 도니 TensorRT 작업 메모리 한 덩이(둘 중 큰 것)를 같이 쓴다 (켤 때 로그에 같이 쓴 크기·따로였으면 든 크기). 그림 엔진을 `maxShapes` 배치 8 대신 4 로 만들면 그 작업 메모리가 줄어든다.
-- 로봇 Orin 시간·메모리는 아직 안 잼.
-
-### 엔진 만들기
-
-PC(같은 transformers 환경)에서 변환하고 로봇에서 엔진을 만든다:
-
-```bash
-# PC: 어휘·병합 글 파일, 그림 ONNX, 글 몸통 ONNX + 토큰 표 (스크립트는 손으로 쓴 변환 보조 — 저장소 밖)
-python export_tok.py siglip2-base-patch16-224/tokenizer.json .          # siglip2_vocab.txt · siglip2_merges.txt
-python export_onnx.py siglip2-base-patch16-224 .                         # siglip2_vision.onnx (B 동적)
-python export_text_split.py siglip2-base-patch16-224 .                   # siglip2_text_body.onnx · siglip2_tok_emb.f16, logit_scale·bias 출력
-# 로봇: models/ 에 두고 엔진 → colcon build (설치 폴더로 복사됨)
-cd $WS/src/limo_fire/limo_fire_perception/models
-/usr/src/tensorrt/bin/trtexec --onnx=siglip2_vision.onnx --fp16 --minShapes=pixel_values:1x3x224x224 --optShapes=pixel_values:4x3x224x224 \
-  --maxShapes=pixel_values:8x3x224x224 --saveEngine=siglip2_vision.engine
-/usr/src/tensorrt/bin/trtexec --onnx=siglip2_text_body.onnx --fp16 --saveEngine=siglip2_text_body.engine
-```
-
-켜기: `yolo.launch.xml search:=true` (또는 `explore_fuel_rl.launch.xml perception:=true search:=true`). 사진 벡터 저장: `object_search ~/save` · `~/save_to`, 읽기: `embeddings_file:=…`.
-
 ## 바닥 광선 거리 (가상 깊이, `~/instances`)
 
 불꽃처럼 깊이 카메라가 비거나 틀리는 물체를 위해, 마스크 밑동(맨 아래 5 % 줄의 가운데 열) 픽셀을 지나는 카메라 광선이 바닥면(base_link 높이 − 0.145 m, `limo_pro_base.xacro`)과 만나는 거리를 잰다.
@@ -303,11 +268,10 @@ cd $WS/src/limo_fire/limo_fire_perception/models
   줄 지연(받음 → 처리 시작, 평균·최대), 장당 처리 시간, 탐지 시각부터 처리 끝까지 나이, 버린 장(TF 없음·줄 넘침).
 - **보는 쪽이 있을 때만**: 결과 영상(GPU 덧칠 + 상자)은 `~/image` 구독자가 있을 때만 만들고, 그 GPU 버퍼(장치 1 장 + 고정 메모리 2 장 = 2.8 MB)와 결과 영상 그래프 2 개는
   처음 필요할 때 만들어 `vis_release_s`(5 s) 동안 구독자가 없으면 푼다. 예전엔 `object_mapper` 가 대표 사진용으로 늘 구독해서 매 장 만들었다 —
-  이제 매퍼는 `~/selected` 를 보는 쪽(RViz Selected 칸)이 있을 때만 결과 영상을, `~/object_views` 구독자(object_search)가 있을 때만 원본 영상을 구독한다
-  (각 10 장 921 KB = 9.2 MB 와 원본 영상 역직렬화 초당 28 MB 를 안 함). 그래서 RViz 를 안 켠 동안 찍힌 물체는 대표 사진이 없다(다시 보이면 생김).
+  이제 매퍼는 `~/selected` 를 보는 쪽(RViz Selected 칸)이 있을 때만 결과 영상을 구독한다
+  (10 장 921 KB = 9.2 MB 를 안 함). 그래서 RViz 를 안 켠 동안 찍힌 물체는 대표 사진이 없다(다시 보이면 생김).
 - **물체 지도 픽셀 반복**: 마스크를 상자 안에서 한 번만 훑어 위치·거리·밑동·발자국이 같이 쓰고(예전 세 번), 물체가 없는 줄은 SIMD 로 건너뛰며(분기 없는 OR 모음 — 컴파일러가 NEON·SSE 로),
   깊이 열 번호는 표로, 점마다 나누던 것은 역수 곱, 작업 버퍼는 다시 쓴다. 빌드 종류를 안 주면 Release(예전엔 colcon 기본이라 -O0), Orin 이면 `-mcpu=cortex-a78ae`.
-- SigLIP2(`search:=true`)는 그림·글 엔진이 TensorRT 작업 메모리를 같이 쓴다. launch 가 `CUDA_MODULE_LOADING=LAZY` 를 못 박는다(쓰는 커널만 올림 — [TensorRT 문서](https://docs.nvidia.com/deeplearning/tensorrt/10.x.x/architecture/how-trt-works.html)).
 
 확인 (PC, x86 i7·GCC 11, TensorRT 없음 — GPU 부분은 TensorRT 10.3 헤더로 문법만):
 
@@ -328,9 +292,9 @@ NEON: `row_has`·깊이 열 표 반복은 x86 GCC 11 `-O3` 에서 "loop vectoriz
 Orin 메모리 어림 (기본: yolo_coco + 매퍼, search 끔, 로봇에서 RViz 안 켬):
 - GPU(NvMap): 결과 영상 버퍼 2.8 MB + 그래프 2 개(어림 1~4 MB) ≈ **4~7 MB** 덜 씀. 엔진 가중치(~21 MB)·TensorRT 작업 메모리·CUDA 문맥은 그대로 —
   켤 때 로그 `GPU 메모리(대략): 엔진 … 실행 문맥 … (TensorRT 작업 메모리 …)` 로 잰다. 지연 로딩은 CUDA 12.2+ 리눅스(535 드라이버~)에서 이미 기본이라([CUDA 12.2 릴리스 노트](https://docs.nvidia.com/cuda/archive/12.2.0/cuda-toolkit-release-notes/index.html)) JetPack 6 에선 보통 그대로 — 환경에서 EAGER 로 꺼져 있던 경우만 준다(TensorRT 가 `CUDA lazy loading is not enabled` 경고를 냈었는지 로봇에서 확인).
-- CPU(RSS 436 MB 였음): 매퍼 영상 줄 2 개 18 MB + 원본 영상 DDS 받기 버퍼(어림 5 MB) + 스레드(멀티 → 한 스레드 컨테이너·TF 스레드) ≈ **20~35 MB** 덜 씀
+- CPU(RSS 436 MB 였음): 매퍼 영상 줄 18 MB + 스레드(멀티 → 한 스레드 컨테이너·TF 스레드) ≈ **20~35 MB** 덜 씀
   (PC 대역 시험 85 → 52 MB). 깊이 영상(614 KB × 30 장/초)·카메라 영상(921 KB)을 받기 메시지로 돌려 써 할당·페이지 폴트가 줄어든다(RSS 보다는 CPU 몫).
-- 판단 모델 OOM 을 막기엔 작다. 큰 것은 RViz 를 로봇 밖(PC)에서 띄우기, search 끄기(SigLIP2 ≈ 0.4 GB), 엔진 작업 메모리 줄이기(아래) 쪽이다.
+- 판단 모델 OOM 을 막기엔 작다. 큰 것은 RViz 를 로봇 밖(PC)에서 띄우기, 엔진 작업 메모리 줄이기(아래) 쪽이다.
 - 엔진 작업 메모리 줄이기 (로봇에서 잴 것): 같은 ONNX 로 `trtexec … --memPoolSize=workspace:256M` 엔진을 만들어 노드 로그의 TensorRT 작업 메모리와 `추론 … ms` 를 지금 엔진과 견준다.
   빌드 작업 공간 기본은 GPU 메모리 전체라, 작업 메모리 = 활성 메모리 + 고른 전술의 스크래치(그 한도 안)다(같은 TensorRT 문서).
 

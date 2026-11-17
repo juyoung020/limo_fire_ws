@@ -9,7 +9,7 @@
 // 늘 최신 쪽이 남음)에 넣고 바로 돌아오고, 처리는 process_period 타이머가 그 시각 TF 가 있는 장부터 한다(tf_wait 지나도 없으면 버림).
 // TF 도 이 노드의 콜백으로 받는다(따로 스레드 없음). 깊이 영상 받기 메시지는 몇 개를 돌려 써서 장마다 큰 할당을 하지 않는다.
 // stats_period 마다 짝 못 지은 탐지 비율(탐지↔깊이 max_sync_dt)·줄 지연·처리 시간을 로그로 낸다
-// 결과 영상(대표 사진)·원본 영상(물체 찾기 사진)은 그것을 쓰는 쪽(~/selected · ~/object_views 구독자)이 있을 때만 구독한다
+// 결과 영상(대표 사진)은 그것을 쓰는 쪽(~/selected 구독자)이 있을 때만 구독한다
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -251,13 +251,6 @@ public:
     // 대표 사진: 탐지 결과 영상(마스크 덧칠·상자·이름). 탐지보다 늦게 올 수 있어 최근 몇 장을 두고 시각으로 맞춘다.
     // ~/selected 를 보는 쪽(RViz Selected 칸)이 있을 때만 구독한다 — 이 구독이 있으면 yolo_detector 가 매 장 결과 영상을 GPU 에서 칠해 내므로
     view_topic_ = declare_parameter<std::string>("view_topic", "/yolo_detector/image");
-    // 물체 찾기용 원본 사진 (object_search 노드가 SigLIP2 로 넣음). ~/object_views 구독자(object_search)가 있을 때만 원본 영상을 구독한다
-    if (declare_parameter<bool>("publish_object_views", true)) {
-      object_view_ratio_ = declare_parameter<double>("object_view_ratio", 0.7);
-      object_view_period_ = declare_parameter<double>("object_view_period", 1.0);
-      views_pub_ = create_publisher<sensor_msgs::msg::Image>("~/object_views", 10);
-      color_topic_ = declare_parameter<std::string>("color_topic", "/camera/color/image_raw");
-    }
     keep_images_ = static_cast<size_t>(std::max<int64_t>(1, declare_parameter<int>("keep_images", 10)));
     // RViz Publish Point 로 누른 곳에서 가장 가까운 물체를 고른다
     selected_pub_ = create_publisher<sensor_msgs::msg::Image>("~/selected", rclcpp::QoS(1).transient_local(), latched);
@@ -429,7 +422,6 @@ private:
     int base_n = 0;   // 바닥 발자국: 분할 마스크 픽셀의 3D 점을 지도 칸(cell_size)에 내린 것 — 칸 → 본 횟수
     sensor_msgs::msg::Image::SharedPtr view;  // 대표 사진 (view_quality 가 가장 큰 장면)
     double view_quality = 0;
-    double raw_quality = 0, raw_t = -1e9;   // 원본 사진(object_views)으로 마지막 낸 것의 품질 · 시각
     int misses = 0;          // 보여야 할 때 못 본 수 (지도 갱신 — 다시 보면 0)
     int moved = 0;           // 처음 자리(ax, ay)에서 멀리 잰 측정이 이어진 수 (정지 물체 옮겨짐 판정)
     double ax = 0, ay = 0;   // 그 이어짐이 시작될 때의 자리 (평균이 끌려가도 이 자리와 견줌)
@@ -439,14 +431,6 @@ private:
   };
 
   // 대표 사진을 잘라 올 장면: 결과 영상이 오면 같은 시각 것을 잘라 물체에 붙인다
-  // 물체 찾기(SigLIP2 object_search)용 원본 사진 자르기: 원본 컬러 영상이 오면 같은 시각 것을 잘라 ~/object_views 로 (frame_id = 물체 이름)
-  struct RawPending
-  {
-    builtin_interfaces::msg::Time stamp;
-    size_t index;
-    int x0, y0, x1, y1;
-    double quality;
-  };
   struct PendingView
   {
     builtin_interfaces::msg::Time stamp;
@@ -754,16 +738,6 @@ private:
       }
       // 크게(가까이)·확실하게 찍힐수록 좋은 사진. 지금 것보다 나을 때만 자른다
       const double quality = d.bbox.size_x * d.bbox.size_y * d.results[0].hypothesis.score;
-      // 원본 사진: 지금까지 낸 것의 object_view_ratio 배보다 좋고 object_view_period 초가 지났으면 (여러 장 — 보는 방향마다)
-      Landmark & lm = landmarks_[idx];
-      if (raw_sub_ && quality > object_view_ratio_ * lm.raw_quality && t_obs_ - lm.raw_t > object_view_period_) {
-        const double rx = 0.1 * d.bbox.size_x, ry = 0.1 * d.bbox.size_y;
-        raw_pending_.push_back({dets->header.stamp, idx,
-            static_cast<int>(d.bbox.center.position.x - d.bbox.size_x / 2 - rx), static_cast<int>(d.bbox.center.position.y - d.bbox.size_y / 2 - ry),
-            static_cast<int>(d.bbox.center.position.x + d.bbox.size_x / 2 + rx), static_cast<int>(d.bbox.center.position.y + d.bbox.size_y / 2 + ry), quality});
-        lm.raw_t = t_obs_;
-        take_raw();
-      }
       if (view_sub_ && quality > landmarks_[idx].view_quality) {
         const double mx = view_margin_ * d.bbox.size_x, my = view_margin_ * d.bbox.size_y;
         pending_.push_back({dets->header.stamp, idx,
@@ -776,28 +750,6 @@ private:
     if (!inst.detections.empty()) {inst_pub_->publish(std::move(inst_msg));}
     if (source < 0) {negative_evidence(*depth, info, tf, sx, sy, fx, fy, cx, cy, seen_now);}
     take_views();
-  }
-
-  // 기다리던 원본 영상이 왔으면 잘라 ~/object_views 로 (지도에 올라간 물체만, frame_id = "chair-1")
-  void take_raw()
-  {
-    for (auto it = raw_pending_.begin(); it != raw_pending_.end(); ) {
-      sensor_msgs::msg::Image::ConstSharedPtr img;
-      for (const auto & v : raws_) {
-        if (v->header.stamp == it->stamp) {img = v;}
-      }
-      const bool stale = !raws_.empty() &&
-        rclcpp::Time(raws_.back()->header.stamp) - rclcpp::Time(it->stamp) > rclcpp::Duration::from_seconds(1.0);
-      if (img && it->index < landmarks_.size() && landmarks_[it->index].number > 0) {
-        auto c = crop(*img, it->x0, it->y0, it->x1, it->y1);
-        Landmark & l = landmarks_[it->index];
-        c->header.frame_id = class_names_[l.cls] + "-" + std::to_string(l.number);
-        views_pub_->publish(std::make_unique<sensor_msgs::msg::Image>(std::move(*c)));
-        l.raw_quality = std::max(l.raw_quality, it->quality);
-      }
-      it = (img || stale) ? raw_pending_.erase(it) : std::next(it);
-    }
-    while (raw_pending_.size() > 100) {raw_pending_.pop_front();}
   }
 
   // 기다리던 장면의 결과 영상이 왔으면 잘라 물체에 붙인다. 너무 오래된 요청은 버린다
@@ -1290,20 +1242,6 @@ private:
       views_.clear();
       pending_.clear();
     }
-    const bool want_raw = views_pub_ &&
-      views_pub_->get_subscription_count() + views_pub_->get_intra_process_subscription_count() > 0;
-    if (want_raw && !raw_sub_) {
-      raw_sub_ = create_subscription<sensor_msgs::msg::Image>(color_topic_, rclcpp::SensorDataQoS(),
-        [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
-          raws_.push_back(msg);
-          if (raws_.size() > keep_images_) {raws_.pop_front();}
-          take_raw();
-        });
-    } else if (!want_raw && raw_sub_) {
-      raw_sub_.reset();
-      raws_.clear();
-      raw_pending_.clear();
-    }
   }
 
   void publish()
@@ -1506,11 +1444,6 @@ private:
   std::vector<std::string> prefer_floor_;
   FILE * depth_csv_ = nullptr;
   rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr inst_pub_;
-  double object_view_ratio_ = 0.7, object_view_period_ = 1.0;
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr views_pub_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_sub_;
-  std::deque<sensor_msgs::msg::Image::ConstSharedPtr> raws_;
-  std::deque<RawPending> raw_pending_;
   std::vector<std::string> ignored_;
   double cell_size_ = 0.05, footprint_max_z_ = 2.0;
   int footprint_stride_ = 3, footprint_min_count_ = 2;
@@ -1525,7 +1458,7 @@ private:
   double tf_wait_ = 0.2;
   size_t max_pending_ = 10, keep_images_ = 10;
   size_t n_no_tf_ = 0, n_overflow_ = 0;   // TF 가 없어·줄이 넘쳐 버린 장 수
-  std::string view_topic_, color_topic_;
+  std::string view_topic_;
   // 장마다 다시 쓰는 작업 버퍼 (할당을 줄이려고 — 한 스레드에서만 씀)
   std::vector<float> vals_, zs_;
   std::vector<int> xs_;

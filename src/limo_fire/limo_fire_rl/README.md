@@ -160,7 +160,7 @@ ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가�
   물체 지도에 그 클래스가 올라오는 즉시 그리로 간다. 지시가 없으면 요청 본문은 예전과 바이트까지 같다 (`low_explore_check --dec-instr` 로 지시가 있을 때도 시뮬 == 실물 비트 확인).
 - RViz: 고른 물체에 흰 고리 + "GOAL 이름", 설 자리 초록 원, 왼쪽 아래 글상자(`/object_goto/overlay`).
 - **판단 모델이 고름 (기본)**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다 — object_goto 는 지시 글(`/low_rl/instruction`)과 선택적 클래스 힌트
-  (`/low_rl/target_class` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 설명 검색 1 위)만 넘긴다(`direct: false`). 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
+  (`/low_rl/target_class` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 비움 — 판단 모델이 글을 읽음)만 넘긴다(`direct: false`). 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
   물체 지도의 **모든 클래스** 물체 설 자리가 물체 후보(`kind: object` — `object` 클래스 · `oid` 지도 번호 · `len` 길 m · `bear` · `dist` 직선 m · `seen_s` · `vis` 지금 보임)로 들어가
   프론티어 후보와 섞인다(합쳐 6 개). 칸보다 많으면 힌트 클래스 먼저, 한 무리 안에선 길 거리 순으로 고르게 벌려(가장 가까운 것·가장 먼 것 늘 포함 — "가장 먼 의자" 같은 지시). 
   글에는 지시 원문(`instruction`) · 힌트(`class_hint`) · 아는 물체 10 개(`known_objects`: "chair-3 chair 4.1 m front-left seen 2 s visible") · 후보 종류 설명(`candidate_kinds`)이 들어가고
@@ -177,7 +177,6 @@ ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가�
   사람이 `follow_reask_m` 넘게 옮기면 판단 모델에 다시 묻고(그 사이 따라가기는 계속), 답이 탐사 자리면 따라가기를 끝낸다. 새 지시·지시 지움도 끝. RViz ~/candidates ns follow (주황 원기둥 + 모드·거리).
   시뮬 확인: `low_explore_check --upper decider --people 3 --follow --dec-fake follow --dec-instr "사람 따라가"` (시뮬 사람을 카메라 화각 66.4°·5 m·지도 가림으로 본 것만 사람 목록에) —
   두 쪽 따라가기 명령·경로 비트 같음, 따라간 거리·모드·놓침·사람 닿음을 `FOLLOW` 줄로.
-- 설명 글 검색(SigLIP2, "빨간 컵" 같은 글)은 다음 단계 — 지금은 클래스 이름·별칭만.
 
 ### 실패 상황 표 (판단 모델 · 지시 · 따라가기)
 
