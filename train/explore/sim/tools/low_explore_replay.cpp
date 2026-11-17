@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
   fo.v_eff = 0.981f;
   fo.w_eff = 3.232f;
   fo.t0 = 0.10f;
-  fo.hyst = 0.2f;      // 실물 노드 기본 (limo_fire_rl config/low_rl.yaml fuel_hyst · fuel_vp_min · fuel_vp_clear)
+  fo.hyst = 0.2f;      // 실물 노드가 fuel 위층을 갖던 때(~2026-11-17)의 기본 fuel_hyst · fuel_vp_min · fuel_vp_clear (1116 녹화 다시 돌리기)
   fo.vp_min = 0.75f;
   fo.vp_clear = 0.21f;
   try {

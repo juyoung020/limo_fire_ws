@@ -76,7 +76,7 @@ flowchart LR
 | `limo_fire_rl/explore_fuel_rl.launch.xml` | `low_rl` (`low_rl.launch.xml`) · `limo_fire_rviz` (RViz) | RViz 는 `rviz:=true` |
 | ↳ `stack:=true` | `mapping.launch.xml`: `cartographer_node` · `cartographer_occupancy_grid_node` | |
 | ↳ `perception:=true` | `yolo.launch.xml`: `/perception_container`(컴포넌트 `yolo_detector` + `object_mapper`, `use_intra_process_comms`) + 따로 프로세스 `object_goto`(`mode: explore`) | |
-| (ROS 밖) | `llama-server` (`127.0.0.1:8171`, 판단 모델) — [limo_fire_rl README](../src/limo_fire/limo_fire_rl/README.md) 대로 손으로 먼저 띄움 | `upper:=decider`(기본) |
+| (ROS 밖) | `llama-server` (`127.0.0.1:8171`, 판단 모델) — [limo_fire_rl README](../src/limo_fire/limo_fire_rl/README.md) 대로 손으로 먼저 띄움 | 늘 (위층은 판단 모델 하나) |
 
 - `env.sh` 는 RMW 를 정하지 않으므로 Humble 기본(Fast DDS)이다. 프로세스 사이는 모두 DDS(직렬화 → 공유 메모리·UDP → 역직렬화)다.
 - 같은 프로세스 안 복사 없는 전달은 `perception_container` 의 `yolo_detector → object_mapper` 하나뿐이다. 카메라는 따로 컨테이너라 영상은 DDS 로 온다(`robot.launch.xml` 주석: 드라이버가 transient_local 발행자를 만들어 프로세스 안 전달을 켤 수 없음).
@@ -262,10 +262,10 @@ flowchart LR
 
 **`~/status` 한 줄 (1 Hz)** — `·` 로 나뉜 칸:
 
-`<state> (<까닭>) · 리모컨 오토|오토 아님 · 걸음 N · 목표 칸 K[ (목표 없음)| (slot0)] · 명령 v ω · 결정 a 통과 b 막힘 c · 평균 ms: 걸음 · 관측 · 위층 (최대) · 리모컨 …(마지막 받은 뒤 ms, 받음 수, 발행자 수, 다시 구독 수, buttons[1]=값) · 판단 모델: 보냄 n 답 n (마지막 ms) 시간 끝 n 실패 n — <마지막 오류> 후보 안 맞음 n slot0 대신 n · 기다리는 중`
+`<state> (<까닭>) · 리모컨 오토|오토 아님 · 걸음 N · 목표 칸 K[ (목표 없음)] · 명령 v ω · 결정 a 통과 b 막힘 c · 평균 ms: 걸음 · 관측 · 위층 (최대) · 리모컨 …(마지막 받은 뒤 ms, 받음 수, 발행자 수, 다시 구독 수, buttons[1]=값) · 판단 모델: 보냄 n 답 n (마지막 ms) 시간 끝 n 실패 n — <마지막 오류> 후보 안 맞음 n 규칙 대신 n · 기다리는 중`
 
-- `목표 칸` 은 로봇 지도 칸 번호(−1 = 없음). `(slot0)` = 판단 모델 대신 점수 1 등 후보로 잡음.
-- `판단 모델:` 칸은 `upper: decider` 일 때만.
+- `목표 칸` 은 로봇 지도 칸 번호(−1 = 없음).
+- `규칙 대신` = 판단 모델 답이 없거나 틀려 규칙(점수 1 등 후보, 지금 목표 붙듦)이 고른 수.
 
 **`~/goto_status` 글 (한글 한 줄, 앞말로 갈래를 안다)**
 

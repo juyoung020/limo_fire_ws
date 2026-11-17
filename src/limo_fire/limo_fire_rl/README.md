@@ -8,7 +8,7 @@
 | 노드 | 무엇 | 켜기 |
 |---|---|---|
 | `explore_frontier` | 프론티어 탐사 (아래 "프론티어 탐사") — 탐사 기준선과 같은 찾기·고르기 | 멈춘 채 뜸 → 버튼 |
-| `low_rl` | 위층 판단 모델(또는 cand · fuel · slot0) + 아래층 A* 경로 추종 (아래 "합친 탐사") — Nav2 없음 | 멈춘 채 뜸 → 버튼 (리모컨 오토일 때만) |
+| `low_rl` | 위층 판단 모델 + 아래층 A* 경로 추종 (아래 "합친 탐사") — Nav2 없음 | 멈춘 채 뜸 → 버튼 (리모컨 오토일 때만) |
 
 탐사 강화학습(RL 정책 노드 `explore_rl`, 아래층 RL 정책 `lower:=rl`)은 2026-11-16 에 그만두고 [archive/rl](../../../archive/rl/README.md) 로 옮겼다
 (실물에서 시뮬과의 격차가 컸고, A* 경로 추종 아래층이 훨씬 빠르고 잘 됐다). 그때의 이 README 는 `archive/rl/src/limo_fire/limo_fire_rl/README.md`.
@@ -57,7 +57,8 @@ ros2 topic echo /explore_frontier/state
 
 ## 합친 탐사 (`low_rl` — 위층 판단 모델 + 아래층 A*, 2026-11-16)
 
-> **확정 구성 (2026-11-16 실물 시험):** 위층 판단 모델(`upper:=decider`, 기본) + 아래층 A* 경로 추종(규칙 추종기 — 유일한 아래층).
+> **확정 구성 (2026-11-16 실물 시험):** 위층 판단 모델 + 아래층 A* 경로 추종(규칙 추종기 — 유일한 아래층). 노드에는 이 위층 하나만 있다 —
+> 기준선 위층(cand · fuel · slot0)은 2026-11-18 노드에서 빼고 시뮬 도구(`low_explore_check --upper …` · `combine_run`)에만 남겼다.
 > 같은 날 실물에서 fuel+RL · 가까운 후보+RL · 판단 모델+RL · 판단 모델+A* 를 돌려 판단 모델+A* 가 가장 잘 됐다(녹화 `~/limo_bags/1116_*`).
 > 실행: ① 로봇 page cache 비우기(`sync && echo 3 | sudo -n tee /proc/sys/vm/drop_caches` — Orin GPU 메모리 확보) → ② 아래 "판단 모델" 절의 llama-server →
 > ③ `robot.launch.xml` → ④ `ros2 launch limo_fire_rl explore_fuel_rl.launch.xml stack:=true rviz:=true dry_run:=false` → 리모컨 SWB 위 + 패널 버튼. 멈춤은 SWB 내림.
@@ -69,19 +70,18 @@ Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`
 |---|---|---|
 | 설정 | `RobotEnv` 합친 탐사 모드 — 목표는 위층, 탐사 판 끝 규칙, 막힘은 신호만 | `low_rl 1` · `low_explore 1` |
 | 결정 때 | 걸음 % 10 == 0 또는 다시 결정 | 같음 |
-| `upper:=decider` (기본) | 판단 모델(d1-3B, zero-shot)이 `scripts/cand_view.h` 후보 앞 6 개 중 고름 — `scripts/low_decider.h` (요청: 지도 사진 + 후보 글). 사건 때만(`decider_mode: event` — 목표에 1 m 다가감 · 목표 실패 · 후보 크게 바뀜 · 10 s 최대 간격) 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면(판 처음·켠 직후 포함) 바로 묻고 답을 (걸음으로 잰 답 지연 이동 평균 + `decider_hold_extra` 0.5 s)까지 기다림 — 그 사이 아래층은 지금 명령 그대로(목표 없으면 제자리), 그래도 안 오면 규칙(cand_pick)이 대신. 남은 길이 답 지연 + `decider_ask_lead_s` 안에 끝날 듯하면 미리 물음. 지시(`~/instruction`)가 바뀌면 다음 결정 차례에 바로 물음("new instruction"), 옛 지시 요청의 답은 버림. 둘 다 −1 이면 옛 동작(요청 바이트 같음). `decider_timeout`(8 s) 넘은 답은 버림. 정해진 주기로 묻기(periodic)는 시뮬 비교에서 덮음이 같아 노드에서 뺐다(시뮬 `--dec-mode periodic` 은 남음) | `low_explore_check --upper decider` |
-| `upper:=cand` | `cand_view.h` 0 번 후보, 지금 목표 번호가 있으면 붙듦 — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 판단 모델보다 빠름 | `low_explore_check --upper cand` |
-| `upper:=fuel` | fuel (시간 + 전역 + 시점, v 0.981 · ω 3.232 · t0 0.10, 붙들기 0.2, 시점은 로봇에서 0.75 m 밖·모름에서 0.21 m — `config/low_rl.yaml`, `scripts/README` "실물 1116"). 덩어리 없음: 피하지 않는 첫 후보(slot0). 시점 자격 되는 덩어리가 없음: 목표 없음 | `--upper fuel` |
-| `upper:=slot0` | 피하지 않는 첫 후보, 같은 덩어리면 그대로(stick) — A/B 용 | `--upper slot0` |
-| 아래층 | 규칙 추종기: 후보 번호(slot0 · 판단 모델) 또는 목표 칸(fuel)까지 A* 경로를 짜 따라감, 막히면 복구(물러나기·목표 포기 — `hier_path.h`) | 같은 함수 |
+| 위층 판단 모델 | 판단 모델(d1-3B, zero-shot)이 `scripts/cand_view.h` 후보 앞 6 개 중 고름 — `scripts/low_decider.h` (요청: 지도 사진 + 후보 글). 사건 때만(`decider_mode: event` — 목표에 1 m 다가감 · 목표 실패 · 후보 크게 바뀜 · 10 s 최대 간격) 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면(판 처음·켠 직후 포함) 바로 묻고 답을 (걸음으로 잰 답 지연 이동 평균 + `decider_hold_extra` 0.5 s)까지 기다림 — 그 사이 아래층은 지금 명령 그대로(목표 없으면 제자리), 그래도 안 오면 규칙(cand_pick)이 대신. 남은 길이 답 지연 + `decider_ask_lead_s` 안에 끝날 듯하면 미리 물음. 지시(`~/instruction`)가 바뀌면 다음 결정 차례에 바로 물음("new instruction"), 옛 지시 요청의 답은 버림. 둘 다 −1 이면 옛 동작(요청 바이트 같음). `decider_timeout`(8 s) 넘은 답은 버림. 정해진 주기로 묻기(periodic)는 시뮬 비교에서 덮음이 같아 노드에서 뺐다(시뮬 `--dec-mode periodic` 은 남음) | `low_explore_check --upper decider` |
+| 대신 고르는 규칙 | 답을 기다리다 시간이 넘거나 답이 잇따라 틀리면 `cand_view.h` 0 번 후보, 지금 목표 번호가 있으면 붙듦(`Ctl::cand_pick`) | `low_explore_check --upper cand` |
+| 아래층 | 규칙 추종기: 고른 후보의 서는 자리까지 A* 경로를 짜 따라감, 막히면 복구(물러나기·목표 포기 — `hier_path.h`) | 같은 함수 |
 | 목표 없음 | 규칙 추종기의 제자리 회전 | 같음 |
-| 다시 결정 | 통과 · 경로 끝 밖 · 경로 없음 · 막힘 신호 → fuel 기억 비움(경로 끝 밖·없음·막힘은 그 칸 0.5 m 를 10 s 피함) | 같음 |
+| 다시 결정 | 통과 · 경로 끝 밖 · 경로 없음 · 막힘 신호 → 경로 끝 밖·없음·막힘은 그 칸 0.5 m 를 10 s 피함 | 같음 |
 | 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `~/done` true | `finish_step` |
 
 위층 결정·목표 넘기기는 `train/explore/scripts/low_explore_ctl.h` 하나를 노드와 확인 도구가 같이 쓴다.
-launch 인자는 `upper` · `dry_run` · `record` · `decider_url` 등뿐이고, 나머지 값(`camera_layer` · `contact_resume_s` · `decider_max_cands` …)은
+launch 인자는 `dry_run` · `record` · `decider_url` 등뿐이고, 나머지 값(`camera_layer` · `contact_resume_s` · `decider_max_cands` …)은
 `config/low_rl.yaml` 에서 바꾼다. 2026-11-17 에 실물에서 안 쓰던 값(`decider_mode`·`decider_period`·`decider_input`·`decider_prompt`·`decider_cand`(옛 hier 8 칸 후보)·
-`decider_cam`·`cam_base_h`·`color_topic`(카메라 키프레임 기억)·`close_lidar`·`slot_vp`·`obs_all`·`frontier_cache`·`frontier_check_every`)과 `~/goto`·`~/goto_face` 를 지웠다 —
+`decider_cam`·`cam_base_h`·`color_topic`(카메라 키프레임 기억)·`close_lidar`·`slot_vp`·`obs_all`·`frontier_cache`·`frontier_check_every`)과 `~/goto`·`~/goto_face` 를,
+2026-11-18 에 기준선 위층(`upper`·`fuel_*`)을 지웠다 —
 시뮬 비교·점검 쪽 옵션은 `low_explore_check` 에 남아 있다.
 
 **멈춤 조건 (명령을 0 으로)**
@@ -96,7 +96,7 @@ launch 인자는 `upper` · `dry_run` · `record` · `decider_url` 등뿐이고,
 
 - `dry_run:=true`(기본): `/cmd_vel` 발행자를 아예 안 만들고 같은 명령을 `~/cmd_debug`(TwistStamped)에만. dry run 에서는 닿음의 "멈춤" 신호(명령 대비 바퀴 정지)를 뺀다 — 명령이 안 나가 늘 참.
 - `max_speed`: 기본 = 시뮬 한도(자르지 않음). 토픽: `~/state`(idle · running · paused · done) · `~/status`(한 줄 — 까닭·리모컨·목표·명령·시간) · `~/done` · `~/goal_marker` · `~/cmd_debug` · `~/candidates`.
-- `~/candidates` (MarkerArray, map 틀, 결정마다 — `upper:=cand` · `decider`): 새 후보(`train/explore/scripts/cand_view.h`)마다 구(서는 자리)·글(판단 모델 글자 · 안정 번호 · 예상 넓이/시간)·덩어리 대표 칸까지 선·덩어리 프론티어 칸, 색 초록 보통 · 파랑 지금 목표 · 주황 실패 기억 · 회색 쉬는 덩어리, 로봇 자취(60 s), 판단 모델 답 수·마지막 답 시간. RViz `explore_fuel_rl.rviz` 의 Candidates 표시. `upper:=cand` 는 그 후보 0 번으로 감(지금 목표 번호가 있으면 붙듦 — `low_explore_check --upper cand`).
+- `~/candidates` (MarkerArray, map 틀, 결정마다): 새 후보(`train/explore/scripts/cand_view.h`)마다 구(서는 자리)·글(판단 모델 글자 · 안정 번호 · 예상 넓이/시간)·덩어리 대표 칸까지 선·덩어리 프론티어 칸, 색 초록 보통 · 파랑 지금 목표 · 주황 실패 기억 · 회색 쉬는 덩어리, 로봇 자취(60 s), 판단 모델 답 수·마지막 답 시간. RViz `explore_fuel_rl.rviz` 의 Candidates 표시.
 - RViz 탐사 패널: 고르기에서 "합친 탐사 (/low_rl)". `paused` 면 상세 줄에 까닭.
 - 리모컨 칸 확인: 녹화 `1103_M_drive3`(리모컨으로 몬 것)의 `/rc_state` buttons 는 모두 `[3, 1, 3, 3]`, `1104_M_cmd_mix`(ROS 명령으로 몬 것)는 모두 `[3, 2, 3, 3]`.
 
@@ -202,7 +202,7 @@ ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가�
 바닥이 장애물로 찍혀 후보가 사라지고 **아직 안 본 곳이 있는데 "탐사 끝"** 이 난다 (옛 `explore_rl` 노드로 1103 녹화에서 확인 — 정렬 끈 깊이는 33 s 에 거짓 닫힘).
 의심되면 `camera_layer: false` 로 끈다.
 
-### 위층 판단 모델 (`upper:=decider`) 띄우기
+### 위층 판단 모델 띄우기
 
 로봇 안에서 llama-server(판단 모델 d1-3B, `/v1/systemone` 이 있는 빌드)를 먼저 띄운다. `-lm dio` 를 꼭 준다: 기본(mmap)이면 모델 파일(2.9 GB)이 page cache 에 남은 채
 같은 내용을 GPU 버퍼로 또 잡아 Orin Nano 8 GB 에서 KV 캐시 할당이 실패한다(NvMap error 12 — Jetson 은 GPU 할당 때 page cache 를 못 비움). DirectIO 로 읽으면 page cache 를 안 거친다.
@@ -212,11 +212,11 @@ ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가�
 cd ~/decider_test && LLAMA_DECISION_IMAGES_LAST=1 nohup ./llama.cpp/build/bin/llama-server -m models/d1-3B-Q8_0.gguf --mmproj models/mmproj-d1-3B-Q8_0.gguf \
   --host 127.0.0.1 --port 8171 -ngl 99 -c 4096 -np 1 -lm dio > server_dec.log 2>&1 &
 # 뜰 때까지 (모델 읽기 약 1 분): grep -m1 "listening" server_dec.log
-ros2 launch limo_fire_rl explore_fuel_rl.launch.xml upper:=decider [dry_run:=false] [rviz:=true]
+ros2 launch limo_fire_rl explore_fuel_rl.launch.xml [dry_run:=false] [rviz:=true]
 ```
 
 서버는 `train/explore/upper_lora/patches/` 의 두 패치(판단 요청 checkpoint · 그림을 글 뒤로)를 넣은 빌드에 `LLAMA_DECISION_IMAGES_LAST=1` 로 띄운다 — 결정마다 같은 앞부분(템플릿 · 설명 글 · 힌트)을 다시 계산하지 않음. 미세조정 v1(LoRA)도 이 차례로 학습한다.
 요청 꼴 기본은 짧은 꼴(`decider_compact: true`, 지도 288 px, 결정 기록 4, 카메라 없음 — 카메라 키프레임 사진은 v1 학습에 없어 2026-11-17 지움): 로봇 Orin 에서 요청 하나 약 1.6 s(앞 요청 뒤) · 2.2 s(처음) — 예전 기본(긴 꼴 + 카메라 2 × 2)은 5.0–5.6 s (`upper_lora/README.md` "요청 꼴과 지연").
 사건 때만 묻고(event) 요청에 후보를 6 개까지 넣는다(`decider_max_cands: 6`) — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 가장 빨랐고, 라벨 굴리기(`dec_rollout`)·`low_explore_check --upper decider` 기본도 같은 값.
-상태는 `~/status` 끝에 "판단 모델: 보냄 · 답 (마지막 ms) · 시간 끝 · 실패 · 후보 안 맞음 · slot0 대신". 서버가 없거나 답이 잇따라 틀리면 규칙(cand_pick)이 대신 고르며 계속 돈다 (멈추지 않음).
+상태는 `~/status` 끝에 "판단 모델: 보냄 · 답 (마지막 ms) · 시간 끝 · 실패 · 후보 안 맞음 · 규칙 대신". 서버가 없거나 답이 잇따라 틀리면 규칙(cand_pick)이 대신 고르며 계속 돈다 (멈추지 않음).
 요청 입력은 지도 사진 + 후보 글(시뮬 `--dec-input both`)로 고정 — 시뮬 장면 카메라 그림(`combine_run --decider-input all`)은 실물에 같은 것이 없다.

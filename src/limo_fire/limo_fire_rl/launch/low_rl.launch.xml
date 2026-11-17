@@ -1,5 +1,5 @@
-<!-- 합친 탐사 실물 노드 (위층 판단 모델 · 기준선 cand · fuel · slot0 + 아래층 A* 경로 추종 — limo_fire_rl/README "합친 탐사 low_rl"). 먼저 robot.launch.xml + Cartographer(지도 TF map → base_link) 를 켜 둔다.
-     dry run (기본, /cmd_vel 안 냄):  ros2 launch limo_fire_rl low_rl.launch.xml [upper:=decider|cand|fuel|slot0]
+<!-- 합친 탐사 실물 노드 (위층 판단 모델 + 아래층 A* 경로 추종 — limo_fire_rl/README "합친 탐사 low_rl"). 먼저 robot.launch.xml + Cartographer(지도 TF map → base_link) 를 켜 둔다.
+     dry run (기본, /cmd_vel 안 냄):  ros2 launch limo_fire_rl low_rl.launch.xml
      실제 주행 (점검표 뒤):           ros2 launch limo_fire_rl low_rl.launch.xml dry_run:=false
      늘 꺼진 채 뜬다 → RViz 탐사 패널 "/low_rl" 또는 ros2 service call /low_rl/enable std_srvs/srv/SetBool "{data: true}" -->
 <launch>
@@ -8,8 +8,7 @@
   <arg name="require_rc" default="true" description="false: /rc_state 없이 (시뮬·리모컨 없는 녹화만)"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="record" default="" description="입력·관측·명령 녹화 파일 (비우면 안 씀)"/>
-  <arg name="upper" default="decider" description="위층: decider (로봇 안 llama-server 판단 모델 — README) · 기준선 cand · fuel · slot0"/>
-  <arg name="decider_url" default="http://127.0.0.1:8171" description="upper:=decider 의 llama-server 주소"/>
+  <arg name="decider_url" default="http://127.0.0.1:8171" description="판단 모델 llama-server 주소"/>
 
   <node pkg="limo_fire_rl" exec="low_rl" name="low_rl" output="screen">
     <param from="$(find-pkg-share limo_fire_rl)/config/low_rl.yaml"/>
@@ -17,7 +16,6 @@
     <param name="map_frame" value="$(var map_frame)"/>
     <param name="require_rc" value="$(var require_rc)"/>
     <param name="record" value="$(var record)"/>
-    <param name="upper" value="$(var upper)"/>
     <param name="decider_url" value="$(var decider_url)"/>
     <param name="use_sim_time" value="$(var use_sim_time)"/>
   </node>

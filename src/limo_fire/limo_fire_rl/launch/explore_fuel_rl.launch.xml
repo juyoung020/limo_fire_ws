@@ -1,6 +1,6 @@
 <!-- 합친 탐사 실물 — 기본은 확정 구성: 위층 판단 모델(decider) + 아래층 A* 경로 계획(rule) (2026-11-16 실물 시험으로 정함, limo_fire_rl/README "합친 탐사 low_rl").
      판단 모델 서버(llama-server)를 먼저 띄운다 (README). 먼저 robot.launch.xml (센서·섀시·EKF) 를 켜 둔다.
-     ros2 launch limo_fire_rl explore_fuel_rl.launch.xml [dry_run:=true|false] [stack:=true] [rviz:=true] [upper:=decider|cand|fuel|slot0] [perception:=true]
+     ros2 launch limo_fire_rl explore_fuel_rl.launch.xml [dry_run:=true|false] [stack:=true] [rviz:=true] [perception:=true]
      perception:=true 면 YOLO 분할(기본 COCO 80 종, perception_config) + 물체 지도를 같이 띄워 찾은 물체가 지도 위에 모양·이름으로 남는다
      stack:=true 면 Cartographer(mapping.launch.xml — 지도 TF map → base_link)를 같이 띄운다. Nav2 는 안 쓴다 (아래층 A* 경로 추종이 바로 /cmd_vel).
      아래층 강화학습은 2026-11-16 에 그만둠 (archive/rl/README.md).
@@ -12,7 +12,6 @@
   <arg name="map_frame" default="map"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="record" default="" description="입력·관측·명령 녹화 파일 (비우면 안 씀)"/>
-  <arg name="upper" default="decider" description="위층: decider (로봇 안 llama-server 판단 모델을 먼저 띄움 — limo_fire_rl/README) · 기준선 cand · fuel · slot0"/>
   <arg name="decider_url" default="http://127.0.0.1:8171"/>
   <arg name="perception" default="false" description="true: YOLO 분할 + 물체 지도(object_mapper) — 찾은 물체가 RViz 지도 위에 모양·이름과 함께 남음"/>
   <arg name="perception_config" default="yolo_coco.yaml" description="인식 모델 설정 (limo_fire_perception/config): yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
@@ -53,7 +52,6 @@
     <arg name="map_frame" value="$(var map_frame)"/>
     <arg name="use_sim_time" value="$(var use_sim_time)"/>
     <arg name="record" value="$(var record)"/>
-    <arg name="upper" value="$(var upper)"/>
     <arg name="decider_url" value="$(var decider_url)"/>
   </include>
 </launch>

@@ -1,14 +1,15 @@
 // 실물 합친 탐사 노드(위층 + 아래층 규칙 추종기 — limo_fire_rl low_rl) == CPU 시뮬 합친 탐사 (combine_run --upper fuel|slot0|decider 와 같은 설정).
+// 실물 노드의 위층은 판단 모델(decider)과 그 대신 고르는 규칙(cand) 뿐 — fuel · slot0 은 시뮬 기준선 (같은 Ctl 코드라 비교는 그대로 뜻이 있음).
 // 시뮬(환경 하나, CPU 참조판)과 RobotEnv(합친 탐사 모드)가 각자 자기 상태로 위층 결정(scripts/low_explore_ctl.h — combine_run 의 환경 하나 몫)을 하고,
 // 걸음마다 시뮬 라이다 장·감각·깊이를 RobotEnv 에 넣어 두 쪽의 위층 명령(목표 칸·follow)·준비 뒤 경로(목표 칸·경로 점)·명령(v, ω)·판 끝을 비트 비교한다.
 // 아래층은 두 쪽 다 규칙 추종기 (준비 단계 행동 칸 = 위층 Ctl::slot() — combine_run 의 act[0], RobotEnv::low_act 계층형 가지). 관측 설정은 env.yaml 그대로.
 //   low_explore_check <장면.scene> … [--steps 1500] [--seed 1] [--people 0] [--upper fuel|slot0|decider] [--fuel-v 0.981 --fuel-w 3.232 --fuel-t0 0.10] [--fuel-time 1 --fuel-global 1 --fuel-vp 1]
-//   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 실물 노드 upper:=slot0)
-//   fuel 기본 = 실물 노드 config/low_rl.yaml (시간 + 전역 + 시점, 붙들기 0.2, 시점 자격 0.75 m · 0.21 m). --fuel-hyst · --fuel-vp-min · --fuel-vp-clear · --fuel-first 로 바꿈
+//   --upper slot0: combine_run --upper slot0 (피하지 않는 첫 후보 · stick — 기준선, 실물 노드에는 없음)
+//   fuel 기본 = 실물 노드가 fuel 을 갖던 때의 config/low_rl.yaml (시간 + 전역 + 시점, 붙들기 0.2, 시점 자격 0.75 m · 0.21 m). --fuel-hyst · --fuel-vp-min · --fuel-vp-clear · --fuel-first 로 바꿈
 //   --contact-log 파일: 판이 닿음(2)으로 끝나면 몸통 8 cm 안 막힌 칸(정답 격자)이 라이다 높이 형상인지 · 로봇 지도·깊이 층이 알았는지 · 그 형상 물체·높이 · 마지막 2 s 자취,
 //     진행 없음(6)으로 끝나면 마지막 65 s 를 1 s 마다 (자세·목표·경로·시계·닫힘·지나온 거리). LOW_CHECK_NNEW=파일: 걸음마다 새로 안 칸·새 막힘·속도·경로·계획 단계·검사 멈춤
 //   --log 파일: 시뮬 쪽 결정마다 한 줄 (판·시각·목표·바뀜·뜀·목표 없음 까닭·닫힘) — 실물 녹화 low_explore_replay --log 와 같은 꼴로 견줌
-//   --upper decider [--dec-period 3.0] [--dec-latency 2.6] [--dec-input both] [--dec-cand 1] [--dec-hint 1] [--dec-mem-image 1] [--dec-image A|B] [--dec-log-k 8]: 실물 노드 upper:=decider (scripts/low_decider.h) — 판단 모델 대신 정해진 가짜 응답기
+//   --upper decider [--dec-period 3.0] [--dec-latency 2.6] [--dec-input both] [--dec-cand 1] [--dec-hint 1] [--dec-mem-image 1] [--dec-image A|B] [--dec-log-k 8]: 실물 노드 위층 (scripts/low_decider.h) — 판단 모델 대신 정해진 가짜 응답기
 //     (요청 본문의 FNV 해시로 글자를 고르고 --dec-latency 초 뒤 걸음에 답을 냄). 두 쪽 요청 본문도 비트 비교. 시뮬이 판단 모델 답을 몇 걸음 뒤에 받는 것과 같은 길
 //     --dec-url http://127.0.0.1:8171: 가짜 대신 진짜 llama-server (실물 노드와 같은 비차단 소켓 limo_fire_rl/decider_client.h). 시뮬 시계는 답을 기다리는 동안 멈추고,
 //     답은 --dec-latency 초 뒤 걸음에 줌 (실물 답 시간을 시뮬 걸음으로). 실물 쪽은 같은 답을 같은 차례로 받음 — 판단 모델 위층을 시뮬에서 실물과 같은 코드로 평가
@@ -189,7 +190,7 @@ int main(int argc, char** argv) {
   fo.v_eff = 0.981f;
   fo.w_eff = 3.232f;
   fo.t0 = 0.10f;
-  fo.hyst = 0.2f;      // 실물 노드 기본 (limo_fire_rl config/low_rl.yaml fuel_hyst · fuel_vp_min · fuel_vp_clear)
+  fo.hyst = 0.2f;      // 실물 노드가 fuel 위층을 갖던 때(~2026-11-17)의 기본 fuel_hyst · fuel_vp_min · fuel_vp_clear
   fo.vp_min = 0.75f;
   fo.vp_clear = 0.21f;
   for (int i = 1; i < argc; ++i) {

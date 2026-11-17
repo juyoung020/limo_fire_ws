@@ -1,6 +1,6 @@
-// 합친 탐사 실물 노드 (limo_fire_rl/README "합친 탐사 low_rl"): 위층(판단 모델 · 기준선 cand · fuel · slot0)이 로봇 자기 지도에서 목표를 고르고, 아래층 규칙 추종기
+// 합친 탐사 실물 노드 (limo_fire_rl/README "합친 탐사 low_rl"): 위층 판단 모델이 로봇 자기 지도에서 목표를 고르고, 아래층 규칙 추종기
 // (로봇 지도 A* plan_ref + path_step_* 추종기 — RobotEnv::low_act 계층형 가지)가 몬다. 2026-11-16 아래층 강화학습을 그만둠 (archive/rl/README.md).
-// /scan 한 장 = 시뮬 걸음 하나(0.1 s). 시뮬 low_explore_check --upper decider|cand|fuel|slot0 와 같은 코드·같은 값:
+// /scan 한 장 = 시뮬 걸음 하나(0.1 s). 시뮬 low_explore_check --upper decider 와 같은 코드·같은 값 (판단 모델이 못 답할 때 대신 고르는 규칙은 --upper cand):
 //   관측·지도·판 끝      RobotEnv 합친 탐사 모드 (sim 헤더 그대로 — env_ref.cpp step_env + low_prepare_env, combine_run 설정)
 //   위층 결정·목표 넘기기  scripts/low_explore_ctl.h (combine_run 의 환경 하나 몫을 옮긴 것, 규칙 가지)
 // 걸음 차례 (장 k): step(감각, 장 k) → 판 끝·닿음 → 위층 걸음 뒤 → 깊이 → [결정 차례면 위층 결정 → set_cmd] → set_slot · low_prepare → low_act → 명령
@@ -10,8 +10,9 @@
 //   멈추고 꺼짐, contact_resume_s > 0 이면 그만큼 뒤 저절로 켬) · 끝(지도 닫힘 + 진척 없음 10 s · 진척 없음 · 시간 — 시뮬 판 끝 규칙).
 // 위층 목표가 없는 걸음(판 시작·프론티어 없음)은 시뮬과 같게 규칙 추종기의 제자리 회전.
 // dry_run:=true (기본): /cmd_vel 발행자를 아예 안 만들고 같은 명령을 ~/cmd_debug 에만.
-// upper:=cand: 위층 후보 scripts/cand_view.h 의 0 번 (low_explore_ctl.h Ctl 후보 모드). ~/candidates 에 후보 그림 (cand · decider 모드 — 결정마다).
-// upper:=decider (기본): 위층을 로봇 안 llama-server 판단 모델에 (scripts/low_decider.h — 사건 때 비동기 요청, 기다리는 동안 지금 목표로 몰고, 답이 오면 바꿈).
+// 위층: 로봇 안 llama-server 판단 모델 (scripts/low_decider.h — 사건 때 비동기 요청, 기다리는 동안 지금 목표로 몰고, 답이 오면 바꿈). 후보는 scripts/cand_view.h,
+//   답이 없거나 잇따라 틀리면 규칙(Ctl::cand_pick — 후보 0 번, 지금 목표 붙듦)이 대신. ~/candidates 에 후보 그림 (결정마다).
+//   fuel · slot0 · cand 기준선 위층은 시뮬 도구(low_explore_check · combine_run)에만 남음 (2026-11-18 노드에서 뺌).
 //   지시(~/instruction)가 있으면 물체 지도의 물체 · 보이는 사람도 후보 — 물체로 가기(scripts/task_sup.h) · 사람 따라가기(scripts/obj_follow.h)는 노드가 목표를 쥠.
 #include <chrono>
 #include <deque>
@@ -58,7 +59,6 @@ class LowRlNode : public rclcpp::Node {
     env_yaml_ = declare_parameter<std::string>("env_yaml", LIMO_FIRE_RL_ENV_YAML);
     dry_run_ = declare_parameter<bool>("dry_run", true);
     enabled_ = declare_parameter<bool>("enabled", false);
-    upper_ = declare_parameter<std::string>("upper", "decider");
     map_frame_ = declare_parameter<std::string>("map_frame", "map");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
     tf_timeout_ = declare_parameter<double>("tf_timeout", 0.2);
@@ -84,19 +84,7 @@ class LowRlNode : public rclcpp::Node {
     const int con_mask = (int)declare_parameter<int>("con_mask", -1);
     const int con_stall = (int)declare_parameter<int>("con_stall", -1);
     const double con_acc = declare_parameter<double>("con_acc", -1.0);
-    // 위층 fuel (combine_run --fuel-*, scripts/README "combine_run — 위층 fuel" 고른 조합)
-    fu::Opt fo;
-    fo.time = declare_parameter<bool>("fuel_time", true);
-    fo.global = declare_parameter<bool>("fuel_global", true);
-    fo.vp = declare_parameter<bool>("fuel_vp", true);
-    fo.room = declare_parameter<bool>("fuel_room", false);
-    fo.hyst = (float)declare_parameter<double>("fuel_hyst", 0.2);
-    fo.v_eff = (float)declare_parameter<double>("fuel_v", 0.981);
-    fo.w_eff = (float)declare_parameter<double>("fuel_w", 3.232);
-    fo.t0 = (float)declare_parameter<double>("fuel_t0", 0.10);
-    fo.vp_min = (float)declare_parameter<double>("fuel_vp_min", 0.75);
-    fo.vp_clear = (float)declare_parameter<double>("fuel_vp_clear", 0.21);
-    // 위층 판단 모델 (upper:=decider — scripts/low_decider.h). 사건 때만 물음 (event: 목표에 다가감 · 실패 · 후보 크게 바뀜 · 최대 간격), 지도 사진 + 후보 글
+    // 위층 판단 모델 (scripts/low_decider.h). 사건 때만 물음 (event: 목표에 다가감 · 실패 · 후보 크게 바뀜 · 최대 간격), 지도 사진 + 후보 글
     const std::string dec_url = declare_parameter<std::string>("decider_url", "http://127.0.0.1:8171");
     const double dec_timeout = declare_parameter<double>("decider_timeout", 8.0);
     lxd::Params dp;
@@ -109,7 +97,6 @@ class LowRlNode : public rclcpp::Node {
     dp.image = declare_parameter<std::string>("decider_image", "A") == "B" ? 1 : 0;
     dp.max_cands = (int)declare_parameter<int>("decider_max_cands", dp.max_cands);   // 요청에 넣는 후보 수 상한 (0 = 다)
     dp.log_k = (int)declare_parameter<int>("decider_log_k", dp.log_k);   // 결정 기록 최근 K 개 (글 + 지도 번호), 0 = 끔
-    if (upper_ != "fuel" && upper_ != "slot0" && upper_ != "decider" && upper_ != "cand") throw std::runtime_error("upper 는 decider · cand · fuel · slot0");
     hc_ = sim::load_env_cfg(env_yaml_);
     if (!camera_layer) hc_.cfg.cam_on = 0;
     if (con_mask >= 0) hc_.cfg.con_mask = con_mask;
@@ -123,14 +110,13 @@ class LowRlNode : public rclcpp::Node {
     const sim::EnvCfg& c = env_->cfg();
     if (!(max_speed_ > 0.0)) max_speed_ = c.act_v_fwd;   // 기본 = 시뮬 한도 (자르지 않음)
     lp_ = lxc::Params::from_cfg(c);
-    lp_.fuel = fo;
-    lp_.use_cand = upper_ == "cand" || upper_ == "decider";   // 위층 후보 scripts/cand_view.h (판단 모델 후보 · cand 는 그 0 번) — low_explore_check --upper cand|decider
-    lp_.use_fuel = upper_ == "fuel";   // slot0: 피하지 않는 첫 계층형 후보 · stick
-    // 걸음마다 관측에서 쓰는 것만 (RobotEnv::set_obs): 위층 관측 그림은 노드가 안 씀, 계층형 후보 8 칸은 fuel · slot0 만 (low_explore_check --node-obs 가 같은 설정으로 비교).
+    lp_.use_cand = true;    // 위층 후보 scripts/cand_view.h (판단 모델 후보 · 대신 고르는 규칙은 그 0 번) — low_explore_check --upper decider|cand
+    lp_.use_fuel = false;
+    // 걸음마다 관측에서 쓰는 것만 (RobotEnv::set_obs): 위층 관측 그림 · 계층형 후보 8 칸은 노드가 안 씀 (low_explore_check --node-obs 가 같은 설정으로 비교).
     // 걸음 사이 프론티어 칸 판정 기억은 RobotEnv 기본 켬 (값 같음 — low_explore_check --fc-check 가 처음부터 다시 센 값과 견줌)
-    env_->set_obs(false, !lp_.use_cand);
+    env_->set_obs(false, false);
     ctl_ = std::make_unique<lxc::Ctl>(lp_);
-    if (upper_ == "decider") {
+    {
       dp.mode = 1;   // event (scripts/low_decider.h — periodic 은 시뮬 비교에서 덮음이 같고 요청만 많아 실물에서 안 씀)
       dp.hold_extra = (int)declare_parameter<int>("decider_hold_extra", dp.hold_extra);      // 목표가 죽었는데 답이 오는 중이면 (지연 어림 + 이것) 걸음까지 기다림 (−1 = 바로 규칙)
       dp.ask_lead_s = (float)declare_parameter<double>("decider_ask_lead_s", dp.ask_lead_s);  // event: 남은 시간 ≤ 답 지연 + 이것 (s) 이면 미리 물음 (−1 = 끔)
@@ -163,9 +149,9 @@ class LowRlNode : public rclcpp::Node {
                   dec_url.c_str(), dp.max_cands, dp.timeout_steps * dt());
     }
     RCLCPP_INFO(get_logger(),
-                "아래층 규칙 추종기 (A* + path_step) · 위층 %s (fuel 시간 %d 전역 %d 시점 %d v %.3f ω %.3f t0 %.2f) · 결정 %d 걸음 · 피하기 %.2f m %.0f s · 닿음 마스크 %d "
+                "아래층 규칙 추종기 (A* + path_step) · 위층 판단 모델 · 결정 %d 걸음 · 피하기 %.2f m %.0f s · 닿음 마스크 %d "
                 "멈춤 %d 걸음 가속 %.1f m/s² · 최고 속도 %.2f m/s%s — %s",
-                upper_.c_str(), fo.time, fo.global, fo.vp, fo.v_eff, fo.w_eff, fo.t0, lp_.decide_steps,
+                lp_.decide_steps,
                 lp_.bl_r, lp_.bl_steps * dt(), c.con_mask, c.con_stall, c.con_acc, max_speed_, max_speed_ < c.act_v_fwd ? " (시뮬 한도보다 낮춤)" : "",
                 dry_run_ ? "dry run: /cmd_vel 안 냄, ~/cmd_debug 에만" : "실제 주행: /cmd_vel 냄");
     if (!record_.empty()) rec_ = std::make_unique<lowrec::Writer>(record_, hc_);
@@ -255,7 +241,6 @@ class LowRlNode : public rclcpp::Node {
 
  private:
   double dt() const { return (double)env_->cfg().substeps * env_->cfg().dt; }
-  bool ctl_upper() const { return upper_ == "fuel" || upper_ == "slot0" || upper_ == "cand"; }   // 위층을 low_explore_ctl.h Ctl 이 바로 정함 (판단 모델 아님)
 
   // ---- 상태 (RViz 탐사 패널: ~/state running 이면 켜짐, ~/done, ~/status)
   void set_state(const std::string& st, const std::string& why) {
@@ -533,20 +518,7 @@ class LowRlNode : public rclcpp::Node {
     // 위층
     const auto t1 = clk::now();
     double dec_ms = -1.0;
-    if (ctl_upper()) {
-      if (running() && ctl_->due(env_->state())) {
-        const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur(), env_->reach_keep()};
-        int why = 0;
-        const sim::LowCmd cmd = ctl_->decide(v, work_, &why);
-        env_->set_cmd(cmd);
-        why_dec_ = why;
-        dec_ms = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
-        publish_goal(cmd.target);
-        if (upper_ == "cand") publish_cands();
-      } else if (!running() && env_->low_cmd().follow != 0) {
-        env_->set_cmd(sim::LowCmd{-1, 0});   // 꺼짐·멈춤: 목표 없음 (다시 켜면 바로 결정)
-      }
-    } else if (upper_ == "decider") {
+    {
       if (running()) {   // 기다리지 않음: 요청은 비차단 소켓으로 걸음마다 조금씩, 답은 다음 걸음들에서 꺼냄
         const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur(), env_->reach_keep()};
         sim::LowCmd cmd;
@@ -636,13 +608,13 @@ class LowRlNode : public rclcpp::Node {
       char buf[512];
       const sim::LowCmd& lc = env_->low_cmd();
       std::snprintf(buf, sizeof(buf), "%s (%s) · 리모컨 %s · 걸음 %d · 목표 칸 %d%s · 명령 v %.2f ω %.2f · 결정 %ld 통과 %ld 막힘 %ld · 평균 ms: 걸음 %.2f 관측 %.2f 위층 %.1f (최대 %.1f)",
-                    state_.c_str(), why_.c_str(), rc_auto_now() ? "오토" : "오토 아님", env_->steps(), lc.target, why_dec_ == 2 ? " (목표 없음)" : why_dec_ == 1 ? " (slot0)" : "", v, w,
+                    state_.c_str(), why_.c_str(), rc_auto_now() ? "오토" : "오토 아님", env_->steps(), lc.target, why_dec_ == 2 ? " (목표 없음)" : "", v, w,
                     ctl_->n_dec(), ctl_->n_reach(), ctl_->n_stall(), sum_step_ / n_, sum_obs_ / n_, n_dec_ ? sum_dec_ / n_dec_ : 0.0, max_dec_);
       st.data = buf;
       st.data += " · " + rc_info();
       if (dec_up_) {
         char b2[300];
-        std::snprintf(b2, sizeof b2, " · 판단 모델: 보냄 %ld 답 %ld (마지막 %.0f ms) 시간 끝 %ld 실패 %ld%s%s 후보 안 맞음 %ld slot0 대신 %ld%s", dec_up_->n_sent(), dec_up_->n_ans(), dec_up_->last_ms(),
+        std::snprintf(b2, sizeof b2, " · 판단 모델: 보냄 %ld 답 %ld (마지막 %.0f ms) 시간 끝 %ld 실패 %ld%s%s 후보 안 맞음 %ld 규칙 대신 %ld%s", dec_up_->n_sent(), dec_up_->n_ans(), dec_up_->last_ms(),
                       dec_up_->n_timeout(), dec_up_->n_fail(), dec_up_->last_err().empty() ? "" : " — ", dec_up_->last_err().c_str(), dec_up_->n_nomatch(), dec_up_->n_fallback(),
                       dec_up_->waiting() ? " · 기다리는 중" : "");
         st.data += b2;
@@ -692,7 +664,7 @@ class LowRlNode : public rclcpp::Node {
       sp.scale.x = sp.scale.y = sp.scale.z = 0.22;
       color(sp, r, g, b, 0.9f);
       ma.markers.push_back(sp);
-      const bool asked = upper_ == "decider" && dec_up_ && dec_up_->last_pick_id() == c.id;   // 판단 모델의 마지막 답이 고른 후보
+      const bool asked = dec_up_ && dec_up_->last_pick_id() == c.id;   // 판단 모델의 마지막 답이 고른 후보
       char buf[96];
       std::snprintf(buf, sizeof buf, "%c#%d:%.0fm2/%.0fs%s%s", 'A' + (int)i, c.id, c.gain_m2, c.t_s, c.aborts > 0 ? "!" : "", asked ? "<" : "");   // RViz 글은 빈칸이 넓어 빈칸 없이
       const double tsz = 0.30;   // 글 높이 (m) — 지도 위에서 읽히게
@@ -768,7 +740,7 @@ class LowRlNode : public rclcpp::Node {
       char buf[400];
       int n = std::snprintf(buf, sizeof buf, "candidates %zu  dormant %d  build %.1f ms%s\ngoal: %s", o.c.size(), o.n_dormant, o.ms, o.rotate ? "  (rotate)" : "",
                             cur_k >= 0 ? (std::string(1, (char)('A' + cur_k)) + " #" + std::to_string(ctl_->cur_id())).c_str() : "none");
-      if (upper_ == "decider" && dec_up_) {
+      if (dec_up_) {
         const int as = dec_up_->last_ans_step();
         n += std::snprintf(buf + n, sizeof buf - (size_t)n, "\ndecider: %s #%d  %.1f s ago  latency %.1f s  ans %ld/%ld%s%s", dec_up_->last_choice().empty() ? "-" : dec_up_->last_choice().c_str(),
                            dec_up_->last_pick_id(), as >= 0 ? (env_->state().step - as) * dt_s : -1.0, dec_up_->last_ms() / 1000.0, dec_up_->n_ans(), dec_up_->n_sent(),
@@ -1008,7 +980,7 @@ class LowRlNode : public rclcpp::Node {
     pub_goal_->publish(ma);
   }
 
-  std::string env_yaml_, upper_, map_frame_, base_frame_, record_, state_, why_;
+  std::string env_yaml_, map_frame_, base_frame_, record_, state_, why_;
   bool dry_run_ = true, enabled_ = false, started_ = false, finished_ = false, stale_ = false, require_rc_ = true, rc_auto_ok_ = false;
   double tf_timeout_ = 0.2, depth_timeout_ = 0.5, input_timeout_ = 0.3, rc_timeout_ = 0.5, contact_resume_s_ = 0.0, max_speed_ = -1.0, contact_t_ = -1.0;
   double sum_step_ = 0, sum_obs_ = 0, sum_dec_ = 0, max_dec_ = 0;
@@ -1021,7 +993,6 @@ class LowRlNode : public rclcpp::Node {
   std::unique_ptr<lxc::Ctl> ctl_;
   std::unique_ptr<lxd::Upper> dec_up_;
   std::unique_ptr<DeciderClient> dec_cli_;
-  fu::Work work_;
   std::unique_ptr<lowrec::Writer> rec_;
   std::shared_ptr<tf2_ros::Buffer> tf_buf_;
   std::shared_ptr<tf2_ros::TransformListener> tf_lis_;
