@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <opencv2/imgproc.hpp>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -32,7 +33,11 @@ public:
   explicit YoloDetectorNode(const rclcpp::NodeOptions & options)
   : Node("yolo_detector", options)
   {
-    const auto engine = declare_parameter<std::string>("engine_path");
+    // 절대 경로가 아니면 이 패키지 설치 폴더의 models/ 에서 찾는다 (엔진을 src/…/models 에 두고 colcon build)
+    auto engine = declare_parameter<std::string>("engine_path");
+    if (!engine.empty() && engine[0] != '/') {
+      engine = ament_index_cpp::get_package_share_directory("limo_fire_perception") + "/models/" + engine;
+    }
     const auto conf = declare_parameter<double>("conf_threshold", 0.35);
     const auto iou = declare_parameter<double>("nms_iou", 0.5);
     class_names_ = declare_parameter<std::vector<std::string>>("class_names");

@@ -64,6 +64,7 @@
     <include file="$(find-pkg-share limo_fire_perception)/launch/yolo.launch.xml">
       <arg name="use_sim_time" value="true"/>
       <arg name="rviz" value="false"/>
+      <arg name="config" value="yolo_fire.yaml"/>
       <arg name="params_override" value="$(find-pkg-share limo_fire_perception)/config/$(if $(var benchmark) benchmark.yaml yolo_fire.yaml)"/>
     </include>
   </group>

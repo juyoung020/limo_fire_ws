@@ -17,6 +17,7 @@ add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall> $<$<COMPILE_LANGUAGE:CXX>:-
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
@@ -47,7 +48,7 @@ target_link_libraries(trt_yolo PUBLIC ${NVINFER_LIB} CUDA::cudart opencv_core op
 # 같은 이름의 실행 파일(yolo_detector, object_mapper)도 함께 만들어져 따로 띄울 수도 있다
 add_library(yolo_detector_component SHARED src/yolo_detector_node.cpp)
 target_link_libraries(yolo_detector_component trt_yolo)
-ament_target_dependencies(yolo_detector_component rclcpp rclcpp_components sensor_msgs vision_msgs)
+ament_target_dependencies(yolo_detector_component rclcpp rclcpp_components sensor_msgs vision_msgs ament_index_cpp)
 rclcpp_components_register_node(yolo_detector_component
   PLUGIN "limo_fire_perception::YoloDetectorNode" EXECUTABLE yolo_detector)
 
@@ -70,5 +71,7 @@ rclcpp_components_register_node(perception_benchmark_component
 install(TARGETS trt_yolo yolo_detector_component object_mapper_component perception_benchmark_component
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY launch config icons DESTINATION share/${PROJECT_NAME})
+# 엔진(기기마다 만듦, git 에 없음): models/ 에 두면 설치되고 engine_path 에 파일 이름만 써도 찾는다
+install(DIRECTORY models/ DESTINATION share/${PROJECT_NAME}/models FILES_MATCHING PATTERN "*.engine")
 
 ament_package()

@@ -35,6 +35,7 @@ object_mapper:
     robot_frame: base_link
     min_hits: 5          # 이만큼 본 것만 지도에 올림 (잘못 탐지 한두 번은 무시)
     class_names: [fire, smoke, fire_extinguisher, exit_sign, person, door, stairs]
+    objects_file: ""      # 물체 지도 파일. 있으면 켤 때 읽음 (navigation.launch.xml 이 저장 지도 옆 <이름>_objects.txt 를 줌)
 
 # 인식 벤치마크 (perception_benchmark, sim.launch.xml benchmark:=true). 정답은 Webots /gt/* (limo_fire_sim)
 perception_benchmark:

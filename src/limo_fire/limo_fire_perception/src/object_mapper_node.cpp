@@ -6,10 +6,15 @@
 // 그 사진을 ~/selected 로 낸다 (선택한 물체는 흰 고리, 현황판에 정보)
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <deque>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <message_filters/subscriber.h>
@@ -21,6 +26,7 @@
 #include <rviz_2d_overlay_msgs/msg/overlay_text.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/buffer.h>
@@ -53,14 +59,63 @@ constexpr std::array<Style, 7> kStyles{{
   {"door", "DOOR", "문", 0.72f, 0.48f, 0.26f},
   {"stairs", "STAIRS", "계단", 0.66f, 0.42f, 0.92f},
 }};
-constexpr Style kUnknown{"", "OBJ", "기타", 0.8f, 0.8f, 0.8f};
+// 화재 7 종 밖의 물체(COCO 80 종 등): 지도 라벨 = 이름 대문자(12 자까지), 현황판 = 이름 그대로, 색 = 이름 해시로 고른 밝은 색.
+// 이 문자열들은 노드가 살아 있는 동안 남아야 해서(Style 은 const char *) 한 번 만들어 둔다
+// 설정 class_colors 로 준 색 (노드가 켤 때 채움). 있으면 정해진 색보다 앞섬
+std::unordered_map<std::string, std::array<float, 3>> & color_override()
+{
+  static std::unordered_map<std::string, std::array<float, 3>> m;
+  return m;
+}
 
 const Style & style_of(const std::string & name)
 {
-  for (const auto & s : kStyles) {
+  const auto co = color_override().find(name);
+  if (co == color_override().end()) {
+    for (const auto & s : kStyles) {
+      if (name == s.name) {return s;}
+    }
+  }
+  static std::deque<std::array<std::string, 3>> names;
+  static std::deque<Style> made;
+  for (const auto & s : made) {
     if (name == s.name) {return s;}
   }
-  return kUnknown;
+  for (const auto & s : kStyles) {   // 정해진 이름표·한글 이름은 두고 색만 바꿈
+    if (name == s.name) {
+      made.push_back({s.name, s.tag, s.ko, co->second[0], co->second[1], co->second[2]});
+      return made.back();
+    }
+  }
+  std::string tag;
+  for (char c : name) {tag += (c == ' ') ? '_' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));}
+  if (tag.size() > 12) {tag.resize(12);}
+  names.push_back({name, tag, name});
+  uint32_t h = 2166136261u;
+  for (char c : name) {h = (h ^ static_cast<uint8_t>(c)) * 16777619u;}
+  const float hue = (h % 360) / 60.0f, x = 1.0f - std::fabs(std::fmod(hue, 2.0f) - 1.0f);
+  float r = 0, g = 0, b = 0;
+  switch (static_cast<int>(hue)) {
+    case 0: r = 1; g = x; break;
+    case 1: r = x; g = 1; break;
+    case 2: g = 1; b = x; break;
+    case 3: g = x; b = 1; break;
+    case 4: r = x; b = 1; break;
+    default: r = 1; b = x; break;
+  }
+  if (co != color_override().end()) {r = co->second[0]; g = co->second[1]; b = co->second[2];} else {
+    r = 0.35f + 0.6f * r; g = 0.35f + 0.6f * g; b = 0.35f + 0.6f * b;
+  }
+  made.push_back({names.back()[0].c_str(), names.back()[1].c_str(), names.back()[2].c_str(), r, g, b});
+  return made.back();
+}
+
+bool has_icon(const std::string & name)
+{
+  for (const auto & s : kStyles) {
+    if (name == s.name) {return true;}
+  }
+  return false;
 }
 
 std_msgs::msg::ColorRGBA rgba(float r, float g, float b, float a)
@@ -107,6 +162,24 @@ public:
     // 클래스별 병합 반경 (class_names 순서). 계단·문처럼 큰 물체는 넓게. 비우면 모두 merge_radius
     merge_radii_ = declare_parameter<std::vector<double>>("merge_radii", std::vector<double>{});
     merge_radii_.resize(class_names_.size(), merge_radius_);
+    n_main_ = static_cast<int>(class_names_.size());
+    // 클래스별 지도 색 "#rrggbb" (class_names 순서). 비우면 정해진 색(화재 7 종) 또는 이름에서 고른 색
+    const auto colors = declare_parameter<std::vector<std::string>>("class_colors", std::vector<std::string>{});
+    for (size_t k = 0; k < colors.size() && k < class_names_.size(); ++k) {
+      unsigned rr, gg, bb;
+      if (std::sscanf(colors[k].c_str(), "#%02x%02x%02x", &rr, &gg, &bb) == 3) {
+        color_override()[class_names_[k]] = {rr / 255.0f, gg / 255.0f, bb / 255.0f};
+      }
+    }
+    // 다른 탐지기(예: COCO 80 종 yolo_coco)의 클래스를 뒤에 붙인다. 이름이 같으면(person) 같은 클래스로 합친다. 반경은 merge_radius
+    extra_class_names_ = declare_parameter<std::vector<std::string>>("extra_class_names", std::vector<std::string>{});
+    for (const auto & n : extra_class_names_) {
+      if (class_index(n) < 0) {class_names_.push_back(n); merge_radii_.push_back(merge_radius_);}
+    }
+    counters_.assign(class_names_.size(), 0);
+    min_hits_extra_ = declare_parameter<int>("min_hits_extra", min_hits_);
+    // 물체 지도 파일 (클래스·위치·크기·본 횟수·마지막 본 시각). 있으면 켤 때 읽는다 — 저장한 지도(map_saver)와 같이 다시 쓰려고
+    objects_file_ = declare_parameter<std::string>("objects_file", "");
     view_margin_ = declare_parameter<double>("view_margin", 0.3);
     select_radius_ = declare_parameter<double>("select_radius", 0.6);
 
@@ -148,7 +221,7 @@ public:
     clear_srv_ = create_service<std_srvs::srv::Trigger>("~/clear",
         [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
           landmarks_.clear();
-          counters_.fill(0);
+          std::fill(counters_.begin(), counters_.end(), 0);
           pending_.clear();
           selected_ = -1;
           visualization_msgs::msg::MarkerArray arr;
@@ -158,14 +231,52 @@ public:
           res->message = "지도 물체를 모두 지웠음";
         });
 
+    // 물체 지도 저장: ~/save (objects_file 에) · ~/save_to (std_msgs/String 경로 — save_map.launch.xml 이 지도 옆에) · ~/load
+    save_srv_ = create_service<std_srvs::srv::Trigger>("~/save",
+        [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
+          res->success = !objects_file_.empty() && save(objects_file_);
+          res->message = res->success ? "저장: " + objects_file_ : "objects_file 이 비었거나 쓰기 실패";
+        });
+    load_srv_ = create_service<std_srvs::srv::Trigger>("~/load",
+        [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
+          res->success = !objects_file_.empty() && load(objects_file_);
+          res->message = res->success ? "읽음: " + objects_file_ : "objects_file 이 비었거나 읽기 실패";
+        });
+    save_to_sub_ = create_subscription<std_msgs::msg::String>("~/save_to", 10,
+        [this](std_msgs::msg::String::ConstSharedPtr m) {save(m->data);});
+    if (!objects_file_.empty()) {load(objects_file_);}
+
     // 탐지와 깊이 영상은 시각이 정확히 같지 않으므로 가까운 것끼리 짝짓는다
     const auto qos = rclcpp::SensorDataQoS().get_rmw_qos_profile();
     det_sub_.subscribe(this, declare_parameter<std::string>("detections_topic", "/yolo_detector/detections"));
     depth_sub_.subscribe(this, declare_parameter<std::string>("depth_topic", "/camera/depth/image_raw"), qos);
+    const double sync_dt = declare_parameter<double>("max_sync_dt", 0.05);
     sync_ = std::make_shared<message_filters::Synchronizer<Policy>>(Policy(10), det_sub_, depth_sub_);
     // 회전 중에 다른 순간의 깊이와 짝지어지면 엉뚱한 곳에 찍히므로 시각 차이를 제한한다
-    sync_->setMaxIntervalDuration(rclcpp::Duration::from_seconds(declare_parameter<double>("max_sync_dt", 0.05)));
-    sync_->registerCallback(&ObjectMapperNode::on_pair, this);
+    sync_->setMaxIntervalDuration(rclcpp::Duration::from_seconds(sync_dt));
+    sync_->registerCallback(std::bind(&ObjectMapperNode::on_pair, this, std::placeholders::_1, std::placeholders::_2, -1));
+    // 더 붙는 탐지기. 분할 모델이면 그 탐지기의 마스크(…/detections → …/mask)를 따로 받는다. 깊이 구독은 같이 쓴다
+    const auto extra_topics = declare_parameter<std::vector<std::string>>("extra_detections_topics", std::vector<std::string>{});
+    for (size_t k = 0; k < extra_topics.size(); ++k) {
+      auto ex = std::make_unique<Extra>();
+      ex->det.subscribe(this, extra_topics[k]);
+      std::string mtopic = extra_topics[k];
+      const auto sl = mtopic.rfind('/');
+      mtopic = (sl == std::string::npos ? std::string() : mtopic.substr(0, sl + 1)) + "mask";
+      Extra * raw = ex.get();
+      ex->mask_sub = create_subscription<sensor_msgs::msg::Image>(mtopic, 10, [raw](sensor_msgs::msg::Image::ConstSharedPtr msg) {
+          raw->masks.push_back(msg);
+          if (raw->masks.size() > 10) {raw->masks.pop_front();}
+        });
+      ex->sync = std::make_shared<message_filters::Synchronizer<Policy>>(Policy(10), ex->det, depth_sub_);
+      ex->sync->setMaxIntervalDuration(rclcpp::Duration::from_seconds(sync_dt));
+      ex->sync->registerCallback(std::bind(&ObjectMapperNode::on_pair, this, std::placeholders::_1, std::placeholders::_2, static_cast<int>(k)));
+      extras_.push_back(std::move(ex));
+    }
+    cell_size_ = declare_parameter<double>("cell_size", 0.05);
+    footprint_stride_ = declare_parameter<int>("footprint_stride", 3);
+    footprint_min_count_ = declare_parameter<int>("footprint_min_count", 2);
+    footprint_max_z_ = declare_parameter<double>("footprint_max_z", 2.0);
 
     // 불 위험 반경 깜빡임·로봇까지 거리 갱신 (벽시계 기준이라 시뮬이 멈춰도 표시는 돈다)
     timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {publish();});
@@ -182,6 +293,11 @@ private:
     int hits;
     double best_score;
     double area;     // m², 마스크로 잰 앞면 넓이 (불 크기). 마스크가 없으면 0
+    double ext = 0;  // m, 물체 너비 (상자 너비 × 거리 / fx, 평균) — 지도 위 발자국 크기
+    double last_seen = 0;  // s (노드 시계), 마지막으로 본 때
+    std::unordered_map<int64_t, uint16_t> cells;
+    double bx = 0, by = 0, bz = 0;   // 밑점: 마스크 3D 점 중 가장 낮은 곳들(아래 10 %)의 평균 (map) — 불이면 불 밑동. 마스크가 없으면 0
+    int base_n = 0;   // 바닥 발자국: 분할 마스크 픽셀의 3D 점을 지도 칸(cell_size)에 내린 것 — 칸 → 본 횟수
     sensor_msgs::msg::Image::SharedPtr view;  // 대표 사진 (view_quality 가 가장 큰 장면)
     double view_quality = 0;
   };
@@ -203,6 +319,14 @@ private:
 
   using Policy = message_filters::sync_policies::ApproximateTime<
     vision_msgs::msg::Detection2DArray, sensor_msgs::msg::Image>;
+  struct Extra
+  {
+    message_filters::Subscriber<vision_msgs::msg::Detection2DArray> det;
+    std::shared_ptr<message_filters::Synchronizer<Policy>> sync;
+    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub;
+    std::deque<sensor_msgs::msg::Image::ConstSharedPtr> masks;
+  };
+
 
   int class_index(const std::string & name) const
   {
@@ -274,7 +398,7 @@ private:
 
   void on_pair(
     const vision_msgs::msg::Detection2DArray::ConstSharedPtr & dets,
-    const sensor_msgs::msg::Image::ConstSharedPtr & depth)
+    const sensor_msgs::msg::Image::ConstSharedPtr & depth, int source)
   {
     if (!info_ || dets->detections.empty()) {return;}
     if (depth->encoding != "16UC1" && depth->encoding != "32FC1") {
@@ -297,7 +421,7 @@ private:
 
     // 같은 시각 마스크 (분할 모델일 때). 영상 크기가 탐지 기준(camera_info)과 같아야 쓴다
     sensor_msgs::msg::Image::ConstSharedPtr mask;
-    for (const auto & mk : masks_) {
+    for (const auto & mk : (source < 0 ? masks_ : extras_[static_cast<size_t>(source)]->masks)) {
       if (mk->header.stamp == dets->header.stamp && mk->width == info_->width && mk->height == info_->height) {
         mask = mk;
       }
@@ -322,7 +446,8 @@ private:
       const double view_yaw = std::atan2(p_map.point.y - tf.transform.translation.y,
           p_map.point.x - tf.transform.translation.x);
       const size_t idx = add(cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw,
-          d.results[0].hypothesis.score, m.area);
+          d.results[0].hypothesis.score, m.area, d.bbox.size_x * m.z / fx);
+      if (mask && i < 255) {footprint(*depth, *mask, static_cast<uint8_t>(i + 1), d.bbox, sx, sy, fx, fy, cx, cy, tf, landmarks_[idx]);}
       // 크게(가까이)·확실하게 찍힐수록 좋은 사진. 지금 것보다 나을 때만 자른다
       const double quality = d.bbox.size_x * d.bbox.size_y * d.results[0].hypothesis.score;
       if (quality > landmarks_[idx].view_quality) {
@@ -401,8 +526,9 @@ private:
   }
 
   // 물체 목록에 넣고 그 물체의 번호(landmarks_ 안 위치)를 돌려준다
-  size_t add(int cls, double x, double y, double z, double yaw, double score, double area)
+  size_t add(int cls, double x, double y, double z, double yaw, double score, double area, double ext)
   {
+    const double t_now = now().seconds();
     Landmark * best = nullptr;
     double best_d = merge_radii_[cls];
     for (auto & l : landmarks_) {
@@ -410,7 +536,7 @@ private:
       if (l.cls == cls && dist < best_d) {best = &l; best_d = dist;}
     }
     if (!best) {
-      landmarks_.push_back({cls, 0, x, y, z, yaw, 1, score, area});
+      landmarks_.push_back({cls, 0, x, y, z, yaw, 1, score, area, ext, t_now});
       return landmarks_.size() - 1;
     }
     // 처음 몇 번은 평균, 그 뒤로는 천천히 따라간다 (멀리서 본 부정확한 값이 남지 않게)
@@ -419,14 +545,142 @@ private:
     best->y += a * (y - best->y);
     best->z += a * (z - best->z);
     if (area > 0) {best->area = best->area > 0 ? best->area + a * (area - best->area) : area;}
+    if (ext > 0) {best->ext = best->ext > 0 ? best->ext + a * (ext - best->ext) : ext;}
+    best->last_seen = t_now;
     best->hits++;
     best->best_score = std::max(best->best_score, score);
-    if (best->hits >= min_hits_ && best->number == 0) {
-      best->number = ++counters_[std::min<size_t>(cls, counters_.size() - 1)];
+    const int need = cls < n_main_ ? min_hits_ : min_hits_extra_;
+    if (best->hits >= need && best->number == 0) {
+      best->number = ++counters_[cls];
       RCLCPP_INFO(get_logger(), "지도에 추가: %s %d (%.2f, %.2f)", style_of(class_names_[cls]).tag, best->number,
         best->x, best->y);
     }
     return static_cast<size_t>(best - landmarks_.data());
+  }
+
+  static int64_t cell_key(int64_t gx, int64_t gy)
+  {
+    return static_cast<int64_t>((static_cast<uint64_t>(static_cast<uint32_t>(gx)) << 32) | static_cast<uint32_t>(gy));
+  }
+  static void cell_of(int64_t k, int32_t & gx, int32_t & gy)
+  {
+    gx = static_cast<int32_t>(static_cast<uint64_t>(k) >> 32);
+    gy = static_cast<int32_t>(static_cast<uint64_t>(k) & 0xffffffffu);
+  }
+
+  // 분할 마스크 픽셀(footprint_stride 칸마다)을 깊이로 3D 점 → map → 바닥 칸(cell_size)에 센다. 물체 깊이(가운데 값) ± 0.5 m 밖 점(배경)은 버림
+  void footprint(const sensor_msgs::msg::Image & depth, const sensor_msgs::msg::Image & mask, uint8_t id,
+    const vision_msgs::msg::BoundingBox2D & box, double sx, double sy, double fx, double fy, double cx, double cy,
+    const geometry_msgs::msg::TransformStamped & tf, Landmark & l) const
+  {
+    const int x0 = std::max(0, static_cast<int>(box.center.position.x - box.size_x / 2));
+    const int x1 = std::min(static_cast<int>(mask.width) - 1, static_cast<int>(box.center.position.x + box.size_x / 2));
+    const int y0 = std::max(0, static_cast<int>(box.center.position.y - box.size_y / 2));
+    const int y1 = std::min(static_cast<int>(mask.height) - 1, static_cast<int>(box.center.position.y + box.size_y / 2));
+    const int st = std::max(1, footprint_stride_);
+    std::vector<std::array<float, 3>> pts;
+    std::vector<float> zs;
+    for (int y = y0; y <= y1; y += st) {
+      const uint8_t * mrow = mask.data.data() + static_cast<size_t>(y) * mask.step;
+      const int dy = std::min(static_cast<int>(y * sy), static_cast<int>(depth.height) - 1);
+      const uint8_t * drow = depth.data.data() + static_cast<size_t>(dy) * depth.step;
+      for (int x = x0; x <= x1; x += st) {
+        if (mrow[x] != id) {continue;}
+        const int dx = std::min(static_cast<int>(x * sx), static_cast<int>(depth.width) - 1);
+        const float d = depth.encoding == "16UC1" ?
+          reinterpret_cast<const uint16_t *>(drow)[dx] * 0.001f : reinterpret_cast<const float *>(drow)[dx];
+        if (!std::isfinite(d) || d < min_depth_ || d > max_depth_) {continue;}
+        pts.push_back({static_cast<float>(x), static_cast<float>(y), d});
+        zs.push_back(d);
+      }
+    }
+    if (zs.size() < 5) {return;}
+    std::nth_element(zs.begin(), zs.begin() + zs.size() / 2, zs.end());
+    const float zmed = zs[zs.size() / 2];
+    tf2::Transform T;
+    tf2::fromMsg(tf.transform, T);
+    std::vector<tf2::Vector3> kept;
+    for (const auto & p : pts) {
+      if (std::fabs(p[2] - zmed) > 0.5f) {continue;}
+      const tf2::Vector3 v = T * tf2::Vector3((p[0] - cx) * p[2] / fx, (p[1] - cy) * p[2] / fy, p[2]);
+      kept.push_back(v);
+      if (v.z() > footprint_max_z_) {continue;}
+      const int64_t gx = static_cast<int64_t>(std::floor(v.x() / cell_size_)), gy = static_cast<int64_t>(std::floor(v.y() / cell_size_));
+      uint16_t & c = l.cells[cell_key(gx, gy)];
+      if (c < 65535) {++c;}
+    }
+    // 밑점: 높이 아래 10 % 점의 평균. 여러 번 본 값은 평균 (처음 몇 번 평균 → 천천히 따라감, 위치와 같은 규칙)
+    if (kept.size() >= 10) {
+      std::sort(kept.begin(), kept.end(), [](const tf2::Vector3 & a, const tf2::Vector3 & b) {return a.z() < b.z();});
+      const size_t n = std::max<size_t>(1, kept.size() / 10);
+      double x = 0, y = 0, z = 0;
+      for (size_t k = 0; k < n; ++k) {x += kept[k].x(); y += kept[k].y(); z += kept[k].z();}
+      x /= n; y /= n; z /= n;
+      const double a = 1.0 / std::min(l.base_n + 1, 20);
+      l.bx += a * (x - l.bx);
+      l.by += a * (y - l.by);
+      l.bz += a * (z - l.bz);
+      ++l.base_n;
+    }
+  }
+
+  // 물체 지도 파일: 머리 줄 + 물체마다 한 줄 "클래스 번호 x y z yaw 본횟수 최고점수 넓이 너비 마지막본시각" (map 좌표, m · rad · s).
+  // 지도에 올라간 것(number > 0)만 쓴다. 대표 사진은 쓰지 않는다
+  bool save(const std::string & path)
+  {
+    std::ofstream f(path);
+    if (!f) {RCLCPP_WARN(get_logger(), "물체 지도 저장 실패: %s", path.c_str()); return false;}
+    f << "# limo_fire object map v1 (frame " << map_frame_ << ", cell " << cell_size_ << " m): class number x y z yaw hits best_score area ext last_seen n_cells gx,gy,count ...\n";
+    int n = 0;
+    for (const auto & l : landmarks_) {
+      if (l.number == 0) {continue;}
+      char buf[256];
+      std::snprintf(buf, sizeof(buf), "%s %d %.3f %.3f %.3f %.3f %d %.3f %.4f %.3f %.1f %zu", class_names_[l.cls].c_str(), l.number,
+        l.x, l.y, l.z, l.yaw, l.hits, l.best_score, l.area, l.ext, l.last_seen, l.cells.size());
+      f << buf;
+      for (const auto & kv : l.cells) {
+        int32_t gx, gy;
+        cell_of(kv.first, gx, gy);
+        f << ' ' << gx << ',' << gy << ',' << kv.second;
+      }
+      f << '\n';
+      ++n;
+    }
+    RCLCPP_INFO(get_logger(), "물체 지도 저장: %s (%d 개)", path.c_str(), n);
+    return static_cast<bool>(f);
+  }
+
+  // 저장한 물체 지도를 읽어 지금 목록에 더한다 (같은 클래스 merge 반경 안이면 합침). 모르는 클래스는 class_names 뒤에 붙인다
+  bool load(const std::string & path)
+  {
+    std::ifstream f(path);
+    if (!f) {RCLCPP_WARN(get_logger(), "물체 지도 파일 없음: %s", path.c_str()); return false;}
+    std::string line;
+    int n = 0;
+    while (std::getline(f, line)) {
+      if (line.empty() || line[0] == '#') {continue;}
+      std::istringstream is(line);
+      std::string name;
+      int number, hits;
+      double x, y, z, yaw, score, area, ext, last;
+      if (!(is >> name >> number >> x >> y >> z >> yaw >> hits >> score >> area >> ext >> last)) {continue;}
+      int cls = class_index(name);
+      if (cls < 0) {class_names_.push_back(name); merge_radii_.push_back(merge_radius_); counters_.push_back(0); cls = class_index(name);}
+      Landmark l{cls, 0, x, y, z, yaw, std::max(hits, min_hits_), score, area, ext, last};
+      size_t nc = 0;
+      if (is >> nc) {
+        std::string tok;
+        for (size_t k = 0; k < nc && (is >> tok); ++k) {
+          int gx, gy, c;
+          if (std::sscanf(tok.c_str(), "%d,%d,%d", &gx, &gy, &c) == 3) {l.cells[cell_key(gx, gy)] = static_cast<uint16_t>(c);}
+        }
+      }
+      l.number = ++counters_[cls];
+      landmarks_.push_back(l);
+      ++n;
+    }
+    RCLCPP_INFO(get_logger(), "물체 지도 읽음: %s (%d 개)", path.c_str(), n);
+    return true;
   }
 
   // 물체 하나 = 바닥 원판 + 종류별 3D 모양 + 라벨. id 는 물체 번호 * 10 + 부품 번호로 고정해 깜빡임 없이 덮어쓴다
@@ -475,10 +729,33 @@ private:
     Marker ring = make(8, Marker::CYLINDER, 0.87, size * 1.45, size * 1.45, 0.01, rgba(1.0f, 1.0f, 1.0f, 0.9f));
     if (static_cast<int>(index) != selected_) {ring.action = Marker::DELETE;}
     arr.markers.push_back(ring);
-    Marker icon = make(3, Marker::MESH_RESOURCE, 0.9, size, size, 1.0, rgba(0.0f, 0.0f, 0.0f, 0.0f), view_angle_);
-    icon.mesh_resource = "package://limo_fire_perception/icons/" + std::string(s.name) + ".obj";
-    icon.mesh_use_embedded_materials = true;  // 색 0 = 텍스처 그대로
-    arr.markers.push_back(icon);
+    if (has_icon(s.name)) {
+      Marker icon = make(3, Marker::MESH_RESOURCE, 0.9, size, size, 1.0, rgba(0.0f, 0.0f, 0.0f, 0.0f), view_angle_);
+      icon.mesh_resource = "package://limo_fire_perception/icons/" + std::string(s.name) + ".obj";
+      icon.mesh_use_embedded_materials = true;  // 색 0 = 텍스처 그대로
+      arr.markers.push_back(icon);
+    } else {   // 아이콘이 없는 물체(COCO 80 종 등): 클래스 색 원판
+      arr.markers.push_back(make(3, Marker::CYLINDER, 0.9, size * 0.7, size * 0.7, 0.02, rgba(s.r, s.g, s.b, 0.95f)));
+    }
+    // 바닥 발자국: 분할 마스크로 쌓은 칸(footprint_min_count 번 넘게 본 칸)을 클래스 색으로 칠함 — 지도(2D)에서 물체 모양.
+    // 칸이 없으면(상자만 내는 탐지기) 잰 너비(없으면 0.2 m) 지름의 반투명 원
+    Marker cells = make(9, Marker::CUBE_LIST, 0.02, cell_size_, cell_size_, 0.02, rgba(s.r, s.g, s.b, 0.75f));
+    cells.pose.position.x = 0.0;
+    cells.pose.position.y = 0.0;
+    for (const auto & kv : l.cells) {
+      if (kv.second < footprint_min_count_) {continue;}
+      int32_t gx, gy;
+      cell_of(kv.first, gx, gy);
+      geometry_msgs::msg::Point pt;
+      pt.x = (gx + 0.5) * cell_size_;
+      pt.y = (gy + 0.5) * cell_size_;
+      cells.points.push_back(pt);
+    }
+    const double fp = std::clamp(l.ext > 0 ? l.ext : 0.2, 0.1, 3.0);
+    Marker disc = make(4, Marker::CYLINDER, 0.03, fp, fp, 0.02, rgba(s.r, s.g, s.b, 0.45f));
+    if (cells.points.empty()) {cells.action = Marker::DELETE;} else {disc.action = Marker::DELETE;}
+    arr.markers.push_back(cells);
+    arr.markers.push_back(disc);
 
     // 라벨: 밝은 지도 위에서도 읽히게 어두운 바탕판(위에서 내려다볼 때 글자 뒤) + 클래스 색 테두리.
     // 아이콘을 가리지 않게 label_offset(화면 기준 오른쪽·위쪽, m) 만큼 비켜 두고, 바탕판은 화면 가로로 길게
@@ -534,6 +811,12 @@ private:
       d.bbox.center.position.z = l.z;
       d.bbox.center.orientation.w = 1.0;
       d.bbox.size.y = l.area > 0 ? std::sqrt(l.area) : 0.0;
+      d.bbox.size.x = l.ext;   // 물체 너비 (m, 모르면 0)
+      // 밑점 (마스크 3D 점의 가장 낮은 10 % 평균, map) — results[0].pose. 마스크로 못 잰 물체는 가운데와 같게
+      h.pose.pose.position.x = l.base_n > 0 ? l.bx : l.x;
+      h.pose.pose.position.y = l.base_n > 0 ? l.by : l.y;
+      h.pose.pose.position.z = l.base_n > 0 ? l.bz : l.z;
+      h.pose.pose.orientation.w = 1.0;
     }
     objects_pub_->publish(out);
   }
@@ -588,6 +871,7 @@ private:
       const Style & s = style_of(class_names_[c]);
       const Row & r = rows[c];
       const bool has = r.count > 0;
+      if (!has && static_cast<int>(c) >= n_main_) {continue;}   // 더 붙인 클래스(80 종)는 찾은 것만 줄로
       html += std::string("<tr style='color:") + (has ? "#ffffff" : "#6b7075") + ";'>" +
         "<td><span style='color:" + hex(s) + ";'>■</span> " + s.ko + "</td>" +
         "<td align='right'><b>" + std::to_string(r.count) + "</b></td>" +
@@ -636,7 +920,15 @@ private:
   int min_hits_;
   std::vector<std::string> class_names_;
   std::vector<Landmark> landmarks_;
-  std::array<int, 16> counters_{};
+  std::vector<int> counters_;
+  std::vector<std::string> extra_class_names_;
+  int min_hits_extra_;
+  std::string objects_file_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_srv_, load_srv_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr save_to_sub_;
+  int n_main_ = 0;
+  double cell_size_ = 0.05, footprint_max_z_ = 2.0;
+  int footprint_stride_ = 3, footprint_min_count_ = 2;   // class_names 앞 n_main_ 개 = 주 탐지기(화재 모델), 나머지 = extra_class_names
   unsigned tick_ = 0;
   sensor_msgs::msg::CameraInfo::ConstSharedPtr info_;
   std::deque<sensor_msgs::msg::Image::ConstSharedPtr> masks_;
@@ -644,6 +936,7 @@ private:
   message_filters::Subscriber<vision_msgs::msg::Detection2DArray> det_sub_;
   message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub_;
   std::shared_ptr<message_filters::Synchronizer<Policy>> sync_;
+  std::vector<std::unique_ptr<Extra>> extras_;   // depth_sub_ 뒤에 둠 (먼저 지워져야 함)
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_, view_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr click_sub_;

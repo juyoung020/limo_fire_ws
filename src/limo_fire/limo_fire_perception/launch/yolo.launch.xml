@@ -3,16 +3,18 @@
      rviz:=true 면 운용 화면(limo_fire_description viewer.launch.xml: 지도 + 물체 + 탐지 영상 + Nav2)
      두 노드는 컴포넌트로 한 프로세스(멀티스레드 컨테이너)에 올리고 프로세스 안 전달(intra-process)로 탐지·마스크를 복사 없이 넘긴다.
      new_container:=false container:=<이름> 이면 이미 있는 컨테이너에 올린다
-     ros2 launch limo_fire_perception yolo.launch.xml [mapper:=true] [rviz:=true]
+     모델은 config 로 고른다: yolo_coco.yaml(COCO 80 종 분할, 기본) · yolo_fire.yaml(우리 화재 7 종 분할). objects_file 이 있으면 켤 때 그 물체 지도를 읽는다
+     ros2 launch limo_fire_perception yolo.launch.xml [config:=yolo_coco.yaml|yolo_fire.yaml] [mapper:=true] [rviz:=true] [objects_file:=…]
      navigation.launch.xml 처럼 운용 화면을 이미 띄운 launch 와 같이 켤 때는 rviz:=false -->
 <launch>
-  <arg name="config" default="yolo_fire.yaml"/>
+  <arg name="config" default="yolo_coco.yaml" description="모델 설정: yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
   <arg name="params_override" default="$(find-pkg-share limo_fire_perception)/config/$(var config)" description="config 위에 덮어쓸 파라미터 (벤치마크: benchmark.yaml)"/>
   <arg name="mapper" default="true" description="탐지한 물체를 지도 좌표로 (map 프레임 TF 필요: SLAM 또는 AMCL)"/>
   <arg name="rviz" default="true" description="운용 화면(탐지 영상 + 지도 위 물체 + Nav2)"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="new_container" default="true" description="false 면 container 로 준 이미 있는 컨테이너에 올린다"/>
   <arg name="container" default="/perception_container"/>
+  <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음 · ~/save 로 씀). 저장 지도 옆 &lt;이름&gt;_objects.txt"/>
 
   <node_container pkg="rclcpp_components" exec="component_container_mt" name="perception_container" namespace=""
                   output="screen" if="$(var new_container)">
@@ -32,6 +34,7 @@
     <load_composable_node target="$(var container)">
       <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectMapperNode" name="object_mapper" namespace="">
         <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
+        <param name="objects_file" value="$(var objects_file)"/>
         <param name="use_sim_time" value="$(var use_sim_time)"/>
         <extra_arg name="use_intra_process_comms" value="true"/>
       </composable_node>

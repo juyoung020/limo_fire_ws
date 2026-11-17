@@ -182,6 +182,49 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
 
 틀린 것: 이전과 같은 사람(person_1) → 소화기, 북쪽 벽 → 문에 더해 작은 불 자리에 연기 1 개. 노드 25 ms 안팎 (Webots 와 같이 돌 때).
 
+## 모델 고르기(COCO 80 종 · 화재 7 종) · 지도 위 물체 모양 · 물체 지도 파일 (2026-11-17)
+
+모델은 설정 파일로 고른다: `yolo.launch.xml config:=yolo_coco.yaml`(기본, Ultralytics 공식 YOLO26s-seg COCO 80 종 — 의자·컵·노트북 …) ·
+`config:=yolo_fire.yaml`(우리 화재 7 종 분할). 노드·물체 지도·표시는 같고 엔진 경로·클래스 이름·색(`class_colors`)만 다르다.
+다른 탐지기를 같은 물체 지도에 더 붙일 수도 있다 (`extra_detections_topics` · `extra_class_names` — 기본은 비움).
+
+- **물체 모양(발자국)**: 분할 모델이면 물체 마스크 픽셀(`footprint_stride` 칸마다)의 깊이로 3D 점을 만들어 지도 칸(`cell_size` 0.05 m)에 내린다.
+  물체 깊이 가운데 값 ± 0.5 m 밖(배경)은 버리고, 여러 장에서 본 칸을 쌓아 `footprint_min_count` 번 넘게 본 칸만 클래스 색으로 칠한다 (`/object_mapper/markers`, CUBE_LIST).
+  이름표는 마스크 무게중심(가운데 점)에 둔다. 상자만 내는 엔진이면 잰 너비 지름의 원.
+- **밑점**: 마스크 3D 점 가운데 가장 낮은 10 % 의 평균(map). `/object_mapper/objects` 의 `results[0].pose` 에 담는다 (불이면 불 밑동). `bbox.center` 는 가운데 점, `bbox.size.x` 는 너비(m).
+  깊이가 비는 픽셀(불꽃은 깊이가 자주 빔)은 버리고, 남은 점이 10 개 안 되면 밑점을 갱신하지 않는다.
+- **물체 지도 파일**: 한 줄에 물체 하나 — 클래스 · 번호 · 가운데 x y z · 방향 · 본 횟수 · 최고 점수 · 넓이 · 너비 · 마지막 본 시각 · 발자국 칸(`gx,gy,횟수`). map 좌표.
+  `objects_file` 이 있으면 켤 때 읽고(저장한 지도로 다시 돌 때), `~/save` 는 그 파일에, `~/save_to`(std_msgs/String 경로)는 준 경로에 쓴다.
+  `limo_fire_bringup save_map.launch.xml` 이 지도와 같은 이름으로 `<이름>_objects.txt` 를 옆에 저장한다. 다시 돌 때 `objects_file:=…/<이름>_objects.txt`.
+- 탐사 중 보기: `ros2 launch limo_fire_rl explore_fuel_rl.launch.xml … perception:=true [perception_config:=yolo_coco.yaml]` — 탐사 RViz 가 같은 `/object_mapper/markers` 를 그린다.
+
+### COCO 80 종 분할 엔진 만들기 (로봇에서 한 번)
+
+Ultralytics 공식 `yolo26s-seg.pt`(COCO 80 종, 인터넷에서 처음 한 번 받음)를 화재 엔진과 같은 꼴(480×640 uint8 RGB 입력, end2end)로 내보낸다. 위 "엔진 만들기" 2 와 같은 코드에서 파일 이름만 바꾼다:
+
+```bash
+mkdir -p ~/yolo_coco && cd ~/yolo_coco
+env -u PYTHONPATH ~/venvs/yolo_export/bin/python - <<'PY'
+import onnx, numpy as np
+from onnx import helper, TensorProto, numpy_helper
+from ultralytics import YOLO
+YOLO('yolo26s-seg.pt').export(format='onnx', imgsz=(480, 640), opset=17, simplify=True, nms=False)
+m = onnx.load('yolo26s-seg.onnx'); g = m.graph; old = g.input[0]
+_, c, h, w = [d.dim_value for d in old.type.tensor_type.shape.dim]
+g.initializer.append(numpy_helper.from_array(np.array(255.0, dtype=np.float32), 'k255'))
+for i, n in enumerate([helper.make_node('Cast', ['rgb_u8'], ['rgb_f'], to=TensorProto.FLOAT),
+                       helper.make_node('Transpose', ['rgb_f'], ['rgb_chw'], perm=[0, 3, 1, 2]),
+                       helper.make_node('Div', ['rgb_chw', 'k255'], [old.name])]):
+    g.node.insert(i, n)
+g.input.remove(old); g.input.insert(0, helper.make_tensor_value_info('rgb_u8', TensorProto.UINT8, [1, h, w, 3]))
+onnx.checker.check_model(m); onnx.save(m, 'yolo26s-seg_coco_u8_480.onnx')
+PY
+/usr/src/tensorrt/bin/trtexec --onnx=yolo26s-seg_coco_u8_480.onnx --fp16 \
+  --saveEngine=$WS/src/limo_fire/limo_fire_perception/models/yolo26s_seg_coco_u8_480.engine   # WS = 로봇의 이 저장소 폴더, 뒤에 colcon build
+```
+
+`config/yolo_coco.yaml` 의 `engine_path` 는 파일 이름만 쓴다 — `models/` 의 엔진이 `colcon build` 때 설치 폴더로 복사되고 노드가 거기서 찾는다.
+
 ## 인식 벤치마크 (`perception_benchmark`)
 
 Webots 정답(같은 카메라의 Recognition 분할, `limo_fire_sim`)과 장마다 비교해 상자·마스크 P·R·F1·mAP50·mAP50-95·IoU, 크기별 재현율, 속도, 물체 지도 P·R·F1·위치 오차를 표로 낸다.
