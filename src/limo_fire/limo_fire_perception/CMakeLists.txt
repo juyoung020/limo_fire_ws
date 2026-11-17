@@ -42,26 +42,28 @@ find_package(rviz_2d_overlay_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(CUDAToolkit REQUIRED)
 
-# TensorRT (JetPack: /usr/include/aarch64-linux-gnu, /usr/lib/aarch64-linux-gnu)
+# TensorRT (JetPack: /usr/include/aarch64-linux-gnu, /usr/lib/aarch64-linux-gnu). 없는 PC 에서는 물체 지도(object_map)만 빌드한다
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h)
 find_library(NVINFER_LIB nvinfer)
-if(NOT TENSORRT_INCLUDE_DIR OR NOT NVINFER_LIB)
-  message(FATAL_ERROR "TensorRT(NvInfer.h, libnvinfer) 를 찾지 못함")
+set(PERCEPTION_TARGETS object_map_component)
+if(TENSORRT_INCLUDE_DIR AND NVINFER_LIB)
+  add_library(trt_yolo STATIC src/trt_yolo.cpp src/trt_yolo_kernels.cu)
+  set_target_properties(trt_yolo PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(trt_yolo PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> ${TENSORRT_INCLUDE_DIR})
+  target_link_libraries(trt_yolo PUBLIC ${NVINFER_LIB} CUDA::cudart opencv_core opencv_imgproc)
+
+  # 노드는 컴포넌트(공유 라이브러리)로 만든다: 서로·탐사 노드와 한 프로세스(app.launch.xml)에 올리면 탐지·마스크를 복사 없이 주고받는다.
+  # 같은 이름의 실행 파일(object_detector, object_map)도 함께 만들어져 따로 띄울 수도 있다
+  add_library(object_detector_component SHARED src/object_detector_node.cpp)
+  target_link_libraries(object_detector_component trt_yolo)
+  ament_target_dependencies(object_detector_component rclcpp rclcpp_components sensor_msgs vision_msgs ament_index_cpp)
+  rclcpp_components_register_node(object_detector_component
+    PLUGIN "limo_fire_perception::ObjectDetectorNode" EXECUTABLE object_detector)
+  list(APPEND PERCEPTION_TARGETS trt_yolo object_detector_component)
+else()
+  message(WARNING "TensorRT(NvInfer.h, libnvinfer) 가 없어 object_detector 는 빼고 object_map 만 빌드함 (탐지는 로봇에서)")
 endif()
-
-add_library(trt_yolo STATIC src/trt_yolo.cpp src/trt_yolo_kernels.cu)
-set_target_properties(trt_yolo PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(trt_yolo PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> ${TENSORRT_INCLUDE_DIR})
-target_link_libraries(trt_yolo PUBLIC ${NVINFER_LIB} CUDA::cudart opencv_core opencv_imgproc)
-
-# 노드는 컴포넌트(공유 라이브러리)로 만든다: 카메라 드라이버·서로와 한 프로세스에 올리면 메시지를 복사 없이 주고받는다.
-# 같은 이름의 실행 파일(object_detector, object_map)도 함께 만들어져 따로 띄울 수도 있다
-add_library(object_detector_component SHARED src/object_detector_node.cpp)
-target_link_libraries(object_detector_component trt_yolo)
-ament_target_dependencies(object_detector_component rclcpp rclcpp_components sensor_msgs vision_msgs ament_index_cpp)
-rclcpp_components_register_node(object_detector_component
-  PLUGIN "limo_fire_perception::ObjectDetectorNode" EXECUTABLE object_detector)
 
 # 탐지 상자 + 깊이 → 지도 위 물체 위치 (TensorRT·OpenCV 안 씀)
 add_library(object_map_component SHARED src/object_map_node.cpp)
@@ -71,7 +73,7 @@ rclcpp_components_register_node(object_map_component
   PLUGIN "limo_fire_perception::ObjectMapNode" EXECUTABLE object_map)
 
 
-install(TARGETS trt_yolo object_detector_component object_map_component
+install(TARGETS ${PERCEPTION_TARGETS}
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY launch config icons DESTINATION share/${PROJECT_NAME})
 # 엔진(기기마다 만듦, git 에 없음): models/ 에 두면 설치되고 engine_path 에 파일 이름만 써도 찾는다

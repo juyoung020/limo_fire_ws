@@ -534,6 +534,20 @@ int TrtYolo::submit(const cv::Mat & rgb, bool want_vis)
   return idx;
 }
 
+bool TrtYolo::ready(int slot) const
+{
+  const Slot & s = *slots_.at(slot);
+  if (!s.busy) {
+    throw std::runtime_error("ready: submit 하지 않은 슬롯");
+  }
+  const cudaError_t e = cudaEventQuery(s.done);
+  if (e == cudaErrorNotReady) {
+    return false;
+  }
+  check_cuda(e, "cudaEventQuery");
+  return true;
+}
+
 YoloResult TrtYolo::collect(int slot)
 {
   Slot & s = *slots_.at(slot);

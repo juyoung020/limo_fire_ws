@@ -7,6 +7,8 @@
     image_topic: /camera/color/image_raw
     publish_image: true   # 결과 영상(~/image)은 구독자가 있을 때만 만든다
     vis_release_s: 5.0    # s, 결과 영상 구독자가 이만큼 없으면 그 GPU 버퍼·그래프를 풂
+    poll_period: 0.002    # s, GPU 에 건 장이 끝났나 묻는 주기 (실행기 타이머 — 건 장이 있을 때만 돎). 늦어지는 것은 최대 이만큼
+    gpu_thread: false     # true: 옛 판 — 작업 스레드가 추론을 기다림 (app.launch.xml gpu_thread:=true). TODO(제거): 로봇에서 실행기 판 확인 뒤
     class_names: [fire, smoke, fire_extinguisher, exit_sign, person, door, stairs]
 
 # 탐지 → 지도 위 물체 (object_map). 깊이는 컬러에 정렬된 영상

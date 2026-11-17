@@ -2,10 +2,12 @@
 // 분할(-seg) 엔진이면 물체 번호 영상(~/mask, mono8, 값 = detections 안 순서 + 1, 0 = 배경)도 같은 시각으로 낸다 (물체가 있을 때만)
 // 파라미터는 config/*.yaml (엔진 경로·문턱·클래스 이름·토픽)
 //
-// 영상은 실행기(executor) 콜백이 아니라 작업 스레드 하나가 WaitSet 으로 직접 받고 추론까지 한다:
-//   결과 기다림(CPU 잠듦) → 다음 영상이 와 있으면 GPU 에 먼저 걸고 → 앞 장 결과 발행 (GPU 와 겹침)
-// 그래서 한 스레드 컨테이너에서 다른 노드(object_map 등) 콜백이 길어져도 영상 받기가 밀리지 않는다.
-// 밀리면 오래된 영상은 버린다 (늦은 탐지보다 최신 탐지). 받은 영상 메시지는 몇 개를 돌려 써서 장마다 큰 할당을 하지 않는다
+// 스레드를 따로 두지 않는다 (gpu_thread: false, 기본): 실행기 콜백이 영상을 받아 GPU 에 걸고(비동기, 바로 돌아옴),
+// GPU 가 일하는 동안 poll_period 타이머가 "끝났나" 만 물어(cudaEventQuery — 기다리지 않음) 끝났으면 결과를 꺼내 발행한다.
+//   영상 받음 → 빈 GPU 면 바로 걸기 · 일하는 중이면 가장 최근 장 하나만 쥠(앞 것은 버림 — 늦은 탐지보다 최신 탐지)
+//   끝남 → 결과 꺼냄 → 쥔 장이 있으면 GPU 에 먼저 걸고 → 앞 장 결과 발행 (GPU 와 겹침)
+// 그래서 한 스레드 컨테이너(app.launch.xml — object_map · explorer 와 같이)에서도 추론을 기다리며 실행기를 막지 않는다.
+// gpu_thread: true 면 옛 판: 작업 스레드 하나가 WaitSet 으로 영상을 받고 collect 로 기다림 — TODO(제거): 로봇에서 실행기 판이 확인되면 지움
 // 결과 영상(~/image)은 구독자가 있을 때만 만들고, vis_release_s 초 동안 없으면 그 GPU 버퍼·그래프를 푼다
 // 컴포넌트라 카메라 드라이버·object_map 과 한 프로세스에 올리면 영상·탐지·마스크를 복사 없이 주고받는다
 #include <atomic>
@@ -13,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <opencv2/imgproc.hpp>
@@ -43,6 +46,8 @@ public:
     publish_image_ = declare_parameter<bool>("publish_image", true);
     vis_release_ = std::chrono::duration<double>(declare_parameter<double>("vis_release_s", 5.0));
     const auto image_topic = declare_parameter<std::string>("image_topic", "/camera/color/image_raw");
+    const bool gpu_thread = declare_parameter<bool>("gpu_thread", false);
+    const double poll_period = declare_parameter<double>("poll_period", 0.002);
 
     yolo_ = std::make_unique<TrtYolo>(engine, static_cast<float>(conf));
     std::vector<cv::Vec3b> colors;
@@ -62,15 +67,22 @@ public:
     }
     // 신뢰(RELIABLE) 발행이면 RViz·rqt 의 신뢰/최선 구독 둘 다 받는다
     img_pub_ = create_publisher<sensor_msgs::msg::Image>("detection_image", rclcpp::QoS(1));
-    // 카메라 드라이버(실물 Orbbec, Webots 플러그인) 둘 다 받도록 SensorData(BEST_EFFORT).
-    // 실행기에 안 올리는 콜백 그룹에 두고 작업 스레드가 WaitSet 으로 꺼낸다 (카메라는 다른 프로세스라 프로세스 안 전달은 끔)
+    // 카메라 드라이버(실물 Orbbec, Webots 플러그인) 둘 다 받도록 SensorData(BEST_EFFORT). 카메라는 다른 프로세스라 프로세스 안 전달은 끔
     rclcpp::SubscriptionOptions so;
-    so.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive, false);
     so.use_intra_process_comm = rclcpp::IntraProcessSetting::Disable;
+    if (gpu_thread) {   // 옛 판: 실행기에 안 올리는 콜백 그룹에 두고 작업 스레드가 WaitSet 으로 꺼냄
+      so.callback_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive, false);
+      sub_ = create_subscription<sensor_msgs::msg::Image>(
+        image_topic, rclcpp::SensorDataQoS(), [](sensor_msgs::msg::Image::ConstSharedPtr) {}, so);
+      wait_set_.add_subscription(sub_);
+      worker_ = std::thread([this] {run();});
+      RCLCPP_WARN(get_logger(), "gpu_thread: true — 옛 작업 스레드 판으로 돈다");
+      return;
+    }
     sub_ = create_subscription<sensor_msgs::msg::Image>(
-      image_topic, rclcpp::SensorDataQoS(), [](sensor_msgs::msg::Image::ConstSharedPtr) {}, so);
-    wait_set_.add_subscription(sub_);
-    worker_ = std::thread([this] {run();});
+      image_topic, rclcpp::SensorDataQoS(), [this](sensor_msgs::msg::Image::ConstSharedPtr m) {on_image(std::move(m));}, so);
+    poll_timer_ = create_wall_timer(std::chrono::duration<double>(poll_period), [this] {poll();});
+    poll_timer_->cancel();   // GPU 에 건 장이 있을 때만 돈다
   }
 
   ~ObjectDetectorNode() override
@@ -91,6 +103,83 @@ private:
     Clock::time_point t_submit;
   };
 
+  // ---- 실행기 판 (기본): 콜백 둘 — 영상 받기 · GPU 끝났나 묻기
+
+  void on_image(sensor_msgs::msg::Image::ConstSharedPtr msg)
+  {
+    const auto t0 = Clock::now();
+    if (latest_) {++dropped_;}
+    latest_ = std::const_pointer_cast<sensor_msgs::msg::Image>(msg);
+    if (!have_cur_) {start_latest(nullptr);}
+    note_callback(t0);
+  }
+
+  // 쥔 장을 GPU 에 건다 (in_use = 아직 발행 전인 앞 장). 걸었으면 true
+  bool start_latest(const Frame * in_use)
+  {
+    auto msg = std::move(latest_);
+    latest_.reset();
+    Frame & f = in_use ? next_ : cur_;
+    bool ok = false;
+    try {
+      ok = msg && submit(std::move(msg), f, in_use);
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "GPU 에 걸기 실패: %s", e.what());
+    }
+    if (ok && !in_use) {
+      have_cur_ = true;
+      poll_timer_->reset();
+    }
+    return ok;
+  }
+
+  void poll()
+  {
+    const auto t0 = Clock::now();
+    if (!have_cur_) {poll_timer_->cancel(); return;}
+    YoloResult res;
+    try {
+      if (!yolo_->ready(cur_.slot)) {return;}   // 아직 GPU 가 일함 — 다음 차례에 다시
+      res = yolo_->collect(cur_.slot);           // 끝났으므로 기다리지 않음
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "추론 실패: %s", e.what());
+      have_cur_ = false;
+      return;
+    }
+    after_collect(res);
+    const double ms = std::chrono::duration<double, std::milli>(Clock::now() - cur_.t_submit).count();
+    const bool have_next = latest_ && start_latest(&cur_);   // 다음 장을 먼저 GPU 에 걸어 두고 이 장을 발행
+    publish(cur_, res, ms);
+    if (have_next) {
+      std::swap(cur_, next_);
+    } else {
+      have_cur_ = false;
+      poll_timer_->cancel();
+      if (latest_) {start_latest(nullptr);}   // 크기가 바뀌어 미룬 장
+    }
+    note_callback(t0);
+  }
+
+  // 콜백 한 번에 걸린 시간 (실행기를 막는지 — 5 초 로그의 "콜백 최대")
+  void note_callback(Clock::time_point t0)
+  {
+    cb_max_ms_ = std::max(cb_max_ms_, std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+  }
+
+  // 결과를 꺼낸 뒤 공통: 첫 메모리 보고, 결과 영상을 vis_release_s 동안 아무도 안 보면 그 GPU 버퍼·그래프를 푼다
+  void after_collect(const YoloResult & res)
+  {
+    if (!logged_memory_) {
+      RCLCPP_INFO(get_logger(), "%s", yolo_->memory_report().c_str());
+      logged_memory_ = true;
+    }
+    if (res.vis.empty() && yolo_->vis_enabled() && Clock::now() - t_vis_wanted_ > vis_release_ && yolo_->release_vis()) {
+      RCLCPP_INFO(get_logger(), "결과 영상 구독자가 없어 GPU 덧칠 버퍼를 풂");
+    }
+  }
+
+  // ---- 옛 작업 스레드 판 (gpu_thread: true) — TODO(제거): 로봇에서 실행기 판이 확인되면 아래 spare_msg · take_latest · run 을 지움
+
   // 다른 곳(Frame)이 안 쥐고 있는 받기용 메시지 (데이터 버퍼를 다시 써서 장마다 921 KB 할당을 안 함)
   std::shared_ptr<sensor_msgs::msg::Image> spare_msg()
   {
@@ -104,8 +193,8 @@ private:
   // 와 있는 영상을 모두 꺼내 가장 최근 것 하나를 돌려준다 (앞 것은 버린 수로 셈). wait 이면 올 때까지 잔다 (멈춤 확인하려고 100 ms 마다 깸)
   sensor_msgs::msg::Image::ConstSharedPtr take_latest(bool wait)
   {
-    std::shared_ptr<sensor_msgs::msg::Image> latest = std::move(held_);
-    held_.reset();
+    std::shared_ptr<sensor_msgs::msg::Image> latest = std::move(latest_);
+    latest_.reset();
     while (wait && !latest && !stop_ && rclcpp::ok()) {
       if (wait_set_.wait(std::chrono::milliseconds(100)).kind() == rclcpp::WaitResultKind::Ready) {break;}
     }
@@ -150,7 +239,7 @@ private:
       return false;
     }
     if (in_use && in_use->rgb.size() != f.rgb.size()) {
-      held_ = std::const_pointer_cast<sensor_msgs::msg::Image>(msg);   // 앞 장을 다 쓴 뒤 다시 건다
+      latest_ = std::const_pointer_cast<sensor_msgs::msg::Image>(msg);   // 앞 장을 다 쓴 뒤 다시 건다
       return false;
     }
     f.msg = std::move(msg);
@@ -183,14 +272,7 @@ private:
         continue;
       }
       const double ms = std::chrono::duration<double, std::milli>(Clock::now() - cur.t_submit).count();
-      if (!logged_memory_) {
-        RCLCPP_INFO(get_logger(), "%s", yolo_->memory_report().c_str());
-        logged_memory_ = true;
-      }
-      // 결과 영상을 vis_release_s 동안 아무도 안 보면 그 GPU 버퍼·그래프를 푼다 (이 장은 결과 영상이 없고 다른 슬롯도 비어 있을 때)
-      if (res.vis.empty() && yolo_->vis_enabled() && Clock::now() - t_vis_wanted_ > vis_release_ && yolo_->release_vis()) {
-        RCLCPP_INFO(get_logger(), "결과 영상 구독자가 없어 GPU 덧칠 버퍼를 풂");
-      }
+      after_collect(res);
       // 다음 장을 먼저 GPU 에 걸어 두고 이 장을 발행한다
       bool have_next = false;
       if (auto msg = take_latest(false)) {
@@ -220,9 +302,10 @@ private:
       const size_t dropped = dropped_;
       dropped_ = 0;
       static const char * modes[] = {"그래프 없음", "CUDA 그래프", "CUDA 그래프 + 조건 노드"};
-      RCLCPP_INFO(get_logger(), "추론 %.1f ms (평균, 걸기→결과), %.1f 장/초, 버린 영상 %zu, 탐지 %zu 개, %s",
+      RCLCPP_INFO(get_logger(), "추론 %.1f ms (평균, 걸기→결과), %.1f 장/초, 버린 영상 %zu, 탐지 %zu 개, %s, 콜백 최대 %.2f ms",
         ms_avg_, t_log_.time_since_epoch().count() ? frames_ / sec : 0.0, dropped, dets.size(),
-        modes[yolo_->graph_mode()]);
+        modes[yolo_->graph_mode()], cb_max_ms_);
+      cb_max_ms_ = 0;
       t_log_ = now;
       frames_ = 0;
     }
@@ -313,11 +396,17 @@ private:
   size_t frames_ = 0;
   Clock::time_point t_log_{};
 
-  // 작업 스레드만 쓰는 것
+  // 가장 최근 받은 장 (GPU 가 일하는 동안 쥠 · 크기가 바뀌어 미룬 장). 한 판에서 한 스레드만 씀
+  std::shared_ptr<sensor_msgs::msg::Image> latest_;
+  size_t dropped_ = 0;
+  double cb_max_ms_ = 0;
+  // 실행기 판: GPU 에 건 장(cur_)과 그 결과를 발행하는 동안 먼저 건 다음 장(next_)
+  Frame cur_, next_;
+  bool have_cur_ = false;
+  rclcpp::TimerBase::SharedPtr poll_timer_;
+  // 옛 작업 스레드 판만 쓰는 것
   rclcpp::WaitSet wait_set_;
   std::vector<std::shared_ptr<sensor_msgs::msg::Image>> pool_;   // 받기용 메시지 (돌려 씀)
-  std::shared_ptr<sensor_msgs::msg::Image> held_;   // 크기가 바뀌어 다음에 걸 영상
-  size_t dropped_ = 0;
   std::atomic<bool> stop_{false};
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_;

@@ -9,7 +9,7 @@
 //
 // 결과 영상(마스크 덧칠)용 버퍼·그래프는 처음 want_vis 로 submit 할 때 만들고(보는 쪽이 없으면 안 만듦), release_vis() 로 푼다.
 //
-// 비동기: submit() 은 GPU 에 일을 걸고 바로 돌아오고, collect() 가 그 결과를 기다린다(CPU 는 잠듦, 바쁜 대기 안 함).
+// 비동기: submit() 은 GPU 에 일을 걸고 바로 돌아오고, ready() 는 끝났는지 묻기만 하고, collect() 가 그 결과를 기다린다(CPU 는 잠듦, 바쁜 대기 안 함).
 // 동시에 걸 수 있는 장 수는 kSlots. 한 장의 결과를 CPU 가 쓰는 동안 다음 장을 GPU 가 돌릴 수 있다.
 #pragma once
 
@@ -60,7 +60,9 @@ public:
   // RGB(CV_8UC3) 한 장을 GPU 에 건다. want_vis 면 마스크 덧칠한 결과 영상도 만든다 (처음이면 그 버퍼·그래프를 만듦 —
   // 다른 슬롯이 아직 collect 안 됐으면 이 장은 결과 영상 없이). 돌려준 슬롯 번호를 collect() 에 준다
   int submit(const cv::Mat & rgb, bool want_vis = false);
-  // 그 슬롯이 끝날 때까지 기다려 결과를 낸다
+  // 그 슬롯이 GPU 에서 끝났는지 (기다리지 않음 — 실행기에서 물어봄)
+  bool ready(int slot) const;
+  // 그 슬롯이 끝날 때까지 기다려 결과를 낸다 (ready 가 true 면 바로 돌아옴)
   YoloResult collect(int slot);
   YoloResult infer(const cv::Mat & rgb, bool want_vis = false) {return collect(submit(rgb, want_vis));}
 
