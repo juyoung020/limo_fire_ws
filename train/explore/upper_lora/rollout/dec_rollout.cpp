@@ -159,8 +159,8 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
   cs.set_geom(w.gw, C.hc.cfg.res);
   std::vector<int16_t> lm;
   std::vector<uint32_t> tr;
-  std::vector<uint8_t> vox, img;
-  std::vector<float> pts, o1d;
+  std::vector<uint8_t> vox;
+  std::vector<float> pts;
   std::vector<int32_t> cand, ccur, dn;
   std::vector<float> act((size_t)mdp::act::DIM, 0.f);
   const double dt = (double)C.hc.cfg.substeps * C.hc.cfg.dt;
@@ -172,13 +172,13 @@ Out run(const Cfg& C, long forced, int letter, uint64_t reseed, int horizon_step
     auto tp = clk::now();
     cpu.get_state(st);
     bm.now = t;
-    cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur); cpu.get_obs(img, o1d);
+    cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur);
     if (snaps) { hist_push(hist, st[0].step, lm); if (st[0].step % 10 == 0) kfp.push_back({(float)st[0].step, st[0].x + st[0].ex, st[0].y + st[0].ey, st[0].th + st[0].eth}); }
     const lxc::View v{&C.hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
     g_tm[0] += since(tp);
     const size_t ns = bm.sent.size();
     sim::LowCmd c1;
-    if (us.step(v, o1d.data() + mdp::obs::POLICY_1D, cs, bm, &c1)) cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
+    if (us.step(v, cs, bm, &c1)) cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
     if (bm.sent.size() > ns) {   // 이 걸음에 요청을 보냄
       const lxd::Req& r = bm.sent.back();
       if (snaps) snaps->push_back(make_snap(C, w, st[0], lm, cs, r, hist, kfp, us));
@@ -245,17 +245,17 @@ int snap_test(const Cfg& C, int a, int n) {
   cs.set_geom(w.gw, C.hc.cfg.res);
   std::vector<int16_t> lm;
   std::vector<uint32_t> tr;
-  std::vector<uint8_t> vox, img;
-  std::vector<float> pts, o1d;
+  std::vector<uint8_t> vox;
+  std::vector<float> pts;
   std::vector<int32_t> cand, ccur, dn;
   std::vector<float> act((size_t)mdp::act::DIM, 0.f);
   const auto one = [&](int t) {
     cpu.get_state(st);
     bm.now = t;
-    cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur); cpu.get_obs(img, o1d);
+    cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur);
     const lxc::View v{&C.hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
     sim::LowCmd c1;
-    if (us.step(v, o1d.data() + mdp::obs::POLICY_1D, cs, bm, &c1)) cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
+    if (us.step(v, cs, bm, &c1)) cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
     std::fill(act.begin(), act.end(), 0.f);
     act[0] = (float)cs.slot();
     cpu.low_prepare(act.data());
@@ -323,8 +323,8 @@ Out base_gpu(const Cfg& C, int every, std::vector<Snap>* snaps, std::vector<Cap>
   cs.set_geom(w.gw, C.hc.cfg.res);
   std::vector<int16_t> lm;
   std::vector<uint32_t> tr;
-  std::vector<uint8_t> vox, img;
-  std::vector<float> pts, o1d;
+  std::vector<uint8_t> vox;
+  std::vector<float> pts;
   std::vector<int32_t> cand, ccur, dn;
   std::vector<float> act((size_t)mdp::act::DIM, 0.f);
   GpuAct da(1);
@@ -335,13 +335,13 @@ Out base_gpu(const Cfg& C, int every, std::vector<Snap>* snaps, std::vector<Cap>
   for (int t = 0;; ++t) {
     g.get_state(st);
     bm.now = t;
-    g.get_map(lm); g.get_trail(tr); g.get_camlayer(vox, pts); g.get_cand(cand); g.get_cand_cur(ccur); g.get_obs(img, o1d);
+    g.get_map(lm); g.get_trail(tr); g.get_camlayer(vox, pts); g.get_cand(cand); g.get_cand_cur(ccur);
     hist_push(hist, st[0].step, lm);
     if (st[0].step % 10 == 0) kfp.push_back({(float)st[0].step, st[0].x + st[0].ex, st[0].y + st[0].ey, st[0].th + st[0].eth});
     const lxc::View v{&C.hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
     const size_t ns = bm.sent.size();
     sim::LowCmd c1;
-    if (us.step(v, o1d.data() + mdp::obs::POLICY_1D, cs, bm, &c1)) g.set_low_cmd(std::vector<sim::LowCmd>{c1});
+    if (us.step(v, cs, bm, &c1)) g.set_low_cmd(std::vector<sim::LowCmd>{c1});
     if (bm.sent.size() > ns) {
       const lxd::Req& r = bm.sent.back();
       if (nreq++ % every == 0 && r.cells.size() >= 2) {
@@ -399,7 +399,7 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
     }
     const sim::World& w = C.worlds[0];
     std::vector<int32_t> cand, ccur, dn;
-    std::vector<float> o1d((size_t)n * mdp::hier::POLICY_1D), act((size_t)AW * n, 0.f);
+    std::vector<float> act((size_t)AW * n, 0.f);
     std::vector<sim::LowCmd> cmd((size_t)n, sim::LowCmd{-1, 0});
     std::vector<sim::LowRl> R;
     std::vector<sim::LowEp> L;
@@ -419,7 +419,6 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
     const int nthr = C.threads;
     while (live > 0) {
       g.get_state(st); g.get_cand(cand); g.get_cand_cur(ccur);
-      cudaMemcpy(o1d.data(), g.batch().obs_1d, sizeof(float) * o1d.size(), cudaMemcpyDeviceToHost);
       // 1) 차례대로: 이 걸음에 후보를 만들 칸(위층 결정 차례 · 답이 옴 · 보낼 때)만 지도 · 지나간 길 · 깊이 층을 칸별 버퍼로 꺼냄 (cand::build 가 읽음)
       // 2) 스레드로 나눠: 칸마다 위층 (Ctl · Upper · 기준 응답기는 칸마다 따로 — 공유 상태 없음, 결과는 한 스레드와 바이트 같음)
       const size_t cells = (size_t)C.hc.cfg.size * C.hc.cfg.size, nf = (size_t)C.hc.cfg.size * ((C.hc.cfg.size + 31) / 32);
@@ -449,7 +448,7 @@ void branch_gpu(const Cfg& C, const std::vector<Cap>& caps, const std::vector<st
             const lxc::View v{&C.hc.cfg, &w, nd ? lmb[(size_t)i].data() : nullptr, nd ? trb[(size_t)i].data() : nullptr, nd && g.batch().cvox ? vxb[(size_t)i].data() : nullptr,
                               &st[(size_t)i], &cand[(size_t)i * K], (uint32_t)ccur[(size_t)i]};
             sim::LowCmd c1;
-            if (x.us.step(v, o1d.data() + (size_t)i * mdp::hier::POLICY_1D + mdp::obs::POLICY_1D, x.cs, x.bm, &c1)) { cmd[(size_t)i] = c1; upd[(size_t)i] = 1; }
+            if (x.us.step(v, x.cs, x.bm, &c1)) { cmd[(size_t)i] = c1; upd[(size_t)i] = 1; }
           }
         };
         std::vector<std::thread> th;
@@ -552,7 +551,7 @@ int render_main(Cfg& C, const std::vector<std::string>& files, const std::string
       for (const auto& t : d["decisions"]) decs.push_back(lxd::Dec{t[0], t[1], t[2], t[3], t[4], t[5]});
       lxd::Req r;
       const std::deque<std::pair<int, std::vector<int16_t>>> hist;
-      if (!lxd::Upper::render_cand(C.dp, cands, M, decs, hist, nullptr, d["step"], d["x"], d["y"], d["th"], c, w, lm.data(), &r)) continue;
+      if (!lxd::Upper::render_cand(C.dp, cands, M, decs, hist, d["step"], d["x"], d["y"], d["th"], c, w, lm.data(), &r)) continue;
       const std::string name = bn + "_r" + std::to_string(req) + ".req.json";
       if (check) {
         std::ifstream o(base + "_r" + std::to_string(req) + ".req.json");
@@ -609,7 +608,7 @@ int main(int argc, char** argv) {
   }
   if (!render_files.empty()) {   // 다시 그리기만 (장면은 jsonl 줄에서)
     C.hc = sim::load_env_cfg(env_path);
-    C.dp = rp; C.dp.cand = true;
+    C.dp = rp;
     (void)rp_set;
     return render_main(C, render_files, render_out, render_check);
   }
@@ -629,7 +628,6 @@ int main(int argc, char** argv) {
     C.lp = lxc::Params::from_cfg(c);
     C.lp.use_fuel = false;
     C.lp.use_cand = true;   // 후보 = scripts/cand_view.h (실물 노드 upper:=decider decider_cand true 와 같음)
-    C.dp.cand = true;
     C.dp.mode = mode;
     const double dt = (double)c.substeps * c.dt;
     C.dp.period_steps = std::max(1, (int)std::lround(period / dt));

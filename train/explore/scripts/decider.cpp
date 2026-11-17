@@ -355,50 +355,6 @@ std::vector<uint8_t> render_png_tiles(const int16_t* lmap, const std::vector<con
   return png_of(out);
 }
 
-std::vector<uint8_t> render_cam_grid(const std::vector<CamTile>& t, int W, int H, int cols, int rows) {
-  Img out{W, H, std::vector<uint8_t>((size_t)W * H * 3, 40)};
-  const int tw = W / cols, th = H / rows;
-  struct Flag { Flag() { g_clear_tags = true; } ~Flag() { g_clear_tags = false; } } flag;
-  for (size_t k = 0; k < t.size() && (int)k < cols * rows; ++k) {
-    const CamTile& c = t[k];
-    const int u0 = (int)(k % cols) * tw, v0 = (int)(k / cols) * th;
-    Img tile{tw - 2, th - 2, std::vector<uint8_t>((size_t)(tw - 2) * (th - 2) * 3, 110)};
-    if (c.rgb && c.w > 0 && c.h > 0) {
-      for (int y = 0; y < tile.h; ++y)   // 겹선형으로 줄이기·늘이기
-        for (int x = 0; x < tile.w; ++x) {
-          const float sx = (x + 0.5f) * c.w / tile.w - 0.5f, sy = (y + 0.5f) * c.h / tile.h - 0.5f;
-          const int x0 = std::clamp((int)std::floor(sx), 0, c.w - 1), y0 = std::clamp((int)std::floor(sy), 0, c.h - 1);
-          const int x1 = std::min(x0 + 1, c.w - 1), y1 = std::min(y0 + 1, c.h - 1);
-          const float fx = std::clamp(sx - x0, 0.f, 1.f), fy = std::clamp(sy - y0, 0.f, 1.f);
-          uint8_t px[3];
-          for (int ch = 0; ch < 3; ++ch) {
-            const float a = c.rgb[((size_t)y0 * c.w + x0) * 3 + ch] * (1 - fx) + c.rgb[((size_t)y0 * c.w + x1) * 3 + ch] * fx;
-            const float b = c.rgb[((size_t)y1 * c.w + x0) * 3 + ch] * (1 - fx) + c.rgb[((size_t)y1 * c.w + x1) * 3 + ch] * fx;
-            px[ch] = (uint8_t)std::lround(a * (1 - fy) + b * fy);
-          }
-          tile.set(x, y, px[0], px[1], px[2]);
-        }
-      if (c.u >= 0 && c.v >= 0) {   // 후보 자리: 검은 테 노란 점
-        const int pu = (int)std::lround(c.u * tile.w / c.w), pv = (int)std::lround(c.v * tile.h / c.h);
-        for (int dy = -7; dy <= 7; ++dy)
-          for (int dx = -7; dx <= 7; ++dx) {
-            const int d2 = dx * dx + dy * dy;
-            if (d2 <= 25) tile.set(pu + dx, pv + dy, 255, 210, 0);
-            else if (d2 <= 49) tile.set(pu + dx, pv + dy, 0, 0, 0);
-          }
-      }
-    }
-    draw_tag(tile, kTagR + 2, kTagR + 2, c.key);
-    if (c.age_s >= 0) draw_small(tile, tile.w - 4 * 2 * 4 - 4, 3, std::to_string((int)std::lround(c.age_s)) + "s", 2);
-    for (int y = 0; y < tile.h; ++y)
-      for (int x = 0; x < tile.w; ++x) {
-        const uint8_t* q = &tile.rgb[((size_t)y * tile.w + x) * 3];
-        out.set(u0 + 1 + x, v0 + 1 + y, q[0], q[1], q[2]);
-      }
-  }
-  return png_of(out);
-}
-
 std::string png_uri(const std::vector<uint8_t>& png) { return "data:image/png;base64," + base64(png); }
 
 std::string build_body(int input, int prompt, const std::vector<Cand>& cand, const std::vector<uint8_t>& png, bool v2) {

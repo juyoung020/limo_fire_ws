@@ -52,10 +52,6 @@ std::vector<uint8_t> render_png(const int16_t* lmap, int size, int gw, int gh, i
 // 기억을 얹은 지도 사진 (판단 모델 위층 꼴 A — scripts/low_decider.h): 위 사진에 지나온 길(점, 오래될수록 옅은 보라)과 지난 목표(닿음 초록 ✓ · 실패 빨강 × ·
 // 바꿈 회색 고리 · 지금 목표 파란 고리)를 더 그린다. 좌표는 지도 칸 (cx, cy — 칸 가운데는 +0.5). 자르는 범위에 길·목표도 넣음. 사진 크기(토큰 수)는 그대로
 std::string png_uri(const std::vector<uint8_t>& png);   // "data:image/png;base64,…" (요청 images 칸)
-// 후보별 지난 카메라 장면 격자 (cols × rows 칸, 그림 W × H): 칸마다 담은 컬러(rgb, w × h) · 후보 자리 점(u, v — 담은 그림 픽셀, 음수면 없음) ·
-// 왼쪽 위 글자 꼬리표(후보 색) · 오른쪽 위 지난 초. rgb 가 없으면 회색 칸 (그 후보를 본 장면이 아직 없음)
-struct CamTile { const uint8_t* rgb = nullptr; int w = 0, h = 0; float u = -1, v = -1; char key = 'A'; float age_s = -1; };
-std::vector<uint8_t> render_cam_grid(const std::vector<CamTile>& t, int W, int H, int cols, int rows);
 struct MapMem {
   struct P { float cx, cy, age_s; };
   struct G { float cx, cy; int outcome; };   // 0 지금 목표 · 1 닿음 · 2 실패 · 3 바꿈 (다른 목표로)

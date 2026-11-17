@@ -54,9 +54,6 @@ struct Opt {
   float vp_min = 0.f, vp_clear = 0.f;
   bool first = false;      // 순회 대신 덩어리 차례(후보 K 개면 시뮬 후보 차례 = 가장 가까운 순)의 첫 시점 — slot0 를 시점으로 (--fuel-first). 지금 목표가 첫 덩어리면 그대로 (slot0 stick 과 같은 뜻)
 };
-// slot0 를 시점으로: 시뮬 후보 차례의 첫 덩어리 (순회 · 시간 비용 · 붙들기 · 방 없이), 시점 자격은 base 그대로 — 실물 노드 upper:=slot0 (slot_vp) ·
-// combine_run --upper fuel --fuel-first 1 --fuel-global 0 --fuel-time 0 --fuel-vp 1 과 같은 값
-inline Opt slot_view(Opt b) { b.first = true; b.global = false; b.time = false; b.vp = true; b.hyst = 0.f; b.room = false; return b; }
 constexpr int kNone = -2;   // decide: 프론티어는 있지만 시점 자격이 되는 덩어리가 없음 → 목표 없음 (slot0 로 안 떨어짐)
 
 // 환경마다 기억 — 지금 목표

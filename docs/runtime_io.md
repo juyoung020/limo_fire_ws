@@ -1,7 +1,7 @@
 # 실행 구조 — 스레드·토픽 입출력
 
 로봇에서 합친 탐사(판단 모델 + A*)와 물체 지도를 돌릴 때 **어느 프로세스·스레드가 무엇을 받아 무엇을 내는지** 한 곳에 모은다.
-계획이 아니라 **지금 코드**(커밋 52cad57) 기준이다. 센서 자체의 사양·실측 주기 근거는 [sensor_topics.md](sensor_topics.md), 이름·메시지 규약은 [conventions.md](conventions.md).
+계획이 아니라 **지금 코드**(2026-11-17 잔재 정리 뒤) 기준이다. 센서 자체의 사양·실측 주기 근거는 [sensor_topics.md](sensor_topics.md), 이름·메시지 규약은 [conventions.md](conventions.md).
 단일 프로세스 Rust 통합 설계(`limo_upper_keep/wt_rust/docs/onboard_rust.md`)가 이 표를 출발점으로 쓴다.
 
 **읽는 법**
@@ -45,7 +45,6 @@ flowchart LR
   YD -- "/scan" --> LR
   CG -- "TF map→odom" --> LR
   CG -- "TF map→odom" --> OM
-  CG -- "/map" --> OG
   CG -- "/map" --> RV
   RSP -- "/tf_static (base_link→camera_link…)" --> OM
   OB -- "/camera/color/image_raw 30 Hz" --> YO
@@ -57,7 +56,7 @@ flowchart LR
   OM -- "/object_mapper/objects" --> OG
   OM -- "~/markers · ~/summary" --> RV
   USER -- "/object_goto/goal (글)" --> OG
-  OG -- "/low_rl/instruction · /low_rl/target_class<br>(direct 면 /low_rl/goto · goto_face)" --> LR
+  OG -- "/low_rl/instruction · /low_rl/target_class" --> LR
   LR -- "/low_rl/goto_status" --> OG
   LR <-- "HTTP POST /v1/systemone (비차단 소켓)" --> LS
   RV -- "/low_rl/enable (서비스)" --> LR
@@ -93,10 +92,10 @@ flowchart LR
 | `ekf_filter_node_odom` | 실행기 1 개 (30 Hz 타이머) | `/odom` `/imu` | 융합 | `/odometry/filtered`, TF `odom→base_link` |
 | `cartographer_node` | 실행기 + Cartographer 뒤 작업 스레드 | `/scan` `/imu` `/odometry/filtered` + TF | SLAM | TF `map→odom`, `/submap_list` 등 → `occupancy_grid_node` 가 `/map` (1 s) |
 | `perception_container` | **YOLO GPU 작업 스레드** (`std::thread`, 실행기 밖, WaitSet 으로 직접 받음) | `/camera/color/image_raw` (가장 최근 장만, 밀린 장은 버림) | RGB 로 맞춤 → 고정 메모리로 복사 → GPU 에 걸기 → 앞 장 결과 받기 (GPU 슬롯 2 개로 겹침) | `~/mask` → `~/detections` 차례로, `~/image` (구독자 있을 때만) |
-| | 실행기 (component_container, **한 스레드**) | `object_mapper` 의 모든 구독 · 타이머 · `/tf` `/tf_static` (TF 스레드 없음) | 탐지·깊이 짝 → 작업 줄 → 20 ms 타이머가 그 시각 TF 있는 장부터 처리 | `~/instances` `~/objects` `~/markers` `~/summary` `~/selected` |
+| | 실행기 (component_container, **한 스레드**) | `object_mapper` 의 모든 구독 · 타이머 · `/tf` `/tf_static` (TF 스레드 없음) | 탐지·깊이 짝 → 작업 줄 → 20 ms 타이머가 그 시각 TF 있는 장부터 처리 | `~/objects` `~/markers` `~/summary` `~/selected` |
 | | CUDA·TensorRT 드라이버 안 스레드 | | | |
 | `low_rl` | 실행기 (`rclcpp::spin`, **한 스레드**, TF 도 이 실행기에서 — 리스너 스레드 없음) | 아래 low_rl 표의 모든 입력, llama-server 답(비차단 소켓을 걸음마다 한 단계씩) | 장 한 장 = 걸음 하나(0.1 s): 지도·관측 → 위층 → A* 추종 | `/cmd_vel` `~/cmd_debug` `~/status` … , HTTP 요청 |
-| `object_goto` | 실행기 1 개 + **TF 리스너 스레드** (`TransformListener(buffer)` 기본값 = 따로 스레드) | `/object_mapper/objects` `/map` `/low_rl/goto_status` `~/goal`, TF | 글 → 클래스, (direct·nav2 모드) 설 자리 BFS | `/low_rl/*` 지시, `~/status` `~/target` `~/overlay`, (nav2 모드) `navigate_to_pose` 액션 |
+| `object_goto` | 실행기 1 개 (nav2 모드만 + TF 리스너 스레드) | `/object_mapper/objects` `/low_rl/goto_status` `~/goal` (nav2 모드만 `/map`·TF) | 글 → 클래스, (nav2 모드) 설 자리 BFS | `/low_rl/*` 지시, `~/status` `~/target` `~/overlay`, (nav2 모드) `navigate_to_pose` 액션 |
 | RViz | Qt 화면 스레드 + ROS 실행 스레드 | 화면 토픽 | 탐사 패널: 콜백은 값만 바꾸고 Qt 타이머가 그림 | `/low_rl/enable` 서비스 부름, `/clicked_point` |
 | 모든 ROS 프로세스 | DDS 안 스레드 (받기·이벤트·타이머) | 네트워크·공유 메모리 | 역직렬화해 실행기 줄에 넣음 | |
 
@@ -112,7 +111,7 @@ flowchart LR
 | 6 | `/scan` → `low_rl` | 역직렬화 + `Scan` 구조체로 `ranges`·`intensities` 복사 | 약 250 점, 10 Hz |
 | 7 | `low_rl` 깊이 → 지도 | 메시지 버퍼를 그대로 읽어 칸으로 투영 (복사 아님, 계산) | |
 | 8 | `low_rl` → llama-server | JSON 본문 문자열(지도 PNG 288 px 를 base64 로) → 소켓, 같은 PNG 를 RViz 용으로 다시 풀어 `~/decider_image` | 요청마다 수십 KB |
-| 9 | TF | `/tf` 를 받는 프로세스마다 TF 버퍼 따로 (`low_rl`·`object_mapper`·`object_goto`·Cartographer·EKF·RViz) | Cartographer `map→odom` 50 Hz 가 가장 많음 |
+| 9 | TF | `/tf` 를 받는 프로세스마다 TF 버퍼 따로 (`low_rl`·`object_mapper`·Cartographer·EKF·RViz, nav2 모드면 `object_goto`) | Cartographer `map→odom` 50 Hz 가 가장 많음 |
 
 ## 모듈별 입출력
 
@@ -162,7 +161,7 @@ flowchart LR
 |---|---|---|
 | `/ekf_filter_node_odom` (`config/ekf.yaml`, 30 Hz) | `odom`(=`/odom`), `imu`(=`/imu`) | `/odometry/filtered` (`odom`→`base_link`), TF `odom→base_link` |
 | `cartographer_node` (`limo_fire_navigation/config/cartographer_2d.lua`) | `/scan`, `/imu`, `odom` → remap `/odometry/filtered` | TF `map→odom` (`pose_publish_period_sec 0.02` = 50 Hz), `/submap_list`, `/trajectory_node_list` 등 |
-| `cartographer_occupancy_grid_node` (`-resolution 0.05 -publish_period_sec 1.0`) | `/submap_list` | `/map` (`nav_msgs/OccupancyGrid`, 1 Hz) — 합친 탐사에서는 RViz·`object_goto` 만 읽음 |
+| `cartographer_occupancy_grid_node` (`-resolution 0.05 -publish_period_sec 1.0`) | `/submap_list` | `/map` (`nav_msgs/OccupancyGrid`, 1 Hz) — 합친 탐사에서는 RViz 만 읽음 |
 
 ### `yolo_detector` (`limo_fire_perception/src/yolo_detector_node.cpp`, 설정 `config/yolo_coco.yaml` · `yolo_fire.yaml`)
 
@@ -197,7 +196,6 @@ flowchart LR
 | 받음 | `view_topic` = `/yolo_detector/image` | `Image` | 5 | `~/selected` 구독자가 있을 때만 구독 | |
 | 받음 | `~/save_to` | `std_msgs/String` (경로) | 10 | | |
 | 냄 | `~/objects` | `vision_msgs/Detection3DArray` | R / TL / 1 | **10 Hz** (벽시계 타이머, 바뀌지 않아도) | `map` |
-| 냄 | `~/instances` | `Detection3DArray` | 10, 프로세스 안 `unique_ptr` | 처리한 장마다 (물체가 있을 때만) | `map`, stamp = 탐지 시각 |
 | 냄 | `~/markers` | `visualization_msgs/MarkerArray` | R / TL / 1 | 10 Hz (비면 안 냄) | `map` |
 | 냄 | `~/summary` | `rviz_2d_overlay_msgs/OverlayText` | R / TL / 1 | 2 Hz | |
 | 냄 | `~/selected` | `Image` | R / TL / 1 | 누를 때 | |
@@ -220,16 +218,6 @@ flowchart LR
 | `results[0].pose.covariance[35]` | **마지막으로 본 뒤 지난 초** (공분산 칸을 빌려 씀, 발행 순간 기준). `low_rl` 이 판단 모델 글의 `seen_s`·`vis` 로 씀 |
 | `header.stamp` | 발행 시각 (`now()`) — 물체를 본 시각이 아님 |
 
-**`~/instances` — 이 장에서 잰 물체 하나 = `Detection3D`** (지도에 합치기 전 측정 그대로, 점검·깊이 비교용)
-
-| 칸 | 뜻 |
-|---|---|
-| `id` | `"<클래스>\|<출처>\|mask <깊이 m>\|floor <깊이 m>"` (예 `chair\|mask\|mask 2.31\|floor 2.40`). 출처 = `mask`(마스크 픽셀 깊이) · `box`(상자 가운데 깊이) · `floor`(바닥 광선 거리로 바꿈). 못 재면 `nan` |
-| `results[0].hypothesis` | 클래스 이름 · 이 장 점수 |
-| `results[0].pose.pose.position` | 바닥 광선 밑점이 있으면 그것, 없으면 잰 점 (map) |
-| `bbox.center.position` | 잰 점 (map) |
-| `bbox.size.x` / `.z` | 너비 / 높이 m (마스크 또는 상자 픽셀 × 거리 / f) |
-
 ### `low_rl` — 합친 탐사 노드 (`limo_fire_rl/src/low_rl_node.cpp`, 설정 `config/low_rl.yaml` + 시뮬 설정 `env_yaml` = `train/explore/sim/config/env.yaml`)
 
 한 스레드 실행기. `/scan` 한 장이 걸음 하나(0.1 s)다: 장과 그때의 오도메트리·IMU·깊이를 줄에 두고, **장 시각의** TF `map→base_link` 가 오면(5 ms 마다 다시 봄, `tf_timeout` 0.2 s 넘으면 건너뜀) 처리한다.
@@ -240,13 +228,10 @@ flowchart LR
 | 받음 | `odom_topic` = `/odom` | `Odometry` | 20 | 50 Hz | 바퀴 속도 (EKF 결과 아님) |
 | 받음 | `imu_topic` = `/imu` | `Imu` | 50 | 100 Hz | 자이로·가속도·roll/pitch |
 | 받음 | `depth_topic` · `depth_info_topic` | `Image` 16UC1 · `CameraInfo` | SensorData | 30 Hz | `depth_timeout` 0.5 s 넘은 깊이는 안 씀 (구멍 0) |
-| 받음 | `color_topic` · `color_info_topic` | `Image` · `CameraInfo` | SensorData | | `decider_cam > 0` 일 때만 구독 (기본 0 → 안 함) |
 | 받음 | `rc_topic` = `/rc_state` | `Joy` | SensorData 깊이 5 (R 발행자와도 맞음) | 40 Hz | `buttons[1] == 2` 가 아니거나 0.5 s 안 오면 멈추고 꺼짐. 발행자가 있는데 2 s 못 받으면 구독을 새로 만듦 |
 | 받음 | `/object_mapper/objects` | `Detection3DArray` | R / TL / 1 | 10 Hz | 지시가 있을 때 물체 후보·`known_objects` |
 | 받음 | `~/instruction` | `std_msgs/String` | 10 | | 사용자 지시 글 그대로 (빈 글 = 지시 지움 → 보통 탐사) |
 | 받음 | `~/target_class` | `String` | 10 | | 클래스 힌트 (물체 후보 차례에서 앞으로) |
-| 받음 | `~/goto` | `geometry_msgs/PointStamped` | 10 | | 설 자리 (map). `point.x/y` 만 씀 |
-| 받음 | `~/goto_face` | `PointStamped` | 10 | | 닿은 뒤 바라볼 물체 자리 (`~/goto` 바로 앞에 와야 함) |
 | 받음 | `/tf` `/tf_static` | | 리스너 스레드 없음 | | `map_frame`(map) → `base_frame`(base_link) |
 | 서비스 | `~/enable` | `std_srvs/SetBool` | | | true: 리모컨 오토일 때만 켬 (아니면 `success: false` + 까닭). false: 멈춤 |
 | 냄 | `cmd_vel_topic` = `/cmd_vel` | `Twist` | 10 | 10 Hz (장마다) | **`dry_run: false` 일 때만 발행자를 만듦**. 켜짐·입력 정상일 때만 냄, 멈출 때 0 한 번 |
@@ -287,7 +272,6 @@ flowchart LR
 | 앞말 | 때 |
 |---|---|
 | `지시: …` / `지시 없음 — 보통 탐사` | `~/instruction` 받음 |
-| `가는 중: <이름> (x, y)` | `~/goto` 받음 (꺼져 있으면 "— 탐사가 꺼져 있어 켜야 움직임") |
 | `물체 후보를 고름: <oid> — 설 자리 (x, y) 로` | 판단 모델(또는 대신 규칙)이 물체 후보를 고름 |
 | `판단 모델이 따라가기를 고름: <oid> …` | 사람 따라가기 시작 |
 | `도착: <이름> — 멈춤` / `— 탐사를 이어 감` | 설 자리 닿고 물체 쪽으로 돎. **`object_goto` 는 `도착` 으로 시작하는 글을 보고 그 지시를 끝냄** |
@@ -297,7 +281,7 @@ flowchart LR
 
 **판단 모델 HTTP** (`limo_fire_rl/include/limo_fire_rl/decider_client.h`, 본문 `train/explore/scripts/low_decider.h` `render_cand`)
 
-요청: `POST /v1/systemone HTTP/1.1`, `Content-Type: application/json`, `Connection: close`, 한도 `decider_timeout` 8 s. 기본 설정(`decider_cand`·`decider_compact` true)의 본문:
+요청: `POST /v1/systemone HTTP/1.1`, `Content-Type: application/json`, `Connection: close`, 한도 `decider_timeout` 8 s. 기본 설정(`decider_compact` true)의 본문:
 
 | 칸 | 뜻 |
 |---|---|
@@ -308,8 +292,7 @@ flowchart LR
 | `state.candidates[]` | 후보 최대 `decider_max_cands` 6 개. 프론티어: `id`(글자) `t`(가는 시간 s) `len`(경로 m) `bear`(방위 도, 왼쪽 +) `new`(새로 보일 넓이 m²) `w`(프론티어 폭 m) `room` `cur` `fail` `fail_s` `seen`. 물체(지시가 있을 때 앞 글자, 최대 `decider_obj_max` 3): `kind`(`object`·`follow`) `object`(클래스) `oid`(`chair-3`) `len` `bear` `dist` `seen_s` `vis`. 지시가 있으면 프론티어에 `kind: frontier` |
 | `state.decision_log_newest_first[]` | 최근 `decider_log_k` 4 결정 (언제·고른 후보·이어 감/바꿈·결과) |
 | `state.instruction` · `class_hint` · `known_objects[]` · `candidate_kinds` | 지시가 있을 때. `known_objects` 는 가까운 10 개 `"chair-3 chair 1.2 m front-left seen 4 s visible"` |
-| `state.camera_image` | `decider_cam > 0` 일 때만 (기본 끔) |
-| `images[]` | `"data:image/png;base64,…"` — 지도 사진 288 px 한 장 (+ 카메라 2 × 2, 켰을 때) |
+| `images[]` | `"data:image/png;base64,…"` — 지도 사진 288 px 한 장 |
 | `questions.pick` | `{"type": "choice", "instructions": …, "criteria": {"A": null, "B": null, …}}` |
 
 답: HTTP 200 JSON 의 `answers.pick.choice` = 글자 하나(`"A"` …). 다른 꼴·늦은 답(8 s)·`http <코드>` 는 버리고 지금 목표 그대로 (`~/status` 의 실패·시간 끝 수). 고른 후보 칸에서 `decider_match_r` 1.5 m 안의 지금 후보로 맞춘다.
@@ -320,11 +303,10 @@ flowchart LR
 |---|---|---|---|---|
 | 받음 | `~/goal` | `String` | 10 | 사람이 주는 지시 글 (한글 별칭 `aliases`·영문 클래스). 빈 글 = 지시 지움 |
 | 받음 | `objects_topic` = `/object_mapper/objects` | `Detection3DArray` | R / TL / 1 | 물체 수가 바뀌면 찾는 중인 지시를 다시 찾음 |
-| 받음 | `map_topic` = `/map` | `OccupancyGrid` | R / TL / 1 | 설 자리 BFS (direct·nav2 모드) |
+| 받음 | `map_topic` = `/map` | `OccupancyGrid` | R / TL / 1 | 설 자리 BFS (nav2 모드만 구독) |
 | 받음 | `explore_status_topic` = `/low_rl/goto_status` | `String` | 10 | `도착` 으로 시작하면 이 지시 끝 |
 | 냄 | `explore_topic` = `/low_rl/instruction` | `String` | 10 | 지시 글 그대로 (빈 글 = 지움) |
 | 냄 | `explore_target_topic` = `/low_rl/target_class` | `String` | 10 | 글에서 푼 클래스 (못 풀면 빈 글) |
-| 냄 | `explore_goto_topic` · `explore_face_topic` = `/low_rl/goto` · `/low_rl/goto_face` | `PointStamped` | 10 | `direct: true` 일 때만 (기본 false: 판단 모델이 고름). `map` |
 | 냄 | `~/status` | `String` | R / TL / 1 | 한글 한 줄: `대기 — …` · `'<글>' → 판단 모델이 …` · `'<글>' → 클래스 c · 지도에 n 개 — …` · `'<글>' — 지도에 없음. 탐사하며 찾는 중` · `끝: 도착…` · `지시 지움` |
 | 냄 | `~/target` · `~/overlay` | `MarkerArray` · `OverlayText` | R / TL / 1 | 고른 물체·설 자리 / 지시 + 상태 |
 | 액션 | `nav_action` = `navigate_to_pose` | `nav2_msgs/NavigateToPose` | | `mode: nav2` 일 때만 (저장 지도 주행) |

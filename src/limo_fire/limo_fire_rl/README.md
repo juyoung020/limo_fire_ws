@@ -69,18 +69,20 @@ Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`
 |---|---|---|
 | 설정 | `RobotEnv` 합친 탐사 모드 — 목표는 위층, 탐사 판 끝 규칙, 막힘은 신호만 | `low_rl 1` · `low_explore 1` |
 | 결정 때 | 걸음 % 10 == 0 또는 다시 결정 | 같음 |
-| `upper:=decider` (기본) | 판단 모델(d1-3B, zero-shot)이 `scripts/cand_view.h` 후보 앞 6 개 중 고름 — `scripts/low_decider.h` (요청: 지도 사진 + 후보 글). 사건 때만(`decider_mode: event` — 목표에 1 m 다가감 · 목표 실패 · 후보 크게 바뀜 · 10 s 최대 간격) 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면(판 처음·켠 직후 포함) 바로 묻고 답을 (걸음으로 잰 답 지연 이동 평균 + `decider_hold_extra` 0.5 s)까지 기다림 — 그 사이 아래층은 지금 명령 그대로(목표 없으면 제자리), 그래도 안 오면 규칙(cand_pick)이 대신. 남은 길이 답 지연 + `decider_ask_lead_s` 안에 끝날 듯하면 미리 물음. 지시(`~/instruction`)가 바뀌면 다음 결정 차례에 바로 물음("new instruction"), 옛 지시 요청의 답은 버림. 둘 다 −1 이면 옛 동작(요청 바이트 같음). `decider_timeout`(8 s) 넘은 답은 버림. `decider_mode: periodic` 이면 `decider_period`(3 s)마다 | `low_explore_check --upper decider` |
+| `upper:=decider` (기본) | 판단 모델(d1-3B, zero-shot)이 `scripts/cand_view.h` 후보 앞 6 개 중 고름 — `scripts/low_decider.h` (요청: 지도 사진 + 후보 글). 사건 때만(`decider_mode: event` — 목표에 1 m 다가감 · 목표 실패 · 후보 크게 바뀜 · 10 s 최대 간격) 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면(판 처음·켠 직후 포함) 바로 묻고 답을 (걸음으로 잰 답 지연 이동 평균 + `decider_hold_extra` 0.5 s)까지 기다림 — 그 사이 아래층은 지금 명령 그대로(목표 없으면 제자리), 그래도 안 오면 규칙(cand_pick)이 대신. 남은 길이 답 지연 + `decider_ask_lead_s` 안에 끝날 듯하면 미리 물음. 지시(`~/instruction`)가 바뀌면 다음 결정 차례에 바로 물음("new instruction"), 옛 지시 요청의 답은 버림. 둘 다 −1 이면 옛 동작(요청 바이트 같음). `decider_timeout`(8 s) 넘은 답은 버림. 정해진 주기로 묻기(periodic)는 시뮬 비교에서 덮음이 같아 노드에서 뺐다(시뮬 `--dec-mode periodic` 은 남음) | `low_explore_check --upper decider` |
 | `upper:=cand` | `cand_view.h` 0 번 후보, 지금 목표 번호가 있으면 붙듦 — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 판단 모델보다 빠름 | `low_explore_check --upper cand` |
 | `upper:=fuel` | fuel (시간 + 전역 + 시점, v 0.981 · ω 3.232 · t0 0.10, 붙들기 0.2, 시점은 로봇에서 0.75 m 밖·모름에서 0.21 m — `config/low_rl.yaml`, `scripts/README` "실물 1116"). 덩어리 없음: 피하지 않는 첫 후보(slot0). 시점 자격 되는 덩어리가 없음: 목표 없음 | `--upper fuel` |
-| `upper:=slot0` | 피하지 않는 첫 후보, 같은 덩어리면 그대로(stick) — A/B 용. `slot_vp: true` 면 그 덩어리의 시점(`fu::slot_view`) — 시뮬에서 나빠 기본 끔 | `--upper slot0` |
+| `upper:=slot0` | 피하지 않는 첫 후보, 같은 덩어리면 그대로(stick) — A/B 용 | `--upper slot0` |
 | 아래층 | 규칙 추종기: 후보 번호(slot0 · 판단 모델) 또는 목표 칸(fuel)까지 A* 경로를 짜 따라감, 막히면 복구(물러나기·목표 포기 — `hier_path.h`) | 같은 함수 |
 | 목표 없음 | 규칙 추종기의 제자리 회전 | 같음 |
 | 다시 결정 | 통과 · 경로 끝 밖 · 경로 없음 · 막힘 신호 → fuel 기억 비움(경로 끝 밖·없음·막힘은 그 칸 0.5 m 를 10 s 피함) | 같음 |
-| 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `~/done` true. `close_lidar: true` 면 닫힘을 라이다 지도만으로 — 깊이 카메라 층에만 막힌 프론티어는 안 닫힘 (`mdp/frontier.h`, 시뮬에서 나빠 기본 끔) | `finish_step` |
+| 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `~/done` true | `finish_step` |
 
 위층 결정·목표 넘기기는 `train/explore/scripts/low_explore_ctl.h` 하나를 노드와 확인 도구가 같이 쓴다.
-launch 인자는 `upper` · `dry_run` · `record` · `decider_url` · `decider_period` 등뿐이고, 나머지 값(아래 `camera_layer` · `close_lidar` · `slot_vp` · `contact_resume_s` · `decider_mode` …)은
-`config/low_rl.yaml` 에서 바꾼다.
+launch 인자는 `upper` · `dry_run` · `record` · `decider_url` 등뿐이고, 나머지 값(`camera_layer` · `contact_resume_s` · `decider_max_cands` …)은
+`config/low_rl.yaml` 에서 바꾼다. 2026-11-17 에 실물에서 안 쓰던 값(`decider_mode`·`decider_period`·`decider_input`·`decider_prompt`·`decider_cand`(옛 hier 8 칸 후보)·
+`decider_cam`·`cam_base_h`·`color_topic`(카메라 키프레임 기억)·`close_lidar`·`slot_vp`·`obs_all`·`frontier_cache`·`frontier_check_every`)과 `~/goto`·`~/goto_face` 를 지웠다 —
+시뮬 비교·점검 쪽 옵션은 `low_explore_check` 에 남아 있다.
 
 **멈춤 조건 (명령을 0 으로)**
 
@@ -154,13 +156,11 @@ ros2 topic pub -1 /object_goto/goal std_msgs/msg/String "{data: '의자'}"   # �
 ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가는지 · /low_rl/goto_status: 가는 중 · 도착
 ```
 
-- 물체 지도에 있으면: 물체 둘레 0.6~1.2 m 고리에서 로봇과 빈 칸으로 이어지는 가장 가까운 설 자리를 골라 `/low_rl/goto` 로 준다. `low_rl` 은 위층(판단 모델) 대신 그 칸을 목표로 같은 A* 아래층으로 가고,
-  `goto_arrive_m`(0.4 m) 안에 들면 "도착" 을 알리고 멈춘다 (기본 `goto_resume: false`, true 면 탐사를 이어 감). 도착하면 물체 쪽으로 제자리에서 돌아(`~/goto_face`, 남은 각 < 0.15 rad 또는 5 s) 물체를 바라보고 끝낸다. object_goto 는 도착을 받으면 그 목표를 끝내고 새 목표까지 다시 찾지 않는다. 가는 동안은 탐사 끝 판정을 하지 않는다.
-- 없으면: 글을 `/low_rl/instruction` 으로 넘겨 판단 모델 요청에 지시(`instruction`)와 아는 물체 10 개(`known_objects`, 거리 · 방향)를 넣고 질문을 "빨리 찾기" 로 바꾼다 — 물체 찾기 모드.
-  물체 지도에 그 클래스가 올라오는 즉시 그리로 간다. 지시가 없으면 요청 본문은 예전과 바이트까지 같다 (`low_explore_check --dec-instr` 로 지시가 있을 때도 시뮬 == 실물 비트 확인).
-- RViz: 고른 물체에 흰 고리 + "GOAL 이름", 설 자리 초록 원, 왼쪽 아래 글상자(`/object_goto/overlay`).
-- **판단 모델이 고름 (기본)**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다 — object_goto 는 지시 글(`/low_rl/instruction`)과 선택적 클래스 힌트
-  (`/low_rl/target_class` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 비움 — 판단 모델이 글을 읽음)만 넘긴다(`direct: false`). 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
+- 판단 모델이 물체 후보를 고르면 `low_rl` 이 그 설 자리로 같은 A* 아래층으로 가고, `goto_arrive_m`(0.4 m) 안에 들면 물체 쪽으로 제자리에서 돌아(남은 각 < `goto_face_tol` 0.15 rad 또는 5 s)
+  "도착" 을 알리고 멈춘다 (기본 `goto_resume: false`, true 면 탐사를 이어 감). object_goto 는 도착을 받으면 그 지시를 끝낸다. 가는 동안은 탐사 끝 판정을 하지 않는다.
+- RViz: 왼쪽 아래 글상자(`/object_goto/overlay`) · `~/candidates` 의 물체 후보 글자.
+- **판단 모델이 고름**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다 — object_goto 는 지시 글(`/low_rl/instruction`)과 선택적 클래스 힌트
+  (`/low_rl/target_class` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 비움 — 판단 모델이 글을 읽음)만 넘긴다. 설 자리를 바로 `/low_rl/goto` 로 주던 길(`direct`)은 2026-11-17 지움. 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
   물체 지도의 **모든 클래스** 물체 설 자리가 물체 후보(`kind: object` — `object` 클래스 · `oid` 지도 번호 · `len` 길 m · `bear` · `dist` 직선 m · `seen_s` · `vis` 지금 보임)로 들어가
   프론티어 후보와 섞인다(합쳐 6 개). 칸보다 많으면 힌트 클래스 먼저, 한 무리 안에선 길 거리 순으로 고르게 벌려(가장 가까운 것·가장 먼 것 늘 포함 — "가장 먼 의자" 같은 지시). 
   글에는 지시 원문(`instruction`) · 힌트(`class_hint`) · 아는 물체 10 개(`known_objects`: "chair-3 chair 4.1 m front-left seen 2 s visible") · 후보 종류 설명(`candidate_kinds`)이 들어가고
@@ -216,7 +216,7 @@ ros2 launch limo_fire_rl explore_fuel_rl.launch.xml upper:=decider [dry_run:=fal
 ```
 
 서버는 `train/explore/upper_lora/patches/` 의 두 패치(판단 요청 checkpoint · 그림을 글 뒤로)를 넣은 빌드에 `LLAMA_DECISION_IMAGES_LAST=1` 로 띄운다 — 결정마다 같은 앞부분(템플릿 · 설명 글 · 힌트)을 다시 계산하지 않음. 미세조정 v1(LoRA)도 이 차례로 학습한다.
-요청 꼴 기본은 짧은 꼴(`decider_compact: true`, 지도 288 px, 결정 기록 4, 카메라 없음 `decider_cam: 0`): 로봇 Orin 에서 요청 하나 약 1.6 s(앞 요청 뒤) · 2.2 s(처음) — 예전 기본(긴 꼴 + 카메라 2 × 2)은 5.0–5.6 s (`upper_lora/README.md` "요청 꼴과 지연").
-기본은 사건 때만 묻고(`decider_mode: event`) 요청에 후보를 6 개까지 넣는다(`decider_max_cands: 6`) — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 가장 빨랐고, 라벨 굴리기(`dec_rollout`)·`low_explore_check --upper decider` 기본도 같은 값.
-상태는 `~/status` 끝에 "판단 모델: 보냄 · 답 (마지막 ms) · 시간 끝 · 실패 · 후보 안 맞음 · slot0 대신". 서버가 없거나 답이 늦으면 slot0 차례로 계속 돈다 (멈추지 않음).
-카메라 그림(시뮬 `--decider-input all`)은 시뮬 장면에 광선을 쏴 칠한 그림이라 실물에는 같은 것이 없어 쓰지 않는다 (`decider_input` text · image · both).
+요청 꼴 기본은 짧은 꼴(`decider_compact: true`, 지도 288 px, 결정 기록 4, 카메라 없음 — 카메라 키프레임 사진은 v1 학습에 없어 2026-11-17 지움): 로봇 Orin 에서 요청 하나 약 1.6 s(앞 요청 뒤) · 2.2 s(처음) — 예전 기본(긴 꼴 + 카메라 2 × 2)은 5.0–5.6 s (`upper_lora/README.md` "요청 꼴과 지연").
+사건 때만 묻고(event) 요청에 후보를 6 개까지 넣는다(`decider_max_cands: 6`) — 시뮬 위층 비교(`train/explore/upper_lora/README.md` "위층 비교")에서 가장 빨랐고, 라벨 굴리기(`dec_rollout`)·`low_explore_check --upper decider` 기본도 같은 값.
+상태는 `~/status` 끝에 "판단 모델: 보냄 · 답 (마지막 ms) · 시간 끝 · 실패 · 후보 안 맞음 · slot0 대신". 서버가 없거나 답이 잇따라 틀리면 규칙(cand_pick)이 대신 고르며 계속 돈다 (멈추지 않음).
+요청 입력은 지도 사진 + 후보 글(시뮬 `--dec-input both`)로 고정 — 시뮬 장면 카메라 그림(`combine_run --decider-input all`)은 실물에 같은 것이 없다.

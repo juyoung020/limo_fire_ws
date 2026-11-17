@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
   std::string env_path = SIM_CONFIG_DIR "/env.yaml", model_path = SIM_CONFIG_DIR "/sensor_model.yaml";
   int steps = 1500, people = 0;
   uint64_t seed = 1;
-  bool use_fuel = true, use_dec = false, use_cand = false, dec_cand = true, dec_hint = true, dec_mimg = true, node_obs = false, fc_on = true;
+  bool use_fuel = true, use_dec = false, use_cand = false, dec_hint = true, dec_mimg = true, node_obs = false, fc_on = true;
   int fc_check = 0;
   int dec_img = 0, dec_logk = lxd::Params{}.log_k;   // 기본은 노드와 같은 lxd::Params
   double dec_period = 3.0, dec_lat = 2.6, dec_match = -1.0;
@@ -216,7 +216,6 @@ int main(int argc, char** argv) {
     else if (a == "--node-obs") node_obs = true;
     else if (a == "--fc-check") fc_check = std::stoi(nx());   // 실물 쪽 걸음 사이 프론티어 칸 판정 기억을 N 걸음마다 처음부터 다시 센 값과 견줌 (frontier_cache.h)
     else if (a == "--no-fc") fc_on = false;                   // 실물 쪽 기억 끔 (걸음마다 처음부터)   // 실물 쪽 RobotEnv 를 노드처럼 쓰는 관측만 (set_obs — 그림 끔, cand_view 후보 위층이면 계층형 후보도 끔) — 그래도 시뮬과 같은지
-    else if (a == "--dec-cand") dec_cand = std::stoi(nx()) != 0;   // 판단 모델 후보: 1 = cand_view.h (기본) · 0 = hier 8 칸
     else if (a == "--dec-hint") dec_hint = std::stoi(nx()) != 0;
     else if (a == "--dec-mem-image") dec_mimg = std::stoi(nx()) != 0;
     else if (a == "--dec-image") dec_img = nx() == "B" ? 1 : 0;
@@ -310,7 +309,7 @@ int main(int argc, char** argv) {
     lxc::Params lp = lxc::Params::from_cfg(hc.cfg);
     lp.fuel = fo;
     lp.use_fuel = use_fuel;
-    lp.use_cand = use_cand || (use_dec && dec_cand);
+    lp.use_cand = use_cand || use_dec;
     if (node_obs) robot.set_obs(false, !lp.use_cand);
     robot.set_frontier_cache(fc_on, fc_check);   // low_rl_node 와 같은 규칙 (obs_all false)
     lp.cand = co;
@@ -326,7 +325,7 @@ int main(int argc, char** argv) {
     dp.compact = dec_compact; dp.px = dec_px; dp.mem_fields = dec_memf; dp.max_cands = dec_max; dp.order = dec_order;
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
-    dp.cand = dec_cand; dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img; dp.log_k = dec_logk;
+    dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img; dp.log_k = dec_logk;
     if (use_dec && (dp.input < 0 || dp.input == dec::kAll)) throw std::runtime_error("--dec-input text · image · both");
     lxd::Upper us(dp), ur(dp);
     std::vector<lxd::Params::Obj> base_objs, live_objs;   // --dec-obj (따라가기 시험은 결정마다 사람을 더해 다시 넣음) · 그중 못 간 것 뺀 지금 목록
@@ -457,7 +456,7 @@ int main(int argc, char** argv) {
       cpu.get_state(st);
       if (use_dec) {   // 판단 모델 위층 (걸음마다 — 보내기 · 받기 · 목표 잃으면 slot0 차례)
         ms.now = mr.now = t;
-        cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur); cpu.get_obs(img, o1d);
+        cpu.get_map(lm); cpu.get_trail(tr); cpu.get_camlayer(vox, pts); cpu.get_cand(cand); cpu.get_cand_cur(ccur);
         const sim::World& w = worlds[(size_t)st[0].map];
         const lxc::View vs{&hc.cfg, &w, lm.data(), tr.data(), vox.empty() ? nullptr : vox.data(), &st[0], cand.data(), (uint32_t)ccur[0]};
         sim::LowCmd c1;
@@ -505,7 +504,7 @@ int main(int argc, char** argv) {
             us.set_objects(ob); ur.set_objects(ob);
           }
         }
-        const bool ch_s = us.step(vs, o1d.data() + mdp::obs::POLICY_1D, cs, ms, &c1, &why);
+        const bool ch_s = us.step(vs, cs, ms, &c1, &why);
         if (ch_s) {
           why_n[why] += 1;
           cpu.set_low_cmd(std::vector<sim::LowCmd>{c1});
@@ -531,7 +530,7 @@ int main(int argc, char** argv) {
         }
         const lxc::View vr{&robot.cfg(), &rw, robot.lmap(), robot.trail(), robot.cam_layer(), &robot.state(), robot.cand(), (uint32_t)robot.cand_cur(), robot.reach_keep()};
         sim::LowCmd c2;
-        const bool ch_r = ur.step(vr, robot.obs_1d() + mdp::obs::POLICY_1D, cr, mr, &c2);
+        const bool ch_r = ur.step(vr, cr, mr, &c2);
         if (ch_r) robot.set_cmd(c2);
         if (follow_on || goto_on) {   // 실물 노드의 물체 답 가지와 같은 차례: 물체 답 꺼내기 → 프론티어 답이면 끝 → 따라가기 · 물체로 가기 걸음 → 아래층 명령
           const double tn = t * dt;
