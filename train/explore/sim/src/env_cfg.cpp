@@ -108,6 +108,8 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     c.decide_steps = (int)std::lround(dp / pv);
     if (c.decide_steps < 1 || std::fabs(c.decide_steps * pv - dp) > 1e-4f) throw std::runtime_error(path + ": action.path.period 는 velocity.period 의 배수");
     c.path_v = ap["v"].as<float>();
+    c.face_tol = ap["face_tol"] ? ap["face_tol"].as<float>() : 0.15f;
+    c.face_w_min = ap["face_w_min"] ? ap["face_w_min"].as<float>() : 0.4f;
     // 돌며 가기 (env.yaml action.path.curved_follow): 켜면 제자리 회전 문턱 · 회전 ω · ω 한도를 nav2_params(기준선 Nav2 판 0.785 · 1.0 · 1.0) 대신 아래 값으로.
     // 끄면 nav2_params 그대로 = 2026-11-17 전 추종기 (turn_gain 맞춤도 꺼짐 — hier_path.h path_follow 가 문턱으로 가름)
     if (ap["curved_follow"] && ap["curved_follow"].as<bool>()) {

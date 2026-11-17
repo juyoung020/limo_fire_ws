@@ -1,7 +1,8 @@
 // 실물 합친 탐사 노드 녹화 꼴 (limo_fire_rl low_rl record:= · 시뮬 room_run --rec 가 쓰고, low_explore_replay · node_stats 가 읽는다):
 // RobotEnv 가 받은 입력을 부른 차례대로 + 그때 낸 명령. 노드 차례를 그대로 다시 돌려 위층 결정·명령이 같은지 본다.
 //
-// 판 4 (2026-11-17 —): 판 3 과 같고 EnvHostCfg 에 EnvCfg::cam_lw·cam_lh(깊이 층 전용 격자) 칸, 사건 'L' (층 전용 깊이 바이트 cam_lw × cam_lh — 'D' 바로 뒤, 격자가 있을 때만).
+// 판 5 (2026-11-17 —): 판 4 와 같고 EnvHostCfg 에 EnvCfg::face_tol·face_w_min(LowCmd::face 로 돌아 서기) 칸. 판 4 이하는 그 칸에 0 (그때는 face 를 안 씀).
+// 판 4 (2026-11-17): 판 3 과 같고 EnvHostCfg 에 EnvCfg::cam_lw·cam_lh(깊이 층 전용 격자) 칸, 사건 'L' (층 전용 깊이 바이트 cam_lw × cam_lh — 'D' 바로 뒤, 격자가 있을 때만).
 //   판 3 · 2 · 1 은 그 칸에 0 (= 층은 관측 깊이 그대로, 그때 동작)을 끼워 읽는다.
 // 판 3 (2026-11-17): 판 2 와 같고 EnvHostCfg 에 EnvCfg::cam_every(깊이 층 걸음마다 갱신) 칸이 더해짐. 판 2 녹화는 그 칸에 0 (= 그때 동작)을 끼워 읽는다.
 // 판 2 (2026-11-17): 머리 = 매직 "LOWN" · 판 번호 2 · 구조체 크기(EnvHostCfg · Proprio · Window) · EnvHostCfg 바이트. 그 뒤 사건(한 바이트 종류 + 몸):
@@ -28,11 +29,13 @@
 
 namespace lowrec {
 constexpr int32_t kMagic = 0x4E574F4C;   // "LOWN"
-constexpr int32_t kVersion = 4;
+constexpr int32_t kVersion = 5;
 // 판 3 · 4 에서 더한 칸 (지금 구조체 안 자리, 바이트) — 옛 판은 이 자리에 0 을 끼움
 constexpr size_t kV3Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, cam_every), kV3Len = sizeof(int32_t);
 constexpr size_t kV4Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, cam_lw), kV4Len = 2 * sizeof(int32_t);
-constexpr size_t kV3Size = sizeof(sim::EnvHostCfg) - kV4Len;
+constexpr size_t kV5Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, face_tol), kV5Len = 2 * sizeof(float);
+constexpr size_t kV4Size = sizeof(sim::EnvHostCfg) - kV5Len;
+constexpr size_t kV3Size = kV4Size - kV4Len;
 constexpr size_t kV2Size = kV3Size - kV3Len;
 using Window = limo_fire_rl::RobotEnv::Window;
 // 'A' 사건의 아래층 목적지: 0 없음 · 1 세계 좌표 (x, y) · 2 판 1 녹화 — 지도 자세 기준 (x = 거리 m, y = 방향 rad, 그 걸음 지도 자세에서 셈)
@@ -113,7 +116,7 @@ class Reader {
     if (hd[1] >= 2 && hd[1] <= kVersion) {
       int32_t sz[3];
       r(sz, sizeof(sz));
-      const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : hd[1] == 3 ? kV3Size : kV2Size;
+      const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : hd[1] == 4 ? kV4Size : hd[1] == 3 ? kV3Size : kV2Size;
       if (sz[0] != (int32_t)want || sz[1] != (int32_t)sizeof(limo_fire_rl::Proprio) || sz[2] != (int32_t)sizeof(Window))
         throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
       version = hd[1];
@@ -242,6 +245,7 @@ class Reader {
     std::vector<std::pair<size_t, size_t>> gaps;
     if (ver < 3) gaps.emplace_back(kV3Off, kV3Len);
     if (ver < 4) gaps.emplace_back(kV4Off, kV4Len);
+    if (ver < 5) gaps.emplace_back(kV5Off, kV5Len);
     std::sort(gaps.begin(), gaps.end());
     uint8_t* d = reinterpret_cast<uint8_t*>(&hc);
     size_t at = 0, from = 0;

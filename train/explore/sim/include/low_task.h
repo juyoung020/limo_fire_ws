@@ -58,6 +58,10 @@ constexpr int32_t kLowFinish = -3;   // LowCmd::target 자리 (follow 0 일 때)
 struct LowCmd {
   int32_t target;    // 목표 칸 (cy · gw + cx, −1 없음) — follow 1 일 때만 봄
   int32_t follow;    // 0 보통 계층형 (target 은 안 봄 — 후보 번호 행동) · 1 목표 칸 target 을 규칙 추종기가 따라감
+  // 아래 셋은 follow 1 일 때만 봄 — 기본값이면 예전과 같음 (사람 따라가기 · 물체 보고 서기, scripts/obj_follow.h)
+  float vmax = 0.f;      // 추종기 속도 한도 (m/s, 0 = path_v 그대로)
+  int32_t face = -1;     // 목표가 없거나 닿았을 때 이 칸 쪽으로 제자리에서 돌아 섬 (−1 = 예전처럼 rot_w 로 돎)
+  float w_idle = 0.f;    // 목표 없을 때(face −1) 제자리 회전 ω (rad/s, 부호 = 방향, 0 = rot_w) — 놓친 사람을 천천히 둘러 찾기
 };
 
 // 판 누적 (환경마다 하나)

@@ -47,6 +47,7 @@ struct EnvCfg {
   int substeps, lidar_every;
   // 추종기 (Nav2 RPP · velocity_smoother · goal checker)
   float v_des, lookahead, min_lookahead, rot_w, rot_min_angle, approach_dist, approach_min_v, goal_tol;
+  float face_tol, face_w_min;   // LowCmd::face 로 돌아 설 때: 남은 각 문턱 (rad) · 최소 ω (rad/s, 섀시 마찰) — env.yaml action.path.face_*
   float v_max, w_max, a_max, alpha_max;
   // 몸통
   float half_len, half_wid;

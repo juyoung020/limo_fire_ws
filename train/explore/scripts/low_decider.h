@@ -171,6 +171,10 @@ class Upper {
       changed = true;
     }
     if (wait_ && s.step - req_.step > p_.timeout_steps) { wait_ = false; ++n_timeout_; }
+    if (ext_) {   // 목표를 밖(노드 — 사람 따라가기)이 쥠: 답만 받고, 목표 죽음·사건 물음은 안 함. 밖이 ask() 로 부탁한 물음만
+      if (!wait_ && !ask_.empty() && ctl.due(s)) { const std::string w = ask_; ask_.clear(); send_req(v, F, ctl, tr, w); }
+      return changed;
+    }
     bool urgent = false;
     const bool dead = !changed && !picked_obj && ctl.due(s) && (ctl.redo_pending() || !ctl.live(s));
     // 목표가 죽었는데 오는 답이 없으면 지금 묻고 (판 처음 포함), 답이 오는 중이면 보낸 뒤 지연 어림 + hold_extra 걸음까지 기다림: 목표는 판단 모델 답이 정함.
@@ -195,7 +199,8 @@ class Upper {
     if (!wait_) {
       if (urgent) trig = "goal failed or lost";
       else if (last_send_ < 0) trig = "start";
-      else if (instr_new_ && ctl.due(s)) trig = "new instruction";   // 지시가 바뀜: 지금 목표로 몰면서 바로 물음 (노드는 이 걸음에 물체 목록을 새로 채움)
+      else if (instr_new_ && ctl.due(s)) trig = "new instruction";
+      else if (!ask_.empty() && ctl.due(s)) { trig = ask_; ask_.clear(); }   // 밖(노드)이 부탁한 물음   // 지시가 바뀜: 지금 목표로 몰면서 바로 물음 (노드는 이 걸음에 물체 목록을 새로 채움)
       else if (p_.mode == 0) { if (s.step - last_send_ >= p_.period_steps) trig = "period"; }
       else trig = event_trigger(v, ctl);
     }
@@ -643,6 +648,11 @@ class Upper {
   }
   void set_known_objects(const std::vector<std::string>& k) { p_.known_objects = k; }
   void set_class_hint(const std::string& c) { p_.class_hint = c; }
+  // 밖(노드)이 목표를 쥠 (사람 따라가기): 켜면 목표 죽음 → 규칙 · 사건 물음을 안 하고 답만 받음. 고른 답이 프론티어면 step 이 명령을 돌려줌(밖은 따라가기를 끝냄)
+  void set_external(bool on) { ext_ = on; }
+  bool external() const { return ext_; }
+  // 다음 결정 차례에 이 까닭으로 물음 (기다리는 답이 있으면 그 뒤)
+  void ask(const std::string& why) { ask_ = why; }
   void set_objects(const std::vector<Params::Obj>& o) { p_.objects = o; }
   // 판단 모델이 물체 후보를 골랐으면 그 설 자리 (한 번 꺼내면 지움) — 노드는 ~/goto 처럼 그 자리로 감
   bool take_object_pick(Params::Obj* o) { if (!obj_pick_) return false; *o = obj_last_; obj_pick_ = false; return true; }
@@ -687,7 +697,8 @@ class Upper {
   Params::Obj obj_last_;
   bool obj_pick_ = false;
   Req req_;
-  bool wait_ = false, instr_new_ = false;
+  bool wait_ = false, instr_new_ = false, ext_ = false;
+  std::string ask_;
   int last_send_ = -1;
   int approach_goal_ = -1, gone_id_ = -1, better_id_ = -1;
   long n_pick_failed_ = 0, n_pick_top_ = 0;

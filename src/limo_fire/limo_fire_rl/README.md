@@ -169,6 +169,14 @@ ros2 topic echo /object_goto/status        # 무엇을 찾았고 어디로 가�
   지도 그림에서 물체 후보는 하늘색 네모, 프론티어 후보는 노란 점. 판단 모델이 물체 후보를 고르면 그 설 자리로 가서 물체를 바라보고 멈춘다. RViz ~/candidates 에 물체 후보 글자(ns cand_obj).
   지시가 없으면 요청 본문은 예전과 바이트까지 같다(`decider_obj_always: false` 기본 — 켜면 지시 없어도 물체 후보). 확인: `low_explore_check --dec-instr 글 --dec-class-hint 클래스 --dec-obj 클래스,x,y`
   (·`--dec-obj-always`) 로 시뮬 == 실물 비트, 지시 없을 때 요청(DEC_BODY_LOG 걸음·본문 해시) 앞 커밋과 같음.
+- **사람 따라가기** (`scripts/obj_follow.h` — 노드와 시뮬이 같은 코드): 지시가 있을 때 지금 보이는(`decider_vis_s`) `follow_classes`(person) 물체는 `kind: follow` 후보로도 들어간다.
+  판단 모델이 고르면 노드가 목표를 쥔다: 같은 사람을 지도 번호로, 없으면 예측 자리 둘레 문(`follow_gate` + 못 본 시간 × `follow_gate_v`, 3 m 까지) 안 가장 가까운 사람으로 잡고,
+  사람에서 `follow_dist`(1.0 m) 떨어진 로봇 쪽 자리(둘레 `follow_clear` 빈 칸, `follow_stop` 이상)를 `follow_replan_s` 마다 다시 세되 `follow_hyst` 안이면 그대로(떨림 없음),
+  아래층은 같은 A* 추종기에 속도 한도 `follow_max_speed`(0.6 m/s — `LowCmd::vmax`). 가까우면(≤ dist + hyst, `follow_stop` 안) 서서 사람 쪽으로 돈다(`LowCmd::face`).
+  `follow_lost_s` 넘게 못 보면 마지막 목표까지 간 뒤 사람이 가던 쪽으로 `follow_search_w` 로 돌며 찾고, `follow_search_s` 넘으면 멈추고 "놓침" 을 알린다.
+  사람이 `follow_reask_m` 넘게 옮기면 판단 모델에 다시 묻고(그 사이 따라가기는 계속), 답이 탐사 자리면 따라가기를 끝낸다. 새 지시·지시 지움도 끝. RViz ~/candidates ns follow (주황 원기둥 + 모드·거리).
+  시뮬 확인: `low_explore_check --upper decider --people 3 --follow --dec-fake follow --dec-instr "사람 따라가"` (시뮬 사람을 카메라 화각 66.4°·5 m·지도 가림으로 본 것만 사람 목록에) —
+  두 쪽 따라가기 명령·경로 비트 같음, 따라간 거리·모드·놓침·사람 닿음을 `FOLLOW` 줄로.
 - 설명 글 검색(SigLIP2, "빨간 컵" 같은 글)은 다음 단계 — 지금은 클래스 이름·별칭만.
 
 ### 깊이 카메라 층을 볼 것

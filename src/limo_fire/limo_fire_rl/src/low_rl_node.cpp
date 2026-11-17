@@ -46,6 +46,7 @@
 #include "limo_fire_rl/robot_env.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
+#include "obj_follow.h"
 
 namespace limo_fire_rl {
 
@@ -154,6 +155,23 @@ class LowRlNode : public rclcpp::Node {
       dp.timeout_steps = std::max(1, (int)std::lround(dec_timeout / dt()));
       dec_up_ = std::make_unique<lxd::Upper>(dp);
       dec_obj_always_ = dp.obj_always;
+      {   // 사람 따라가기 (scripts/obj_follow.h — 판단 모델이 kind follow 후보를 고르면)
+        ofl::Params fp;
+        fp.dist = (float)declare_parameter<double>("follow_dist", fp.dist);
+        fp.stop = (float)declare_parameter<double>("follow_stop", fp.stop);
+        fp.hyst = (float)declare_parameter<double>("follow_hyst", fp.hyst);
+        fp.replan_s = (float)declare_parameter<double>("follow_replan_s", fp.replan_s);
+        fp.gate = (float)declare_parameter<double>("follow_gate", fp.gate);
+        fp.gate_v = (float)declare_parameter<double>("follow_gate_v", fp.gate_v);
+        fp.lost_s = (float)declare_parameter<double>("follow_lost_s", fp.lost_s);
+        fp.search_s = (float)declare_parameter<double>("follow_search_s", fp.search_s);
+        fp.search_w = (float)declare_parameter<double>("follow_search_w", fp.search_w);
+        fp.v_max = (float)declare_parameter<double>("follow_max_speed", fp.v_max);
+        fp.reask_m = (float)declare_parameter<double>("follow_reask_m", fp.reask_m);
+        fp.clear = (float)declare_parameter<double>("follow_clear", fp.clear);
+        follower_ = ofl::Follower(fp);
+        follow_classes_ = declare_parameter<std::vector<std::string>>("follow_classes", std::vector<std::string>{"person"});
+      }
       dec_vis_s_ = dp.vis_s;
       dp_cand_ = dp.cand;
       dp_cam_ = dp.cam;
@@ -227,6 +245,7 @@ class LowRlNode : public rclcpp::Node {
     });
     sub_instr_ = create_subscription<std_msgs::msg::String>("~/instruction", 10, [this](std_msgs::msg::String::ConstSharedPtr m) {
       instruction_ = m->data;
+      end_follow("");   // 지시가 바뀌거나 지워지면 따라가기도 끝 (판단 모델이 새로 고름)
       if (instruction_.empty()) {
         goto_active_ = false;
         facing_ = false;
@@ -469,7 +488,7 @@ class LowRlNode : public rclcpp::Node {
         if (std::fabs(err) < face_tol_ || now().seconds() - facing_t0_ > face_timeout_s_) { facing_ = false; finish_goto(); }
       }
       // 판 끝 (시뮬 finish_step 의 합친 탐사 규칙 — combine_run.cpp:1270). 물체로 가는 중이면 끝내지 않음
-      if (goto_active_ || facing_) {
+      if (goto_active_ || facing_ || follower_.active()) {
       } else if (ctl_->rough_done(e.step)) {   // 후보 모드 "대충 다 앎" 끝 (Ctl::rough_done — low_explore_check 끝 코드 11 과 같은 판정)
         finished_ = true;
         stop("done", "끝: 대충 다 앎 (후보 0 · 남은 덩어리는 대충 아는 곳 안 구멍뿐 10 s)", true);
@@ -478,7 +497,7 @@ class LowRlNode : public rclcpp::Node {
         pub_done_->publish(d);
         return;
       }
-      const int dn = (goto_active_ || facing_) ? 0 : env_->done();
+      const int dn = (goto_active_ || facing_ || follower_.active()) ? 0 : env_->done();
       if (dn == mdp::cur::kDeclareOk || dn == mdp::cur::kNoProgress || dn == mdp::cur::kTruncated) {
         finished_ = true;
         stop("done", dn == mdp::cur::kDeclareOk ? "끝: 지도 닫힘 + 진척 없음 10 s (시뮬 성공 판정)" : dn == mdp::cur::kNoProgress ? "끝: 지도 진척 없음 (시뮬 실패 판정)" : "끝: 시간 한도",
@@ -542,14 +561,27 @@ class LowRlNode : public rclcpp::Node {
           dec_up_->set_known_objects(known_objects());
           dec_up_->set_objects(map_objects());   // 지도 물체 모두 (설 자리는 Upper::object_spots 가 탐사 지도에서, 칸 고르기는 Upper::pick_objects)
         }
-        if (dec_up_->step(v, env_->obs_1d() + mdp::obs::POLICY_1D, *ctl_, *dec_cli_, &cmd, &why)) {
+        const bool stepped_change = dec_up_->step(v, env_->obs_1d() + mdp::obs::POLICY_1D, *ctl_, *dec_cli_, &cmd, &why);
+        if (stepped_change) {
           env_->set_cmd(cmd);
           why_dec_ = why;
           publish_goal(cmd.target);
         }
         if (env_->state().step % lp_.decide_steps == 0) publish_object_cands();
         lxd::Params::Obj pick;
-        if (dec_up_->take_object_pick(&pick)) {   // 판단 모델이 물체 후보를 고름 → 그 설 자리로 (~/goto 와 같은 길), 닿으면 물체를 바라보고 멈춤
+        const bool picked = dec_up_->take_object_pick(&pick);
+        if (follower_.active() && stepped_change) end_follow("판단 모델이 따라가기 대신 탐사 자리를 고름");
+        if (picked && pick.follow) {   // 판단 모델이 따라가기 후보를 고름 → 그 사람을 따라감 (목표는 노드가 쥠 — 판단 모델은 답만 받고, 사람이 많이 옮기면 다시 물음)
+          end_follow("");
+          follower_.start(pick.oid, pick.x, pick.y, now().seconds());
+          dec_up_->set_external(true);
+          char b[160];
+          std::snprintf(b, sizeof b, "판단 모델이 따라가기를 고름: %s (%.2f, %.2f) — %.1f m 뒤에서 최대 %.1f m/s", pick.oid.c_str(), pick.x, pick.y, follower_.params().dist,
+                        follower_.params().v_max);
+          say_goto(b);
+        } else if (picked) end_follow("");
+        if (follower_.active()) follow_step();
+        if (picked && !pick.follow) {   // 판단 모델이 물체 후보를 고름 → 그 설 자리로 (~/goto 와 같은 길), 닿으면 물체를 바라보고 멈춤
           float gx = 0.f, gy = 0.f;
           if (env_->cell_xy(pick.vp, &gx, &gy)) {
             goto_x_ = gx;
@@ -826,8 +858,81 @@ class LowRlNode : public rclcpp::Node {
       o.seen_s = (float)seen_s_of(d);
       if (o.seen_s > obj_stale_s_) continue;
       ob.push_back(o);
+      if (is_follow_class(o.cls) && o.seen_s <= dec_vis_s_) { o.follow = true; ob.push_back(o); }   // 지금 보이는 사람: 따라가기 후보도
     }
     return ob;
+  }
+  bool is_follow_class(const std::string& c) const { for (const auto& f : follow_classes_) if (f == c) return true; return false; }
+  // 따라가기 입력: 물체 지도의 따라갈 클래스 항목 (사람은 object_mapper 가 최신 측정으로 옮김)
+  std::vector<ofl::Person> persons() const {
+    std::vector<ofl::Person> v;
+    if (!objects_) return v;
+    for (const auto& d : objects_->detections)
+      if (!d.results.empty() && is_follow_class(d.results[0].hypothesis.class_id))
+        v.push_back({d.id, (float)d.bbox.center.position.x, (float)d.bbox.center.position.y, (float)seen_s_of(d)});
+    return v;
+  }
+  // 따라가기 끝 (why 가 있으면 알림)
+  void end_follow(const std::string& why) {
+    if (!follower_.active() && why.empty()) return;
+    follower_.stop();
+    if (dec_up_) dec_up_->set_external(false);
+    if (!why.empty()) say_goto(why);
+  }
+  // 따라가기 한 걸음: 아래층 명령을 정하고 (다시 묻기 · 포기 처리)
+  void follow_step() {
+    const sim::EnvState& e = env_->state();
+    const float res = env_->cfg().res;
+    const auto spot = [&](float x, float y, float px, float py, float* gx, float* gy) {
+      const ofl::Params& fp = follower_.params();
+      return ofl::spot_on_map(env_->lmap(), env_->cfg().size, world_.gw, world_.gh, world_.ox, world_.oy, res, x, y, px, py, fp.stop, fp.clear, fp.search, gx, gy);
+    };
+    const auto cell = [&](float x, float y) {
+      const int cx = (int)std::floor((x - world_.ox) / res), cy = (int)std::floor((y - world_.oy) / res);
+      return cx < 0 || cy < 0 || cx >= world_.gw || cy >= world_.gh ? -1 : cy * world_.gw + cx;
+    };
+    const ofl::Out o = follower_.step(now().seconds(), e.x + e.ex, e.y + e.ey, persons(), spot);
+    follow_out_ = o;
+    if (o.mode == ofl::kGiveUp) {
+      env_->set_cmd(sim::LowCmd{-1, 1});
+      end_follow("사람을 놓침: " + follower_.oid() + " — " + std::to_string((int)(follower_.params().lost_s + follower_.params().search_s)) + " s 못 찾아 멈춤");
+      stop("paused", "따라가던 사람을 놓침 (찾기 시간 끝)", true);
+      publish_follow();
+      return;
+    }
+    const sim::LowCmd c = ofl::cmd_of(o, follower_.params(), cell);
+    const sim::LowCmd& cur = env_->low_cmd();
+    if (c.target != cur.target || c.follow != cur.follow || c.face != cur.face || c.w_idle != cur.w_idle || c.vmax != cur.vmax) {
+      env_->set_cmd(c);
+      publish_goal(c.target);
+    }
+    if (o.reask) dec_up_->ask("followed person moved");
+    if (env_->state().step % lp_.decide_steps == 0) publish_follow();
+  }
+  // RViz ~/candidates (ns follow): 따라가는 사람 (주황 원기둥 + 글 — 모드 · 거리), 없으면 지움
+  void publish_follow() {
+    visualization_msgs::msg::MarkerArray ma;
+    for (int k = 0; k < 2; ++k) {
+      visualization_msgs::msg::Marker m;
+      m.header.frame_id = map_frame_;
+      m.header.stamp = now();
+      m.ns = "follow";
+      m.id = k;
+      if (!follower_.active()) { m.action = m.DELETE; ma.markers.push_back(m); continue; }
+      m.pose.position.x = follow_out_.px;
+      m.pose.position.y = follow_out_.py;
+      m.pose.orientation.w = 1.0;
+      static const char* mn[5] = {"끔", "따라감", "섬", "찾는 중", "놓침"};
+      if (k == 0) { m.type = m.CYLINDER; m.pose.position.z = 0.6; m.scale.x = m.scale.y = 0.4; m.scale.z = 1.2; m.color.r = 1.0f; m.color.g = 0.5f; m.color.a = 0.5f; }
+      else {
+        m.type = m.TEXT_VIEW_FACING; m.pose.position.z = 1.5; m.scale.z = 0.25; m.color.r = m.color.g = m.color.b = m.color.a = 1.0f;
+        char b[96];
+        std::snprintf(b, sizeof b, "%s %s %.1f m", follower_.oid().c_str(), follow_out_.searching ? mn[3] : mn[std::clamp(follow_out_.mode, 0, 4)], follow_out_.d);
+        m.text = b;
+      }
+      ma.markers.push_back(m);
+    }
+    pub_cand_->publish(ma);
   }
   // 판단 모델 글에 넣을 아는 물체: 가까운 10 개 "chair-3 chair 1.2 m front-left seen 4 s" (+ " visible" — 지금 보임)
   std::vector<std::string> known_objects() const {
@@ -1004,6 +1109,9 @@ class LowRlNode : public rclcpp::Node {
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
   bool obj_dirty_ = false;
+  ofl::Follower follower_;
+  ofl::Out follow_out_;
+  std::vector<std::string> follow_classes_;
   bool dec_obj_always_ = false;   // decider_obj_always
   double dec_vis_s_ = 1.0;        // decider_vis_s   // 지시가 바뀌어 물체 후보를 이번 걸음에 새로 채울 것
   bool goto_active_ = false, goto_resume_ = false, facing_ = false, face_valid_ = false;

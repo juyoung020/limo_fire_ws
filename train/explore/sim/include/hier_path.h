@@ -690,6 +690,27 @@ struct PathPre {
   int arr_hit;   // 도착 제자리 회전 (0, rot_w, 당근 무한) 의 path_imminent
 };
 DEV float path_cs_r(const EnvCfg& c) { return dm::minf(c.path_cs_dist, c.path_r_out); }
+// LowCmd 덧값 (follow 1 일 때만 — 기본값이면 예전과 같음, low_task.h)
+DEV float path_vmax(const EnvBatch& b, int env) {
+  const float v = b.lowcmd && b.lowcmd[env].follow != 0 ? b.lowcmd[env].vmax : 0.f;
+  return v > 0.f ? dm::minf(v, b.cfg.path_v) : b.cfg.path_v;
+}
+DEV int path_face(const EnvBatch& b, int env) { return b.lowcmd && b.lowcmd[env].follow != 0 ? b.lowcmd[env].face : -1; }
+// 목표 없음·도착 때 ω: face 칸이 있으면 그쪽으로 돌아 섬 (남은 각 < face_tol 이면 0, 아니면 2·각을 [face_w_min, rot_w] 로), 없으면 w_idle (0 = rot_w — 예전)
+DEV float path_idle_w(const EnvBatch& b, const EnvState& e, int env) {
+  const EnvCfg& c = b.cfg;
+  const int f = path_face(b, env);
+  if (f >= 0) {
+    const MapDev& m = b.maps[e.map];
+    const float fx = m.ox + ((float)(f % m.gw) + 0.5f) * c.res, fy = m.oy + ((float)(f / m.gw) + 0.5f) * c.res;
+    const float err = dm::wrap_pi(dm::atan2f_d(fy - (e.y + e.ey), fx - (e.x + e.ex)) - (e.th + e.eth));
+    if (dm::absf(err) < c.face_tol) return 0.f;
+    const float w = dm::maxf(c.face_w_min, dm::minf(c.rot_w, 2.f * dm::absf(err)));
+    return err > 0.f ? w : -w;
+  }
+  const float wi = b.lowcmd && b.lowcmd[env].follow != 0 ? b.lowcmd[env].w_idle : 0.f;
+  return wi != 0.f ? wi : c.rot_w;
+}
 // 추종기 한 번 (행동 주기 0.1 s, 스레드 하나): 웨이포인트 따라 (vc, ωc) — velocity_smoother 앞 명령. p_i(지금 구간)를 앞으로만 옮긴다
 DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* wc_o, float* carrot_o = nullptr, const PathPre* pre = nullptr,
                      PathWhy* why = nullptr) {   // why: 아래층 계측 (low_task.h) — 값만 적고 계산은 안 바꿈
@@ -699,7 +720,7 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
   *wc_o = 0.f;
   if (carrot_o) *carrot_o = 1e9f;   // 제자리 회전이면 당근 거리 무한 (기준선과 같음)
   if (e.p_n <= 0) {   // 목표 없음: 후보가 없을 때(판 시작·모두 닫힘)는 제자리 회전, 목표는 있는데 경로를 못 짰으면 섬
-    if (e.goal_cell < 0) *wc_o = c.rot_w;
+    if (e.goal_cell < 0) *wc_o = path_idle_w(b, e, env);
     if (why) { why->kind = e.goal_cell < 0 ? kWhyNoGoal : kWhyNoPath; why->bind = kLowFull; why->vc = 0.f; why->err = 0.f; why->d_goal = 0.f; }
     return;
   }
@@ -753,7 +774,7 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
   // 도착: 다음 결정까지 제자리 회전 — 라이다가 뒤 140° 를 못 봐서(sensor_model.yaml fov 220°) 목표 덩어리가 로봇 뒤·발밑에 남는 일이 많다
   // (2026-11-08 규칙 정책 시험: 서 있기만 하면 0 번 후보가 거리 0 인 채로 안 풀려 128 판 모두 진행 없음 실패)
   if (d_goal <= c.goal_tol) {   // (모름 칸까지 막힘으로 보면 판 시작의 뒤쪽 모름 때문에 영영 안 돌아 128 판 모두 정체 — 지도 막힘만 봄)
-    if (!(pre ? pre->arr_hit != 0 : path_imminent(b, e, env, 0.f, c.rot_w, 1e9f))) *wc_o = c.rot_w;
+    if (!(pre ? pre->arr_hit != 0 : path_imminent(b, e, env, 0.f, c.rot_w, 1e9f))) *wc_o = path_face(b, env) >= 0 ? path_idle_w(b, e, env) : c.rot_w;
     if (why) { why->kind = *wc_o != 0.f ? kWhyArrive : kWhyArriveStop; why->bind = kLowFull; why->vc = 0.f; why->err = 0.f; why->d_goal = d_goal; }
     return;
   }
@@ -763,7 +784,8 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
     if (why) { why->kind = kWhyRot; why->bind = kLowFull; why->vc = 0.f; why->err = err; why->d_goal = d_goal; }
     return;
   }
-  float vc = c.path_v;
+  const float pv = path_vmax(b, env);   // 속도 한도 (LowCmd::vmax — 사람 따라가기, 없으면 path_v)
+  float vc = pv;
   const float ld = dm::maxf(c.min_lookahead, dm::minf(c.lookahead, d_car));
   float se, ce;
   dm::sincosf_d(err, &se, &ce);
@@ -780,10 +802,10 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
     if (d < r_eff) v_cost = vc * c.path_cs_gain * d / c.path_cs_dist;
   }
   vc = dm::maxf(dm::minf(v_curv, v_cost), c.reg_min_speed);
-  int why_bind = vc >= c.path_v ? kLowFull : (v_cost < v_curv ? kLowCost : kLowCurv);   // 아래층 계측: 목표 속도를 묶은 항
+  int why_bind = vc >= pv ? kLowFull : (v_cost < v_curv ? kLowCost : kLowCurv);   // 아래층 계측: 목표 속도를 묶은 항
   // 경로 끝 감속 (RPP approach scaling)
   if (d_goal < c.approach_dist) {
-    const float va = dm::maxf(c.path_v * d_goal / c.approach_dist, c.approach_min_v);
+    const float va = dm::maxf(pv * d_goal / c.approach_dist, c.approach_min_v);
     if (va < vc) why_bind = kLowApproach;
     vc = dm::minf(vc, va);
   }
