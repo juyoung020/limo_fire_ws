@@ -8,6 +8,7 @@
 | `thermal_gymcu90640/` | 열화상 GY-MCU90640 (MLX90640, 32×24) | ESP32-S3-N16R8 개발 보드 | `F,ta,t1,…,t768` (0.1 °C 정수, 921600 baud) · 2 초마다 `S,ok=…,bad=…` |
 | `thermal_uno/` | 열화상 GY-MCU90640 | **Arduino Uno** (PlatformIO) | 위 열화상과 같은 줄 (115200 baud, 약 1.2 장/초) |
 | `radar_ld2450/` | 레이더 HLK-LD2450 (24 GHz, 표적 3) | ESP32-C3 SuperMini | `T,x1,y1,v1,x2,y2,v2,x3,y3,v3` (mm, cm/s, 없으면 0, 115200 baud) |
+| `ultrasonic_uno/` | 초음파 HC-SR04 × 2 | **Arduino Uno** (PlatformIO) | 로봇 펌웨어와 같은 `$US,<번호>,<mm>,<ms>*CS` · `$HB` (115200 baud) |
 
 ## 배선
 
@@ -44,6 +45,19 @@
 | GND | G |
 | TX | GPIO 4 |
 | RX | GPIO 3 |
+
+초음파 × 2 → Arduino Uno (`ultrasonic_uno/`, `pio run -e uno -t upload`)
+
+| 센서 | 왼쪽(0 번, front_left) | 오른쪽(1 번, front_right) |
+|---|---|---|
+| VCC | 5V | 5V (Uno 5V 핀이 하나라 빵판 + 줄로 나눔) |
+| Trig | 9 | 11 |
+| Echo | 10 | 12 |
+| GND | GND | GND |
+
+- Uno 는 5 V 입력이라 Echo 전압 분배(저항)가 필요 없다. ESP32 로 할 때는 Echo 를 1 kΩ / 2 kΩ 로 나눠 꽂아야 한다([wiring.md](../../docs/wiring.md)).
+- 확인(2026-11-18, CH340 호환 Uno): 같은 핀·같은 규칙의 앞선 판(줄 만들기만 `String` 으로)에서 두 센서 모두 매번 응답(5 초에 각 64~65 번, 0 없음), 받침대 앞 물체까지 55 mm · 67 mm 로 일정. 지금 파일은 `protocol.h` 를 쓰게 바꾼 뒤 빌드만(RAM 11 %) — 실물로 다시 올려 보지 않음. 줄자 거리 비교도 아직.
+- 센서 0 번은 센서가 나를 바라볼 때 내 오른쪽 = 로봇 기준 왼쪽.
 
 핀 번호는 각 스케치 맨 위 `kRxPin`·`kTxPin` 에 있다. TX 는 상대 RX 로 엇갈려 꽂는다.
 
