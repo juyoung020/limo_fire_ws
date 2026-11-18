@@ -65,7 +65,7 @@ install(TARGETS explorer_component ARCHIVE DESTINATION lib LIBRARY DESTINATION l
 # include/limo_fire_explore/class_alias.h (지시 글 → 클래스) 는 저장 지도 object_goto(limo_fire_navigation) 도 씀
 install(DIRECTORY include/ DESTINATION include)
 ament_export_include_directories(include)
-install(DIRECTORY launch config rviz DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   # 리모컨 받기 시험 (rc_watch.h — 다시 구독 판단 · QoS 호환 · 받는 노드 다시 만들기): colcon test --packages-select limo_fire_explore

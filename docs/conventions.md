@@ -87,7 +87,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 | (2026-11-18) `/explore/object_goto/goal` · `/explore/instruction` · `/explore/target_class` | `/explore/goal` (explorer 가 직접 받음) |
 | (2026-11-18) `/explore/goto_status` · `/explore/object_goto/status` | `/explore/goal_status` (`object_goto/target` · `overlay` 는 지움) |
 | 설정 `low_rl.yaml` · `explore_frontier.yaml` | `explorer.yaml` · `frontier_explorer.yaml` |
-| RViz `explore_fuel_rl.rviz` | `explore.rviz` |
+| RViz `explore_fuel_rl.rviz` · (2026-11-18) `explore.rviz` | `limo_fire_description/rviz/limo_fire.rviz` 하나로 합침 |
 
 ## 언어
 

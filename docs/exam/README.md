@@ -75,7 +75,7 @@ robot.launch.xml  (항상 먼저)
 ├─ mapping.launch.xml: cartographer_node, cartographer_occupancy_grid_node
 ├─ /app (component_container — 프로세스 하나, 실행기 스레드 하나, intra-process)
 │     ← explorer (+ perception:=true 면 object_detector + object_map)   ↔ HTTP llama-server :8171 (ROS 밖, 손으로 먼저 띄움)
-└─ (rviz:=true) rviz2 (explore.rviz)
+└─ (rviz:=true) rviz2 (limo_fire.rviz — 운용 화면 하나)
 
 ② navigation.launch.xml  (+ perception.launch.xml, bt.launch.xml)
 ├─ nav2_container (component_container_isolated) ← controller_server, smoother_server, planner_server,
@@ -236,7 +236,7 @@ QoS 는 `신뢰/지속` 으로: R = RELIABLE, BE = BEST_EFFORT, V = VOLATILE, TL
 | `/perception/object_detector` 📄 | `/camera/color/image_raw` BE (실행기 콜백, GPU 가 일하는 동안 최근 장만 쥠) | `~/detections` Detection2DArray, `~/mask` mono8(먼저), `~/image`(구독자 있을 때만) | — | `limo_fire_perception/config/yolo_coco.yaml`·`yolo_fire.yaml` | `/app` 실행기 1 (2 ms 타이머가 GPU 끝났나 물음 — 2026-11-18 전엔 GPU 작업 스레드) |
 | `/perception/object_map` 📄 | `/perception/detections`+`/camera/depth/image_raw` (ApproximateTime 0.05 s), `~/mask`, depth `camera_info`, TF, `/clicked_point`, `~/save_to` | `~/objects` Detection3DArray **R/TL 10 Hz** (map 틀), `~/markers`, `~/summary`, `~/selected` | 서버 `~/clear` `~/save` `~/load` (Trigger) | 같은 파일 `object_map:` | 컨테이너 실행기 1, 20 ms 처리 타이머 |
 | `/explore/object_goto` (저장 지도만) | `/explore/goal` String(사람 지시), `/perception/objects`, `/map` + TF | `/explore/goal_status`(TL) | 클라이언트 액션 `/navigate_to_pose` | `limo_fire_navigation/config/object_goto.yaml` + 별칭 `explorer.yaml` `/explore/**` | 실행기 1 + TF 스레드 |
-| `/limo_fire_rviz` (RViz2) | 지도·스캔·경로·물체·상태 글 | `/goal_pose`(2D Goal Pose), `/initialpose`(2D Pose Estimate), `/clicked_point`(Publish Point) | 클라이언트 `/explore/frontier_explorer/enable` 또는 `/explore/enable` (탐사 패널) | `limo_fire_description/rviz/limo_fire.rviz`, `limo_fire_explore/rviz/explore.rviz` | Qt + ROS 스레드 |
+| `/limo_fire_rviz` (RViz2) | 지도·스캔·경로·물체·상태 글 | `/goal_pose`(2D Goal Pose), `/initialpose`(2D Pose Estimate), `/clicked_point`(Publish Point) | 클라이언트 `/explore/frontier_explorer/enable` 또는 `/explore/enable` (탐사 패널) | `limo_fire_description/rviz/limo_fire.rviz` (운용 화면 하나) | Qt + ROS 스레드 |
 | `/mission` 📄 (팀원) | `IsTopicAlive` 로 `/scan /odom /imu /odometry/filtered /camera/* /perception/detections`(generic 구독, SensorData), `/rc_state`, `/perception/objects`(R/TL), `/map`, `/amcl_pose`, TF | `/mission/events`(JSON 한 줄, R 깊이 50), `/mission/overlay`, `/cmd_vel`(StopRobot 0), `/nozzle/command`, `/mission/call119`(꺼짐) | 서버 `/mission/request_survivor_search` SetBool; 클라이언트 액션 `/navigate_to_pose`, 서비스 `/lifecycle_manager_*/is_active`(Trigger)·`/smoke_mode/set`·`/explore/frontier_explorer/enable`·`/pump/set`·`/speaker/evacuation` | `limo_fire_bt/config/limo_fire_bt.yaml` (+ `_sim.yaml`), 트리 `behavior_trees/limo_fire_bt.xml` | 한 스레드, 10 Hz 틱 |
 
 🧪 (11-18 한 프로세스 전 옛 구조) sim B `explorer` 실측([`raw/sim_B_lowrl_explore/node_info.txt`](raw/sim_B_lowrl_explore/node_info.txt)), 지시 흐름([`instruction_flow.txt`](raw/sim_B_lowrl_explore/instruction_flow.txt)): `/explore/object_goto/goal "의자로 가"` → `/explore/object_goto/status "'의자로 가' → 클래스 chair · 지도에 0 개 — 판단 모델이 후보(그 물체 옆 · 프론티어)에서 고름"` → `/explore/goto_status "지시: 의자로 가 — …"`.

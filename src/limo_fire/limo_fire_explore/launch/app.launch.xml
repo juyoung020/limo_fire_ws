@@ -11,7 +11,7 @@
   <arg name="dry_run" default="true" description="true: /cmd_vel 안 냄 (/explore/cmd_debug 에만) · false: 실제 주행"/>
   <arg name="perception" default="false" description="true: YOLO 탐지 + 물체 지도를 같은 프로세스에 (찾은 물체가 지도에 남고 '○○ 로 가' 후보가 됨)"/>
   <arg name="stack" default="false" description="true: Cartographer(지도 TF map → odom) 같이"/>
-  <arg name="rviz" default="false" description="true: 운용 화면 RViz (rviz/explore.rviz, 탐사 패널)"/>
+  <arg name="rviz" default="false" description="true: 운용 화면 RViz (limo_fire_description viewer.launch.xml · limo_fire.rviz 하나 — 탐사 패널·후보·판단 모델 입력 지도 포함)"/>
   <arg name="debug" default="$(var rviz)" description="true: RViz 표시 토픽(/explore/candidates …)도 냄 — 기본은 rviz 와 같음"/>
   <arg name="record" default="" description="입력·명령 녹화 파일 (비우면 안 씀 — low_explore_replay 로 다시 돌림)"/>
   <arg name="perception_config" default="yolo_coco.yaml" description="인식 설정 (limo_fire_perception/config): yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
@@ -65,6 +65,6 @@
     </load_composable_node>
   </group>
 
-  <node pkg="rviz2" exec="rviz2" name="limo_fire_rviz" output="screen" if="$(var rviz)"
-        args="-d $(find-pkg-share limo_fire_explore)/rviz/explore.rviz"/>
+  <!-- 운용 화면은 하나(limo_fire.rviz): 순찰·주행·탐사가 같은 창 -->
+  <include file="$(find-pkg-share limo_fire_description)/launch/viewer.launch.xml" if="$(var rviz)"/>
 </launch>

@@ -349,6 +349,69 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /click_patrol/markers
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Goal
+      Namespaces:
+        goal: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /explore/goal_marker
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Candidates
+      Namespaces:
+        cand: true
+        cand_text: true
+        cand_link: true
+        cand_frontier: true
+        cand_text_bg: true
+        cand_dormant: true
+        trail: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /explore/candidates
+      Value: true
+    - Align Bottom: false
+      Background Alpha: 0.75
+      Background Color: 0; 0; 0
+      Class: rviz_2d_overlay_plugins/TextOverlay
+      Enabled: true
+      Foreground Alpha: 1
+      Foreground Color: 255; 255; 150
+      Invert Shadow: false
+      Name: Candidates text
+      Overtake BG Color Properties: false
+      Overtake FG Color Properties: false
+      Overtake Position Properties: false
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /explore/candidates_text
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: 판단 모델 입력 지도
+      Normalize Range: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /explore/decider_image
+      Value: true
     - Align Bottom: false
       Background Alpha: 0.800000011920929
       Background Color: 0; 0; 0

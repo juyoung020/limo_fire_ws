@@ -496,7 +496,7 @@ Nav2 `NavigateToPose` 로 프론티어를 차례로 가는 탐사 (시뮬 `sim.l
 ### RViz 탐사 패널 (`limo_fire_rviz/src/explore_panel.cpp`)
 
 "합친 탐사 (/explore/explorer)" 를 고르면: `/explore/state`(R / TL / 1), `/explore/done`(R / TL / 1), `/explore/status`(10) 구독, `/explore/enable` 부름. `/explore/state == "running"` 이면 켜짐으로 그린다.
-운용 화면(`limo_fire_explore/rviz/explore.rviz`)이 그리는 토픽: `/map` `/scan` `/perception/markers` `/perception/summary` `/explore/candidates` `/explore/candidates_text` `/explore/decider_image` `/explore/goal_marker` `/perception/detection_image` `/robot_description` (`/explore/*` 표시 토픽은 `debug` 일 때만 — `rviz:=true` 면 켜짐).
+운용 화면(`limo_fire_description/rviz/limo_fire.rviz`, 순찰·주행과 같은 창)이 그리는 탐사 토픽: `/map` `/scan` `/perception/markers` `/perception/summary` `/explore/candidates` `/explore/candidates_text` `/explore/decider_image` `/explore/goal_marker` `/perception/detection_image` `/robot_description` (`/explore/*` 표시 토픽은 `debug` 일 때만 — `rviz:=true` 면 켜짐).
 
 ## I/O 표 맞추기 (`tools/io_table`)
 
