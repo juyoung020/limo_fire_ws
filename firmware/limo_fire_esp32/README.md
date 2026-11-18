@@ -19,6 +19,13 @@ pio device monitor                # 115200, 줄이 나오는지 보기
 | 0 front_left (앞 왼쪽 +20°) | GPIO 6 | GPIO 7 |
 | 1 front_right (앞 오른쪽 −20°) | GPIO 15 | GPIO 16 |
 
+| 센서 (ROS 이름) | ESP32-C3 SuperMini (`pio run -e esp32c3`, **잠정·실물 배선 때 확인**) |
+|---|---|
+| 0 front_left | Trig GPIO 3 · Echo GPIO 4 |
+| 1 front_right | Trig GPIO 5 · Echo GPIO 6 |
+
+C3 에는 GPIO 15·16 이 없어 `config.h` 가 칩에 따라 핀을 고른다. 부팅 핀(2·8·9)·USB(18·19)는 피했다. USB 시리얼은 칩 안의 USB-CDC(`ARDUINO_USB_CDC_ON_BOOT`) — 포트 이름이 `/dev/ttyACM*` 일 수 있어 udev 규칙을 따로 본다.
+
 - HC-SR04 는 5 V 로 돌고 **Echo 도 5 V** 다 — ESP32(3.3 V) 에 바로 꽂지 말고 전압 분배(예: 1 kΩ / 2 kΩ) 뒤 꽂는다(docs/hardware.md). GND 는 모두 공통.
 - 둘을 **번갈아** 쏜다(센서마다 35 ms, 한 바퀴 70 ms ≈ 14 Hz) — 동시에 쏘면 서로의 메아리를 받는다(docs/wiring.md, 60 ms 이상).
 - 거리 = Echo HIGH 길이(왕복 µs) × 343 m/s ÷ 2. 데이터시트는 340 m/s 로 셈 — 20 °C 공기 343 m/s 를 썼다. 25 ms 안에 메아리가 없거나 2~400 cm 밖이면 0(메아리 없음).
@@ -36,4 +43,4 @@ $HB,<ms>                             살아 있음 (1 s 마다)
 
 ## 확인한 것 (2026-11-06)
 
-- `pio run` 빌드 성공(경고 0, RAM 6.8 %, Flash 22.3 %). **실물 ESP32·HC-SR04 에서는 아직 안 돌려 봤다.**
+- `pio run` 빌드 성공(경고 0, RAM 6.8 %, Flash 22.3 %). 2026-11-17 다시: platform espressif32 8.0.0 에서 `esp32s3`(Flash 8.9 %)·`esp32c3`(RAM 4.4 %, Flash 21.7 %) 둘 다 경고 0 으로 성공(Docker python:3.12 + PlatformIO 6.2). **실물 ESP32·HC-SR04 에서는 아직 안 돌려 봤다.**

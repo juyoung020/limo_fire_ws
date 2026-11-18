@@ -14,7 +14,7 @@ Isaac Sim·Webots 결과를 실물 LIMO 에 반영하기 전에 준비할 것. �
 | 항목 | 상태 |
 |---|---|
 | 초음파 HC-SR04 × 2 | 키트 보유, **로봇 미장착** |
-| 펌웨어 `firmware/limo_fire_esp32` | `pio run` 빌드만 됨, **실물 ESP32·HC-SR04 에서 안 돌려 봄** |
+| 펌웨어 `firmware/limo_fire_esp32` | `pio run` 빌드 통과(S3·C3 둘 다, 2026-11-17, C3 핀은 잠정), **실물 ESP32·HC-SR04 에서 안 돌려 봄** |
 | ESP32 브리지 `limo_fire_esp32_bridge` | 줄 해석·가짜 ESP32 장면 시험 통과(2026-11-17, 단위 13 개) + 가짜 ESP32(pty)로 끝까지 통과(`scripts/fake_bridge_check.sh`: 값·`+inf`·깨진 줄·재연결). **실물 ESP32 연결은 아직** |
 | 핀 배치(`include/config.h`) | 잠정 — front_left Trig 6/Echo 7, front_right Trig 15/Echo 16 (ESP32-S3 기준) |
 | Echo 5 V → 3.3 V | 전압 분배(예 1 kΩ/2 kΩ) 필요 |
@@ -24,7 +24,7 @@ Isaac Sim·Webots 결과를 실물 LIMO 에 반영하기 전에 준비할 것. �
 
 - [ ] HC-SR04 2 개를 앞 범퍼 아래 좌우에 장착. 위치·각도를 줄자·각도기로 실측해 `limo_fire.urdf.xacro` 와 비교
 - [ ] Echo 라인 전압 분배 회로 만들기, GND 공통
-- [ ] ESP32 보드(S3 또는 C3) 핀을 `config.h` 에 맞추거나 `config.h` 를 보드에 맞게 고치기
+- [ ] ESP32 보드 핀: S3 는 `config.h` 그대로, C3 SuperMini 는 `pio run -e esp32c3` 의 잠정 핀(Trig 3·5 / Echo 4·6)으로 배선하고 실물에서 확인 — 배선하면 `docs/wiring.md` 에도 반영
 - [ ] USB 시리얼 `/dev/esp32` udev 규칙
 - [ ] 배터리·전원: 초음파 5 V 공급원, 모터 노이즈가 센서에 끼는지 확인
 
@@ -97,7 +97,24 @@ cmake -S tools/real_calib -B /tmp/real_calib_build && cmake --build /tmp/real_ca
 
 판정은 시뮬과 같다: `wall` 이 `hold` 보다 나쁘면 초음파 보정을 쓰지 않고 `hold` 로 간다.
 
-## 7. 알려진 위험
+## 7. Isaac 슬립 민감도 (2026-11-17, office·시드 0 하나)
+
+바퀴 반지름 배율 k(오도메트리 슬립)를 바꿔 `hold` 와 `wall`(hard 반사)을 같은 목표 14 개로 돌렸다. 원본 표는 [benchmarks/isaac_slip_k/](benchmarks/isaac_slip_k/).
+
+| k | hold 성공 / 평균 도착 오차 | wall 성공 / 평균 도착 오차 |
+|---|---|---|
+| 0.97 | 14/14 · 0.34 m | 14/14 · 0.32 m |
+| 1.00 | 14/14 · 0.29 m | 14/14 · 0.26 m |
+| 1.03 | 14/14 · 0.26 m | 14/14 · 0.24 m |
+| 1.06 | 11/14 · 0.83 m | 14/14 · 0.23 m |
+| 1.10 | 7/14 · 2.47 m | 11/14 · 3.76 m |
+
+`wall`+soft 반사는 k=1.03 에서 14/14 · 0.24 m, k=1.10 에서 14/14 · 0.21 m(최대 추정 오차 0.15 m).
+
+- 읽을 수 있는 것: k 가 ±3 % 안이면 둘 다 거의 같고, 6 % 부근에서 `hold` 만 무너진다. 10 % 에서는 hard 모양 `wall` 도 일부 실패(11/14)하는데 soft 에서는 14/14 였다 — 반사 모양 가정이 결과를 바꾼다는 교차 검증 결론과 같은 방향.
+- 한계: office 한 곳·시드 하나·판마다 1 회. 1.10 처럼 크게 갈리는 구간은 판 사이 흔들림일 수 있어 순서만 믿는다. 실물에서 슬립(`real_calib slip`)을 먼저 재서 어느 줄에 해당하는지 본다.
+
+## 8. 알려진 위험
 
 - 초음파 두 개뿐이라 옆·뒤는 못 본다. 코너·비스듬한 벽에서 메아리가 안 올 수 있다(옛 `sonar` 방식이 시뮬 warehouse 에서 크게 나빴던 곳 — `wall` 은 같은 곳에서 8 판 중 7 판에서 `hold` 보다 오차가 작았다, benchmarks 결과 7).
 - 모터·USB 전원 노이즈, 5 V Echo 레벨, 온도에 따른 음속(20 °C 343 m/s 가정).
