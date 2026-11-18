@@ -92,7 +92,7 @@ void loop() {
 #if LF_RADAR
   while (Serial2.available()) if (radar.push(Serial2.read())) send_radar(now);
 #endif
-  if (static_cast<int32_t>(now - next_slot_ms) >= 0) {
+  if (LF_SONAR && static_cast<int32_t>(now - next_slot_ms) >= 0) {
     // 열화상 줄을 쓰느라 늦어졌으면 몰아 쏘지 않고 한 칸만 건너뛴다(센서 사이 간격 kSlotMs 를 지킨다)
     next_slot_ms = (static_cast<int32_t>(now - next_slot_ms) > static_cast<int32_t>(kSlotMs)) ? now + kSlotMs : next_slot_ms + kSlotMs;
     const uint32_t mm = measure(next_sonar);

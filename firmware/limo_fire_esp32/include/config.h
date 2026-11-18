@@ -5,6 +5,10 @@
 // HC-SR04 × 2 (ESP32-S3 개발 보드, docs/wiring.md 핀표): 순서 = ROS 쪽 이름 순서(esp32_bridge.yaml ultrasonic.names: front_left, front_right)
 // Echo 는 5 V 라 전압 분배(1 kΩ / 2 kΩ, docs/wiring.md "초음파 ECHO 전압 분배") 뒤 ESP32 에
 constexpr uint8_t kNumSonar = 2;
+// 초음파 끄기: -DLF_SONAR=0 (env esp32s3_nosonar) — 초음파가 안 될 때 열화상·레이더만 시험
+#ifndef LF_SONAR
+#define LF_SONAR 1
+#endif
 #if defined(CONFIG_IDF_TARGET_ESP32C3)
 // ESP32-C3 SuperMini: GPIO 15·16 이 없다. 부팅 핀(2·8·9)·USB(18·19)를 피한 자리 (잠정 — 실물 배선 때 확인, docs/wiring.md 에도 적을 것)
 constexpr uint8_t kTrigPin[kNumSonar] = {3, 5};

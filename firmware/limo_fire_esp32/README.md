@@ -11,6 +11,7 @@ pio run                           # 빌드
 pio run -t upload                 # USB 로 올리기
 pio device monitor                # 921600, 줄이 나오는지 보기
 test/run.sh                       # 열화상·레이더 프레임 조립 호스트 시험(보드 없이)
+pio run -e esp32s3_nosonar -t upload   # 초음파 끔(열화상·레이더만), 시리얼은 S3 USB 직결 포트로
 ```
 
 ## 초음파 배선 (잠정 — `include/config.h`, 실물 장착 때 확인)
@@ -47,6 +48,11 @@ $HB,<ms>                             살아 있음 (1 s 마다)
 **열화상·레이더 배선** (`docs/wiring.md` 핀표, S3): 열화상 TX → GPIO 10 · RX ← 11 (UART1, 115200) / 레이더 TX → GPIO 17 · RX ← 18 (UART2, 256000, **전원 5 V**).
 
 체크섬이 틀리거나 반쪽인 줄은 다리가 버린다. 형식 정의는 `include/protocol.h` 와 다리의 `protocol.hpp` 두 곳 — 바꾸면 같이 바꾼다.
+
+## 확인한 것 (2026-11-18, `esp32s3_nosonar`)
+
+- S3 USB 직결 포트(Windows COM5)로 올려 `$HB` 가 1 초마다 나옴. 열화상 `$TH` 는 0 줄 — 진단 코드로 GPIO 10·11 에서 신호 변화 0, 115200·9600·57600·460800 과 TX/RX 바꿔서도 0 바이트(GPIO 10 은 풀다운에 떨어져 떠 있음). 모듈 전원·GND 접촉을 먼저 볼 것. 레이더는 꽂지 않음
+- 기본 `esp32s3` 는 시리얼이 UART0(CH343 COM 포트)로 나가서 USB 직결 포트에는 아무것도 안 나온다 — 그래서 이 환경에서 USB 직결로 돌렸다
 
 ## 확인한 것 (2026-11-18)
 
