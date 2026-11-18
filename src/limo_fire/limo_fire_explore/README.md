@@ -53,7 +53,38 @@ ros2 topic echo /explore/frontier_explorer/state
 - 프론티어 중심이 지도가 자랄 때마다 조금씩 옮겨 가서 목표를 자주 다시 보낸다(3 초마다, explore_lite 와 같음) — Nav2 로그에 앞 목표 취소가 많이 찍힌다.
 - 처음엔 전역 costmap 이 Cartographer 벽을 안 넣어(막힘 문턱 100, 아래 문서) 라이다 3 m 밖 덕트를 뚫는 경로로 7 분 넘게 맴돌았다 —
   `nav2_params.yaml` `lethal_cost_threshold: 65` 로 고친 뒤 위 결과. [docs/simulation.md "Nav2 설정"](../../../docs/simulation.md).
-- 시뮬은 화면 없는 X 의 소프트웨어 렌더링이라 실시간의 약 0.55 배. 실물·젯슨에서는 아직 안 돌림.
+- 시뮬은 화면 없는 X 의 소프트웨어 렌더링이라 실시간의 약 0.55 배.
+
+### 실물 확인 (2026-11-18, 로봇 Jetson · 실험실 · `real.launch.xml slam:=true`)
+
+띄운 것: `ros2 launch limo_fire_bringup real.launch.xml slam:=true` — Cartographer + Nav2(지도 없이 주행) + 인식(화재 모델) + 운용 화면,
+프론티어 탐사 노드는 멈춘 채(idle) 늘 떠 있어 탐사 패널 버튼으로 언제든 켜고 끈다(임무 BT 와 따로).
+
+| 확인 | 결과 |
+|---|---|
+| 켜기·끄기 (버튼과 같은 `~/enable`, 리모컨 SWB 내림) | `idle` → `running`(프론티어 1 개, 목표를 바로 고름) → `idle`, 끌 때 Nav2 목표 취소 |
+| 탐사 주행 | 지도 약 102 m² 까지 넓힘, 블랙리스트 1 |
+
+**속도가 느리다** — Nav2 는 최고 속도로 명령하는데 바퀴가 못 따라간다.
+
+| 잰 것 | 값 |
+|---|---|
+| Nav2 명령 `/cmd_vel` | 0.26 m/s (설정 최고 속도 `desired_linear_vel`·`velocity_smoother max_velocity` 그대로) |
+| 실제 바퀴 `/odom` | 0.118 m/s — 명령의 절반쯤 |
+| 연기 모드 속도 한도 `/speed_limit` | 0 (걸리지 않음) |
+| 섀시 배터리 `/limo_status` | 10.7 V |
+| Jetson 부하 평균 | 7.6 (Cartographer + 인식 + Nav2), `planner_server` 1 Hz 를 못 맞춘 적 2 번(0.69 · 0.81 Hz) |
+
+- 가장 의심: 배터리(충전기를 뺀 뒤 꽤 돌린 뒤). 이 로봇 배터리의 정상 전압은 아직 확인 안 함 — 충전 직후 같은 시험으로 `/cmd_vel` 와 `/odom` 을 견줘 가린다.
+- 그 밖에 늦어지는 것: 최고 속도 0.26 m/s 자체가 WeGo 기본값, RPP 가 곡선(반경 0.9 m 아래)·목표 0.6 m 안에서 줄임(최저 0.1 · 0.05 m/s),
+  탐사가 3 초마다 목표를 다시 골라 방향이 바뀜.
+
+**라이다가 의자를 못 거른다** — 라이다 한계. 장애물 입력은 정상(`/scan_obstacles` 10 Hz).
+
+- 라이다는 바닥에서 약 7 cm 높이 한 평면만 본다 → 의자는 가는 다리 넷만 보이고 좌판은 안 보인다. 다리 사이를 지날 수 있다고 보고 의자 밑으로 들어가거나 좌판에 닿을 수 있다.
+- 라이다는 앞쪽 ±110° 만 쓴다(`limo_fire_bringup/config/ydlidar.yaml`) — 옆·뒤는 못 본다.
+- 고치려면 깊이 카메라를 Nav2 costmap 에 넣어야 한다(좌판·책상 높이까지 봄). 이 패키지 explorer 의 "깊이 카메라 장애물 층"은 있지만
+  Nav2 costmap(`limo_fire_navigation/config/nav2_params.yaml`, 지금 `/scan_obstacles` 하나)에는 아직 없다. 그때까지는 의자를 치우거나 둘레를 막는다.
 
 ## 합친 탐사 (`explorer` — 위층 판단 모델 + 아래층 A*, 2026-11-16)
 
