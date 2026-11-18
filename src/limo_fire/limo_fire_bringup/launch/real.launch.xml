@@ -2,6 +2,7 @@
        로봇(센서·섀시·EKF) + (저장 지도·AMCL 또는 Cartographer 지도 만들기) + Nav2 + 인식(화재 모델) + 운용 화면 하나
      순찰 (저장 지도):  ros2 launch limo_fire_bringup real.launch.xml
                         → RViz 2D Pose Estimate → Publish Point 로 점 찍기 → ros2 service call /click_patrol/start std_srvs/srv/Trigger
+     연기 모드 (저장 지도): 2D Pose Estimate 로 위치를 잡은 뒤 RViz Smoke 패널 버튼 → 라이다·카메라 없이 바퀴 + IMU 로만 주행 → Nav2 Goal
      임무 BT 까지:      ros2 launch limo_fire_bringup real.launch.xml bt:=true click_patrol:=false
      프론티어 탐사:     ros2 launch limo_fire_bringup real.launch.xml slam:=true
                         → 리모컨 SWB 위 → RViz 탐사 패널 "Auto explore" 버튼 → 다 돌면 save_map.launch.xml name:=<이름>

@@ -93,7 +93,7 @@ class Serial {
     termios t{};
     tcgetattr(fd_, &t);
     cfmakeraw(&t);
-    const speed_t sp = baud_ == 115200 ? B115200 : baud_ == 460800 ? B460800 : B921600;
+    const speed_t sp = baud_ == 115200 ? B115200 : baud_ == 460800 ? B460800 : baud_ == 500000 ? B500000 : B921600;
     cfsetispeed(&t, sp);
     cfsetospeed(&t, sp);
     tcsetattr(fd_, TCSANOW, &t);
@@ -335,7 +335,7 @@ int main(int argc, char** argv) {
     const std::string a = argv[i];
     if (a == "--baud" && i + 1 < argc) baud = std::atoi(argv[++i]);
     else if (a == "-h" || a == "--help") {
-      std::printf("사용: sensor_view [포트(기본: /dev/ttyACM* 첫 번째)] [--baud 921600|460800|115200]\n");
+      std::printf("사용: sensor_view [포트(기본: /dev/ttyACM* 첫 번째)] [--baud 921600|500000|460800|115200]\n");
       return 0;
     } else port = a;
   }

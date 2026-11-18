@@ -18,6 +18,8 @@ ros2 service call /smoke_mode/set std_srvs/srv/SetBool "{data: false}"   # 평�
 ros2 topic echo /smoke_mode/active                                        # 지금 상태 (마지막 값 유지)
 ```
 
+운용 화면(`limo_fire.rviz`)의 **Smoke 패널** 버튼이 같은 서비스를 부른다 — [limo_fire_rviz](../limo_fire_rviz/README.md#연기-모드-패널-limo_fire_rvizsmokepanel-smoke).
+
 저장 지도 위치 추정(`navigation.launch.xml`, 기본 `localization:=true`)일 때만 켜진다. 지도 만들기(SLAM) 중이거나,
 아직 AMCL 자세·지도·`odom → base_link` TF 가 없으면 켜기를 거절하고 까닭을 돌려준다.
 

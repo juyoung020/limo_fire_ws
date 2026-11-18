@@ -9,11 +9,13 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
-# ESP32 USB 시리얼 → ROS (지금은 초음파 Range). 줄 형식은 include/limo_fire_esp32_bridge/protocol.hpp = 펌웨어 include/protocol.h
+# ESP32 USB 시리얼 → ROS (초음파 Range · 열화상 Image · 레이더 PoseArray). 줄 형식은 include/limo_fire_esp32_bridge/protocol.hpp = 펌웨어 include/protocol.h
 add_executable(esp32_bridge src/esp32_bridge_node.cpp)
 target_include_directories(esp32_bridge PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
-ament_target_dependencies(esp32_bridge rclcpp sensor_msgs)
+ament_target_dependencies(esp32_bridge rclcpp sensor_msgs geometry_msgs std_msgs)
 
 # 가짜 ESP32 (가상 시리얼 pty 에 펌웨어와 같은 줄) — 실물 없이 다리를 시험. ROS 의존 없음
 add_executable(fake_esp32 tools/fake_esp32.cpp)

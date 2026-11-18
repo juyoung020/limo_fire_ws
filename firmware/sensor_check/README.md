@@ -6,6 +6,7 @@
 | 폴더 | 모듈 | 보드 | 출력 (USB 시리얼, 한 줄씩) |
 |---|---|---|---|
 | `thermal_gymcu90640/` | 열화상 GY-MCU90640 (MLX90640, 32×24) | ESP32-S3-N16R8 개발 보드 | `F,ta,t1,…,t768` (0.1 °C 정수, 921600 baud) · 2 초마다 `S,ok=…,bad=…` |
+| `thermal_uno/` | 열화상 GY-MCU90640 | **Arduino Uno** (PlatformIO) | 위 열화상과 같은 줄 (115200 baud, 약 1.2 장/초) |
 | `radar_ld2450/` | 레이더 HLK-LD2450 (24 GHz, 표적 3) | ESP32-C3 SuperMini | `T,x1,y1,v1,x2,y2,v2,x3,y3,v3` (mm, cm/s, 없으면 0, 115200 baud) |
 
 ## 배선
@@ -19,6 +20,21 @@
 | TX | GPIO 10 |
 | RX | GPIO 11 |
 | SCL · SDA · NC · PS | 꽂지 않음 — **PS 가 GND 에 닿으면 UART 가 꺼진다** |
+
+열화상 → Arduino Uno (`thermal_uno/`, `pio run -e uno -t upload`)
+
+| 모듈 | Uno |
+|---|---|
+| VIN | 5V (3~5 V 모두 됨) |
+| GND | GND |
+| TX | **0 (하드웨어 UART RX)** — 코드를 올릴 때는 이 선을 뽑는다(USB 와 같은 선) |
+| RX | 꽂지 않음 (모듈은 켜지면 바로 계속 보냄 — 2026-11-18 실물 확인) |
+| SCL · SDA · NC · PS | 꽂지 않음 |
+
+- 저항이 필요 없다(모듈 TX 3.3 V → Uno 입력). 모듈과 USB 가 같은 **115200** 을 쓴다. 화면: `tools/sensor_view/build/sensor_view /dev/ttyUSB0 --baud 115200`(CH340 호환 보드는 `ttyUSB*`, 정품은 `ttyACM*`) — 좌우 반전은 기본 켜짐, `m` 으로 끈다.
+- 확인(2026-11-18, CH340 호환 Uno): 8 초에 10 장 정상(약 1.2 장/초), 받은 장의 약 절반이 깨짐 — 한 장을 PC 로 내는 280 ms 동안 오는 다음 장을 놓쳐서다. 실내 약 24~28 °C.
+- 처음엔 AltSoftSerial(8 번 핀, USB 500000)로 했으나 실물에서 체크섬이 거의 다 깨졌다(정상 0~50 %, 흔들림) — [PJRC](https://www.pjrc.com/teensy/td_libs_AltSoftSerial.html): 16 MHz AVR 에서 115200 은 다른 인터럽트가 거의 없을 때만 된다.
+- SRAM 2 KB 중 83 % 를 쓴다(프레임 1544 B 를 통째로 받아야 체크섬을 안다). 빠르게 보려면 ESP32-S3(`thermal_gymcu90640/`, 약 4 장/초).
 
 레이더 → ESP32-C3 SuperMini (5V 가 있는 줄만)
 

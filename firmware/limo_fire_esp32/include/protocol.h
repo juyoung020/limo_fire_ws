@@ -1,6 +1,8 @@
 // ESP32 → PC 시리얼 줄 형식 (README "시리얼 형식"). 브리지(limo_fire_esp32_bridge protocol.hpp)와 같아야 한다.
 //   $<종류>,<필드>,...*<XOR 체크섬 16 진 2 자리>\r\n   — 체크섬 = '$' 와 '*' 사이 글자의 XOR (NMEA 0183 꼴)
 //   $US,<번호>,<mm>,<ms>    초음파 번호(0 부터) 거리(mm, 0 = 메아리 없음) ESP32 시각(ms)
+//   $TH,<ms>,<ta>,<t1>,…,<t768>  열화상: 모듈 온도 ta, 768 점(32×24, 행 먼저: 1 행 왼→오 … 24 행), 모두 0.1 °C 정수. 약 4 Hz
+//   $RD,<ms>,x1,y1,v1,x2,y2,v2,x3,y3,v3  레이더 표적 3 개(없으면 0,0,0): x 오른쪽 + · y 앞 (mm), v cm/s (LD2450 원본 부호). 약 10 Hz
 //   $HB,<ms>                살아 있음
 #pragma once
 #include <stdint.h>

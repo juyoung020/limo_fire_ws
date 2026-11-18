@@ -2,4 +2,7 @@
   <class name="limo_fire_rviz/ExplorePanel" type="limo_fire_rviz::ExplorePanel" base_class_type="rviz_common::Panel">
     <description>탐사 자동 모드 켜기·끄기 (프론티어 /explore/frontier_explorer · 합친 탐사 /explore/explorer) 와 상태</description>
   </class>
+  <class name="limo_fire_rviz/SmokePanel" type="limo_fire_rviz::SmokePanel" base_class_type="rviz_common::Panel">
+    <description>연기 모드 켜기·끄기 (/smoke_mode/set) — 라이다·카메라 없이 바퀴 + IMU 로 주행, 상태와 추정 불확실성</description>
+  </class>
 </library>

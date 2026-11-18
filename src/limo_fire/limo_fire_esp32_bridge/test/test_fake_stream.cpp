@@ -1,6 +1,8 @@
 // 가짜 ESP32 줄 만들기: 다리가 쓰는 해석기(parse_line)를 거쳐 장면마다 기대한 대로 나오는지
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "limo_fire_esp32_bridge/fake_stream.hpp"
 #include "limo_fire_esp32_bridge/protocol.hpp"
 
@@ -58,4 +60,29 @@ TEST(FakeStream, ParseScenario) {
   Scenario s;
   EXPECT_TRUE(parse_scenario("corrupt", s));
   EXPECT_FALSE(parse_scenario("nope", s));
+}
+
+TEST(FakeStream, SensorsSceneThermalAndRadarParse) {
+  int th = 0, rd = 0, bad = 0;
+  float max_c = 0;
+  size_t max_targets = 0;
+  for (int s = 0; s < 300; ++s)   // 10.5 s
+    for (const auto& l : lines_at(Scenario::Sensors, s)) {
+      const auto parsed = parse_line(l);
+      if (!parsed) { ++bad; continue; }
+      if (const auto t = as_thermal(*parsed)) {
+        ++th;
+        ASSERT_EQ(t->c.size(), static_cast<size_t>(kThermalPoints));
+        max_c = std::max(max_c, *std::max_element(t->c.begin(), t->c.end()));
+        EXPECT_NEAR(t->ambient_c, 22.0, 1e-6);
+      } else if (const auto r = as_radar(*parsed)) {
+        ++rd;
+        max_targets = std::max(max_targets, r->targets.size());
+      }
+    }
+  EXPECT_EQ(bad, 0);
+  EXPECT_NEAR(th, 10.5 * 4, 3);    // 약 4 Hz
+  EXPECT_NEAR(rd, 10.5 * 10, 5);   // 약 10 Hz
+  EXPECT_NEAR(max_c, 80.0, 1e-4);
+  EXPECT_EQ(max_targets, 2u);      // 셋째 칸은 비어 있어 뺀다
 }
