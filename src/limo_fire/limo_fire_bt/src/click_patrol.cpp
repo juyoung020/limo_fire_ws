@@ -2,6 +2,7 @@
 // 차례로 돌고 끝나면 처음부터 다시 돈다.
 //   - 찍으면 순찰점 끝에 더함. 이미 찍은 점 근처(remove_radius_m 안)를 다시 찍으면 그 점을 지움
 //   - ~/start 로 출발, ~/stop 으로 멈춤(Nav2 목표 취소), ~/undo 마지막 점 지우기, ~/clear 다 지우기 (std_srvs/Trigger)
+//   - 경유지 모드(remove_on_arrival, ~/waypoint_mode std_srvs/SetBool): 도착한 점을 지우고 다음 점으로, 다 지나면 멈춤
 //   - 바뀔 때마다 out_file 에 patrol: [[x, y], ...] 로 저장 (임무 BT patrol_file 과 같은 형식)
 //   - ~/markers: 번호·순서 선, 지금 가는 점은 초록
 // 설정: config/click_patrol.yaml. 실행: ros2 launch limo_fire_bt click_patrol.launch.xml
@@ -16,6 +17,7 @@
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <yaml-cpp/yaml.h>
@@ -40,6 +42,7 @@ public:
     remove_radius_ = declare_parameter<double>("remove_radius_m", 0.3);
     retry_wait_s_ = declare_parameter<double>("retry_wait_s", 3.0);
     loop_ = declare_parameter<bool>("loop", true);
+    remove_on_arrival_ = declare_parameter<bool>("remove_on_arrival", false);
     const auto file = declare_parameter<std::string>("file", "");
     out_file_ = declare_parameter<std::string>("out_file", "");
     if (out_file_.empty()) {
@@ -72,6 +75,14 @@ public:
         changed("다 지움");
         r.success = true;
       }));
+
+    mode_srv_ = create_service<std_srvs::srv::SetBool>("~/waypoint_mode",
+        [this](std_srvs::srv::SetBool::Request::SharedPtr q, std_srvs::srv::SetBool::Response::SharedPtr r) {
+          remove_on_arrival_ = q->data;
+          r->success = true;
+          r->message = remove_on_arrival_ ? "경유지 모드: 도착한 점을 지움" : "순찰 모드: 점을 남기고 되풀이";
+          RCLCPP_INFO(get_logger(), "%s", r->message.c_str());
+        });
 
     if (!file.empty()) {
       try {
@@ -175,7 +186,13 @@ private:
         goal_.reset();
         if (r.code == rclcpp_action::ResultCode::SUCCEEDED) {
           RCLCPP_INFO(get_logger(), "%zu 번 점 도착", index + 1);
-          ++next_;
+          if (remove_on_arrival_ && index < points_.size()) {
+            points_.erase(points_.begin() + static_cast<long>(index));   // 다음 점이 같은 번호로 당겨진다
+            next_ = index;
+            changed(std::to_string(index + 1) + " 번 경유지 지남");      // 다 지나면 changed 가 멈춘다
+          } else {
+            ++next_;
+          }
           send_next();
         } else {
           RCLCPP_WARN(get_logger(), "%zu 번 점 못 감 — %.0f s 뒤 다음 점", index + 1, retry_wait_s_);
@@ -246,7 +263,7 @@ private:
 
   std::string frame_, out_file_;
   double remove_radius_, retry_wait_s_;
-  bool loop_, running_ = false;
+  bool loop_, remove_on_arrival_, running_ = false;
   std::vector<Point2> points_;
   size_t next_ = 0;
   int token_ = 0;
@@ -256,6 +273,7 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr click_sub_;
   std::vector<rclcpp::Service<Trigger>::SharedPtr> srvs_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr mode_srv_;
 };
 }  // namespace
 

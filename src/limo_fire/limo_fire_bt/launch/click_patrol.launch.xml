@@ -2,6 +2,8 @@
      RViz 위쪽 Publish Point 로 지도를 찍으면 순찰점, 출발·멈춤:
        ros2 service call /click_patrol/start std_srvs/srv/Trigger
        ros2 service call /click_patrol/stop  std_srvs/srv/Trigger
+     경유지 모드(도착한 점을 지움) 켜기·끄기:
+       ros2 service call /click_patrol/waypoint_mode std_srvs/srv/SetBool "{data: true}"
      ros2 launch limo_fire_bt click_patrol.launch.xml [file:=<순찰점 yaml>] [sim:=true] -->
 <launch>
   <arg name="file" default="" description="시작할 때 읽을 순찰점 yaml (비면 빈 순찰)"/>

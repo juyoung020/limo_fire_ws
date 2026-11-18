@@ -7,6 +7,7 @@ click_patrol:
     remove_radius_m: 0.3           # 이미 찍은 점에서 이만큼 안을 다시 찍으면 그 점을 지움
     retry_wait_s: 3.0              # 못 가면 이만큼 쉬고 다음 점 (Nav2 가 바로 실패해도 점을 몇 초 만에 다 넘기지 않게)
     loop: true                     # 끝 점 뒤 처음부터 다시
+    remove_on_arrival: false       # true: 경유지 모드 — 도착한 점을 지우고 다음 점, 다 지나면 멈춤 (~/waypoint_mode 로 실행 중에 바꿈)
     auto_start: false              # true 면 file 을 읽자마자 출발. 기본은 ~/start 로
     file: ""                       # 시작할 때 읽을 순찰점 yaml (patrol: [[x, y], ...], 지도 좌표). 비면 빈 순찰
     out_file: ""                   # 바뀔 때마다 저장할 곳. 비면 ~/limo_fire_patrol.yaml
