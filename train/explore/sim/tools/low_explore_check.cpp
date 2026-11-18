@@ -220,6 +220,14 @@ int main(int argc, char** argv) {
     else if (a == "--cand-dump") { cand_on = true; cand_dump = nx(); }   // 결정 --cand-every 째마다 지도·후보 그림 재료 (cand_quality.h dump)
     else if (a == "--cand-every") cand_every = std::stoi(nx());
     else if (a == "--cand-gain-m") co.gain_m = std::stof(nx());
+    else if (a == "--cand-algo") {   // 후보 만드는 법 (cand::Algo — 기본 view)
+      const std::string v = nx();
+      const char* nm[] = {"view", "center", "nearest", "tour", "decay", "sector"};
+      co.algo = -1;
+      for (int k = 0; k < 6; ++k) if (v == nm[k]) co.algo = k;
+      if (co.algo < 0) throw std::runtime_error("--cand-algo 는 view · center · nearest · tour · decay · sector");
+    }
+    else if (a == "--cand-k") co.k = std::stoi(nx());
     else if (a == "--cand-vp-min") co.vp_min = std::stof(nx());
     else if (a == "--cand-margin") co.margin = std::stof(nx());
     else if (a == "--cand-coarse") co.coarse_m = std::stof(nx());

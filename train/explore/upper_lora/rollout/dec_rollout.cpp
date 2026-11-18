@@ -573,7 +573,7 @@ int main(int argc, char** argv) {
   Cfg C;
   double period = 3.0, latency = 2.6, horizon = 600.0;
   int mode = 1;   // 위층 요청 차례 — 실물 노드 decider_mode 기본(event)과 같게
-  int every = 3, reps = 4, max_req = 0, snap_a = -1, gpu_n = 0;
+  int every = 3, reps = 4, max_req = 0, snap_a = -1, gpu_n = 0, cand_algo = 0;
   std::vector<std::string> render_files;
   std::string render_out;
   bool render_check = false;
@@ -604,6 +604,13 @@ int main(int argc, char** argv) {
     else if (a == "--px") { rp.px = std::stoi(nx()); rp_set = true; }
     else if (a == "--log-k") { rp.log_k = std::stoi(nx()); rp_set = true; }
     else if (a == "--max-cands") { rp.max_cands = std::stoi(nx()); rp_set = true; }
+    else if (a == "--cand-algo") {   // 후보 만드는 법 (cand::Algo — low_explore_check --cand-algo 와 같은 이름, 기본 view)
+      const std::string v = nx();
+      const char* nm[] = {"view", "center", "nearest", "tour", "decay", "sector"};
+      cand_algo = -1;
+      for (int k = 0; k < 6; ++k) if (v == nm[k]) cand_algo = k;
+      if (cand_algo < 0) throw std::runtime_error("--cand-algo 는 view · center · nearest · tour · decay · sector");
+    }
     else scene = a;
   }
   if (!render_files.empty()) {   // 다시 그리기만 (장면은 jsonl 줄에서)
@@ -628,6 +635,7 @@ int main(int argc, char** argv) {
     C.lp = lxc::Params::from_cfg(c);
     C.lp.use_fuel = false;
     C.lp.use_cand = true;   // 후보 = scripts/cand_view.h (실물 노드 upper:=decider decider_cand true 와 같음)
+    C.lp.cand.algo = cand_algo;
     C.dp.mode = mode;
     const double dt = (double)c.substeps * c.dt;
     C.dp.period_steps = std::max(1, (int)std::lround(period / dt));

@@ -29,9 +29,26 @@
 
 namespace cand {
 
+// 후보 만드는 법 (Opt::algo — low_explore_check --cand-algo). 기본 kView 는 위 일곱 단계 그대로이고, 나머지는 문헌의 다른 방식을 같은 틀(덩어리 · 거르기 · 번호 잇기 · 기억)에 얹어
+// 견주는 것 (결과: limo_upper_keep/reports/candidates_audit.md). 어느 방식이든 예상 넓이 0 인 자리는 후보가 아님 ('대충 다 앎' 끝 판정이 같게)
+enum Algo : int {
+  kView = 0,     // 지금 방식: 고리 시점 · 넓이 ÷ 시간 · 겹침 빼며 고르기
+  kCenter = 1,   // 덩어리마다 가운데에서 가장 가까운 설 자리 하나, 큰 덩어리부터 (VLFM · explore_lite 꼴 — 시점 뽑기 · 넓이 점수 · 겹침 빼기 없음)
+  kNearest = 2,  // 덩어리마다 가장 가까운 프론티어 칸 곁 설 자리 하나, 가는 시간 짧은 것부터 (Yamauchi 1997 가장 가까운 프론티어)
+  kTour = 3,     // 지금 방식의 시점을 모두 도는 가장 짧은 순회(열린 TSP)의 첫 정거장 차례 (FUEL · TARE 전역 순서)
+  kDecay = 4,    // 지금 방식 + 광선이 모름 속으로 들어간 깊이만큼 넓이를 깎음 (모름 뒤에 벽이 있을 확률 — 센서 가림 모형)
+  kSector = 5,   // 프론티어와 무관하게 로봇 둘레 방향 sector_n 개 × 거리 sector_m 의 설 자리 (없으면 지금 방식)
+};
+
 // 상수 (단위 · 출처). "잠정" = 재지 않고 정한 값, "잰 값" = 시험·실물 장면에서 비교해 고른 값
 struct Opt {
   int k = mdp::hier::K;       // 후보 상한 (판단 모델 슬롯 수)
+  int algo = kView;           // 후보 만드는 법 (Algo)
+  float one_m = 1.0f;         // m — kCenter · kNearest: 기준 칸에서 이 거리 안 가장 가까운 설 자리 (잠정)
+  int tour_n = 10;            // kTour: 순회에 넣는 후보 상한 (정확한 동적 계획법 — 넘는 것은 넓이 ÷ 시간 차례로 뒤에)
+  float decay_m = 2.0f;       // m — kDecay: 모름 속 깊이 d 의 칸 무게 = exp(−d / decay_m) (잠정)
+  int sector_n = 8;           // kSector: 방향 수 (지도 축 기준 — 로봇이 돌아도 같은 방향)
+  double sector_m[3] = {1.0, 2.0, 3.0};   // m — kSector: 로봇에서 곧은 거리 (잠정)
   // 4. 거르기
   float vp_min = 0.75f;       // m — 로봇에서 이 거리 안 시점은 안 씀 (FUEL min_candidate_dist — 몸 · 뒤 사각지대)
   float margin = 0.25f;       // m — 시점의 막힘 간격 = 몸통 반경(close_radius) + 이것. 라이다 면(0.11 m) 아래 가구 다리·받침·낮은 물체는 로봇 지도에 없어
@@ -452,16 +469,19 @@ struct Run {
     ++w.seen_id;
     if (B) {
       w.btouch.clear();
-      for (int a = 0; a < mdp::hier::kGainRays; a += step)
+      for (int a = 0; a < mdp::hier::kGainRays; a += step) {
+        int deep = 0;   // kDecay: 이 광선이 지나온 모름 칸 수
         mdp::gain_ray_walk(mv, vp % gw, vp / gw, a, Rg, [&](int x, int y, int t, uint8_t cl) {
           if (cl != mdp::kUnk) return;
+          const double wg = o.algo == kDecay ? std::exp(-(deep++) * res / o.decay_m) : 1.0;
           const int j = y * gw + x;
           if (w.seen[j] == w.seen_id || (marginal && w.stamp[j] == w.cov_id)) return;
           w.seen[j] = w.seen_id;
           const int b = (y / B) * bw + x / B;
           if (w.bnew[b] == 0.0) w.btouch.push_back(b);
-          w.bnew[b] += t * ray_k;
+          w.bnew[b] += o.algo == kDecay ? t * ray_k * wg : t * ray_k;
         });
+      }
       for (int b : w.btouch) {
         const double base = w.bknown[b] + (marginal ? w.bcov[b] : 0.0), need = o.known_frac * w.btotal[b];
         if (base < need && base + w.bnew[b] >= need) ++g;
@@ -481,18 +501,21 @@ struct Run {
   }
   // 고른 후보의 광선이 지난 모름 칸을 덮었다고 표시 (다음 marginal 이 뺌)
   void mark_covered(int vp) {
-    for (int a = 0; a < mdp::hier::kGainRays; a += step)
+    for (int a = 0; a < mdp::hier::kGainRays; a += step) {
+      int deep = 0;
       mdp::gain_ray_walk(mv, vp % gw, vp / gw, a, Rg, [&](int x, int y, int t, uint8_t cl) {
         if (cl != mdp::kUnk) return;
+        const double wg = o.algo == kDecay ? std::exp(-(deep++) * res / o.decay_m) : 1.0;
         const int j = y * gw + x;
         if (B) {   // 굵은 칸: 덮은 몫을 그 굵은 칸에 더함 (칸마다 한 번)
           if (w.stamp[j] == w.cov_id) return;
           w.stamp[j] = w.cov_id;
-          w.bcov[(y / B) * bw + x / B] += t * ray_k;
+          w.bcov[(y / B) * bw + x / B] += o.algo == kDecay ? t * ray_k * wg : t * ray_k;
           return;
         }
         w.stamp[j] = w.cov_id;
       });
+    }
   }
 
   // ---- 4. 거르기 — 갈 수 있음(BFS 번진 칸) · 피하는 칸 아님 · 로봇 곁(몸 · 뒤 사각) 아님 · 막힘에서 clear_need 밖 · 덩어리 대표 칸이 보임
@@ -506,6 +529,7 @@ struct Run {
 
   // 덩어리 하나의 살아 있는 후보 (6 · 7 단계가 씀)
   struct Live { int node, vp, id, age, kept; long g; double t; };
+  struct Pick { int i; long m; double sc; };   // 고른 차례 하나: live 번호 · 넓이 (굵은 칸 수) · 점수
 
   // 구멍: 덩어리 칸과 그 4 이웃이 든 굵은 칸이 모두 이미 대충 앎 → 값 0 (대충 아는 곳 안의 작은 모름은 탐사를 붙들지 않음)
   bool pocket(const fu::Node& nd) const {
@@ -546,6 +570,94 @@ struct Run {
     }
     return L.vp >= 0;
   }
+  // ---- 다른 방식 (Opt::algo) — 3 → 5 자리
+  // kCenter · kNearest: 기준 칸 (fx, fy) 에서 one_m 안 가장 가까운 자격 칸 하나 (네모 고리로 넓혀 가며 — 점수로 고르지 않음). 거짓 = 쉼
+  bool one_view(int k, const fu::Node& nd, double fx, double fy, Live& L) {
+    L = Live{k, -1, -1, 0, 0, 0, 0};
+    const int cx = (int)std::floor(fx), cy = (int)std::floor(fy), Rm = (int)std::lround(o.one_m / res);
+    for (int tier = 0; tier < 2 && L.vp < 0; ++tier) {
+      const double clear_need = c.close_radius + (tier == 0 ? o.margin : o.margin_min);
+      for (int rr = 0; rr <= Rm && L.vp < 0; ++rr) {
+        int bc = -1;
+        long bd = 0;
+        for (int dy = -rr; dy <= rr; ++dy)
+          for (int dx = -rr; dx <= rr; ++dx) {
+            if (std::max(std::abs(dx), std::abs(dy)) != rr) continue;
+            const int x = cx + dx, y = cy + dy;
+            if (x < 0 || y < 0 || x >= gw || y >= gh || !vp_ok(y * gw + x, nd.anc, clear_need)) continue;
+            const long d = (long)dx * dx + (long)dy * dy;
+            if (bc < 0 || d < bd) { bd = d; bc = y * gw + x; }
+          }
+        if (bc < 0) continue;
+        const long g = gain(bc, false);
+        if (g > 0) { L.vp = bc; L.g = g; L.t = t_of(bc); }
+      }
+    }
+    return L.vp >= 0;
+  }
+  // kSector: 방향 sector_n 개마다 거리 sector_m 가운데 넓이 ÷ 시간이 가장 큰 자격 칸. 후보마다 칸 하나짜리 덩어리를 만들어 6 · 7 단계가 그대로 씀
+  void sector_views(std::vector<fu::Node>& nodes, std::vector<Live>& live) {
+    for (int a = 0; a < o.sector_n; ++a) {
+      const double ang = 2 * M_PI * a / o.sector_n;
+      Live L{(int)nodes.size(), -1, -1, 0, 0, 0, 0};
+      double bs = -1;
+      for (double rr : o.sector_m) {
+        const int x = (int)std::floor(rxf + rr / res * std::cos(ang)), y = (int)std::floor(ryf + rr / res * std::sin(ang));
+        if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+        const int cell = y * gw + x;
+        if (!vp_ok(cell, cell, c.close_radius + o.margin)) continue;
+        const long g = gain(cell, false);
+        if (g <= 0) continue;
+        const double t = t_of(cell), sc = g / (t + o.t0);
+        if (sc > bs) { bs = sc; L.vp = cell; L.g = g; L.t = t; }
+      }
+      if (L.vp < 0 || gave_up(L.vp)) continue;
+      fu::Node nd;
+      nd.cells.push_back(L.vp);
+      nd.cx = L.vp % gw + 0.5; nd.cy = L.vp / gw + 0.5;
+      nd.anc = L.vp; nd.anc_d = DI[L.vp];
+      nodes.push_back(std::move(nd));
+      live.push_back(L);
+    }
+  }
+  // ---- 다른 방식 — 7a 자리: 겹침을 빼지 않고 열쇠 key 가 큰 차례 (같으면 작은 번호). 넓이는 겹침 안 뺀 값
+  std::vector<Pick> order_by(const std::vector<Live>& live, const std::vector<double>& key) {
+    std::vector<int> idx(live.size());
+    for (size_t i = 0; i < idx.size(); ++i) idx[i] = (int)i;
+    std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return key[a] != key[b] ? key[a] > key[b] : live[a].id < live[b].id; });
+    std::vector<Pick> order;
+    for (int i : idx) { if ((int)order.size() >= o.k) break; order.push_back(Pick{i, live[i].g, key[i]}); }
+    return order;
+  }
+  // kTour: 첫 정거장 i 로 시작해 나머지를 모두 도는 가장 짧은 시간 T_i (열린 순회, 정확한 동적 계획법) → 열쇠 1 / T_i. 구간 시간 = 시점 사이 길 / v_eff, 로봇 → 첫 정거장은 t (첫 회전 포함).
+  //   tour_n 개를 넘으면 넓이 ÷ 시간이 큰 tour_n 개만 순회에 넣고 나머지는 그 뒤 (넓이 ÷ 시간 차례)
+  std::vector<double> tour_keys(const std::vector<Live>& live) {
+    const int n_all = (int)live.size();
+    std::vector<double> sc(n_all), key(n_all, 0.0);
+    for (int i = 0; i < n_all; ++i) sc[i] = live[i].g / (live[i].t + o.t0);
+    std::vector<int> in(n_all);
+    for (int i = 0; i < n_all; ++i) in[i] = i;
+    std::stable_sort(in.begin(), in.end(), [&](int a, int b) { return sc[a] > sc[b]; });
+    const int m = std::min(n_all, std::max(1, std::min(o.tour_n, 14)));
+    for (int q = m; q < n_all; ++q) key[in[q]] = 1e-9 * sc[in[q]];   // 순회 밖: 늘 뒤
+    std::vector<double> C((size_t)m * m, 0.0);
+    for (int a = 0; a < m; ++a) {
+      fu::detail::chamfer(live[in[a]].vp, gw, gh, [&](int idx) { return pass(idx); }, *QA, nr0, fw.cd2, fw.bk);
+      for (int b = 0; b < m; ++b) { const int d = fw.cd2[live[in[b]].vp]; C[(size_t)a * m + b] = d >= 0 ? d * 0.2 * res / o.v_eff : 1e6; }
+    }
+    const int M = 1 << m;
+    std::vector<double> rest((size_t)M * m, 0.0);   // rest[S][l] = l 에 서 있고 S(방문한 것, l 포함) 일 때 남은 것을 모두 도는 가장 짧은 시간
+    for (int S = M - 2; S >= 1; --S)
+      for (int l = 0; l < m; ++l) {
+        if (!(S >> l & 1)) continue;
+        double b = 1e18;
+        for (int j = 0; j < m; ++j) if (!(S >> j & 1)) b = std::min(b, C[(size_t)l * m + j] + rest[(size_t)(S | 1 << j) * m + j]);
+        rest[(size_t)S * m + l] = b;
+      }
+    for (int a = 0; a < m; ++a) key[in[a]] = 1.0 / (live[in[a]].t + rest[(size_t)(1 << a) * m + a] + o.t0);
+    return key;
+  }
+
   // 버림: 시점 L.vp 에서 fail_m 안 실패 자리가 give_up 개 이상 (describe 의 fail_near 와 같은 셈)
   bool gave_up(int vp) const {
     if (o.give_up <= 0) return false;
@@ -583,6 +695,7 @@ struct Run {
     L.id = p.id;
     L.age = p.age + 1;
     if (p.vp == L.vp) { L.kept = 1; return; }
+    if (o.algo == kCenter || o.algo == kNearest || o.algo == kSector) return;   // 자리를 점수로 고르지 않는 방식 — 지난 칸과 견줄 점수가 없음
     if (!vp_ok(p.vp, nd.anc, c.close_radius + o.margin_min)) return;
     const double bs = L.g / (L.t + o.t0);
     const long g = gain(p.vp, false);
@@ -591,7 +704,6 @@ struct Run {
   }
 
   // ---- 7a. 고르기 — 남은 것 중 "아직 안 덮인" 넓이 / 시간이 가장 큰 것을 차례로 (같으면 작은 번호). 고른 것의 광선이 지난 모름은 덮였다고 표시 (TARE)
-  struct Pick { int i; long m; double sc; };
   std::vector<Pick> select(const std::vector<Live>& live) {
     ++w.cov_id;
     std::vector<uint8_t> taken(live.size(), 0);
@@ -687,18 +799,46 @@ inline Out build(const In& in, const Opt& o, Mem& mem, Work& w) {
   // 3 · 4 · 5. 덩어리마다 시점 뽑기 → 거르기 → 점수 (없으면 쉼)   6. 번호 잇기
   std::vector<detail::Run::Live> live;
   std::vector<uint8_t> used_prev(mem.prev.size(), 0);
-  for (int k = 0; k < (int)nodes.size(); ++k) {
+  bool sector = false;
+  if (o.algo == kSector) {   // 방향 후보 (프론티어 덩어리와 무관). 하나도 없으면 아래 지금 방식으로
+    std::vector<fu::Node> sn;
+    R.sector_views(sn, live);
+    if (!live.empty()) {
+      sector = true;
+      nodes.swap(sn);
+      for (detail::Run::Live& L : live) R.match(nodes[L.node], L, used_prev);
+    }
+  }
+  for (int k = 0; k < (int)nodes.size() && !sector; ++k) {
     detail::Run::Live L;
     const bool is_pocket = R.pocket(nodes[k]);
-    if (is_pocket || !R.best_view(k, nodes[k], L)) { R.rest(nodes[k], is_pocket); continue; }
+    const bool found = is_pocket ? false
+                       : o.algo == kCenter ? R.one_view(k, nodes[k], nodes[k].cx, nodes[k].cy, L)
+                       : o.algo == kNearest ? R.one_view(k, nodes[k], nodes[k].anc % R.gw + 0.5, nodes[k].anc / R.gw + 0.5, L)
+                       : R.best_view(k, nodes[k], L);
+    if (!found) { R.rest(nodes[k], is_pocket); continue; }
     if (R.gave_up(L.vp)) { R.rest(nodes[k], false); out.n_gaveup += 1; continue; }   // 같은 자리 실패 give_up 번 — 버림
     R.match(nodes[k], L, used_prev);
     live.push_back(L);
   }
   R.lap(4);
   if (live.empty() && out.n_dormant > 0 && out.n_near == out.n_dormant) out.rotate = 1;   // 쉬는 덩어리가 모두 로봇 곁 → 제자리 회전
-  // 7. 고르기 · 기억
-  for (const detail::Run::Pick& p : R.select(live)) {
+  // 7. 고르기 · 기억 (다른 방식은 겹침을 빼지 않고 그 방식의 열쇠 차례)
+  std::vector<detail::Run::Pick> picks;
+  if (o.algo == kCenter) {
+    std::vector<double> key(live.size());
+    for (size_t i = 0; i < live.size(); ++i) key[i] = (double)nodes[live[i].node].cells.size();   // 큰 덩어리부터
+    picks = R.order_by(live, key);
+  } else if (o.algo == kNearest) {
+    std::vector<double> key(live.size());
+    for (size_t i = 0; i < live.size(); ++i) key[i] = 1.0 / (live[i].t + o.t0);   // 가는 시간 짧은 것부터
+    picks = R.order_by(live, key);
+  } else if (o.algo == kTour) {
+    picks = R.order_by(live, R.tour_keys(live));
+  } else {
+    picks = R.select(live);
+  }
+  for (const detail::Run::Pick& p : picks) {
     const detail::Run::Live& L = live[p.i];
     out.c.push_back(R.describe(L, nodes[L.node], p));
     out.cells.push_back(std::move(nodes[L.node].cells));   // 이 뒤로 nodes 칸은 안 씀 (기억은 anc 만)
