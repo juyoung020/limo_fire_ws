@@ -9,3 +9,4 @@
     occupied_thresh: 65       # /map 값이 이보다 크면 막힘 = p > 0.65 (cartographer_ros ros_map.cc:44-45 occupied_thresh, mdp/frontier.h kOccL 과 같은 문턱)
     spin_angle: 1.57          # rad, 시작 때 프론티어가 안 보이면 Nav2 spin (기준선은 계속 돎) — 잠정
     map_timeout: 5.0          # s, /map 이 이보다 오래되면 고르지 않음 (Cartographer 발행 주기 1 s) — 잠정
+    commit_tol: 0.5           # m, 보낸 목표가 이 안에 프론티어로 남아 있으면 도착·실패까지 그대로(3 s 마다 갈아타지 않음). 0 = explore_lite 그대로

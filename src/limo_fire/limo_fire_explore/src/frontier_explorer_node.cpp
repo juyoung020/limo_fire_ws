@@ -59,6 +59,7 @@ class ExploreFrontierNode : public rclcpp::Node {
     occupied_thresh_ = declare_parameter<int>("occupied_thresh", 65);
     spin_angle_ = declare_parameter<double>("spin_angle", 1.57);
     map_timeout_ = declare_parameter<double>("map_timeout", 5.0);
+    commit_tol_ = (float)declare_parameter<double>("commit_tol", 0.5);
 
     // explore_lite 값: 기준선과 같은 파일 (같은 값을 두 곳에 두지 않음)
     const YAML::Node f = YAML::LoadFile(fy);
@@ -222,9 +223,22 @@ class ExploreFrontierNode : public rclcpp::Node {
       const std::vector<fb::Ranked> cs = fb::rank_frontiers(fr_.data(), n, res_, ox_, oy_, potential_scale_, gain_scale_);
       const float tol = (float)blacklist_tol_ * res_;
       auto it = std::find_if(cs.begin(), cs.end(), [&](const fb::Ranked& c) { return !fb::on_blacklist(blacklist_, c.cx, c.cy, tol); });
-      publish_markers(cs, it == cs.end() ? -1 : (int)(it - cs.begin()), tol);
-      if (it == cs.end()) return finish("all_blacklisted");
-      const bool same = std::hypot(it->cx - prev_gx_, it->cy - prev_gy_) < 0.01f;   // explore.cpp:42-49, 213
+      if (it == cs.end()) {
+        publish_markers(cs, -1, tol);
+        return finish("all_blacklisted");
+      }
+      // 목표 지키기(실물 2026-11-18: 259 s 에 목표 36 · 도착 0 — 지도가 넓어질 때마다 덩어리 중심이 몇 cm 움직이거나 비용 1 등이 바뀌어
+      // 3 s 마다 새 목표, Nav2 가 경로·제자리 회전·가속을 처음부터 해 평균 속도가 반). 보낸 목표가 commit_tol 안에 프론티어로 남아 있으면
+      // 도착·실패·진척 없음까지 그것을 그대로 둔다. commit_tol 0 = explore_lite 그대로(0.01 m 같음, 늘 1 등)
+      const float same_tol = commit_tol_ > 0 ? commit_tol_ : 0.01f;
+      if (goal_active_ && commit_tol_ > 0) {
+        auto keep = std::find_if(cs.begin(), cs.end(), [&](const fb::Ranked& c) {
+          return !fb::on_blacklist(blacklist_, c.cx, c.cy, tol) && std::hypot(c.cx - goal_gx_, c.cy - goal_gy_) < commit_tol_;
+        });
+        if (keep != cs.end()) it = keep;
+      }
+      publish_markers(cs, (int)(it - cs.begin()), tol);
+      const bool same = std::hypot(it->cx - prev_gx_, it->cy - prev_gy_) < same_tol;   // explore.cpp:42-49, 213
       prev_gx_ = it->cx;
       prev_gy_ = it->cy;
       if (!same || prev_dist_ > it->dist) {
@@ -240,7 +254,7 @@ class ExploreFrontierNode : public rclcpp::Node {
       std::snprintf(b, sizeof(b), "탐사 중 — 프론티어 %d (작은 것 %d), 목표 (%.2f, %.2f) 거리 %.2f m, 블랙리스트 %zu, 지도 %.1f m²", n, r.n_small, it->cx, it->cy,
                     it->dist, blacklist_.size(), known_m2_);
       status(b);
-      if (same && goal_active_) return;   // explore.cpp:229-231 같은 목표면 다시 안 보냄
+      if (goal_active_ && std::hypot(it->cx - goal_gx_, it->cy - goal_gy_) < same_tol) return;   // explore.cpp:229-231 같은 목표면 다시 안 보냄
       send_goal(it->cx, it->cy, px, py);
       return;
     }
@@ -299,6 +313,8 @@ class ExploreFrontierNode : public rclcpp::Node {
     if (goal_handle_) nav_->async_cancel_goal(goal_handle_);
     goal_handle_.reset();
     goal_active_ = true;
+    goal_gx_ = gx;
+    goal_gy_ = gy;
     ++n_goals_;
     nav_->async_send_goal(g, opt);
     RCLCPP_INFO(get_logger(), "새 목표 (%.2f, %.2f)", gx, gy);
@@ -399,7 +415,7 @@ class ExploreFrontierNode : public rclcpp::Node {
   std::string state_, last_status_;
   rclcpp::Time t_on_{0, 0, RCL_ROS_TIME}, last_progress_{0, 0, RCL_ROS_TIME}, next_plan_{0, 0, RCL_ROS_TIME}, t_wait0_{0, 0, RCL_ROS_TIME},
       map_t_{0, 0, RCL_ROS_TIME};
-  float prev_gx_ = 1e30f, prev_gy_ = 1e30f, prev_dist_ = 0;
+  float prev_gx_ = 1e30f, prev_gy_ = 1e30f, prev_dist_ = 0, goal_gx_ = 1e30f, goal_gy_ = 1e30f, commit_tol_ = 0.5f;
   std::vector<std::pair<float, float>> blacklist_;
   int n_goals_ = 0, n_reached_ = 0, n_aborted_ = 0;
   uint64_t goal_seq_ = 0;
