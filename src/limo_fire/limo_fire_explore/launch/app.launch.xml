@@ -16,6 +16,8 @@
   <arg name="record" default="" description="입력·명령 녹화 파일 (비우면 안 씀 — low_explore_replay 로 다시 돌림)"/>
   <arg name="perception_config" default="yolo_coco.yaml" description="인식 설정 (limo_fire_perception/config): yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
   <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음)"/>
+  <arg name="search" default="false" description="true: 지시 글로 물체 찾기 (SigLIP2 object_search + 물체 사진) — perception:=true 필요. 판단 모델 뜻 물체 칸은 explorer.yaml decider_sem_max 도 켤 것"/>
+  <arg name="embeddings_file" default="" description="물체 사진 벡터 파일 (search — 있으면 켤 때 읽음)"/>
   <arg name="camera_in_app" default="false" description="true: 카메라 드라이버(Orbbec)를 /app 안에 — 카메라 → 우리 노드가 공유 메모리·UDP 없이 프로세스 안. robot.launch.xml camera:=false 와 같이"/>
   <arg name="gpu_thread" default="false" description="true: YOLO 를 옛 작업 스레드 판으로 (로봇에서 실행기 판 확인 전 대비) — TODO(제거)"/>
 
@@ -48,6 +50,17 @@
       <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectMapNode" name="object_map" namespace="perception">
         <param from="$(find-pkg-share limo_fire_perception)/config/$(var perception_config)"/>
         <param name="objects_file" value="$(var objects_file)"/>
+        <param from="$(find-pkg-share limo_fire_perception)/config/object_search.yaml"/>
+        <param name="publish_views" value="$(var search)"/>
+        <extra_arg name="use_intra_process_comms" value="true"/>
+      </composable_node>
+    </load_composable_node>
+  </group>
+  <group if="$(var search)">
+    <load_composable_node target="/app">
+      <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectSearchNode" name="object_search" namespace="perception">
+        <param from="$(find-pkg-share limo_fire_perception)/config/object_search.yaml"/>
+        <param name="embeddings_file" value="$(var embeddings_file)"/>
         <extra_arg name="use_intra_process_comms" value="true"/>
       </composable_node>
     </load_composable_node>

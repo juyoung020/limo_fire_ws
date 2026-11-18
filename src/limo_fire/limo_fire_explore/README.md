@@ -206,6 +206,14 @@ ros2 topic echo /explore/goal_status        # 푼 클래스 · 고른 물체 · 
   지도 그림에서 물체 후보는 하늘색 네모, 프론티어 후보는 노란 점. 판단 모델이 물체 후보를 고르면 그 설 자리로 가서 물체를 바라보고 멈춘다. RViz /explore/candidates 에 물체 후보 글자(ns cand_obj).
   지시가 없으면 요청 본문은 예전과 바이트까지 같다(`decider_obj_always: false` 기본 — 켜면 지시 없어도 물체 후보). 확인: `low_explore_check --dec-instr 글 --dec-class-hint 클래스 --dec-obj 클래스,x,y`
   (·`--dec-obj-always`) 로 시뮬 == 실물 비트, 지시 없을 때 요청(DEC_BODY_LOG 걸음·본문 해시) 앞 커밋과 같음.
+- **뜻 물체 칸 (9 칸 꼴, 기본 끔 — `decider_sem_max: 0`)**: 켜면 지시가 있을 때 후보가 프론티어 ≤ `decider_front_max_instr`(권장 3) + 이름 물체 ≤ `decider_obj_max`(3, 위 별칭 클래스)
+  + **뜻 물체 ≤ `decider_sem_max`(권장 3)** 가 된다. 뜻 물체 = 물체 사진과 지시 글의 그림·글 모델(SigLIP2, 인식 `object_search` — `app.launch.xml perception:=true search:=true`)
+  맞음 확률이 `decider_sem_thr`(0.01) 이상인 물체를 확률 순으로, 이름 칸에 이미 든 물체는 빼고 다음 순위로 채운다 (`kind: semantic`, `score` 확률 — 이름 칸 물체에도 점수가 있으면 붙음).
+  explorer 는 지시가 바뀔 때 명사구(`decider_sem_strip` 낱말을 떼어 — "의자로 가" → "의자", `class_alias.h query_phrase`)를 `/perception/object_query` 로 묻고
+  `/perception/object_query_result`(물체마다 score, 사진 없으면 −1) 를 받는다. 맞는 게 없으면 뜻 칸은 비고 프론티어만 남아 계속 찾는다(`instruction_limit_s` · 못 찾음 그대로).
+  `decider_obj_fill: false` 면 이름 칸을 클래스 안 맞는 가까운 물체로 채우지 않는다, `decider_sem_first` 는 뜻 칸을 앞 글자로. 시뮬은 같은 `low_decider.h` 로
+  `low_explore_check --obj-file · --sem-file · --aliases · --dec-sem-max …` (시뮬엔 카메라 그림이 없어 점수는 밖에서 만든 대리 값 — HSSD 물체 모형을 그려 SigLIP2 로 잰 것).
+  시험 결과와 권장 설정은 `train/explore/upper_lora/README.md` "뜻 물체 칸 (9 칸) 시험".
 - **사람 따라가기** (`scripts/obj_follow.h` — 노드와 시뮬이 같은 코드): 지시가 있을 때 지금 보이는(`decider_vis_s`) `follow_classes`(person) 물체는 `kind: follow` 후보로도 들어간다.
   판단 모델이 고르면 노드가 목표를 쥔다: 같은 사람을 지도 번호로, 없으면 예측 자리 둘레 문(`follow_gate` + 못 본 시간 × `follow_gate_v`, 3 m 까지) 안 가장 가까운 사람으로 잡고,
   사람에서 `follow_dist`(1.0 m) 떨어진 로봇 쪽 자리(둘레 `follow_clear` 빈 칸, `follow_stop` 이상)를 `follow_replan_s` 마다 다시 세되 `follow_hyst` 안이면 그대로(떨림 없음),

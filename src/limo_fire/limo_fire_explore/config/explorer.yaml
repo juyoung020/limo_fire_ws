@@ -25,6 +25,16 @@
     decider_obj_always: false # true = 지시 없어도 물체 후보 (false 면 지시 없는 탐사 요청은 예전과 바이트 같음)
     decider_vis_s: 1.0        # s — 이 안에 본 물체 = 지금 보임 (요청 vis)
     decider_obj_stale_s: 600.0  # s — 이보다 오래 안 본 물체는 물체 후보에서 뺌
+    # 뜻 물체 칸 (9 칸 꼴, 지시가 있을 때만): 지시 글과 물체 사진의 맞음 확률(인식 object_search — perception.launch search:=true)이 높은 물체를 이름 물체 칸 뒤에.
+    # 0 = 끔 (요청이 예전과 바이트 같음). 켤 때 권장: sem_max 3 · front_max_instr 3 → 프론티어 ≤ 3 + 이름 물체 ≤ 3 + 뜻 물체 ≤ 3
+    decider_sem_max: 0
+    decider_sem_thr: 0.01     # 맞음 확률 문턱 (SigLIP2 sigmoid 확률 — 맞는 쌍도 낮음, 실사진 맞춤 반쪽 최선 F1 0.009 · 확인 반쪽 P 0.67 R 0.80, upper_lora/README "뜻 물체 칸") — 아래면 칸을 비움
+    decider_front_max_instr: 0  # 지시가 있을 때 프론티어 칸 상한 (0 = 예전: decider_max_cands − 물체 칸)
+    decider_obj_fill: true    # 이름 물체 칸이 남으면 클래스 안 맞는 가까운 물체로도 채움 (예전 동작)
+    # object_search 에 물을 글 = 지시에서 아래 낱말을 끝·앞에서 뗀 명사구 ("의자로 가" → "의자") — 실사진 검색 1 위가 문장 전체보다 잘 맞음
+    decider_sem_strip: ["있는 데로 가", "데로 가", "으로 가", "로 가", "가져와", "찾아줘", "찾아", "어디 있어", "가줘",
+                        "take me to ", "go to the ", "go to a ", "go to ", "find the ", "find a ", "find ", "where is the ", "is there any "]
+    decider_sem_first: false  # 뜻 물체 칸을 이름 물체 칸 앞 글자에 (판단 모델이 앞 글자로 쏠림)
     # 사람 따라가기 (scripts/obj_follow.h): 판단 모델이 지금 보이는 사람(follow_classes) 의 follow 후보를 고르면 그 사람을 따라감 — 목표는 사람에서 follow_dist 떨어진 로봇 쪽 자리
     follow_classes: ["person"]
     follow_dist: 1.0          # m — 사람과 둘 거리

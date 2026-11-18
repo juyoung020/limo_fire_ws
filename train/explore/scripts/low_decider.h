@@ -13,6 +13,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <deque>
 #include <map>
 #include <string>
@@ -56,6 +57,14 @@ struct Params {
   int obj_max = 3;          // 물체 후보 칸 수 (따라가기 후보 포함, 합쳐 max_cands — 프론티어는 남은 칸)
   bool obj_always = false;  // 지시가 없어도 물체 후보를 넣음 (기본 끔 — 지시 없는 탐사 요청은 예전과 바이트 같음)
   float vis_s = 1.0f;       // 이 안에 본 물체 = 지금 보임 (vis)
+  // 뜻 물체 후보 (지시가 있을 때만 — 9 칸 꼴): 지시 글과 물체 사진의 그림·글 모델 점수(Obj::sem, 확률 0–1 — 인식 object_search) 위 sem_max 개를
+  // 이름 물체 칸 뒤에 (이름 칸과 같은 물체는 빼고 다음 순위로 채움). 문턱 sem_thr 아래면 칸을 비움 (맞는 게 없으면 프론티어만 → 계속 찾음).
+  // sem_max 0 이면 끔 — 요청이 예전과 바이트 같음
+  int sem_max = 0;
+  float sem_thr = 0.01f;    // 실사진 물체 59 · 지시 30 의 맞춤 반쪽 최선 F1 문턱 (upper_lora/README "뜻 물체 칸")
+  int front_max_instr = 0;  // 지시가 있을 때 프론티어 칸 상한 (0 = 예전: max_cands − 물체 칸)
+  bool obj_fill = true;     // 이름 물체 칸이 남으면 클래스가 안 맞는 가까운 물체로도 채움 (예전 동작). 끄면 따라가기 · 힌트 클래스 물체만
+  bool sem_first = false;   // 뜻 물체 칸을 이름 물체 칸 앞 글자에 (3B 판단 모델은 앞 글자 A 로 쏠림 — 순서 효과 견줌용)
   std::vector<std::string> known_objects;   // "cup 1.2 m ahead-left" 꼴 짧은 글 (노드가 물체 지도에서 만듦)
   // 물체 후보 (지시가 있을 때만): 지시에 맞는 지도 위 물체의 설 자리. 후보 목록 앞 칸에 들어가 프론티어 후보와 섞임 (합쳐 max_cands)
   struct Obj {
@@ -64,6 +73,8 @@ struct Params {
     float seen_s = 0;       // 마지막으로 본 뒤 (s)
     float match = 0;        // 1 = class_hint 클래스 (물체 후보 칸 앞에)
     bool follow = false;    // 따라가기 후보: 지금 보이는 사람 (노드가 실시간 탐지에서) — 고르면 노드가 그 사람을 약 1 m 뒤에서 따라감
+    float sem = -1.f;       // 지시 글과 이 물체 사진의 맞음 확률 (sem_max > 0 일 때만 씀, < 0 = 점수 없음)
+    bool by_sem = false;    // 뜻 물체 칸으로 들어감 (build_cand 가 채움 — 요청 kind semantic)
     int vp = -1;            // 설 자리 칸 (build_cand 가 채움)
     float len_m = 0;        // 로봇에서 설 자리까지 길 (m, 빈 칸 BFS)
   };
@@ -280,7 +291,12 @@ class Upper {
       return render_cand(p_, co.c, ctl.cand_mem(), decs_, hist_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
     }
     Params P = p_;
-    P.objects = pick_objects(object_spots(v, co), p_.obj_max);
+    const std::vector<Params::Obj> spots = object_spots(v, co);
+    P.objects = pick_objects(spots, p_.obj_max, p_.obj_fill);
+    if (p_.sem_max > 0 && !p_.instruction.empty()) {
+      const std::vector<Params::Obj> sm = pick_semantic(spots, P.objects, p_.sem_max, p_.sem_thr);
+      P.objects.insert(p_.sem_first ? P.objects.begin() : P.objects.end(), sm.begin(), sm.end());
+    }
     obj_req_ = P.objects;
     if (co.c.size() + P.objects.size() < 2) return false;
     return render_cand(P, co.c, ctl.cand_mem(), decs_, hist_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
@@ -318,10 +334,10 @@ class Upper {
   }
   // 물체 후보 칸 고르기 (k 칸): 따라가기 후보(가까운 사람부터) → class_hint 클래스 → 나머지 가까운 것. 한 무리가 남은 칸보다 많으면 길 거리 순으로
   // 고르게 벌려 뽑음 (가장 가까운 것과 가장 먼 것을 늘 넣음 — "가장 먼 의자" 같은 지시도 답이 후보 안에 있게)
-  static std::vector<Params::Obj> pick_objects(std::vector<Params::Obj> in, int k) {
+  static std::vector<Params::Obj> pick_objects(std::vector<Params::Obj> in, int k, bool fill = true) {
     std::vector<Params::Obj> out;
     std::stable_sort(in.begin(), in.end(), [](const Params::Obj& a, const Params::Obj& b) { return a.len_m < b.len_m; });
-    for (int g = 0; g < 3 && (int)out.size() < k; ++g) {
+    for (int g = 0; g < (fill ? 3 : 2) && (int)out.size() < k; ++g) {
       std::vector<Params::Obj> grp;
       for (const auto& o : in) if ((g == 0 && o.follow) || (g == 1 && !o.follow && o.match >= 1.f) || (g == 2 && !o.follow && o.match < 1.f)) grp.push_back(o);
       const int room = k - (int)out.size(), n = (int)grp.size();
@@ -329,6 +345,20 @@ class Upper {
       for (int i = 0; i < room; ++i) out.push_back(grp[(size_t)(room == 1 ? 0 : (int)std::lround((double)i * (n - 1) / (room - 1)))]);
     }
     return out;
+  }
+  // 뜻 물체 칸 (k 칸): 이름 칸(taken)에 없는 물체 가운데 점수 sem ≥ thr 인 것을 점수 높은 순 (같으면 길 짧은 순). 따라가기 항목은 뺌
+  static std::vector<Params::Obj> pick_semantic(const std::vector<Params::Obj>& in, const std::vector<Params::Obj>& taken, int k, float thr) {
+    std::vector<Params::Obj> c;
+    for (const auto& o : in) {
+      if (o.follow || o.sem < 0.f || o.sem < thr) continue;
+      bool dup = false;
+      for (const auto& t : taken) dup = dup || (!t.follow && t.oid == o.oid);
+      if (!dup) c.push_back(o);
+    }
+    std::stable_sort(c.begin(), c.end(), [](const Params::Obj& a, const Params::Obj& b) { return a.sem != b.sem ? a.sem > b.sem : a.len_m < b.len_m; });
+    if ((int)c.size() > k) c.resize((size_t)k);
+    for (auto& o : c) o.by_sem = true;
+    return c;
   }
   // 요청 본문 그리기 (후보 모드) — 노드·시뮬(build_cand)과 라벨 다시 그리기(upper_lora/rollout/req_render: 갈래 굴리기가 남긴 원시 상태)가 같은 함수를 씀.
   // C = 후보(cand::build 차례, 기억 필드 포함) · M = 판 기억 · decs = 지금까지 결정 · (rx, ry, rth) = 지도 자세 · lmap = 지도 (c.size 줄 간격)
@@ -356,9 +386,10 @@ class Upper {
       const std::string k = c.contains("kind") ? c["kind"].get<std::string>() : "frontier";
       o += "\n" + c["id"].get<std::string>() + " " + k;
       if (k == "stop") continue;
-      if (k == "object" || k == "follow") {
+      if (k == "object" || k == "follow" || k == "semantic") {
         o += " " + c["object"].get<std::string>() + " " + c["oid"].get<std::string>();
         for (const char* f : {"len", "bear", "dist", "seen_s"}) o += std::string(" ") + f + " " + num(c[f]);
+        if (c.contains("score")) o += " score " + num(c["score"]);
         if (c.value("vis", false)) o += " vis";
         continue;
       }
@@ -395,7 +426,8 @@ class Upper {
     std::vector<int> cells;
     oj cl = oj::array();
     // 물체 후보 (지시가 있을 때만, build_cand 가 설 자리를 채움): 앞 글자들. 프론티어 후보는 남은 칸에 (합쳐 max_cands)
-    const size_t n_obj = P.instruction.empty() && !P.obj_always ? 0 : std::min(P.objects.size(), (size_t)std::max(0, P.obj_max));
+    const bool sem_on = P.sem_max > 0 && !P.instruction.empty();
+    const size_t n_obj = P.instruction.empty() && !P.obj_always ? 0 : std::min(P.objects.size(), (size_t)std::max(0, P.obj_max + (sem_on ? P.sem_max : 0)));
     for (size_t i = 0; i < n_obj; ++i) {
       const Params::Obj& ob = P.objects[i];
       dec::Cand d;
@@ -410,17 +442,18 @@ class Upper {
       const auto [dist, ang] = rel(ob.x, ob.y);
       oj o;
       o["id"] = std::string(1, d.key);
-      o["kind"] = ob.follow ? "follow" : "object";
+      o["kind"] = ob.follow ? "follow" : ob.by_sem ? "semantic" : "object";
       o["object"] = ob.cls;
       o["oid"] = ob.oid;
       if (P.compact) { o["len"] = rnd(ob.len_m, 0.1); o["bear"] = ang; o["dist"] = rnd(dist, 0.1); o["seen_s"] = rnd(ob.seen_s, 1.0); o["vis"] = ob.seen_s <= P.vis_s; }
       else { o["path_length_m"] = rnd(ob.len_m, 0.1); o["bearing_deg_left_positive"] = ang; o["distance_m"] = rnd(dist, 0.1); o["seconds_since_seen"] = rnd(ob.seen_s, 1.0); o["visible_now"] = ob.seen_s <= P.vis_s; }
+      if (sem_on && !ob.follow && ob.sem >= 0.f) o["score"] = rnd(ob.sem, 0.01);   // 뜻 맞음 확률 (이름 칸 물체도 점수가 있으면)
       cl.push_back(o);
     }
     std::vector<size_t> ord;   // 글자 차례 → C 번호
     for (size_t i = 0; i < C.size() && i < 26; ++i) ord.push_back(i);
     if (P.order == 1) std::stable_sort(ord.begin(), ord.end(), [&](size_t a, size_t b) { return C[a].len_m < C[b].len_m; });
-    const int room = P.max_cands > 0 ? P.max_cands - (int)n_obj : (int)ord.size();
+    const int room = !P.instruction.empty() && P.front_max_instr > 0 ? P.front_max_instr : P.max_cands > 0 ? P.max_cands - (int)n_obj : (int)ord.size();
     if (room >= 0 && (int)ord.size() > room) ord.resize((size_t)room);   // 점수 순 · 거리 순 어느 쪽이든 앞에서
     if (ord.size() + n_obj < 2) return false;
     std::map<int, char> id_let;
@@ -596,8 +629,13 @@ class Upper {
                                               (P.compact ? "len = path m, bear = bearing deg left +, dist = straight-line m, seen_s = seconds since the camera last saw it, vis = seen right now"
                                                          : "visible_now = seen by the camera right now") +
                                               "); choosing it drives there, turns to the object and stops. kind = follow: a person seen right now; choosing it makes the robot keep "
-                                              "following that person at about 1 m. kind = frontier: a spot that maps unknown space (exploring). On the map image object and follow "
-                                              "candidates are cyan squares, frontier candidates yellow dots."
+                                              "following that person at about 1 m. " +
+                                              (sem_on ? "kind = semantic: a spot next to a mapped object whose camera photos match the user's instruction according to an "
+                                                        "image-text model (score = match probability 0-1, higher = more likely what the user means; it can be wrong); choosing it "
+                                                        "drives there, turns to the object and stops. An object candidate's score is the same probability. "
+                                                      : "") +
+                                              "kind = frontier: a spot that maps unknown space (exploring). On the map image object" + (sem_on ? ", semantic" : "") +
+                                              " and follow candidates are cyan squares, frontier candidates yellow dots."
                                         : "No object on the robot's object map is a candidate right now; all candidates are frontier spots (exploring).";
     const bool stop_c = P.stop_cand && !P.instruction.empty();
     const char stop_key = (char)('A' + (int)dc.size());
@@ -642,6 +680,25 @@ class Upper {
     wait_ = false;
   }
   void set_known_objects(const std::vector<std::string>& k) { p_.known_objects = k; }
+  // 요청 known_objects 글: 로봇 (rx, ry, th) 에서 가까운 n 개 "chair-3 chair 1.2 m front-left seen 4 s" (+ " visible" — vis_s 안에 봄). 노드 · 시뮬 같은 함수
+  struct Known { std::string oid, cls; double x, y, seen_s; };   // double: 노드가 물체 지도 값(double)을 그대로 — 글 반올림이 예전 노드 글과 같게
+  static std::vector<std::string> known_lines(const std::vector<Known>& objs, double rx, double ry, double th, double vis_s, size_t n = 10) {
+    std::vector<std::pair<double, std::string>> v;
+    static const char* dirs[8] = {"front", "front-left", "left", "back-left", "back", "back-right", "right", "front-right"};
+    for (const auto& o : objs) {
+      const double dx = o.x - rx, dy = o.y - ry, dist = std::hypot(dx, dy);
+      double a = std::atan2(dy, dx) - th;
+      a = std::atan2(std::sin(a), std::cos(a));
+      const int k = ((int)std::lround(a / (M_PI / 4)) + 8) % 8;
+      char b[160];
+      std::snprintf(b, sizeof b, "%s %s %.1f m %s seen %.0f s%s", o.oid.c_str(), o.cls.c_str(), dist, dirs[k], o.seen_s, o.seen_s <= vis_s ? " visible" : "");
+      v.push_back({dist, b});
+    }
+    std::sort(v.begin(), v.end());
+    std::vector<std::string> out;
+    for (size_t i = 0; i < v.size() && i < n; ++i) out.push_back(v[i].second);
+    return out;
+  }
   void set_class_hint(const std::string& c) { p_.class_hint = c; }
   // 밖(노드)이 목표를 쥠 (사람 따라가기): 켜면 목표 죽음 → 규칙 · 사건 물음을 안 하고 답만 받음. 고른 답이 프론티어면 step 이 명령을 돌려줌(밖은 따라가기를 끝냄)
   void set_external(bool on) { ext_ = on; }

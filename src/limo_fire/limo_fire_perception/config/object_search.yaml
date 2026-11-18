@@ -1,0 +1,37 @@
+# 설명 글로 물체 찾기 (SigLIP2) — 기본 꺼짐. launch search:=true 일 때만 object_search 가 올라가고 object_map 이 물체 사진을 낸다
+# (perception.launch.xml · app.launch.xml 이 이 파일을 두 노드에 같이 줌 — 노드마다 아래 자기 칸만 읽힘). 모델 설정(yolo_coco·yolo_fire)과 상관없이 같음.
+# 엔진·토큰 표 만들기와 메모리는 README "설명 글로 물체 찾기"
+/perception/object_search:      # 노드 /perception/object_search
+  ros__parameters:
+    backend: siglip2_trt          # Embedder 판 (embedder.cpp). 양자화 판을 더하면 이름만 바꿈
+    siglip2_trt:                  # 판 siglip2_trt 의 파일 — 이름만 쓰면 model_dir(비우면 설치된 models/)에서
+      vision_engine: siglip2_vision.engine
+      text_engine: siglip2_text_body.engine
+      token_table: siglip2_tok_emb.f16    # 256000 × 768 fp16 (393 MB) — mmap, 쓰는 줄만 메모리에
+      vocab_file: siglip2_vocab.txt
+      merges_file: siglip2_merges.txt
+      max_batch: 4                # 그림 엔진 한 번에 넣는 장 수 — 엔진 maxShapes 이하 (작을수록 TensorRT 작업 메모리 작음)
+    model_dir: ""
+    # google/siglip2-base-patch16-224 의 exp(logit_scale) · logit_bias (변환 스크립트 출력). 점수 = sigmoid(scale·cos + bias) — sem_score.hpp
+    logit_scale: 112.66889953613281
+    logit_bias: -16.771724700927734
+    prompt: "a photo of {}."      # 글 틀 ({} 에 지시 글)
+    views_per_object: 4           # 물체마다 둘 사진 수 (픽셀 수가 큰 것부터 — 가까이·크게 찍힌 사진)
+    queue_size: 32                # 아직 벡터로 안 바꾼 사진 줄 한도 (넘으면 오래된 것 버림)
+    embed_period: 0.2             # s, 사진 줄을 벡터로 바꾸는 주기 (한 번에 max_batch 장)
+    rescore_period: 1.0           # s, 글이 살아 있는 동안 물체 목록·사진이 바뀌었으면 결과를 다시 냄
+    embeddings_file: ""           # 사진 벡터 파일 (켤 때 읽음 · ~/save 로 씀). 물체 지도 파일 옆 <이름>_objects.emb
+    views_topic: /perception/object_views
+    objects_topic: /perception/objects
+    query_topic: /perception/object_query
+    query_result_topic: /perception/object_query_result
+
+# object_map 의 물체 사진 (publish_views 는 launch 의 search 가 정함 — 여기서 켜지 않음)
+/perception/object_map:
+  ros__parameters:
+    views_ratio: 0.7              # 지금까지 낸 사진 품질(상자 넓이 × 점수)의 이 배보다 좋을 때만 새 사진 (보는 방향마다 여러 장)
+    views_period: 1.0             # s, 한 물체 사진 사이 최소 간격
+    views_margin: 0.1             # 상자 둘레 여백 (상자 크기 비율)
+    views_wait: 1.0               # s, 같은 시각 원본 영상을 기다리는 한도
+    views_keep_images: 10         # 같은 시각을 찾으려 쥐는 최근 원본 영상 장 수 (640×480 rgb8 921 KB 씩)
+    color_topic: /camera/color/image_raw
