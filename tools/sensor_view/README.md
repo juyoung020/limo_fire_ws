@@ -13,6 +13,7 @@ cmake -S tools/sensor_view -B tools/sensor_view/build
 cmake --build tools/sensor_view/build -j
 tools/sensor_view/build/sensor_view                 # /dev/ttyACM* 첫 번째, 921600 baud (열화상 시험 코드)
 tools/sensor_view/build/sensor_view /dev/ttyACM1 --baud 115200   # 포트·속도 지정 (레이더 시험 코드)
+tools/sensor_view/build/sensor_view /dev/ttyUSB0 --baud 115200   # Arduino Uno 열화상 (firmware/sensor_check/thermal_uno, CH340 호환 보드)
 ```
 
 - 리눅스는 `dialout` 그룹이어야 포트를 연다. 보드가 빠졌다 다시 꽂히면(포트 번호가 바뀌어도) 1 초 안에 다시 연다.
