@@ -103,22 +103,22 @@ controller_server:
 
     # 경로 추종: Regulated Pure Pursuit (Nav2 가 차동 구동·좁은 통로에 권하는 단순한 방식). 경로 위 앞쪽 한 점을 따라가고,
     # 방향이 45° 넘게 다르면 제자리에서 먼저 돈다. WeGo 의 DWB(궤적 수백 개 평가 + 비평 7 개 손튜닝)는 덕트호스 미로의
-    # U 자 구간에서 제자리 좌우 회전만 하다 멈췄다(Webots limo_fire_maze). 속도는 velocity_smoother 한도(0.26 m/s)에 맞춘다
+    # U 자 구간에서 제자리 좌우 회전만 하다 멈췄다(Webots limo_fire_maze). 속도는 velocity_smoother 한도(0.40 m/s)에 맞춘다. 0.26 → 0.40 (2026-11-18 사용자 요청: 탐사가 느림. LIMO Pro 무부하 최고 1 m/s)
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.26
+      desired_linear_vel: 0.40
       lookahead_dist: 0.5
       min_lookahead_dist: 0.3
       max_lookahead_dist: 0.9
       lookahead_time: 1.5
       use_velocity_scaled_lookahead_dist: false
-      rotate_to_heading_angular_vel: 1.0
+      rotate_to_heading_angular_vel: 1.5
       use_rotate_to_heading: true
-      rotate_to_heading_min_angle: 0.785
+      rotate_to_heading_min_angle: 1.0          # 0.785 → 1.0 rad(57°): 조금 틀어진 정도는 돌면서 출발 (2026-11-18, 탐사 평균 속도)
       max_angular_accel: 3.2
       transform_tolerance: 0.2
-      min_approach_linear_velocity: 0.05
-      approach_velocity_scaling_dist: 0.6
+      min_approach_linear_velocity: 0.10        # 0.05 → 0.10: 도착 직전 기어가는 시간 줄임 (2026-11-18)
+      approach_velocity_scaling_dist: 0.3       # 0.6 → 0.3 m: 감속 시작을 늦춤, 0.10 m/s·감속 2.5 m/s² 면 도착 허용 0.25 m 안에 섬 (2026-11-18)
       use_collision_detection: true
       max_allowed_time_to_collision_up_to_carrot: 1.0
       use_regulated_linear_velocity_scaling: true
@@ -271,8 +271,8 @@ velocity_smoother:
     smoothing_frequency: 20.0  # 컨트롤러(20 Hz)와 같게. 5 Hz 면 명령이 0.2 초마다 한 번만 나간다
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.26, 0.0, 1.0]
-    min_velocity: [-0.26, 0.0, -1.0]
+    max_velocity: [0.40, 0.0, 1.5]
+    min_velocity: [-0.40, 0.0, -1.5]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: "odometry/filtered"

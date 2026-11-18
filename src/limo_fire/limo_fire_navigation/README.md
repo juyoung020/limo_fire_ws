@@ -49,7 +49,7 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 | `map → odom` TF | AMCL 자세(`/amcl_pose`)로 계산해 냄 | `hold`: 들어갈 때 값을 붙잡아 냄 → 위치는 EKF(바퀴 + IMU) 만 따라감 · `wall`: `hold` 에 더해 초음파 메아리를 저장 지도의 벽에 맞춰 조금씩 고침(아래) |
 | AMCL 이 받는 스캔 `scan_localization` | `/scan` 그대로 | 끊음 |
 | 장애물 지도가 받는 라이다 `scan_obstacles` | `/scan` 그대로 | 저장 지도에서 광선을 쏜 **가상 스캔** — 지도의 벽만 남고 연기가 찍은 가짜 장애물은 지워짐 |
-| 최고 속도 (`speed_limit`) | 한도 없음 | 0.13 m/s, 앞 초음파 0.6 m 안이면 0.05 m/s (`slow.*`, 잠정) |
+| 최고 속도 (`speed_limit`) | 한도 없음 | 0.20 m/s, 앞 초음파 0.6 m 안이면 0.08 m/s (`slow.*`, 잠정) |
 | 추정 자세 `smoke_mode/pose` | — | 자세 + 이동·회전에 비례해 커지는 불확실성 |
 | 부딪힘 `smoke_mode/bump` | — | IMU 수평 가속도가 4 m/s² (잠정) 넘으면 그 지도 위치 |
 

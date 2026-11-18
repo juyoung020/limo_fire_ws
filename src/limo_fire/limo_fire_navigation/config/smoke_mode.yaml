@@ -9,7 +9,7 @@ smoke_mode:
     #   (include/limo_fire_navigation/sonar_wall.hpp). 값은 모두 잠정 — 시뮬 HC-SR04 모델 기준, 실물 메아리 잡음은 아직 안 쟀다
     wall:
       range_topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
-      window: 4.0          # s. 0.13 m/s 면 약 0.5 m — 그동안 바퀴 + IMU 가 거의 맞다고 본다
+      window: 4.0          # s. 0.20 m/s 면 약 0.8 m — 그동안 바퀴 + IMU 가 거의 맞다고 본다
       rate: 2.0            # Hz, 맞추기 주기
       min_hits: 8          # 지도와 맞는 메아리가 이보다 적으면 안 고침
       max_hits: 80         # 이보다 많으면 창 전체에서 고르게 솎음
@@ -31,11 +31,11 @@ smoke_mode:
       max_step_xy: 0.10    # m, 한 번에 고치는 최대
       max_step_yaw: 0.05   # rad
       iterations: 3        # 가우스-뉴턴 횟수
-    # 앞쪽 초음파(topics) 중 하나라도 0.6 m 보다 가까우면 연기 모드 속도 한도를 0.05 m/s 로 (장애물을 늦게 봐 상자를 못 피함, 잠정)
+    # 앞쪽 초음파(topics) 중 하나라도 0.6 m 보다 가까우면 연기 모드 속도 한도를 slow.speed 로 (장애물을 늦게 봐 상자를 못 피함, 잠정)
     slow:
       topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
       distance: 0.6
-      speed: 0.05
+      speed: 0.08          # 0.05 → 0.08 (2026-11-18 사용자 요청)
     global_frame: map
     odom_frame: odom
     base_frame: base_link
@@ -55,8 +55,8 @@ smoke_mode:
       range_max: 4.0
       occupied_threshold: 65     # map_server occupied_thresh 0.65
 
-    # 연기 속 최고 속도 (m/s). 잠정: 평상시 0.26 의 절반. 앞을 못 보고 위치가 이동 거리만큼 흐려지므로 낮춘다
-    speed_limit: 0.13
+    # 연기 속 최고 속도 (m/s). 잠정: 평상시 0.40 의 절반(0.13 → 0.20, 2026-11-18 사용자 요청). 앞을 못 보고 위치가 이동 거리만큼 흐려지므로 낮춘다
+    speed_limit: 0.20
 
     # 연기 속 추정 자세의 불확실성 (1σ). 잠정: 바퀴 오도메트리 주행 오차는 아직 안 쟀다(hardware.md "확인할 것")
     #   xy = xy_sigma0 + xy_per_m × 이동 거리,  yaw = yaw_sigma0 + yaw_per_rad × 회전량
