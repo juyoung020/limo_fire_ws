@@ -61,6 +61,9 @@ python3 src/limo_fire/limo_fire_hardware/tools/write_mount_config.py \
 `robot.launch.xml`과 `navigation.launch.xml`을 켜고 RViz의 **2D Pose Estimate**로 실제 위치를 맞춘다. 개인 저장소의 감지·매핑 노드를 사용할 때는 `/fire/observations`에 최신 `map` 좌표와 `position_valid=true`가 나오는지 확인한다. 주영 저장소의 이번 브랜치만 사용할 때는 자동 표적 좌표 발행기가 없으므로, 지도에서 위치를 측정한 **고정 시험 표식**을 다음 도구로 10Hz 발행할 수 있다. 이 도구는 카메라 탐지 결과가 아니다. 자동 탐지 노드와 동시에 실행하지 않는다.
 
 ```bash
+source /home/wego/limo_fire_ws/env.sh
+source /home/wego/launcher_aim_friday_20261120/install/local_setup.bash
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
 python3 /home/wego/launcher_aim_friday_20261120/src/limo_fire/limo_fire_hardware/tools/publish_test_target.py \
   --x <지도_x_m> --y <지도_y_m> --z <표식_높이_m>
 ```
@@ -78,6 +81,9 @@ ros2 launch limo_fire_hardware approach_aim.launch.py \
 또 다른 터미널에서 아래 요청과 상태 확인을 실행한다. `PREVIEW_READY`에 후보 위치·차체 yaw·상하각이 나오고, 공·사람·장애물을 지나는 경로가 아니어야 한다. 미리보기 노드를 종료한 뒤 다음 단계로 간다.
 
 ```bash
+source /home/wego/limo_fire_ws/env.sh
+source /home/wego/launcher_aim_friday_20261120/install/local_setup.bash
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
 ros2 service call /launcher/approach_and_aim std_srvs/srv/Trigger '{}'
 ros2 topic echo /launcher/approach_aim_status
 ```
@@ -102,6 +108,9 @@ ros2 launch limo_fire_hardware approach_aim.launch.py \
 방향이 반대로 돌거나 표적·오도메트리·상태가 사라지면 즉시 취소하고 로봇 정지를 확인한다.
 
 ```bash
+source /home/wego/limo_fire_ws/env.sh
+source /home/wego/launcher_aim_friday_20261120/install/local_setup.bash
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
 ros2 service call /launcher/cancel std_srvs/srv/Trigger '{}'
 ros2 topic echo /launcher/approach_aim_status
 ```
