@@ -3,7 +3,7 @@
 <package format="3">
   <name>limo_fire_rviz</name>
   <version>0.1.0</version>
-  <description>운용 화면(RViz2) 패널 플러그인: 탐사 자동 모드 켜기·끄기 버튼과 상태</description>
+  <description>운용 화면(RViz2) 패널 플러그인: 탐사 자동 모드·연기 모드 켜기·끄기 버튼과 상태</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">김주영</maintainer>
   <license>MIT</license>
 
@@ -14,6 +14,7 @@
   <depend>pluginlib</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
+  <depend>geometry_msgs</depend>
   <depend>qtbase5-dev</depend>
 
   <export>

@@ -9,6 +9,8 @@ Panels:
   - Class: limo_fire_rviz/ExplorePanel
     Name: Explore
     mode: frontier
+  - Class: limo_fire_rviz/SmokePanel
+    Name: Smoke
 Visualization Manager:
   Class: ""
   Displays:
@@ -198,6 +200,41 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /particle_cloud
+      Value: true
+    - Alpha: 1
+      Axes Length: 0.30000001192092896
+      Axes Radius: 0.029999999329447746
+      Class: rviz_default_plugins/PoseWithCovariance
+      Color: 120; 120; 120
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 120; 120; 120
+          Scale: 1
+          Value: true
+        Value: true
+      Enabled: true
+      Head Length: 0.10000000149011612
+      Head Radius: 0.10000000149011612
+      Name: Smoke Pose
+      Shaft Length: 0.30000001192092896
+      Shaft Radius: 0.029999999329447746
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /smoke_mode/pose
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
