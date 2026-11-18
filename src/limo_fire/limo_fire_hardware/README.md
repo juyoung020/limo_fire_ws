@@ -68,29 +68,24 @@ export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
 ros2 launch limo_fire_bringup navigation.launch.xml rviz:=true
 ```
 
-터미널 3에서 **지도에서 좌표를 잰 고정 시험 표식**을 발행한다. 주영 저장소 main의 카메라 인식은 이 브랜치에서 `/fire/observations`의 지도 좌표로 연결되지 않았으므로, 이 단계는 자동 탐지 시험이 아니다. 자동 탐지 노드와 동시에 실행하지 않는다.
-
-```bash
-source /home/wego/limo_fire_ws/env.sh
-export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
-python3 /home/wego/limo_fire_ws/src/limo_fire/limo_fire_hardware/tools/publish_test_target.py \
-  --x <지도_x_m> --y <지도_y_m> --z <표식_높이_m>
-```
+주영 인식 패키지의 Orbbec RGB·깊이 입력과 YOLO·물체 지도를 실물 표적 소스로 쓴다. `/perception/objects`에는 저장된 물체도 주기적으로 나오므로 `mapper_observation_bridge`가 마지막 관측 나이·신뢰도·표적 수를 검사한 뒤 `/fire/observations`로 보낸다. 실물 시험에서 `publish_test_target.py`를 실행하지 않는다. 센서·거리 확인 및 2026-11-20 실행 순서는 [REAL_AIM_TEST.md](REAL_AIM_TEST.md)를 따른다.
 
 ## 후보와 경로 미리보기
 
-터미널 4에서 기본 launch를 실행한다. 기본값은 `motion_enabled=false`, `serial_enabled=false`다.
+터미널 3에서 카메라 인식·매핑·조준을 묶은 launch를 실행한다. 기본값은 `motion_enabled=false`, `serial_enabled=false`다.
 
 ```bash
 source /home/wego/limo_fire_ws/env.sh
+source /home/wego/launcher_aim_friday_20261120/install/local_setup.bash
 export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
-ros2 launch limo_fire_hardware approach_aim.launch.py
+ros2 launch limo_fire_hardware real_camera_aim.launch.py
 ```
 
 다른 터미널에서 한 번의 계산을 요청한다.
 
 ```bash
 source /home/wego/limo_fire_ws/env.sh
+source /home/wego/launcher_aim_friday_20261120/install/local_setup.bash
 export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
 ros2 service call /launcher/approach_and_aim std_srvs/srv/Trigger '{}'
 ros2 topic echo /launcher/approach_aim_status
@@ -106,14 +101,15 @@ ros2 topic echo /launcher/approach_aim_status
 
 ```bash
 source /home/wego/limo_fire_ws/env.sh
+source /home/wego/launcher_aim_friday_20261120/install/local_setup.bash
 export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
-ros2 launch limo_fire_hardware approach_aim.launch.py \
+ros2 launch limo_fire_hardware real_camera_aim.launch.py \
   config:=<실측한_설정파일의_절대경로> \
   motion_enabled:=true serial_enabled:=true \
   serial_port:=<확인한_보드의_전체_장치경로>
 ```
 
-브리지 상태가 `ready`가 된 뒤 `/launcher/approach_and_aim` 서비스를 호출한다. 수동 시험에서 공과 고무줄 하중을 제거해 상하 구동 및 혼 방향을 먼저 확인한다.
+실제 `/fire/observations`의 `map` 좌표가 카메라 표적과 줄자 거리와 맞고 브리지 상태가 `ready`가 된 뒤 `/launcher/approach_and_aim` 서비스를 호출한다. 무장전 시험에서 공과 고무줄 하중을 제거해 상하 구동 및 혼 방향을 먼저 확인한다.
 
 ESP32-S3의 수정된 `hardware/modeling/탁구공발사대/firmware/launcher_test/src/main.cpp`를 쓰면 브리지는 펌웨어 신원을 확인하고 `e5`를 보내 상하 GPIO5 PWM의 `tilt PWM ON` 응답을 받은 뒤에만 `ready`가 된다. 따라서 이후 `a<각도>`가 거부되지 않는다. 이 단계에서 1500µs 신호로 모터가 움직일 수 있다. 브리지는 장전·발사 레버 GPIO4를 활성화하지 않으며 `s`·`c`·`f` 명령도 보내지 않는다. 서보 영점과 회전 부호, 발사기 장착 치수는 실물에서 아직 확인해야 한다.
 

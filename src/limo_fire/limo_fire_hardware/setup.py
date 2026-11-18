@@ -19,5 +19,6 @@ setup(
     entry_points={'console_scripts': [
         'approach_aim = limo_fire_hardware.approach_aim:main',
         'pitch_serial_bridge = limo_fire_hardware.pitch_serial_bridge:main',
+        'mapper_observation_bridge = limo_fire_hardware.mapper_observation_bridge:main',
     ]},
 )
