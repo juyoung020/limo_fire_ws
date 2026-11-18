@@ -15,14 +15,21 @@ add_executable(esp32_bridge src/esp32_bridge_node.cpp)
 target_include_directories(esp32_bridge PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 ament_target_dependencies(esp32_bridge rclcpp sensor_msgs)
 
-install(TARGETS esp32_bridge DESTINATION lib/${PROJECT_NAME})
+# 가짜 ESP32 (가상 시리얼 pty 에 펌웨어와 같은 줄) — 실물 없이 다리를 시험. ROS 의존 없음
+add_executable(fake_esp32 tools/fake_esp32.cpp)
+target_include_directories(fake_esp32 PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+
+install(TARGETS esp32_bridge fake_esp32 DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+install(PROGRAMS scripts/fake_bridge_check.sh DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_protocol test/test_protocol.cpp)
   target_include_directories(test_protocol PRIVATE include)
+  ament_add_gtest(test_fake_stream test/test_fake_stream.cpp)
+  target_include_directories(test_fake_stream PRIVATE include)
 endif()
 
 ament_package()
