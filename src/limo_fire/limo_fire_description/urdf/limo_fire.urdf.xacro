@@ -30,6 +30,21 @@
   <xacro:ultrasonic parent="base_link" name="ultrasonic_front_left" xyz="0.18 0.025 -0.06" yaw="${20*pi/180}" pitch="${-5*pi/180}"/>
   <xacro:ultrasonic parent="base_link" name="ultrasonic_front_right" xyz="0.18 -0.025 -0.06" yaw="${-20*pi/180}" pitch="${-5*pi/180}"/>
 
+  <!-- 열화상 GY-MCU90640 (thermal_link)·레이더 HLK-LD2450 (radar_link) — 실물 ESP32 다리(limo_fire_esp32_bridge)가 /thermal/image·/radar/targets 의 프레임으로 쓴다.
+       x 앞이 보는 방향. 자리는 **잠정**(로봇 미장착, 실측 아님): 앞 위쪽 가운데. 장착하면 줄자로 재서 여기만 고친다(launch 에 따로 두지 않는다) -->
+  <link name="thermal_link"/>
+  <joint name="thermal_joint" type="fixed">
+    <origin xyz="0.12 0 0.10" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="thermal_link"/>
+  </joint>
+  <link name="radar_link"/>
+  <joint name="radar_joint" type="fixed">
+    <origin xyz="0.12 0 0.14" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="radar_link"/>
+  </joint>
+
   <!-- Webots 바퀴 구동 (webots_control.xacro) -->
   <xacro:if value="${'$(arg platform)' == 'webots'}">
     <xacro:webots_control/>

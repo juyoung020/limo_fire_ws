@@ -7,6 +7,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -17,7 +18,11 @@
 
 #include "limo_fire_esp32_bridge/protocol.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "geometry_msgs/msg/pose_array.hpp"
+#include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/range.hpp"
+#include "std_msgs/msg/float32.hpp"
+#include "std_msgs/msg/float32_multi_array.hpp"
 
 namespace limo_fire_esp32_bridge {
 
@@ -31,6 +36,8 @@ class Esp32Bridge : public rclcpp::Node {
     fov_ = declare_parameter<double>("ultrasonic.field_of_view", 0.2618);
     min_ = declare_parameter<double>("ultrasonic.min_range", 0.02);
     max_ = declare_parameter<double>("ultrasonic.max_range", 4.0);
+    thermal_frame_ = declare_parameter<std::string>("thermal.frame_id", "thermal_link");
+    radar_frame_ = declare_parameter<std::string>("radar.frame_id", "radar_link");
     if (names_.empty() || fov_ <= 0.0 || min_ < 0.0 || max_ <= min_ || hb_timeout_ <= 0.0)
       throw std::invalid_argument("esp32_bridge: ultrasonic.names·field_of_view·min/max_range·heartbeat_timeout 확인");
     if (speed_of(baud_) == B0) throw std::invalid_argument("esp32_bridge: 지원하지 않는 baud " + std::to_string(baud_));
@@ -38,9 +45,13 @@ class Esp32Bridge : public rclcpp::Node {
       pubs_.push_back(create_publisher<sensor_msgs::msg::Range>("/ultrasonic/" + n, rclcpp::SensorDataQoS()));
       frames_.push_back("ultrasonic_" + n + "_link");
     }
+    thermal_pub_ = create_publisher<sensor_msgs::msg::Image>("/thermal/image", rclcpp::SensorDataQoS());
+    thermal_max_pub_ = create_publisher<std_msgs::msg::Float32>("/thermal/max", rclcpp::SensorDataQoS());
+    radar_pub_ = create_publisher<geometry_msgs::msg::PoseArray>("/radar/targets", rclcpp::SensorDataQoS());
+    radar_vel_pub_ = create_publisher<std_msgs::msg::Float32MultiArray>("/radar/velocities", rclcpp::SensorDataQoS());
     last_hb_ = now();
     timer_ = create_wall_timer(std::chrono::milliseconds(5), [this] { poll(); });
-    RCLCPP_INFO(get_logger(), "ESP32 %s @ %d, 초음파 %zu 개", port_.c_str(), baud_, names_.size());
+    RCLCPP_INFO(get_logger(), "ESP32 %s @ %d, 초음파 %zu 개 · 열화상 · 레이더", port_.c_str(), baud_, names_.size());
   }
   ~Esp32Bridge() override { close_port(); }
 
@@ -88,7 +99,7 @@ class Esp32Bridge : public rclcpp::Node {
         return;
       }
     }
-    char tmp[256];
+    char tmp[4096];
     for (;;) {
       const ssize_t n = ::read(fd_, tmp, sizeof tmp);
       if (n > 0) { buf_.append(tmp, n); continue; }
@@ -103,7 +114,7 @@ class Esp32Bridge : public rclcpp::Node {
       handle(buf_.substr(0, nl));
       buf_.erase(0, nl + 1);
     }
-    if (buf_.size() > 4096) buf_.clear();   // 줄 끝이 안 오는 쓰레기
+    if (buf_.size() > 16384) buf_.clear();   // 줄 끝이 안 오는 쓰레기
     if (fd_ >= 0 && (now() - last_hb_).seconds() > hb_timeout_)
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "ESP32 살아 있음 줄이 %.0f s 넘게 없음", hb_timeout_);
   }
@@ -112,6 +123,8 @@ class Esp32Bridge : public rclcpp::Node {
     const auto l = parse_line(raw);
     if (!l) { ++bad_; RCLCPP_DEBUG(get_logger(), "깨진 줄 버림 (%zu 번째)", bad_); return; }
     if (l->type == "HB") { last_hb_ = now(); return; }
+    if (l->type == "TH") { handle_thermal(*l); return; }
+    if (l->type == "RD") { handle_radar(*l); return; }
     const auto s = as_sonar(*l);
     if (!s) return;
     if (s->index >= static_cast<int>(pubs_.size())) {
@@ -129,10 +142,56 @@ class Esp32Bridge : public rclcpp::Node {
     pubs_[s->index]->publish(m);
   }
 
+  void handle_thermal(const Line& l) {
+    const auto t = as_thermal(l);
+    if (!t) { ++bad_; RCLCPP_DEBUG(get_logger(), "열화상 줄 형식 틀림"); return; }
+    sensor_msgs::msg::Image m;
+    m.header.stamp = now();
+    m.header.frame_id = thermal_frame_;
+    m.height = kThermalRows;
+    m.width = kThermalCols;
+    m.encoding = "32FC1";   // 값 = °C
+    m.is_bigendian = 0;
+    m.step = kThermalCols * sizeof(float);
+    m.data.resize(kThermalPoints * sizeof(float));
+    std::memcpy(m.data.data(), t->c.data(), m.data.size());
+    thermal_pub_->publish(m);
+    std_msgs::msg::Float32 mx;
+    mx.data = *std::max_element(t->c.begin(), t->c.end());
+    thermal_max_pub_->publish(mx);
+  }
+
+  // LD2450 (x 오른쪽 + · y 앞, mm) → REP-103 (x 앞 · y 왼쪽, m): x_ros = y, y_ros = −x. 속도는 LD2450 원본 부호 그대로 m/s
+  // (부호가 다가옴 +/멀어짐 + 중 어느 쪽인지는 실물에서 확인 전 — 출처마다 다르다)
+  void handle_radar(const Line& l) {
+    const auto r = as_radar(l);
+    if (!r) { ++bad_; RCLCPP_DEBUG(get_logger(), "레이더 줄 형식 틀림"); return; }
+    const auto stamp = now();
+    geometry_msgs::msg::PoseArray pa;
+    pa.header.stamp = stamp;
+    pa.header.frame_id = radar_frame_;
+    std_msgs::msg::Float32MultiArray v;
+    for (const auto& t : r->targets) {
+      geometry_msgs::msg::Pose p;
+      p.position.x = t.y_mm * 1e-3;
+      p.position.y = -t.x_mm * 1e-3;
+      p.orientation.w = 1.0;
+      pa.poses.push_back(p);
+      v.data.push_back(static_cast<float>(t.v_cms * 1e-2));
+    }
+    radar_pub_->publish(pa);
+    radar_vel_pub_->publish(v);
+  }
+
   std::string port_;
   int baud_;
   double hb_timeout_, fov_, min_, max_;
   std::vector<std::string> names_, frames_;
+  std::string thermal_frame_, radar_frame_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr thermal_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr thermal_max_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr radar_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr radar_vel_pub_;
   std::vector<rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr> pubs_;
   rclcpp::TimerBase::SharedPtr timer_;
   int fd_ = -1;

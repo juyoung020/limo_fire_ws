@@ -72,4 +72,64 @@ inline std::optional<Sonar> as_sonar(const Line& l) {
   }
 }
 
+// 열화상 줄: $TH,<ms>,<ta>,<t1>…<t768> — 모두 0.1 °C 정수(ta = 모듈 온도), 점은 32×24 행 먼저
+constexpr int kThermalCols = 32, kThermalRows = 24, kThermalPoints = kThermalCols * kThermalRows;
+struct Thermal {
+  uint32_t ms;
+  double ambient_c;
+  std::vector<float> c;   // °C, 768 개
+};
+
+inline std::optional<int> parse_int(const std::string& f) {
+  try {
+    size_t p = 0;
+    const int v = std::stoi(f, &p);
+    if (p != f.size()) return std::nullopt;
+    return v;
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+inline std::optional<Thermal> as_thermal(const Line& l) {
+  if (l.type != "TH" || l.fields.size() != static_cast<size_t>(2 + kThermalPoints)) return std::nullopt;
+  const auto ms = parse_int(l.fields[0]), ta = parse_int(l.fields[1]);
+  if (!ms || *ms < 0 || !ta) return std::nullopt;
+  Thermal t;
+  t.ms = static_cast<uint32_t>(*ms);
+  t.ambient_c = *ta * 0.1;
+  t.c.reserve(kThermalPoints);
+  for (int i = 0; i < kThermalPoints; ++i) {
+    const auto v = parse_int(l.fields[2 + i]);
+    if (!v) return std::nullopt;
+    t.c.push_back(static_cast<float>(*v * 0.1));
+  }
+  return t;
+}
+
+// 레이더 줄: $RD,<ms>,x1,y1,v1,x2,y2,v2,x3,y3,v3 — x 오른쪽 + · y 앞 (mm), v cm/s(LD2450 원본 부호), 표적 없으면 0,0,0
+constexpr int kRadarTargets = 3;
+struct RadarTarget {
+  double x_mm, y_mm, v_cms;
+};
+struct Radar {
+  uint32_t ms;
+  std::vector<RadarTarget> targets;   // 있는 표적만(없는 칸 0,0 은 뺀다)
+};
+
+inline std::optional<Radar> as_radar(const Line& l) {
+  if (l.type != "RD" || l.fields.size() != static_cast<size_t>(1 + 3 * kRadarTargets)) return std::nullopt;
+  const auto ms = parse_int(l.fields[0]);
+  if (!ms || *ms < 0) return std::nullopt;
+  Radar r;
+  r.ms = static_cast<uint32_t>(*ms);
+  for (int t = 0; t < kRadarTargets; ++t) {
+    const auto x = parse_int(l.fields[1 + 3 * t]), y = parse_int(l.fields[2 + 3 * t]), v = parse_int(l.fields[3 + 3 * t]);
+    if (!x || !y || !v) return std::nullopt;
+    if (*x == 0 && *y == 0) continue;
+    r.targets.push_back({static_cast<double>(*x), static_cast<double>(*y), static_cast<double>(*v)});
+  }
+  return r;
+}
+
 }  // namespace limo_fire_esp32_bridge

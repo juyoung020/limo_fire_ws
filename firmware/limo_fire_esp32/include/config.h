@@ -23,5 +23,20 @@ constexpr uint32_t kSoundSpeedMmPerMs = 343;
 // 데이터시트 측정 범위 2~400 cm. 밖이면 메아리 없음으로 보낸다
 constexpr uint32_t kMinMm = 20, kMaxMm = 4000;
 
-constexpr uint32_t kBaud = 115200;
+// 열화상 GY-MCU90640 (UART1)·레이더 HLK-LD2450 (UART2) — docs/wiring.md 핀표. 레이더는 전원 5 V (3.3 V 면 안 켜짐, docs/hardware.md)
+// ESP32-C3 는 UART 가 둘뿐이고 초음파 핀과 겹쳐서 둘 다 끈다(C3 는 초음파만).
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+#define LF_THERMAL 0
+#define LF_RADAR 0
+#else
+#define LF_THERMAL 1
+#define LF_RADAR 1
+#endif
+constexpr int kThermalRxPin = 10, kThermalTxPin = 11;   // 모듈 TX → ESP 받기 / 모듈 RX ← ESP 보내기
+constexpr uint32_t kThermalBaud = 115200;
+constexpr int kRadarRxPin = 17, kRadarTxPin = 18;
+constexpr uint32_t kRadarBaud = 256000;
+
+// USB 시리얼 속도. 열화상 줄(약 3 KB × 4 Hz)이 있어 115200 으로는 모자라다(약 11 KB/s) — 브리지 esp32_bridge.yaml baud 와 같아야 한다
+constexpr uint32_t kBaud = 921600;
 constexpr uint32_t kHeartbeatMs = 1000;   // 살아 있음 줄 (브리지가 끊김을 안다)

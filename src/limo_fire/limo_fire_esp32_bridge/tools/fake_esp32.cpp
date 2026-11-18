@@ -32,10 +32,10 @@ int main(int argc, char** argv) {
     if (k == "--link") link = argv[i + 1];
     else if (k == "--scenario") sc_name = argv[i + 1];
     else if (k == "--duration") duration = std::atof(argv[i + 1]);
-    else { std::fprintf(stderr, "모르는 인자 %s\n사용: fake_esp32 [--link 경로] [--scenario sweep|noecho|corrupt|stall] [--duration 초]\n", k.c_str()); return 2; }
+    else { std::fprintf(stderr, "모르는 인자 %s\n사용: fake_esp32 [--link 경로] [--scenario sweep|noecho|corrupt|stall|sensors] [--duration 초]\n", k.c_str()); return 2; }
   }
   Scenario sc;
-  if (!parse_scenario(sc_name, sc)) { std::fprintf(stderr, "모르는 장면 %s (sweep|noecho|corrupt|stall)\n", sc_name.c_str()); return 2; }
+  if (!parse_scenario(sc_name, sc)) { std::fprintf(stderr, "모르는 장면 %s (sweep|noecho|corrupt|stall|sensors)\n", sc_name.c_str()); return 2; }
 
   const int master = posix_openpt(O_RDWR | O_NOCTTY);
   if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0) { std::perror("pty"); return 1; }
