@@ -1,0 +1,70 @@
+<!-- 실물 LIMO 를 한 번에 (sim.launch.xml 의 실물판 — 인자 이름이 같다):
+       로봇(센서·섀시·EKF) + (저장 지도·AMCL 또는 Cartographer 지도 만들기) + Nav2 + 인식(화재 모델) + 운용 화면 하나
+     순찰 (저장 지도):  ros2 launch limo_fire_bringup real.launch.xml
+                        → RViz 2D Pose Estimate → Publish Point 로 점 찍기 → ros2 service call /click_patrol/start std_srvs/srv/Trigger
+     임무 BT 까지:      ros2 launch limo_fire_bringup real.launch.xml bt:=true click_patrol:=false
+     프론티어 탐사:     ros2 launch limo_fire_bringup real.launch.xml slam:=true
+                        → 리모컨 SWB 위 → RViz 탐사 패널 "Auto explore" 버튼 → 다 돌면 save_map.launch.xml name:=<이름>
+     Nav2 목표를 내는 것(임무 BT · click_patrol · 프론티어 탐사)은 하나만 쓴다 — 둘이 같이 내면 서로 목표를 끊는다.
+     프론티어 탐사 노드는 늘 멈춘 채 떠 있어 RViz 탐사 패널 버튼으로 언제든 켜고 끈다(임무 BT 와 따로). 순찰이면 click_patrol 도
+     멈춘 채 뜬다 — 둘을 동시에 켜지 않는다. 저장 지도(slam:=false)는 이미 닫혀 있어 탐사가 곧 끝난다, 새 곳은 slam:=true
+     대시보드 limo_base 나 robot.launch.xml 을 따로 켜 두었으면 robot:=false (섀시 포트는 드라이버 하나만) -->
+<launch>
+  <arg name="robot" default="true" description="센서·섀시·EKF (robot.launch.xml). 따로 켜 두었으면 false"/>
+  <arg name="slam" default="false" description="true: 저장 지도·AMCL 대신 Cartographer 로 지도를 만들며 주행 (프론티어 탐사)"/>
+  <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/lab_1116b.yaml" description="slam:=false 일 때 쓰는 지도"/>
+  <arg name="explore" default="true" description="프론티어 탐사 노드를 멈춘 채 늘 띄운다 — RViz 탐사 패널 버튼으로 언제든 켜고 끔(임무 BT 와 따로), 임무 BT 의 탐사 모드도 이 노드를 켠다"/>
+  <arg name="click_patrol" default="$(not $(var slam))" description="RViz Publish Point 로 찍은 점을 도는 순찰 (~/start 전까지 멈춤). 기본은 저장 지도일 때"/>
+  <arg name="bt" default="false" description="임무 BT (순찰·불 대응). 켜면 리모컨 오토가 되자마자 순찰하므로 click_patrol:=false 와 같이"/>
+  <arg name="patrol_file" default="$(find-pkg-share limo_fire_bt)/config/patrol/lab_1116b_short.yaml" description="임무 BT 순찰점"/>
+  <arg name="perception" default="true" description="YOLO 화재 모델 탐지 + 물체 지도"/>
+  <arg name="perception_override" default="$(find-pkg-share limo_fire_perception)/config/yolo_fire.yaml"
+       description="인식 설정 덮어쓰기 (예: 이 기기에 있는 엔진 경로만 바꾼 yaml)"/>
+  <arg name="rviz" default="true"/>
+
+  <!-- include 에 준 인자는 Humble 에서 바깥으로 새어 나와 다음 include 의 값을 바꾸므로 하나씩 group 으로 가둔다 -->
+  <group if="$(var robot)">
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/robot.launch.xml"/>
+  </group>
+
+  <group if="$(var slam)">
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/mapping.launch.xml">
+      <arg name="rviz" value="false"/>
+    </include>
+  </group>
+
+  <group>
+    <include file="$(find-pkg-share limo_fire_bringup)/launch/navigation.launch.xml">
+      <arg name="map" value="$(var map)"/>
+      <arg name="localization" value="$(not $(var slam))"/>
+      <arg name="rviz" value="false"/>
+    </include>
+  </group>
+
+  <group if="$(var explore)">
+    <include file="$(find-pkg-share limo_fire_explore)/launch/frontier_explorer.launch.xml"/>
+  </group>
+
+  <group if="$(var click_patrol)">
+    <include file="$(find-pkg-share limo_fire_bt)/launch/click_patrol.launch.xml"/>
+  </group>
+
+  <group if="$(var perception)">
+    <include file="$(find-pkg-share limo_fire_perception)/launch/perception.launch.xml">
+      <arg name="config" value="yolo_fire.yaml"/>
+      <arg name="params_override" value="$(var perception_override)"/>
+      <arg name="rviz" value="false"/>
+    </include>
+  </group>
+
+  <!-- 화면은 하나: 지도·Nav2·순찰점·탐사·물체·YOLO·임무 현황판 -->
+  <group if="$(var rviz)">
+    <include file="$(find-pkg-share limo_fire_description)/launch/viewer.launch.xml"/>
+  </group>
+
+  <group if="$(var bt)">
+    <include file="$(find-pkg-share limo_fire_bt)/launch/bt.launch.xml">
+      <arg name="patrol_file" value="$(var patrol_file)"/>
+    </include>
+  </group>
+</launch>

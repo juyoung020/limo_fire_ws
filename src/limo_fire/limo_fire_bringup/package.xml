@@ -38,6 +38,7 @@
   <exec_depend>limo_fire_explore</exec_depend>
   <exec_depend>limo_fire_esp32_bridge</exec_depend>
   <exec_depend>limo_fire_bt</exec_depend>
+  <exec_depend>limo_fire_perception</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
