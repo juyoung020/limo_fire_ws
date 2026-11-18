@@ -21,6 +21,7 @@ find_package(std_srvs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(vision_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
@@ -48,7 +49,12 @@ target_link_libraries(mission ${PROJECT_NAME}_nodes)
 ament_target_dependencies(mission behaviortree_cpp rclcpp rviz_2d_overlay_msgs)
 
 install(TARGETS ${PROJECT_NAME}_nodes LIBRARY DESTINATION lib)
-install(TARGETS mission RUNTIME DESTINATION lib/${PROJECT_NAME})
+# 찍어서 순찰: RViz Publish Point 로 찍은 점을 Nav2 로 돈다 (임무 BT 와 따로 도는 시험 도구)
+add_executable(click_patrol src/click_patrol.cpp)
+target_link_libraries(click_patrol yaml-cpp)
+ament_target_dependencies(click_patrol geometry_msgs nav2_msgs rclcpp rclcpp_action std_srvs visualization_msgs)
+
+install(TARGETS mission click_patrol RUNTIME DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY behavior_trees config launch DESTINATION share/${PROJECT_NAME})
 

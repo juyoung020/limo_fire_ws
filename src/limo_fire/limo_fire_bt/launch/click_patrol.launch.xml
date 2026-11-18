@@ -1,0 +1,14 @@
+<!-- 찍어서 순찰 (임무 BT 와 따로). Nav2(navigation.launch.xml)와 RViz 가 떠 있어야 한다.
+     RViz 위쪽 Publish Point 로 지도를 찍으면 순찰점, 출발·멈춤:
+       ros2 service call /click_patrol/start std_srvs/srv/Trigger
+       ros2 service call /click_patrol/stop  std_srvs/srv/Trigger
+     ros2 launch limo_fire_bt click_patrol.launch.xml [file:=<순찰점 yaml>] [sim:=true] -->
+<launch>
+  <arg name="file" default="" description="시작할 때 읽을 순찰점 yaml (비면 빈 순찰)"/>
+  <arg name="sim" default="false" description="true: 시뮬 시계"/>
+  <node pkg="limo_fire_bt" exec="click_patrol" name="click_patrol" output="screen">
+    <param from="$(find-pkg-share limo_fire_bt)/config/click_patrol.yaml"/>
+    <param name="file" value="$(var file)"/>
+    <param name="use_sim_time" value="$(var sim)"/>
+  </node>
+</launch>
