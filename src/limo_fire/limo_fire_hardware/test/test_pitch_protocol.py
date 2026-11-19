@@ -87,6 +87,16 @@ class PitchProtocolTest(unittest.TestCase):
         for line in ('READY extra', 'pitch 15.0', 'targets OK', ''):
             self.assertFalse(protocol.launcher_startup_banner(line))
 
+    def test_shot_requires_exact_ordered_firmware_replies(self):
+        index = 0
+        for line in ('lever PWM ON', 'shot: cock', 'shot: fire', 'done'):
+            index = protocol.shot_reply_index('shot', index, line)
+        self.assertEqual(index, 3)
+        with self.assertRaises(ValueError):
+            protocol.shot_reply_index('shot', 0, 'shot: fire')
+        with self.assertRaises(ValueError):
+            protocol.shot_reply_index('fire', 0, 'blocked: use e4 first')
+
 
 if __name__ == '__main__':
     unittest.main()

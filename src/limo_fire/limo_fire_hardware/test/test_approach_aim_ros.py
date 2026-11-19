@@ -45,6 +45,7 @@ class FakeRobot(Node):
         self.nav_cancel_seen = threading.Event()
         self.navigation_goals = []
         self.pitch_commands = []
+        self.shot_requests = 0
         self.statuses = []
         self.grid_stale = False
         self.send_malformed = False
@@ -52,7 +53,8 @@ class FakeRobot(Node):
         self.feedback_mode = 'none'
         self.feedback_stamp_ns = None
         self.bridge_status = dict(state='ready', sequence=0, command_deg=None,
-                                  command_stamp=None, acked=False, measured=False)
+                                  command_stamp=None, acked=False, measured=False,
+                                  firing_enabled=True)
         self.tf_pub = TransformBroadcaster(self)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.grid_pub = self.create_publisher(OccupancyGrid, '/global_costmap/costmap', latched)
@@ -60,6 +62,7 @@ class FakeRobot(Node):
         self.odom_pub = self.create_publisher(Odometry, '/odometry/filtered', 10)
         self.base_status_pub = self.create_publisher(LimoStatus, '/limo_status', 10)
         self.bridge_pub = self.create_publisher(String, '/launcher/pitch_status', 10)
+        self.shot_pub = self.create_publisher(String, '/launcher/shot_status', latched)
         self.joint_pub = self.create_publisher(JointState, '/launcher/joint_states', 10)
         self.create_subscription(Float64, '/launcher/pitch_command', self.pitch, 10)
         self.create_subscription(Twist, '/cmd_vel', self.yaw_command, 10)
@@ -71,6 +74,8 @@ class FakeRobot(Node):
                                       cancel_callback=self.nav_cancel, callback_group=self.group)
         self.start_client = self.create_client(Trigger, '/launcher/approach_and_aim')
         self.cancel_client = self.create_client(Trigger, '/launcher/cancel')
+        self.shot_service = self.create_service(Trigger, '/launcher/shot', self.shot,
+                                                callback_group=self.group)
         self.sensor_timer = self.create_timer(0.05, self.publish_sensors, callback_group=self.group)
         self.grid_timer = self.create_timer(0.2, self.publish_grid, callback_group=self.group)
 
@@ -83,7 +88,16 @@ class FakeRobot(Node):
         self.bridge_status = dict(state='acknowledged', sequence=self.sequence,
                                   command_deg=msg.data,
                                   command_stamp=self.get_clock().now().nanoseconds * 1e-9,
-                                  acked=True, measured=False)
+                                  acked=True, measured=False, firing_enabled=True)
+
+    def shot(self, request, response):
+        del request
+        self.shot_requests += 1
+        self.shot_pub.publish(String(data=json.dumps(dict(state='completed', command='shot',
+                                                          sequence=self.shot_requests, measured=False))))
+        response.success = True
+        response.message = f'fixture accepted sequence={self.shot_requests}'
+        return response
 
     def yaw_command(self, msg):
         self.angular_rate = msg.angular.z
@@ -206,6 +220,8 @@ class RosFixture(unittest.TestCase):
     motion_enabled = True
     mount_calibrated = True
     require_pitch_feedback = False
+    auto_fire_enabled = False
+    fire_on_pitch_ack = False
     delay_navigation = False
     yaw_alignment_mode = 'nav2'
     yaw_rate_drive_mode_verified = False
@@ -215,6 +231,8 @@ class RosFixture(unittest.TestCase):
         args = ['--ros-args', '-p', f'motion_enabled:={str(self.motion_enabled).lower()}',
                 '-p', f'mount_calibrated:={str(self.mount_calibrated).lower()}',
                 '-p', f'require_pitch_feedback:={str(self.require_pitch_feedback).lower()}',
+                '-p', f'auto_fire_enabled:={str(self.auto_fire_enabled).lower()}',
+                '-p', f'fire_on_pitch_ack:={str(self.fire_on_pitch_ack).lower()}',
                 '-p', f'yaw_alignment_mode:={self.yaw_alignment_mode}',
                 '-p', f'yaw_rate_drive_mode_verified:={str(self.yaw_rate_drive_mode_verified).lower()}',
                 '-p', 'stop_dwell_s:=0.1',
@@ -312,6 +330,31 @@ class PreviewRosTest(RosFixture):
         self.wait_for(lambda: self.controller.phase == 'PREVIEW_READY')
         self.assertEqual(self.robot.navigation_goals, [])
         self.assertEqual(self.robot.pitch_commands, [])
+
+
+class AutoFireRosTest(RosFixture):
+    auto_fire_enabled = True
+    fire_on_pitch_ack = True
+
+    def test_acknowledged_pitch_requests_one_firmware_shot(self):
+        self.assertTrue(self.call(self.robot.start_client).success)
+        self.wait_for(lambda: self.controller.phase == 'SHOT_COMMAND_ACKNOWLEDGED', 8)
+        self.assertEqual(self.robot.shot_requests, 1)
+        self.assertEqual(len(self.robot.pitch_commands), 1)
+        self.wait_for(lambda: any(s['state'] == 'SHOT_COMMAND_ACKNOWLEDGED' for s in self.robot.statuses))
+        terminal = next(s for s in self.robot.statuses if s['state'] == 'SHOT_COMMAND_ACKNOWLEDGED')
+        self.assertFalse(terminal['measured'])
+
+
+class AutoFireFeedbackRosTest(RosFixture):
+    auto_fire_enabled = True
+    require_pitch_feedback = True
+
+    def test_measured_pitch_requests_one_firmware_shot(self):
+        self.robot.feedback_mode = 'fresh'
+        self.assertTrue(self.call(self.robot.start_client).success)
+        self.wait_for(lambda: self.controller.phase == 'SHOT_COMMAND_ACKNOWLEDGED', 8)
+        self.assertEqual(self.robot.shot_requests, 1)
 
 
 class CancellationRosTest(RosFixture):

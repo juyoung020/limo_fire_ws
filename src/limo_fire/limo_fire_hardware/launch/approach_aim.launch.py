@@ -16,12 +16,17 @@ def generate_launch_description():
         DeclareLaunchArgument('motion_enabled', default_value='false'),
         DeclareLaunchArgument('serial_enabled', default_value='false'),
         DeclareLaunchArgument('serial_port', default_value=''),
+        DeclareLaunchArgument('firing_enabled', default_value='false'),
+        DeclareLaunchArgument('auto_fire_enabled', default_value='false'),
+        DeclareLaunchArgument('fire_on_pitch_ack', default_value='false'),
         DeclareLaunchArgument('yaw_alignment_mode', default_value='nav2'),
         DeclareLaunchArgument('yaw_rate_drive_mode_verified', default_value='false'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         Node(package='limo_fire_hardware', executable='approach_aim', name='launcher_approach_aim',
              output='screen', parameters=[LaunchConfiguration('config'), {
                  'motion_enabled': ParameterValue(LaunchConfiguration('motion_enabled'), value_type=bool),
+                 'auto_fire_enabled': ParameterValue(LaunchConfiguration('auto_fire_enabled'), value_type=bool),
+                 'fire_on_pitch_ack': ParameterValue(LaunchConfiguration('fire_on_pitch_ack'), value_type=bool),
                  'yaw_alignment_mode': ParameterValue(LaunchConfiguration('yaw_alignment_mode'), value_type=str),
                  'yaw_rate_drive_mode_verified': ParameterValue(
                      LaunchConfiguration('yaw_rate_drive_mode_verified'), value_type=bool),
@@ -30,6 +35,7 @@ def generate_launch_description():
         Node(package='limo_fire_hardware', executable='pitch_serial_bridge', name='pitch_serial_bridge',
              output='screen', parameters=[LaunchConfiguration('config'), {
                  'enabled': ParameterValue(LaunchConfiguration('serial_enabled'), value_type=bool),
+                 'firing_enabled': ParameterValue(LaunchConfiguration('firing_enabled'), value_type=bool),
                  'serial_port': ParameterValue(LaunchConfiguration('serial_port'), value_type=str),
                  'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool),
              }]),

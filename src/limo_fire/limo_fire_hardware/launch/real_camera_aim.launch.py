@@ -26,6 +26,9 @@ def generate_launch_description():
         DeclareLaunchArgument('motion_enabled', default_value='false'),
         DeclareLaunchArgument('serial_enabled', default_value='false'),
         DeclareLaunchArgument('serial_port', default_value=''),
+        DeclareLaunchArgument('firing_enabled', default_value='false'),
+        DeclareLaunchArgument('auto_fire_enabled', default_value='false'),
+        DeclareLaunchArgument('fire_on_pitch_ack', default_value='false'),
         DeclareLaunchArgument('yaw_alignment_mode', default_value='nav2'),
         DeclareLaunchArgument('yaw_rate_drive_mode_verified', default_value='false'),
         DeclareLaunchArgument('target_id', default_value=''),
@@ -46,5 +49,6 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(os.path.join(hardware, 'launch', 'approach_aim.launch.py')),
             launch_arguments={name: LaunchConfiguration(name) for name in (
                 'config', 'motion_enabled', 'serial_enabled', 'serial_port',
+                'firing_enabled', 'auto_fire_enabled', 'fire_on_pitch_ack',
                 'yaw_alignment_mode', 'yaw_rate_drive_mode_verified', 'use_sim_time')}.items()),
     ])

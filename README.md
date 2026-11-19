@@ -149,6 +149,8 @@ LIMO 지붕 나사 구멍에 고정하는 3D 출력(PLA) 발사대. 서보 두 �
 
 펌웨어 값: 장전 +67.3°, 장전 뒤 1.0 s 대기, 발사 -24°. 설계·검증 문서는 [`hardware/modeling/탁구공발사대/v5/설계_v5.md`](hardware/modeling/탁구공발사대/v5/설계_v5.md).
 
+ESP32-S3 GPIO4 레버·GPIO5 상하 모터를 쓰는 실물 시험용 ROS 경로는 [탐지·접근·조준 패키지](src/limo_fire/limo_fire_hardware/README.md)와 [조준 뒤 장전·발사 및 별도 터미널 실행법](src/limo_fire/limo_fire_hardware/REAL_FIRE_TEST.md)에 있다. 자동 발사는 기본으로 꺼져 있다. 가상 Nav2·시리얼 시험은 통과했지만 이 연속 경로에서 실물 공 발사·명중은 아직 검증하지 않았다. 기존 물 노즐 행동 트리와는 별도 시험 경로다.
+
 ## 폴더
 
 ```

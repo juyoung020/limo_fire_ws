@@ -1,6 +1,10 @@
 launcher_approach_aim:
   ros__parameters:
     motion_enabled: false
+    auto_fire_enabled: false
+    # If false, automatic fire needs a fresh measured joint-state pitch feedback.
+    # If true, firmware pitch command acknowledgement is enough; no angle is measured.
+    fire_on_pitch_ack: false
     mount_calibrated: false
     # Measured pitch-pivot position in base_link, metres. Zeroes are placeholders.
     mount_xyz_m: [0.0, 0.0, 0.0]
@@ -40,6 +44,8 @@ launcher_approach_aim:
 pitch_serial_bridge:
   ros__parameters:
     enabled: false
+    firing_enabled: false
+    shot_timeout_s: 8.0
     # Use the verified /dev/serial/by-id/... device, not a guessed ttyUSB number.
     serial_port: ''
     baud_rate: 115200

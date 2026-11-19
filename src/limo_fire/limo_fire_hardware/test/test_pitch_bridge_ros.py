@@ -23,6 +23,7 @@ try:
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from std_msgs.msg import Float64, String
+    from std_srvs.srv import Trigger
     ROS_PTY_AVAILABLE = os.name == 'posix'
 except ImportError:
     ROS_PTY_AVAILABLE = False
@@ -80,6 +81,14 @@ class FirmwareEmulator:
                     response = f'pitch {angle:.1f}\r\n'
                 elif line == 'e5' and self.guarded:
                     response = 'tilt PWM ON\r\n'
+                elif line == 'e4' and self.guarded:
+                    response = 'lever PWM ON\r\n'
+                elif line == 'c' and self.guarded:
+                    response = 'cocked\r\n'
+                elif line == 'f' and self.guarded:
+                    response = 'fired\r\n'
+                elif line == 's' and self.guarded:
+                    response = 'shot: cock\r\nshot: fire\r\ndone\r\n'
                 if response is not None:
                     os.write(self.master, response.encode('ascii'))
 
@@ -112,6 +121,9 @@ class PitchBridgeRosTest(unittest.TestCase):
         self.sub = self.node.create_subscription(
             String, '/launcher/pitch_status', self.receive_status, qos)
         self.pub = self.node.create_publisher(Float64, '/launcher/pitch_command', 10)
+        self.shot_statuses = []
+        self.node.create_subscription(String, '/launcher/shot_status',
+                                      lambda msg: self.shot_statuses.append(json.loads(msg.data)), qos)
         self.emulator = None
         self.process = None
         self.log = tempfile.TemporaryFile(mode='w+b')
@@ -119,7 +131,7 @@ class PitchBridgeRosTest(unittest.TestCase):
     def receive_status(self, message):
         self.statuses.append(json.loads(message.data))
 
-    def start_bridge(self, identity=True, mismatch=False, uno=False, guarded=False):
+    def start_bridge(self, identity=True, mismatch=False, uno=False, guarded=False, firing_enabled=False):
         self.emulator = FirmwareEmulator(identity=identity, mismatch=mismatch, uno=uno, guarded=guarded)
         command = [sys.executable, '-c',
                    'from limo_fire_hardware.pitch_serial_bridge import main; main()',
@@ -127,6 +139,8 @@ class PitchBridgeRosTest(unittest.TestCase):
                    '-p', f'serial_port:={self.emulator.slave_name}',
                    '-p', 'startup_delay_s:=0.1', '-p', 'startup_timeout_s:=1.0',
                    '-p', 'ack_timeout_s:=1.0', '-p', 'min_command_interval_s:=0.0']
+        if firing_enabled:
+            command.extend(['-p', 'firing_enabled:=true'])
         self.process = subprocess.Popen(command, stdout=self.log, stderr=subprocess.STDOUT,
                                         env=os.environ.copy(), start_new_session=True)
 
@@ -153,6 +167,37 @@ class PitchBridgeRosTest(unittest.TestCase):
         message = Float64()
         message.data = degrees
         self.pub.publish(message)
+
+    def shot_request(self, action):
+        client = self.node.create_client(Trigger, '/launcher/' + action)
+        self.wait_for(client.service_is_ready)
+        future = client.call_async(Trigger.Request())
+        self.wait_for(future.done)
+        return future.result()
+
+    def test_guarded_launcher_manual_cock_fire_and_single_shot(self):
+        self.start_bridge(guarded=True, firing_enabled=True)
+        self.wait_for(lambda: any(s['state'] == 'ready' for s in self.statuses))
+        self.assertFalse(self.shot_request('fire').success)
+        self.assertTrue(self.shot_request('cock').success)
+        self.wait_for(lambda: any(s['state'] == 'completed' and s['command'] == 'cock'
+                                  for s in self.shot_statuses))
+        self.assertFalse(self.shot_request('cock').success)
+        self.assertFalse(self.shot_request('shot').success)
+        self.assertTrue(self.shot_request('fire').success)
+        self.wait_for(lambda: any(s['state'] == 'completed' and s['command'] == 'fire'
+                                  for s in self.shot_statuses))
+        self.assertFalse(self.shot_request('fire').success)
+        self.assertTrue(self.shot_request('shot').success)
+        self.wait_for(lambda: any(s['state'] == 'completed' and s['command'] == 'shot'
+                                  for s in self.shot_statuses))
+        self.assertEqual(self.emulator.commands(), ['?', 'e5', 'e4', 'c', 'f', 's'])
+
+    def test_firing_disabled_rejects_manual_shot(self):
+        self.start_bridge(guarded=True)
+        self.wait_for(lambda: any(s['state'] == 'ready' for s in self.statuses))
+        self.assertFalse(self.shot_request('shot').success)
+        self.assertEqual(self.emulator.commands(), ['?', 'e5'])
 
     def test_nominal_pitch_and_command_only_acknowledgement(self):
         self.start_bridge()

@@ -1,4 +1,4 @@
-"""Pitch-only adapter for Juyoung's launcher_test and its guarded ESP32 port.
+"""Single-owner serial adapter for pitch and explicitly enabled launcher shots.
 
 The firmware reports the commanded pitch. Its reply is not an encoder reading.
 ROS imports are local to main so protocol helpers can be tested without ROS.
@@ -82,6 +82,24 @@ def guarded_pitch_firmware(line):
                 and (line.endswith('(ON)') or line.endswith('(OFF)'))))
 
 
+SHOT_REPLIES = {'cock': ('cocked',), 'fire': ('fired',),
+                'shot': ('shot: cock', 'shot: fire', 'done')}
+SHOT_BYTES = {'cock': b'c\n', 'fire': b'f\n', 'shot': b's\n'}
+MOTION_REPLIES = frozenset(line for replies in SHOT_REPLIES.values() for line in replies)
+
+
+def shot_reply_index(command, index, line):
+    """Advance only on the next exact firmware reply; never infer physical motion."""
+    expected = SHOT_REPLIES[command]
+    if line.startswith('blocked:') or line.endswith('failed'):
+        raise ValueError(line)
+    if line == expected[index]:
+        return index + 1
+    if line in MOTION_REPLIES:
+        raise ValueError(f'out-of-order launcher reply: {line}')
+    return index
+
+
 def main(args=None):
     import rclpy
     from rcl_interfaces.msg import ParameterDescriptor
@@ -89,6 +107,7 @@ def main(args=None):
     from rclpy.executors import ExternalShutdownException
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from std_msgs.msg import Float64, String
+    from std_srvs.srv import Trigger
 
     class PitchSerialBridge(Node):
         def __init__(self):
@@ -105,6 +124,8 @@ def main(args=None):
             self.maximum = parameter('max_pitch_deg', 30.0)
             self.ack_timeout = parameter('ack_timeout_s', 3.0)
             self.command_interval = parameter('min_command_interval_s', 0.2)
+            self.firing_enabled = parameter('firing_enabled', False)
+            self.shot_timeout = parameter('shot_timeout_s', 8.0)
             startup_delay = parameter('startup_delay_s', 2.0)
             startup_timeout = parameter('startup_timeout_s', 8.0)
             command_topic = parameter('command_topic', '/launcher/pitch_command')
@@ -113,17 +134,27 @@ def main(args=None):
             if (baud <= 0 or not math.isfinite(self.ack_timeout) or self.ack_timeout <= 0
                     or not math.isfinite(self.command_interval) or self.command_interval < 0
                     or not math.isfinite(startup_delay) or startup_delay < 0
-                    or not math.isfinite(startup_timeout) or startup_timeout <= startup_delay):
+                    or not math.isfinite(startup_timeout) or startup_timeout <= startup_delay
+                    or not math.isfinite(self.shot_timeout) or self.shot_timeout <= 0):
                 raise ValueError('invalid serial timing or baud configuration')
 
             status_qos = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                                     reliability=ReliabilityPolicy.RELIABLE)
             self.status_publisher = self.create_publisher(String, status_topic, status_qos)
             self.command_subscription = self.create_subscription(Float64, command_topic, self.command, 10)
+            self.shot_status_publisher = self.create_publisher(String, '/launcher/shot_status', status_qos)
+            for name in SHOT_BYTES:
+                self.create_service(Trigger, '/launcher/' + name,
+                                    lambda request, response, action=name: self.shot_service(action, response))
             self.port = None
             self.fault = False
             self.sequence = 0
             self.pending = None
+            self.shot_pending = None
+            self.shot_sequence = 0
+            self.cocked = False
+            self.lever_enabled = False
+            self.guarded_firmware_seen = False
             self.receive_buffer = bytearray()
             self.last_sent = -math.inf
             self.ready_at = time.monotonic() + startup_delay
@@ -155,7 +186,7 @@ def main(args=None):
 
         def publish_status(self, state, command=None, acked=False, reason=''):
             status = dict(state=state, stamp=self.now_seconds(), acked=acked,
-                          measured=False, reason=reason)
+                          measured=False, firing_enabled=self.firing_enabled, reason=reason)
             status.update(command or dict(sequence=self.sequence, command_deg=None, command_stamp=None))
             self.latest_status = status
             self.emit_status()
@@ -171,7 +202,77 @@ def main(args=None):
             self.fault = True
             self.publish_status('error', self.pending, reason=reason)
             self.pending = None
+            if self.shot_pending is not None:
+                self.publish_shot('error', reason)
+                self.shot_pending = None
+            self.cocked = False
             self.get_logger().error(reason)
+
+        def publish_shot(self, state, reason=''):
+            pending = self.shot_pending or {}
+            message = String()
+            message.data = json.dumps(dict(state=state, reason=reason,
+                                           command=pending.get('command'),
+                                           sequence=pending.get('sequence', self.shot_sequence),
+                                           stamp=self.now_seconds(), measured=False), allow_nan=False)
+            self.shot_status_publisher.publish(message)
+
+        def shot_service(self, action, response):
+            if not self.firing_enabled:
+                response.success, response.message = False, 'firing_enabled=false'
+            elif not self.enabled or self.port is None or self.fault or not self.startup_reported:
+                response.success, response.message = False, 'identified launcher serial port is unavailable'
+            elif not self.guarded_firmware_seen:
+                response.success, response.message = False, 'guarded ESP32 launcher firmware is required'
+            elif self.pending is not None or self.shot_pending is not None:
+                response.success, response.message = False, 'another serial command is pending'
+            elif action == 'fire' and not self.cocked:
+                response.success, response.message = False, 'cock must be acknowledged before fire'
+            elif action in ('cock', 'shot') and self.cocked:
+                response.success, response.message = False, 'launcher is already cocked; fire or inspect before re-cocking'
+            else:
+                self.shot_sequence += 1
+                self.shot_pending = dict(command=action, sequence=self.shot_sequence,
+                                         index=0, started=time.monotonic(), enabling=not self.lever_enabled)
+                try:
+                    self.receive_buffer.clear()
+                    self.port.reset_input_buffer()
+                    self._write_shot(b'e4\n' if not self.lever_enabled else SHOT_BYTES[action])
+                    self.publish_shot('accepted')
+                    response.success = True
+                    response.message = (f'accepted sequence={self.shot_sequence}; '
+                                        'watch /launcher/shot_status for completion')
+                except Exception as exc:
+                    self.fail(f'launcher serial write failed: {exc}')
+                    response.success, response.message = False, str(exc)
+            return response
+
+        def _write_shot(self, payload):
+            if self.port.write(payload) != len(payload):
+                raise OSError('incomplete launcher serial write')
+            self.last_sent = time.monotonic()
+
+        def _shot_line(self, line):
+            pending = self.shot_pending
+            if pending is None:
+                return
+            if pending['enabling']:
+                if line == 'lever PWM ON':
+                    self.lever_enabled = True
+                    pending['enabling'] = False
+                    pending['started'] = time.monotonic()
+                    self._write_shot(SHOT_BYTES[pending['command']])
+                    self.publish_shot('running')
+                elif line.startswith('blocked:') or 'lever PWM attach failed' in line:
+                    raise ValueError(line)
+                elif line in MOTION_REPLIES:
+                    raise ValueError(f'unexpected launcher motion reply before e4: {line}')
+                return
+            pending['index'] = shot_reply_index(pending['command'], pending['index'], line)
+            if pending['index'] == len(SHOT_REPLIES[pending['command']]):
+                self.cocked = pending['command'] == 'cock'
+                self.publish_shot('completed', 'Firmware command acknowledged; physical motion unmeasured')
+                self.shot_pending = None
 
         def command(self, message):
             self.sequence += 1
@@ -181,7 +282,7 @@ def main(args=None):
             if not self.enabled or self.port is None or self.fault:
                 self.publish_status('rejected', request, reason='serial output unavailable')
                 return
-            if self.pending is not None:
+            if self.pending is not None or self.shot_pending is not None:
                 self.publish_status('rejected', request, reason='previous command awaiting reply')
                 return
             now = time.monotonic()
@@ -215,6 +316,9 @@ def main(args=None):
                 if self.pending and time.monotonic() - self.last_sent >= self.ack_timeout:
                     self.fail('pitch reply deadline exceeded; restart bridge before another command')
                     return
+                if self.shot_pending and time.monotonic() - self.shot_pending['started'] >= self.shot_timeout:
+                    self.fail('launcher reply deadline exceeded; inspect hardware before any retry')
+                    return
                 available = self.port.in_waiting
                 if available:
                     data = self.port.read(min(available, 4096))
@@ -227,6 +331,7 @@ def main(args=None):
                             if launcher_identity(line):
                                 self.identity_seen = True
                                 self.pitch_enable_required |= guarded_pitch_firmware(line)
+                                self.guarded_firmware_seen |= guarded_pitch_firmware(line)
                             if self.pitch_enable_sent_at is not None:
                                 if line == 'tilt PWM ON':
                                     self.pitch_enable_sent_at = None
@@ -237,6 +342,7 @@ def main(args=None):
                             if self.pending and matching_pitch_reply(line, self.pending['command_deg']):
                                 self.publish_status('acknowledged', self.pending, acked=True)
                                 self.pending = None
+                            self._shot_line(line)
                         elif byte != 13:
                             self.receive_buffer.append(byte)
                             if len(self.receive_buffer) > 512:

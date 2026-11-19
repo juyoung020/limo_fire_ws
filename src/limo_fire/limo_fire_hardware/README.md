@@ -6,6 +6,8 @@
 
 발사 결과 기록과 오프라인 보정 후보 학습은 [AIM_LEARNING_PREP.md](AIM_LEARNING_PREP.md)를 따른다. 현재 조준 실행에는 학습 모델이 연결되지 않는다.
 
+ESP32-S3의 장전·발사 브리지, 사용자가 조작하는 별도 터미널, 조준 후 자동 한 발 요청은 [REAL_FIRE_TEST.md](REAL_FIRE_TEST.md)를 따른다. 모두 기본 비활성화이며 펌웨어 `done`은 실제 탄착 측정이 아니다.
+
 ## 확인한 발사장치 구성
 
 2026-11-18에는 Arduino Uno로 분리 모터 진단을 했다. 이번 통합 시험의 대상은 **ESP32-S3 GPIO4 레버·GPIO5 상하**다. 상하 모터는 사용자 제공 DSSERVO 20kg, 270° 위치형 가정이며 실물 각도·영점은 아직 측정되지 않았다.
@@ -22,7 +24,7 @@
 
 수정된 ESP32 소스는 [launcher_test/src/main.cpp](../../../hardware/modeling/탁구공발사대/firmware/launcher_test/src/main.cpp)다. 통신 속도는 115200 baud다. 브리지는 Uno 상태 응답도 식별할 수 있지만, 이 브랜치의 금요일 실물 시험은 ESP32-S3를 대상으로 한다. `READY`만으로는 장치를 신뢰하지 않으며, 확인 후 보드가 재시작되면 새 각도 명령을 차단한다.
 
-이 패키지는 접근·조준을 연결하며, 장전·발사 명령 `c`/`f`/`s`를 전송하지 않는다. 파일 배치와 소프트웨어 시험은 실제 보드 업로드·서보 동작·발사 검증을 대신하지 않는다.
+이 패키지의 `pitch_serial_bridge`는 명시적으로 `firing_enabled`를 켰을 때만 ESP32-S3 장전·발사 명령 `c`/`f`/`s`를 보낸다. `launcher_control_terminal`은 같은 ROS 브리지를 사용한다. `auto_fire_enabled`를 따로 켜면 조준 완료 후 `s`를 한 번 요청한다. 파일 배치와 소프트웨어 시험은 실제 보드 업로드·서보 동작·발사 검증을 대신하지 않는다.
 
 ## 빌드
 
@@ -113,7 +115,7 @@ ros2 launch limo_fire_hardware real_camera_aim.launch.py \
 
 실제 `/fire/observations`의 `map` 좌표가 카메라 표적과 줄자 거리와 맞고 브리지 상태가 `ready`가 된 뒤 `/launcher/approach_and_aim` 서비스를 호출한다. 무장전 시험에서 공과 고무줄 하중을 제거해 상하 구동 및 혼 방향을 먼저 확인한다.
 
-ESP32-S3의 수정된 `hardware/modeling/탁구공발사대/firmware/launcher_test/src/main.cpp`를 쓰면 브리지는 펌웨어 신원을 확인하고 `e5`를 보내 상하 GPIO5 PWM의 `tilt PWM ON` 응답을 받은 뒤에만 `ready`가 된다. 따라서 이후 `a<각도>`가 거부되지 않는다. 이 단계에서 1500µs 신호로 모터가 움직일 수 있다. 브리지는 장전·발사 레버 GPIO4를 활성화하지 않으며 `s`·`c`·`f` 명령도 보내지 않는다. 서보 영점과 회전 부호, 발사기 장착 치수는 실물에서 아직 확인해야 한다.
+ESP32-S3의 수정된 `hardware/modeling/탁구공발사대/firmware/launcher_test/src/main.cpp`를 쓰면 브리지는 펌웨어 신원을 확인하고 `e5`를 보내 상하 GPIO5 PWM의 `tilt PWM ON` 응답을 받은 뒤에만 `ready`가 된다. 따라서 이후 `a<각도>`가 거부되지 않는다. 이 단계에서 1500µs 신호로 모터가 움직일 수 있다. 기본 `firing_enabled=false`에서는 장전·발사 레버 GPIO4를 활성화하지 않으며 `s`·`c`·`f` 명령도 보내지 않는다. 서보 영점과 회전 부호, 발사기 장착 치수는 실물에서 아직 확인해야 한다.
 
 실행 상태는 `PLANNING → APPROACHING → WAIT_STOP → REACQUIRING → ALIGNING → WAIT_STOP → REACQUIRING → WAIT_PITCH` 순서다. 이동 후 최신 표적과 거리·정지를 다시 확인하고, 차체 방향 오차가 허용 범위일 때 상하 명령을 보낸다. 불 검출은 `FireObservation`의 `position_valid`, confidence와 시각을 확인한다. 진행 중 다른 표적 ID는 채택하지 않고, 선택 표적의 누적 위치 변화가 허용치를 넘으면 취소한다.
 

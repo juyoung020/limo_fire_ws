@@ -1,6 +1,7 @@
 """One requested approach, body-yaw alignment and single-axis pitch command."""
 import json
 import math
+import re
 import signal
 import time
 from dataclasses import replace
@@ -57,6 +58,9 @@ class ApproachAim(Node):
             'yaw_rate_timeout_s': 8.0, 'yaw_rate_max_error_deg': 45.0,
             'require_pitch_feedback': False, 'pitch_joint': 'launcher_pitch_joint',
             'pitch_feedback_dwell_s': 0.2,
+            'auto_fire_enabled': False, 'fire_on_pitch_ack': False,
+            'shot_timeout_s': 12.0, 'shot_service': '/launcher/shot',
+            'shot_status_topic': '/launcher/shot_status',
             'fire_topic': '/fire/observations', 'odom_topic': '/odometry/filtered',
             'costmap_topic': '/global_costmap/costmap',
             'navigate_action': '/navigate_to_pose', 'planner_action': '/compute_path_to_pose',
@@ -85,6 +89,9 @@ class ApproachAim(Node):
         grid_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(OccupancyGrid, self.cfg['costmap_topic'], self._grid, grid_qos)
         self.create_subscription(String, self.cfg['pitch_status_topic'], self._bridge, 10)
+        shot_qos = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(String, self.cfg['shot_status_topic'], self._shot_status, shot_qos)
+        self.shot_client = self.create_client(Trigger, self.cfg['shot_service'])
         self.create_subscription(JointState, self.cfg['pitch_feedback_topic'], self._joint, 10)
         self.create_service(Trigger, '/launcher/approach_and_aim', self._start)
         self.create_service(Trigger, '/launcher/cancel', self._cancel)
@@ -105,6 +112,9 @@ class ApproachAim(Node):
         self.base_status_at = 0.0
         self.bridge = {}
         self.bridge_at = 0.0
+        self.shot_status = {}
+        self.shot_baseline = 0
+        self.shot_expected_sequence = 0
         self.joint = None
         self.joint_at = 0.0
         self.phase_at = time.monotonic()
@@ -125,6 +135,7 @@ class ApproachAim(Node):
                     'target_freshness_s', 'sensor_freshness_s', 'costmap_freshness_s',
                     'tf_freshness_s', 'plan_timeout_s', 'navigation_timeout_s',
                     'reacquire_timeout_s', 'pitch_timeout_s', 'stop_dwell_s', 'pitch_feedback_dwell_s',
+                    'shot_timeout_s',
                     'target_shift_limit_m', 'yaw_tolerance_deg', 'pitch_tolerance_deg', 'max_base_tilt_deg'):
             if self.cfg[key] <= 0:
                 raise ValueError(f'{key} must be positive')
@@ -152,6 +163,11 @@ class ApproachAim(Node):
             raise ValueError('candidate_offsets_deg must contain finite values')
         if self.cfg['yaw_alignment_mode'] not in ('nav2', 'yaw_rate'):
             raise ValueError('yaw_alignment_mode must be nav2 or yaw_rate')
+        if self.cfg['auto_fire_enabled'] and not self.cfg['motion_enabled']:
+            raise ValueError('automatic fire requires motion_enabled=true')
+        if (self.cfg['auto_fire_enabled'] and not self.cfg['require_pitch_feedback']
+                and not self.cfg['fire_on_pitch_ack']):
+            raise ValueError('automatic fire requires measured pitch or explicit fire_on_pitch_ack=true')
         if not self.cfg['yaw_velocity_topic'] or not self.cfg['limo_status_topic']:
             raise ValueError('yaw velocity and LIMO status topics must be nonempty')
         yaw_limits = ('yaw_rate_gain', 'yaw_rate_min_rps', 'yaw_rate_max_rps',
@@ -311,6 +327,9 @@ class ApproachAim(Node):
                     raise ValueError('Nav2 NavigateToPose is unavailable')
                 if time.monotonic() - self.bridge_at > 2.5 or self.bridge.get('state') not in ('ready', 'acknowledged'):
                     raise ValueError('An enabled, identified and ready pitch bridge is required')
+                if self.cfg['auto_fire_enabled']:
+                    if self.bridge.get('firing_enabled') is not True or not self.shot_client.service_is_ready():
+                        raise ValueError('Automatic fire requires an enabled launcher shot bridge')
             self.target = self.latest_fire
             self.initial_target_xyz = self._xyz(self.target)
             candidates = approach_candidates(
@@ -331,6 +350,9 @@ class ApproachAim(Node):
 
     def _cancel(self, request, response):
         del request
+        if self.phase in ('WAIT_SHOT_ACCEPT', 'WAIT_SHOT'):
+            response.success, response.message = False, 'Firmware shot may be in progress; stop external power and inspect hardware'
+            return response
         if self.active:
             self._begin_cancel('CANCELLED', 'Cancellation requested')
         response.success, response.message = True, 'Cancellation requested'
@@ -586,6 +608,22 @@ class ApproachAim(Node):
                     self._state('WAIT_STOP', yaw_error_deg=math.degrees(error))
             elif self.phase == 'WAIT_PITCH':
                 self._check_pitch(elapsed)
+            elif self.phase in ('WAIT_SHOT_ACCEPT', 'WAIT_SHOT'):
+                if elapsed > self.cfg['shot_timeout_s']:
+                    self.active = False
+                    self._state('SHOT_UNCONFIRMED', 'Shot response timed out; inspect hardware before retry')
+                elif self.phase == 'WAIT_SHOT':
+                    status = self.shot_status
+                    if (status.get('sequence') == self.shot_expected_sequence
+                            and status.get('command') == 'shot'):
+                        if status.get('state') == 'completed':
+                            self.active = False
+                            self._state('SHOT_COMMAND_ACKNOWLEDGED',
+                                        'Firmware reported done; physical projectile motion unmeasured',
+                                        measured=False)
+                        elif status.get('state') == 'error':
+                            self.active = False
+                            self._state('SHOT_UNCONFIRMED', status.get('reason', 'Launcher fault'))
         except (ValueError, TransformException) as exc:
             self._fail(str(exc))
 
@@ -626,6 +664,9 @@ class ApproachAim(Node):
                         and abs(status['command_deg'] - self.pitch_deg) <= 0.051
                         and status['command_stamp'] >= self.pitch_sent_ns * 1e-9)
         if acknowledged and not self.cfg['require_pitch_feedback']:
+            if self.cfg['auto_fire_enabled']:
+                self._request_shot(measured=False)
+                return
             self.active = False
             self._state('PITCH_ACKNOWLEDGED', 'Firmware acknowledged the command', measured=False,
                         pitch_deg=self.pitch_deg, aiming_model=self.cfg['aiming_model'])
@@ -639,6 +680,9 @@ class ApproachAim(Node):
                 if self.pitch_feedback_since is None:
                     self.pitch_feedback_since = time.monotonic()
                 if time.monotonic() - self.pitch_feedback_since >= self.cfg['pitch_feedback_dwell_s']:
+                    if self.cfg['auto_fire_enabled']:
+                        self._request_shot(measured=True)
+                        return
                     self.active = False
                     self._state('AIM_VERIFIED', 'Fresh measured pitch feedback is within tolerance', measured=True)
                     return
@@ -646,6 +690,55 @@ class ApproachAim(Node):
                 self.pitch_feedback_since = None
         if elapsed > self.cfg['pitch_timeout_s']:
             raise ValueError('Pitch acknowledgement or required measured feedback timed out')
+
+    def _shot_status(self, message):
+        try:
+            status = json.loads(message.data)
+            if isinstance(status, dict) and isinstance(status.get('sequence'), int):
+                self.shot_status = status
+        except (ValueError, TypeError):
+            pass
+
+    def _request_shot(self, measured):
+        if not measured and not self.cfg['fire_on_pitch_ack']:
+            raise ValueError('Unmeasured pitch is not authorized for automatic fire')
+        if not self._stopped() or not self._target_ready() or self.handles or self.pending_requests:
+            raise ValueError('Robot, target or Nav2 state changed before shot')
+        pose, required_pitch, error = self._geometry()
+        if (not self._clear_at_pose(pose)
+                or abs(math.degrees(error)) > self.cfg['yaw_tolerance_deg']
+                or abs(required_pitch - self.pitch_deg) > self.cfg['pitch_tolerance_deg']):
+            raise ValueError('Aim or clearance changed before shot')
+        if not self.shot_client.service_is_ready():
+            raise ValueError('Launcher shot service is unavailable')
+        if time.monotonic() - self.bridge_at > 2.5 or self.bridge.get('firing_enabled') is not True:
+            raise ValueError('Launcher firing bridge is no longer ready')
+        self.shot_baseline = self.shot_status.get('sequence', 0)
+        token = self.epoch
+        self._state('WAIT_SHOT_ACCEPT', pitch_deg=self.pitch_deg, measured=measured)
+        future = self.shot_client.call_async(Trigger.Request())
+
+        def accepted(result):
+            if token != self.epoch or not self.active:
+                return
+            try:
+                reply = result.result()
+                if not reply.success:
+                    self.active = False
+                    self._state('SHOT_REJECTED', reply.message)
+                else:
+                    match = re.search(r'\bsequence=(\d+)\b', reply.message)
+                    if not match or int(match.group(1)) <= self.shot_baseline:
+                        self.active = False
+                        self._state('SHOT_UNCONFIRMED', 'Shot service did not provide a fresh sequence')
+                        return
+                    self.shot_expected_sequence = int(match.group(1))
+                    self._state('WAIT_SHOT', reply.message)
+            except Exception as exc:
+                self.active = False
+                self._state('SHOT_UNCONFIRMED', f'Shot service response failed: {exc}')
+
+        future.add_done_callback(accepted)
 
     def close(self):
         self.epoch += 1
