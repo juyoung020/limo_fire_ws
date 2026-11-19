@@ -46,7 +46,7 @@ GUI 터미널이 없으면 위의 `ros2 run` 명령을 직접 사용한다. 이�
 
 실물 카메라 표적의 지도 좌표와 거리, 장착 치수, Nav2 도착·차체 정지, 좌우 오차와 상하각을 확인한 뒤 실행한다. `a`를 누를 때 최근 표적이 없으면 주영의 프론티어 탐사를 켠다. 지도 좌표가 있는 같은 표적을 서로 다른 영상 시각으로 세 번 확인하면 탐사를 끄고, `idle` 상태와 차체 정지 0.5초를 확인한 뒤 기존 접근·조준·발사 임무를 시작한다. 180초 안에 표적이 없거나 지도가 닫혀 탐사가 끝나면 발사하지 않는다. 탐사 서비스가 없거나 다른 탐사가 이미 진행 중이어도 시작하지 않는다.
 
-Wego의 기존 작업공간에는 `limo_fire_explore`가 설치돼 있지 않아, 2026-11-19에 `/home/wego/launcher_auto_fire_20261119` 시험 오버레이에 프론티어 실행 파일만 빌드했다. 이 빌드는 `-DLIMO_FIRE_FRONTIER_ONLY=ON`을 사용했고, 기존 인식·Nav2 설치본은 바꾸지 않았다. `ros2 pkg prefix limo_fire_explore`가 이 오버레이를 가리키는지 확인한다. 새 저장소 전체를 빌드할 때는 기본 옵션으로 전체 탐사 컴포넌트를 빌드할 수 있다.
+Wego의 기존 작업공간에는 `limo_fire_explore`가 설치돼 있지 않아, 2026-11-19에 `/home/wego/launcher_auto_fire_20261119` 시험 오버레이에 프론티어 실행 파일만 빌드했다. 이 빌드는 `-DLIMO_FIRE_FRONTIER_ONLY=ON`을 사용했고, 기존 인식·Nav2 설치본은 바꾸지 않았다. `ros2 pkg prefix limo_fire_explore`가 이 오버레이를 가리키는지 확인한다. 2026-11-20 터미널 안전장치가 포함된 `limo_fire_hardware`는 `/home/wego/launcher_auto_fire_20261120`에 따로 빌드했다. 11-19 오버레이 **다음에** 이 오버레이를 source하고, `ros2 pkg prefix limo_fire_hardware`가 20261120을 가리키는지 확인한다. 11-19 오버레이의 `limo_fire_hardware`에는 `r`·Ctrl+C 안전장치가 없다. 새 저장소 전체를 빌드할 때는 기본 옵션으로 전체 탐사 컴포넌트를 빌드할 수 있다.
 
 표적을 탐색하며 지도를 새로 만들 때는 첫 터미널에서 로봇을, 둘째 터미널에서 Cartographer·Nav2·멈춘 프론티어 탐사 노드를 실행한다. 각 터미널의 ROS 도메인을 맞추고 RViz에서 위치·지도·장애물을 확인한다. 저장된 지도에 미지 영역이 없으면 프론티어 탐사는 곧 `done`이 된다.
 
@@ -69,6 +69,7 @@ ros2 launch limo_fire_explore frontier_explorer.launch.xml stack:=true rviz:=tru
 source /opt/ros/humble/setup.bash
 source /home/wego/limo_fire_ws/install/local_setup.bash
 source /home/wego/launcher_auto_fire_20261119/install/local_setup.bash
+source /home/wego/launcher_auto_fire_20261120/install/local_setup.bash
 export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
 ros2 launch limo_fire_hardware real_camera_aim.launch.py \
   config:=/home/wego/launcher_aim_measured.yaml \
@@ -77,7 +78,7 @@ ros2 launch limo_fire_hardware real_camera_aim.launch.py \
   serial_port:=/dev/serial/by-id/<ESP32_확인한_장치>
 ```
 
-넷째 터미널에서 같은 ROS 환경을 불러온 뒤 `ros2 run limo_fire_hardware launcher_control_terminal`을 실행하고 `a`를 한 번 입력한다. `--search-timeout-s 180`은 기본 탐색 제한 시간이며 `--no-search`는 탐색 없이 현재 보이는 표적만 사용한다. GUI 새 창은 `LIMO_FIRE_AIM_OVERLAY=/home/wego/launcher_auto_fire_20261119 bash /home/wego/launcher_auto_fire_20261119/tools/hardware_check/open_ros_launcher_terminal.sh`로 연다. `a`는 launch의 `auto_fire_enabled:=true`를 켜는 스위치가 아니라 현재 설정된 자동 임무를 한 번 시작하는 명령이다. 직접 `/launcher/approach_and_aim` 서비스를 호출하면 탐색 단계는 거치지 않는다.
+넷째 터미널에서 같은 ROS 환경을 불러온 뒤 `ros2 run limo_fire_hardware launcher_control_terminal`을 실행하고 `a`를 한 번 입력한다. `--search-timeout-s 180`은 기본 탐색 제한 시간이며 `--no-search`는 탐색 없이 현재 보이는 표적만 사용한다. GUI 새 창은 `LIMO_FIRE_AIM_OVERLAY=/home/wego/launcher_auto_fire_20261120 bash /home/wego/launcher_auto_fire_20261119/tools/hardware_check/open_ros_launcher_terminal.sh`로 연다. `a`는 launch의 `auto_fire_enabled:=true`를 켜는 스위치가 아니라 현재 설정된 자동 임무를 한 번 시작하는 명령이다. 직접 `/launcher/approach_and_aim` 서비스를 호출하면 탐색 단계는 거치지 않는다.
 
 `a`를 누르면 터미널은 최소 1.2초, 최대 5초 동안 조준 노드의 새 상태를 기다린다. 받지 못하면 시작하지 않는다. 자동 임무가 발사를 요청했거나 결과를 확인하지 못하면 이후의 `a`는 거부된다. 미리 입력해 둔 `a`도 마찬가지다. 공과 발사기를 확인한 뒤 `r`을 입력해야 다음 `a` 한 번이 허용된다. 탐색 중 Ctrl+C를 누르면 `/explore/frontier_explorer/enable false`를 보낸 뒤 종료한다. 이동·조준 중 Ctrl+C를 누르면 `/launcher/cancel`을 호출한 뒤 종료한다. 두 경우 모두 응답을 받지 못할 수 있으므로 로봇 정지는 현장에서 직접 확인한다.
 
