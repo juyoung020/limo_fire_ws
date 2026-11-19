@@ -8,6 +8,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -33,9 +34,36 @@ from tf2_ros import TransformBroadcaster
 from limo_fire_hardware.approach_aim import ApproachAim
 
 
+def start_process_group(command, log_path=None):
+    """Start a helper in its own session; `ros2 run` leaves the node orphaned on SIGINT."""
+    output = open(log_path, 'w') if log_path else subprocess.DEVNULL
+    return subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
+                            start_new_session=True)
+
+
+def stop_process_group(process):
+    """Interrupt the whole group (wrapper and node); escalate if it does not exit."""
+    for sig, wait_s in ((signal.SIGINT, 8), (signal.SIGTERM, 3), (signal.SIGKILL, 3)):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + wait_s
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                process.poll()
+                return
+            process.poll()
+            time.sleep(0.05)
+
+
 class FakeRobot(Node):
-    def __init__(self, delay_navigation=False, nav_yaw_bias_deg=0.0):
+    def __init__(self, delay_navigation=False, nav_yaw_bias_deg=0.0, external_bridge=False):
         super().__init__('fake_approach_aim_robot')
+        # True: a real pitch_serial_bridge owns /launcher/pitch_status and /launcher/shot.
+        self.external_bridge = external_bridge
         self.group = ReentrantCallbackGroup()
         self.pose = (0.0, 0.0, 0.0)
         self.target_x = 2.0
@@ -80,7 +108,8 @@ class FakeRobot(Node):
                                       cancel_callback=self.nav_cancel, callback_group=self.group)
         self.start_client = self.create_client(Trigger, '/launcher/approach_and_aim')
         self.cancel_client = self.create_client(Trigger, '/launcher/cancel')
-        self.shot_service = self.create_service(Trigger, '/launcher/shot', self.shot,
+        self.shot_service = None if external_bridge else self.create_service(
+            Trigger, '/launcher/shot', self.shot,
                                                 callback_group=self.group)
         self.sensor_timer = self.create_timer(0.05, self.publish_sensors, callback_group=self.group)
         self.grid_timer = self.create_timer(0.2, self.publish_grid, callback_group=self.group)
@@ -205,7 +234,8 @@ class FakeRobot(Node):
         status['stamp'] = now.nanoseconds * 1e-9
         if self.send_malformed:
             status.update(acked=True, sequence='bad', command_deg=None)
-        self.bridge_pub.publish(String(data=json.dumps(status)))
+        if not self.external_bridge:
+            self.bridge_pub.publish(String(data=json.dumps(status)))
         if self.feedback_mode != 'none':
             joint = JointState()
             joint.header.stamp = now.to_msg()
@@ -233,6 +263,7 @@ class RosFixture(unittest.TestCase):
     yaw_alignment_mode = 'nav2'
     yaw_rate_drive_mode_verified = False
     nav_yaw_bias_deg = 0.0
+    external_bridge = False
 
     def setUp(self):
         args = ['--ros-args', '-p', f'motion_enabled:={str(self.motion_enabled).lower()}',
@@ -247,7 +278,7 @@ class RosFixture(unittest.TestCase):
                 '-p', 'reacquire_timeout_s:=3.0', '-p', 'pitch_timeout_s:=2.0']
         rclpy.init(args=args)
         self.controller = ApproachAim()
-        self.robot = FakeRobot(self.delay_navigation, self.nav_yaw_bias_deg)
+        self.robot = FakeRobot(self.delay_navigation, self.nav_yaw_bias_deg, self.external_bridge)
         self.executor = MultiThreadedExecutor(num_threads=4)
         self.executor.add_node(self.controller)
         self.executor.add_node(self.robot)
@@ -620,12 +651,12 @@ class AutoFireRosTest(RosFixture):
         watcher = Node('real_explorer_state_watcher')
         watcher.create_subscription(String, '/explore/frontier_explorer/state', state_received, latched)
         self.executor.add_node(watcher)
-        explorer = subprocess.Popen(
+        explorer = start_process_group(
             ['ros2', 'run', 'limo_fire_explore', 'frontier_explorer', '--ros-args',
              '-r', '__ns:=/explore', '-r', '__node:=frontier_explorer',
              '--params-file', os.path.join(share, 'config', 'frontier_explorer.yaml'),
-             '-p', 'enabled:=false'],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+             '-p', 'enabled:=false'])
+        self.addCleanup(stop_process_group, explorer)
         try:
             self.wait_for(lambda: states[-1:] == ['idle'], 15)
             output, _ = self.terminal().communicate('a\nq\n', timeout=40)
@@ -635,13 +666,68 @@ class AutoFireRosTest(RosFixture):
             self.assertEqual(states[-1], 'idle', output)
             self.assertEqual(self.robot.shot_requests, 1, output)
         finally:
-            explorer.send_signal(signal.SIGINT)
-            try:
-                explorer.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                explorer.kill()
+            stop_process_group(explorer)
             self.executor.remove_node(watcher)
             watcher.destroy_node()
+
+
+class FirmwareHostSimAutoFireRosTest(RosFixture):
+    """a -> controller -> real pitch_serial_bridge -> unmodified launcher firmware on a pty.
+
+    Needs LAUNCHER_HOST_SIM pointing at hardware/launcher_test/host_sim/launcher_host_sim.
+    Nav2, odometry and the target are still fakes; no real servo or ball is involved.
+    """
+    auto_fire_enabled = True
+    fire_on_pitch_ack = True
+    external_bridge = True
+
+    def setUp(self):
+        sim = os.environ.get('LAUNCHER_HOST_SIM', '')
+        if not sim or not os.access(sim, os.X_OK):
+            self.skipTest('LAUNCHER_HOST_SIM firmware host binary not built')
+        self.workdir = tempfile.mkdtemp(prefix='launcher_host_sim_')
+        pty_file = os.path.join(self.workdir, 'pty')
+        self.pwm_log = os.path.join(self.workdir, 'pwm.log')
+        self.sim = start_process_group([sim, pty_file], log_path=self.pwm_log)
+        self.addCleanup(stop_process_group, self.sim)
+        deadline = time.monotonic() + 5
+        while not os.path.exists(pty_file) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        with open(pty_file, encoding='ascii') as handle:
+            port = handle.read().strip()
+        # Cleanups run even if setUp fails below, so no bridge outlives the test.
+        self.bridge = start_process_group(
+            ['ros2', 'run', 'limo_fire_hardware', 'pitch_serial_bridge', '--ros-args',
+             '-p', 'enabled:=true', '-p', 'firing_enabled:=true', '-p', f'serial_port:={port}'],
+            log_path=os.path.join(self.workdir, 'bridge.log'))
+        self.addCleanup(stop_process_group, self.bridge)
+        super().setUp()
+        self.wait_for(lambda: self.controller.bridge.get('state') == 'ready', 20)
+
+    def test_terminal_a_drives_real_bridge_and_firmware_logic_once(self):
+        command = [sys.executable, '-c',
+                   'import sys; from limo_fire_hardware.launcher_control_terminal import main; '
+                   'main(sys.argv[1:])', '--no-search']
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, env=os.environ.copy())
+        output, _ = process.communicate('a\na\nq\n', timeout=60)
+        self.assertIn('SHOT_COMMAND_ACKNOWLEDGED', output)
+        self.assertIn('r을 입력하세요', output)
+        with open(self.pwm_log, encoding='ascii') as handle:
+            pwm = handle.read().splitlines()
+        # The firmware enabled both servo outputs and moved the lever through one shot.
+        self.assertTrue(any(' attach 5 ' in line for line in pwm), pwm[:5])
+        self.assertTrue(any(' attach 4 ' in line for line in pwm), pwm[:5])
+        lever = [int(line.split()[-1][:-2]) for line in pwm if ' pwm 4 ' in line]
+        self.assertLess(min(lever), 1000)   # cock position, servo 30 deg -> 833 us
+        self.assertGreater(max(lever), 1800)  # fire position, servo 125 deg -> 1889 us
+        tilt = [int(line.split()[-1][:-2]) for line in pwm if ' pwm 5 ' in line]
+        commanded = self.robot.pitch_commands[-1]
+        expected_us = 500 + 2000 * (135.0 + commanded - 15.0) / 270.0
+        self.assertAlmostEqual(tilt[-1], expected_us, delta=2)
+        terminal = next(s for s in reversed(self.robot.statuses)
+                        if s['state'] == 'SHOT_COMMAND_ACKNOWLEDGED')
+        self.assertFalse(terminal['measured'])
 
 
 class AutoFireFeedbackRosTest(RosFixture):

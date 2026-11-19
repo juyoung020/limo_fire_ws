@@ -7,7 +7,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.launch_description_sources import AnyLaunchDescriptionSource, PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -33,13 +33,15 @@ def generate_launch_description():
         DeclareLaunchArgument('yaw_rate_drive_mode_verified', default_value='false'),
         DeclareLaunchArgument('target_id', default_value=''),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
-        IncludeLaunchDescription(
+        # Scoped: the perception 'config' (a YOLO file name) must not overwrite this
+        # launch's 'config' (the measured aim YAML) for the include below.
+        GroupAction(scoped=True, actions=[IncludeLaunchDescription(
             AnyLaunchDescriptionSource(perception_launch),
             launch_arguments={
                 'config': 'yolo_fire.yaml', 'mapper': 'true', 'rviz': 'false',
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
                 **({'objects_file': ''} if juyoung_pipeline else {}),
-            }.items()),
+            }.items())]),
         *([Node(package='limo_fire_hardware', executable='mapper_observation_bridge',
                 name='mapper_observation_bridge', output='screen', parameters=[{
                     'target_id': ParameterValue(LaunchConfiguration('target_id'), value_type=str),

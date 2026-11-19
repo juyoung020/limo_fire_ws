@@ -2,6 +2,118 @@
 
 이 절차는 GPIO4 레버·GPIO5 상하 서보의 `launcher_test` 펌웨어를 대상으로 한다. 코드는 조준 후 `s` 한 번으로 장전·발사를 요청할 수 있다. 응답 `done`은 펌웨어가 명령을 마쳤다는 뜻이며 공의 비행이나 명중을 측정하지 않는다. ESP32 업로드, 실제 장착 치수, 실제 표적 거리·방향, 서보 움직임과 발사는 아직 이 통합 코드로 시험하지 않았다.
 
+## 실물 데모 실행 순서 (2026-11-20 확정판)
+
+아래 순서가 이 문서의 기준이다. 뒤쪽 절은 배경 설명이다. 단계마다 **기대 결과가 나와야만** 다음 단계로 간다. 로봇이 움직이는 단계에서는 사람이 리모컨을 들고 곁에 있는다. 리모컨 SWB를 수동으로 내리면 섀시가 ROS 명령을 받지 않는다.
+
+**모든 터미널 공통 환경.** 아래 단계의 각 터미널에서 먼저 실행한다.
+
+```bash
+source /home/wego/limo_fire_ws/env.sh
+source /home/wego/launcher_auto_fire_20261119/install/local_setup.bash
+source /home/wego/launcher_auto_fire_20261120/install/local_setup.bash
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
+ros2 pkg prefix limo_fire_hardware   # 기대: /home/wego/launcher_auto_fire_20261120/...
+```
+
+### 0. 한 번만 하는 준비
+
+1. **시리얼 권한.** `wego` 사용자는 2026-11-20 기준 `dialout` 그룹이 아니었다. ESP32-S3 포트(`ttyACM*`)는 보통 `root:dialout 0660`이라 이대로는 브리지가 포트를 열지 못한다. 다음 명령을 실행한 뒤 로그아웃·재로그인(또는 재부팅)하고, `groups`에 `dialout`이 나오는지 확인한다.
+   ```bash
+   sudo usermod -aG dialout wego
+   ```
+2. **ESP32-S3 장치 경로.** 꽂기 전과 후에 `ls -l /dev/serial/by-id/`를 비교해 새로 생긴 항목만 쓴다. `usb-Silicon_Labs_CP2102...`는 라이다다. 아래에서는 확인한 전체 경로를 `ESP=/dev/serial/by-id/...`로 둔다.
+3. **펌웨어 업로드.** 서보 전원은 꺼 둔다. 업로드가 연결 오류로 실패하면 보드의 BOOT 버튼을 누른 채 RESET을 눌러 다운로드 모드로 넣고 다시 실행한다. 업로드 후 장치 이름이 바뀔 수 있으므로 2번 목록을 다시 확인한다.
+   ```bash
+   F=/home/wego/launcher_aim_friday_20261120/firmware/launcher_s3_arduino_3.3.12_20261119.merged.bin
+   sha256sum $F   # 기대: accec093a16b8806322f877c77dc0ba34fb1285bed00dcc25df7e092d053862e
+   /home/wego/.venvs/launcher-pio/bin/python3 -m esptool --chip esp32s3 --port $ESP write-flash 0x0 $F   # esptool 5.6.0 확인됨
+   ```
+4. **장착 실측 YAML.** 네 값은 줄자·각도기로 잰 값만 넣는다(정의는 [REAL_AIM_TEST.md](REAL_AIM_TEST.md) 1절).
+   ```bash
+   python3 /home/wego/launcher_auto_fire_20261120/src/limo_fire/limo_fire_hardware/tools/write_mount_config.py \
+     --x-cm <앞+> --y-cm <왼쪽+> --pivot-height-cm <바닥→회전축> --mount-yaw-deg <왼쪽+> \
+     --measurements-confirmed --output /home/wego/launcher_aim_measured.yaml
+   grep -E "mount_xyz_m|mount_yaw_deg|mount_calibrated" /home/wego/launcher_aim_measured.yaml
+   ```
+
+### 1. 로봇·지도·Nav2 켜기 (차체 움직임 없음)
+
+충전기를 빼고 섀시 전원과 리모컨을 켠다. 리모컨 SWB는 위(오토)로 둔다. 표적(YOLO `fire` 클래스로 탐지되는 물체)의 실제 위치를 로봇 출발점 기준으로 줄자로 재어 기록한다.
+
+```bash
+# 터미널 1
+ros2 launch limo_fire_bringup robot.launch.xml base:=true viz:=false max_clocks:=false
+# 터미널 2 (Cartographer + Nav2 + 꺼진 프론티어 탐사)
+ros2 launch limo_fire_explore frontier_explorer.launch.xml stack:=true rviz:=true
+```
+
+확인(터미널 4):
+```bash
+ros2 topic echo /limo_status --once        # 기대: 메시지 수신, motion_mode 기록(0 차동·1 Ackermann·2 메카넘)
+ros2 topic hz /odometry/filtered           # 기대: 수십 Hz
+ros2 run tf2_ros tf2_echo map base_link    # 기대: Translation 출력
+ros2 topic echo /explore/frontier_explorer/state --once   # 기대: idle
+```
+
+2026-11-20 점검에서는 섀시 드라이버가 `/dev/ttylimo`를 열었지만 섀시에서 데이터가 오지 않았다. `/limo_status`·오도메트리·`map`이 없으면 여기서 멈추고 섀시 전원·모드를 확인한다.
+
+### 2. 발사기 연결 확인 (공·고무줄 제거, 차체 정지)
+
+```bash
+# 터미널 3
+ros2 launch limo_fire_hardware approach_aim.launch.py config:=/home/wego/launcher_aim_measured.yaml \
+  motion_enabled:=false serial_enabled:=true firing_enabled:=true auto_fire_enabled:=false serial_port:=$ESP
+# 터미널 4
+ros2 topic echo /launcher/pitch_status --once          # 기대: "state": "ready"
+ros2 topic pub --once /launcher/pitch_command std_msgs/msg/Float64 '{data: 20.0}'   # 상하 서보가 20°로 움직이는지 눈으로 확인
+ros2 run limo_fire_hardware launcher_control_terminal --log /home/wego/launcher-commands.jsonl
+#   c → completed, 레버 장전 동작 / f → completed, 레버 발사 동작 / s → completed / q
+```
+
+서보가 반대로 돌거나 걸리면 터미널 3을 Ctrl+C로 끄고 서보 전원을 내린다. 펌웨어 상수(`kTiltSign`, 레버 각)를 실물에서 맞춘 뒤 다시 시작한다. 확인이 끝나면 터미널 3을 끈다.
+
+### 3. 카메라 표적 확인과 미리보기 (차체 정지)
+
+표적을 카메라 앞에 둔다.
+
+```bash
+# 터미널 3
+ros2 launch limo_fire_hardware real_camera_aim.launch.py config:=/home/wego/launcher_aim_measured.yaml \
+  motion_enabled:=false serial_enabled:=false
+# 터미널 4
+ros2 topic echo /fire/observations --once      # 기대: frame_id map, position_valid true, confidence ≥ 0.5
+ros2 service call /launcher/approach_and_aim std_srvs/srv/Trigger '{}'
+ros2 topic echo /launcher/approach_aim_status --once   # 기대: PREVIEW_READY, 접근 위치·yaw·상하각
+```
+
+`/fire/observations`의 좌표·거리를 1단계에서 줄자로 잰 값과 비교한다. 차이가 크면(예: 30cm 이상) 멈춘다. 처음에는 접근 거리가 짧도록 표적을 로봇 앞 약 1.8m에 둔다. 기본 정지 거리가 1.2m이므로 차체 이동은 약 0.6m가 된다.
+
+### 4. 무장전 자동 임무 리허설 (공·고무줄 제거, 차체 이동)
+
+공과 고무줄을 뺀 상태다. 탐색→접근→좌우→상하→레버 동작까지 전부 실행하지만 아무것도 발사되지 않는다.
+
+```bash
+# 터미널 3
+ros2 launch limo_fire_hardware real_camera_aim.launch.py config:=/home/wego/launcher_aim_measured.yaml \
+  motion_enabled:=true serial_enabled:=true firing_enabled:=true auto_fire_enabled:=true \
+  fire_on_pitch_ack:=true serial_port:=$ESP
+# 터미널 4
+ros2 run limo_fire_hardware launcher_control_terminal --log /home/wego/launcher-commands.jsonl
+#   a  (한 번)
+```
+
+기대 순서는 다음과 같다. 표적이 보이지 않으면 먼저 탐사가 진행된다.
+`PLANNING → APPROACHING → WAIT_STOP → REACQUIRING → ALIGNING → WAIT_STOP → REACQUIRING → WAIT_PITCH → WAIT_SHOT_ACCEPT → SHOT_COMMAND_ACKNOWLEDGED`
+
+정지한 위치에서 표적까지의 거리·좌우 오차, 그리고 상하각을 눈과 줄자로 기록한다. 이상하면 터미널 4에서 Ctrl+C(탐사 정지·임무 취소 요청)를 누르고, 동시에 리모컨을 수동으로 바꾼다. 다시 하려면 `r`을 누른 뒤 `a`를 누른다.
+
+### 5. 실제 장전·발사 1회
+
+4단계가 기대대로 끝났을 때만 진행한다. 공의 비행 방향에 사람과 깨질 물건이 없어야 한다. 공과 고무줄을 장착하고 영상 촬영을 시작한다. 로봇을 4단계 출발점에 다시 둔 뒤 터미널 4에서 `r`, `a`를 한 번씩 입력한다. 같은 launch를 그대로 쓴다.
+
+기록할 것: 사용한 커밋, 네 실측값, `ESP` 경로, `motion_mode`, 터미널 로그(`/home/wego/launcher-commands.jsonl`), 종료 상태, 영상에서 본 공의 비행·착탄 위치와 표적 사이 오차. `SHOT_COMMAND_ACKNOWLEDGED`만으로는 발사 성공이 아니다.
+
 ## 공통 준비
 
 1. [실물 조준 절차](REAL_AIM_TEST.md)의 로봇·Nav2·카메라·발사기 장착 치수 확인을 먼저 끝낸다. ESP32-S3 펌웨어를 올리고 GPIO4/5 및 외부 서보 전원·공통 GND를 확인한다.
@@ -96,6 +208,25 @@ ros2 launch limo_fire_hardware real_camera_aim.launch.py \
   - **중복 발사 방지:** 미리 입력한 두 번째 `a`는 거부됐다. `r` 뒤의 `a` 한 번만 추가로 허용됐다.
 - 수정 전 시험에서 두 가지 시작 시점 문제가 각각 1회씩 나타났다. 하나는 조준 상태를 1.2초 안에 받지 못한 경우, 다른 하나는 탐사 상태를 1초 안에 받지 못한 경우였다. 두 경우 모두 발사 없이 임무를 거부했다. 대기를 "받을 때까지 최대 5초"로 바꾼 뒤에는 위 반복 시험에서 다시 나타나지 않았다.
 - 이 시험은 실물 시험이 아니다. 실제 카메라 표적, Nav2 주행, 서보, ESP32 장전·발사는 포함되지 않는다.
+
+**2026-11-20 펌웨어 원본 ↔ ROS 연결 시험(하드웨어 없음)**
+- `hardware/modeling/탁구공발사대/firmware/launcher_test/host_sim`은 `src/main.cpp`를 수정하지 않고 리눅스에서 컴파일한다. Arduino 함수만 대체하고 가상 시리얼(pty)에 연결하며, 서보 PWM 명령값을 시간과 함께 기록한다.
+  ```bash
+  cd hardware/modeling/탁구공발사대/firmware/launcher_test/host_sim && g++ -std=c++17 -O1 -I. host_main.cpp -o launcher_host_sim -lutil
+  LAUNCHER_HOST_SIM=$PWD/launcher_host_sim python3 -m pytest ../../../../../../src/limo_fire/limo_fire_hardware/test   # ROS 환경에서
+  ```
+- 실제 `approach_aim.launch.py`와 `pitch_serial_bridge`를 이 펌웨어에 연결해 확인했다. 브리지는 3초 만에 `ready`가 됐다(펌웨어가 `e5`로 GPIO5 PWM을 켬). 22.5° 명령은 펌웨어 PWM 1555µs와 계산값이 일치했다. 터미널 `c`(2.1초), `f`(0.5초), `s`(2.5초)가 모두 완료됐다. 장전 상태에서의 두 번째 `c`는 거부됐다.
+- 새 ROS 시험(`FirmwareHostSimAutoFireRosTest`)의 흐름은 다음과 같다: 터미널 `a` → 조준 컨트롤러(가짜 Nav2·표적) → 실제 브리지 → 펌웨어 원본. 레버 장전·발사 위치 PWM과 최종 상하 PWM이 계산 각도와 일치했고, 두 번째 `a`는 거부됐다. 이 시험을 포함한 전체 84개를 3회 실행해 모두 통과했다.
+- 실물 서보의 실제 각도·힘, 공 발사는 이 시험으로 알 수 없다.
+
+**2026-11-20 실물 launch 결함 수정**
+- `real_camera_aim.launch.py`가 인식 launch에 넘긴 `config:=yolo_fire.yaml`이 범위 밖으로 새어, 조준·발사 브리지 노드도 `yolo_fire.yaml`을 설정 파일로 받고 있었다. 그 결과 `config:=/home/wego/launcher_aim_measured.yaml`의 실측 장착값이 무시됐다.
+- Wego에서 재현했다. 수정 전에는 설정에 `mount_yaw_deg 7.0`을 넣어도 노드가 0.0을 받았고 경고 2개가 났다. 수정 후(인식 include를 범위 제한 `GroupAction`으로 감쌈)에는 7.0이 들어갔고 경고는 0개였다.
+
+**2026-11-20 Wego 센서 실시간 점검(차체 명령·시리얼 없음, 도메인 93)**
+- 컬러 17.5Hz, 깊이 23Hz, 라이다 10Hz가 들어왔다. Nav2 액션 서버, 탐사 노드 `idle`, 조준 노드 `IDLE`을 확인했다. `/fire/observations` 발행자는 1개였다. 자동 발사가 꺼진 상태에서 터미널 `a`는 거부됐다.
+- 섀시 드라이버가 `/dev/ttylimo`를 열었지만 섀시 데이터가 오지 않아 `/limo_status`·오도메트리·`map` TF가 없었다. 표적이 없어 탐지는 확인하지 못했다.
+- `wego` 사용자는 `dialout` 그룹이 아니다.
 
 **2026-11-20 실물 준비 점검(읽기 전용)**
 - CP2102 `ttyUSB0`은 라이다(`/dev/ydlidar`)다. ESP32-S3는 연결돼 있지 않았다.
