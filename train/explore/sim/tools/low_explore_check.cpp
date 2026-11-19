@@ -107,7 +107,7 @@ struct FakeModel : lxd::Transport {
       const auto j = nlohmann::json::parse(r.body, nullptr, false);
       if (j.is_object() && j.contains("state") && j["state"].is_object() && j["state"].contains("candidates")) {
         for (const auto& c : j["state"]["candidates"])
-          if (c.contains("kind") && (c["kind"] == kind || (obj && c["kind"] == "semantic"))) { a.choice = c["id"].get<std::string>(); break; }   // obj: 뜻 물체 칸도
+          if (c.contains("kind") && c["kind"] == kind) { a.choice = c["id"].get<std::string>(); break; }
       } else if (j.is_object() && j.contains("state") && j["state"].is_string()) {   // 꼴 2: 후보 줄 "글자 종류 …"
         const std::string t = j["state"].get<std::string>();
         for (size_t i = t.find("\nCandidates:"); i != std::string::npos && (i = t.find('\n', i + 1)) != std::string::npos;) {
@@ -194,13 +194,12 @@ int main(int argc, char** argv) {
   bool dec_obj_always = false;   // --dec-obj "클래스,x,y" (여러 번): 지시가 있을 때 물체 후보 (실물 노드는 물체 지도에서) — 요청 비트 비교 확인용
   int max_ep = 0;
   // 지시 물체 찾기 실험 (--obj-file): 장면 물체 표(물체 번호 · 클래스 · x · y …)의 물체가 카메라(--follow-fov · --follow-range, 로봇 지도 가림)에 처음 보이면 물체 지도에 들어감 —
-  // 실물 노드의 물체 지도(/perception/objects) 자리. --sem-file: 지시마다 물체의 뜻 맞음 확률 표 (실물은 object_search 가 사진으로 — 시뮬은 그림 없음, 대리 값을 밖에서 만듦)
-  std::string obj_file, sem_file, sem_iid, sem_col = "p_np", alias_file, instr_log, gt_csv;
+  // 실물 노드의 물체 지도(/perception/objects) 자리
+  std::string obj_file, alias_file, instr_log, gt_csv;
   float obj_min_size = 0.f;
   bool hint_once = false;
-  int dec_sem_max = lxd::Params{}.sem_max, dec_front_instr = lxd::Params{}.front_max_instr;
-  float dec_sem_thr = lxd::Params{}.sem_thr;
-  bool dec_obj_fill = lxd::Params{}.obj_fill, dec_sem_first = lxd::Params{}.sem_first, stop_instr_end = false, instr_hold_done = false;
+  int dec_front_instr = lxd::Params{}.front_max_instr;
+  bool dec_obj_fill = lxd::Params{}.obj_fill, stop_instr_end = false, instr_hold_done = false;
   bool close_lidar = false;
   bool cand_on = false, open_scene = false;
   std::string cand_dump;
@@ -289,16 +288,10 @@ int main(int argc, char** argv) {
     else if (a == "--max-ep") max_ep = std::stoi(nx());
     else if (a == "--obj-file") obj_file = nx();          // 장면 물체 표 (tsv: oid yolo_class x y … size_m — 클래스 '-' 는 탐지 못 하는 물체라 뺌)
     else if (a == "--obj-min-size") obj_min_size = std::stof(nx());   // 이보다 작은 물체는 뺌 (m)
-    else if (a == "--sem-file") sem_file = nx();          // 뜻 맞음 확률 표 (tsv: iid oid 열들 …)
-    else if (a == "--sem-iid") sem_iid = nx();            // 그 표의 지시 번호
-    else if (a == "--sem-col") sem_col = nx();            // 확률 열 이름 (p_np · p_full)
     else if (a == "--aliases") alias_file = nx();         // 지시 글 → 클래스 힌트를 실물 노드처럼 (explorer.yaml 의 aliases 줄, class_alias.h class_of — 지시 때 물체 지도는 빔)
     else if (a == "--hint-once") hint_once = true;        // --aliases 힌트를 지시 때 한 번만 풂 (2026-11-19 전 노드 — 견줌용)
-    else if (a == "--dec-sem-max") dec_sem_max = std::stoi(nx());           // lxd::Params::sem_max (실물 decider_sem_max)
-    else if (a == "--dec-sem-thr") dec_sem_thr = std::stof(nx());           // lxd::Params::sem_thr
     else if (a == "--dec-front-max-instr") dec_front_instr = std::stoi(nx());   // lxd::Params::front_max_instr
     else if (a == "--dec-obj-fill") dec_obj_fill = std::stoi(nx()) != 0;   // lxd::Params::obj_fill
-    else if (a == "--dec-sem-first") dec_sem_first = std::stoi(nx()) != 0;   // lxd::Params::sem_first
     else if (a == "--gt") gt_csv = nx();                  // 정답 물체 번호들 (쉼표) — --instr-log 셈만
     else if (a == "--instr-log") instr_log = nx();        // 지시 하나 결과 한 줄 (닿은 물체 · 시각 · 요청 수 · 글 크기 · 답 시간 · 정답이 후보에 든 때)
     else if (a == "--stop-on-instr-end") stop_instr_end = true;   // 지시가 끝나면 (닿음 · 포기) 멈춤
@@ -376,7 +369,7 @@ int main(int argc, char** argv) {
     dp.input = dec::input_of(dec_input);
     if (dec_match > 0.0) dp.match_r = (float)dec_match;
     dp.hint = dec_hint; dp.mem_image = dec_mimg; dp.image = dec_img; dp.log_k = dec_logk;
-    dp.sem_max = dec_sem_max; dp.sem_thr = dec_sem_thr; dp.front_max_instr = dec_front_instr; dp.obj_fill = dec_obj_fill; dp.sem_first = dec_sem_first;
+    dp.front_max_instr = dec_front_instr; dp.obj_fill = dec_obj_fill;
     if (use_dec && dp.input < 0) throw std::runtime_error("--dec-input text · image · both");
     lxd::Upper us(dp), ur(dp);
     std::vector<lxd::Params::Obj> base_objs, live_objs;   // --dec-obj (따라가기 시험은 결정마다 사람을 더해 다시 넣음) · 그중 못 간 것 뺀 지금 목록
@@ -402,7 +395,7 @@ int main(int argc, char** argv) {
       ur.set_objects(ob);
       base_objs = ob;
     }
-    // --obj-file: 장면 물체 (아직 안 본 것) · 뜻 확률 · 클래스 힌트 (실물 노드 on_goal 의 class_of — 지시 때 물체 지도 클래스는 빔)
+    // --obj-file: 장면 물체 (아직 안 본 것) · 클래스 힌트 (실물 노드 on_goal 의 class_of — 지시 때 물체 지도 클래스는 빔)
     struct SimObj { lxd::Params::Obj o; float size = 0.f; double seen_t = -1e9; };
     std::vector<SimObj> sobj;
     std::vector<std::string> gt;
@@ -435,17 +428,6 @@ int main(int argc, char** argv) {
         us.set_class_hint(dec_hint_cls); ur.set_class_hint(dec_hint_cls);
       }
       for (auto& so : sobj) so.o.match = !dec_hint_cls.empty() && so.o.cls == dec_hint_cls ? 1.f : 0.f;
-      if (!sem_file.empty()) {
-        const auto L2 = read_lines(sem_file);
-        const auto h = split(L2.at(0));
-        const size_t ci = (size_t)(std::find(h.begin(), h.end(), sem_col) - h.begin());
-        if (ci >= h.size()) throw std::runtime_error("--sem-col 없음: " + sem_col);
-        for (size_t q = 1; q < L2.size(); ++q) {
-          const auto f = split(L2[q]);
-          if (f.size() <= ci || f[0] != sem_iid) continue;
-          for (auto& so : sobj) if (so.o.oid == f[1]) so.o.sem = std::stof(f[ci]);
-        }
-      }
       goto_on = true;   // 물체 답이면 노드처럼 그 설 자리로 감
     }
     long i_req = 0, i_body = 0, i_gt_req = 0;
@@ -657,12 +639,12 @@ int main(int argc, char** argv) {
           bool has = false;
           for (const auto& o : us.last_objects()) has = has || std::find(gt.begin(), gt.end(), o.oid) != gt.end();
           if (has) { ++i_gt_req; if (i_gt_cand_t < 0) i_gt_cand_t = t * dt; }
-          else {   // 정답이 지도에 있는데 후보에 안 든 까닭 (진단): 설 자리 없음(못 감 · 못 간 물체로 빠짐) · 클래스·뜻이 안 맞음 · 맞는데 칸 수에 밀림
+          else {   // 정답이 지도에 있는데 후보에 안 든 까닭 (진단): 설 자리 없음(못 감 · 못 간 물체로 빠짐) · 클래스가 안 맞음 · 맞는데 칸 수에 밀림
             const auto is_gt = [&](const std::string& id) { return std::find(gt.begin(), gt.end(), id) != gt.end(); };
             bool in_map = false, spot = false, elig = false;
             for (const auto& o : base_objs) in_map = in_map || is_gt(o.oid);
             for (const auto& o : us.last_spots())
-              if (!o.follow && is_gt(o.oid)) { spot = true; elig = elig || o.match >= 1.f || (dp.sem_max > 0 && o.sem >= 0.f && o.sem >= dp.sem_thr); }
+              if (!o.follow && is_gt(o.oid)) { spot = true; elig = elig || o.match >= 1.f; }
             if (in_map) ++(!spot ? i_miss_nospot : !elig ? i_miss_nomatch : i_miss_cap);
           }
         }
@@ -1127,7 +1109,7 @@ int main(int argc, char** argv) {
     sim::set_cpu_tap(nullptr);
     if (lf) std::fclose(lf);
     if (!instr_log.empty()) {   // 지시 하나: 끝 · 닿은 물체 · 끝 시각 · 정답 처음 봄 · 정답이 후보에 처음 듦 · 요청 수 · 정답 든 요청 수 · 평균 글 바이트 · 평균 답 ms · 본 물체 수 ·
-                                // 마지막 클래스 힌트 · 정답이 지도에 있는데 후보에 안 든 요청 수 (설 자리 없음 · 클래스·뜻 안 맞음 · 칸 수에 밀림)
+                                // 마지막 클래스 힌트 · 정답이 지도에 있는데 후보에 안 든 요청 수 (설 자리 없음 · 클래스 안 맞음 · 칸 수에 밀림)
       if (FILE* f = std::fopen(instr_log.c_str(), "a")) {
         double rm = 0; for (const auto& x : real_log) rm += x.ms;
         long nseen = 0; for (const auto& so : sobj) nseen += so.seen_t > -1e8;

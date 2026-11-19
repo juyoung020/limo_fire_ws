@@ -57,16 +57,10 @@ struct Params {
   int obj_max = 3;          // 물체 후보 칸 수 (따라가기 후보 포함, 합쳐 max_cands — 프론티어는 남은 칸)
   bool obj_always = false;  // 지시가 없어도 물체 후보를 넣음 (기본 끔 — 지시 없는 탐사 요청은 예전과 바이트 같음)
   float vis_s = 1.0f;       // 이 안에 본 물체 = 지금 보임 (vis)
-  // 뜻 물체 후보 (지시가 있을 때만 — 9 칸 꼴): 지시 글과 물체 사진의 그림·글 모델 점수(Obj::sem, 확률 0–1 — 인식 object_search) 위 sem_max 개를
-  // 이름 물체 칸 앞(sem_first) 또는 뒤에 (이름 칸과 같은 물체는 빼고 다음 순위로 채움). 문턱 sem_thr 아래면 칸을 비움 (맞는 게 없으면 프론티어만 → 계속 찾음).
-  // 점수가 없으면 (object_search 꺼짐 · 답 없음 — Obj::sem < 0) 칸이 비어 이름 물체 + 프론티어 ≤ front_max_instr 만. sem_max 0 이면 끔.
-  // 기본 = HSSD 13 집 · 지시 83 · 332 짝 시뮬 실험의 권장 (upper_lora/README "뜻 물체 칸", 2026-11-19): 뜻 3 · 프론티어 3 · 채움 끔 · 뜻 칸 앞 글자 · 문턱 0.01
-  int sem_max = 3;
-  float sem_thr = 0.01f;    // 실사진 물체 59 · 지시 30 의 맞춤 반쪽 최선 F1 문턱 (upper_lora/README "뜻 물체 칸")
-  int front_max_instr = 3;  // 지시가 있을 때 프론티어 칸 상한 (0 = max_cands − 물체 칸) — 3 과 6 이 시뮬 성공 차 없음(−0.024 ± 0.023), 요청이 짧음
+  // 지시가 있을 때 후보 = 이름 물체 ≤ obj_max + 프론티어 ≤ front_max_instr (HSSD 13 집 · 지시 83 · 332 짝 시뮬, upper_lora/README "지시 후보")
+  int front_max_instr = 3;  // 지시가 있을 때 프론티어 칸 상한 (0 = max_cands − 물체 칸)
   bool obj_fill = false;    // 지시가 있을 때 이름 물체 칸이 남으면 클래스가 안 맞는 가까운 물체로도 채움 — 켜면 판단 모델이 첫 글자로 쏠려 엉뚱한 물체 0.89 (끄면 0.09,
                             //   성공 같음). 지시 없이 obj_always 일 때는 늘 채움 (맞출 지시가 없음)
-  bool sem_first = true;    // 뜻 물체 칸을 이름 물체 칸 앞 글자에 (3B 판단 모델은 앞 글자 A 로 쏠림 — 시뮬 성공 +0.018 ± 0.020, 엉뚱함 −0.018 ± 0.013)
   std::vector<std::string> known_objects;   // "cup 1.2 m ahead-left" 꼴 짧은 글 (노드가 물체 지도에서 만듦)
   // 물체 후보 (지시가 있을 때만): 지시에 맞는 지도 위 물체의 설 자리. 후보 목록 앞 칸에 들어가 프론티어 후보와 섞임 (합쳐 max_cands)
   struct Obj {
@@ -75,8 +69,6 @@ struct Params {
     float seen_s = 0;       // 마지막으로 본 뒤 (s)
     float match = 0;        // 1 = class_hint 클래스 (물체 후보 칸 앞에)
     bool follow = false;    // 따라가기 후보: 지금 보이는 사람 (노드가 실시간 탐지에서) — 고르면 노드가 그 사람을 약 1 m 뒤에서 따라감
-    float sem = -1.f;       // 지시 글과 이 물체 사진의 맞음 확률 (sem_max > 0 일 때만 씀, < 0 = 점수 없음)
-    bool by_sem = false;    // 뜻 물체 칸으로 들어감 (build_cand 가 채움 — 요청 kind semantic)
     int vp = -1;            // 설 자리 칸 (build_cand 가 채움)
     float len_m = 0;        // 로봇에서 설 자리까지 길 (m, 빈 칸 BFS)
   };
@@ -297,10 +289,6 @@ class Upper {
     const std::vector<Params::Obj> spots = object_spots(v, co);
     spots_req_ = spots;
     P.objects = pick_objects(spots, p_.obj_max, p_.obj_fill || p_.instruction.empty());
-    if (p_.sem_max > 0 && !p_.instruction.empty()) {
-      const std::vector<Params::Obj> sm = pick_semantic(spots, P.objects, p_.sem_max, p_.sem_thr);
-      P.objects.insert(p_.sem_first ? P.objects.begin() : P.objects.end(), sm.begin(), sm.end());
-    }
     obj_req_ = P.objects;
     if (co.c.size() + P.objects.size() < 2) return false;
     return render_cand(P, co.c, ctl.cand_mem(), decs_, hist_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
@@ -350,20 +338,6 @@ class Upper {
     }
     return out;
   }
-  // 뜻 물체 칸 (k 칸): 이름 칸(taken)에 없는 물체 가운데 점수 sem ≥ thr 인 것을 점수 높은 순 (같으면 길 짧은 순). 따라가기 항목은 뺌
-  static std::vector<Params::Obj> pick_semantic(const std::vector<Params::Obj>& in, const std::vector<Params::Obj>& taken, int k, float thr) {
-    std::vector<Params::Obj> c;
-    for (const auto& o : in) {
-      if (o.follow || o.sem < 0.f || o.sem < thr) continue;
-      bool dup = false;
-      for (const auto& t : taken) dup = dup || (!t.follow && t.oid == o.oid);
-      if (!dup) c.push_back(o);
-    }
-    std::stable_sort(c.begin(), c.end(), [](const Params::Obj& a, const Params::Obj& b) { return a.sem != b.sem ? a.sem > b.sem : a.len_m < b.len_m; });
-    if ((int)c.size() > k) c.resize((size_t)k);
-    for (auto& o : c) o.by_sem = true;
-    return c;
-  }
   // 요청 본문 그리기 (후보 모드) — 노드·시뮬(build_cand)과 라벨 다시 그리기(upper_lora/rollout/req_render: 갈래 굴리기가 남긴 원시 상태)가 같은 함수를 씀.
   // C = 후보(cand::build 차례, 기억 필드 포함) · M = 판 기억 · decs = 지금까지 결정 · (rx, ry, rth) = 지도 자세 · lmap = 지도 (c.size 줄 간격)
   // 요청 꼴 2: render_cand 가 만든 state(JSON) → 글 하나. 바뀌지 않는 글(과제 · 그림 설명 · 칸 뜻 · 후보 종류 · 힌트 · 지시)을 앞에, 바뀌는 것(후보 · 결정 기록 · 아는 물체)을 뒤에.
@@ -390,10 +364,9 @@ class Upper {
       const std::string k = c.contains("kind") ? c["kind"].get<std::string>() : "frontier";
       o += "\n" + c["id"].get<std::string>() + " " + k;
       if (k == "stop") continue;
-      if (k == "object" || k == "follow" || k == "semantic") {
+      if (k == "object" || k == "follow") {
         o += " " + c["object"].get<std::string>() + " " + c["oid"].get<std::string>();
         for (const char* f : {"len", "bear", "dist", "seen_s"}) o += std::string(" ") + f + " " + num(c[f]);
-        if (c.contains("score")) o += " score " + num(c["score"]);
         if (c.value("vis", false)) o += " vis";
         continue;
       }
@@ -430,8 +403,7 @@ class Upper {
     std::vector<int> cells;
     oj cl = oj::array();
     // 물체 후보 (지시가 있을 때만, build_cand 가 설 자리를 채움): 앞 글자들. 프론티어 후보는 남은 칸에 (합쳐 max_cands)
-    const bool sem_on = P.sem_max > 0 && !P.instruction.empty();
-    const size_t n_obj = P.instruction.empty() && !P.obj_always ? 0 : std::min(P.objects.size(), (size_t)std::max(0, P.obj_max + (sem_on ? P.sem_max : 0)));
+    const size_t n_obj = P.instruction.empty() && !P.obj_always ? 0 : std::min(P.objects.size(), (size_t)std::max(0, P.obj_max));
     for (size_t i = 0; i < n_obj; ++i) {
       const Params::Obj& ob = P.objects[i];
       dec::Cand d;
@@ -446,12 +418,11 @@ class Upper {
       const auto [dist, ang] = rel(ob.x, ob.y);
       oj o;
       o["id"] = std::string(1, d.key);
-      o["kind"] = ob.follow ? "follow" : ob.by_sem ? "semantic" : "object";
+      o["kind"] = ob.follow ? "follow" : "object";
       o["object"] = ob.cls;
       o["oid"] = ob.oid;
       if (P.compact) { o["len"] = rnd(ob.len_m, 0.1); o["bear"] = ang; o["dist"] = rnd(dist, 0.1); o["seen_s"] = rnd(ob.seen_s, 1.0); o["vis"] = ob.seen_s <= P.vis_s; }
       else { o["path_length_m"] = rnd(ob.len_m, 0.1); o["bearing_deg_left_positive"] = ang; o["distance_m"] = rnd(dist, 0.1); o["seconds_since_seen"] = rnd(ob.seen_s, 1.0); o["visible_now"] = ob.seen_s <= P.vis_s; }
-      if (sem_on && !ob.follow && ob.sem >= 0.f) o["score"] = rnd(ob.sem, 0.01);   // 뜻 맞음 확률 (이름 칸 물체도 점수가 있으면)
       cl.push_back(o);
     }
     std::vector<size_t> ord;   // 글자 차례 → C 번호
@@ -633,13 +604,8 @@ class Upper {
                                               (P.compact ? "len = path m, bear = bearing deg left +, dist = straight-line m, seen_s = seconds since the camera last saw it, vis = seen right now"
                                                          : "visible_now = seen by the camera right now") +
                                               "); choosing it drives there, turns to the object and stops. kind = follow: a person seen right now; choosing it makes the robot keep "
-                                              "following that person at about 1 m. " +
-                                              (sem_on ? "kind = semantic: a spot next to a mapped object whose camera photos match the user's instruction according to an "
-                                                        "image-text model (score = match probability 0-1, higher = more likely what the user means; it can be wrong); choosing it "
-                                                        "drives there, turns to the object and stops. An object candidate's score is the same probability. "
-                                                      : "") +
-                                              "kind = frontier: a spot that maps unknown space (exploring). On the map image object" + (sem_on ? ", semantic" : "") +
-                                              " and follow candidates are cyan squares, frontier candidates yellow dots."
+                                              "following that person at about 1 m. kind = frontier: a spot that maps unknown space (exploring). On the map image object and follow "
+                                              "candidates are cyan squares, frontier candidates yellow dots."
                                         : "No object on the robot's object map is a candidate right now; all candidates are frontier spots (exploring).";
     const bool stop_c = P.stop_cand && !P.instruction.empty();
     const char stop_key = (char)('A' + (int)dc.size());

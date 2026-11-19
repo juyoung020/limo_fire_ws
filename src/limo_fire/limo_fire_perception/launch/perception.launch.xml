@@ -5,9 +5,7 @@
      object_detector 는 영상을 자기 작업 스레드에서 직접 받고, object_map 는 TF 를 기다리며 막지 않아 한 스레드로 충분하다 (README "스레드·메모리")
      new_container:=false container:=<이름> 이면 이미 있는 컨테이너에 올린다
      모델은 config 로 고른다: yolo_coco.yaml(COCO 80 종 분할, 기본) · yolo_fire.yaml(우리 화재 7 종 분할). objects_file 이 있으면 켤 때 그 물체 지도를 읽는다
-     search:=true 면 설명 글로 물체 찾기(SigLIP2, /perception/object_search — 기본 꺼짐, 엔진은 README "설명 글로 물체 찾기"): object_map 이 물체 사진을 내고
-     글 /perception/object_query → 물체마다 확률 /perception/object_query_result
-     ros2 launch limo_fire_perception perception.launch.xml [config:=yolo_coco.yaml|yolo_fire.yaml] [mapper:=true] [rviz:=true] [objects_file:=…] [search:=true]
+     ros2 launch limo_fire_perception perception.launch.xml [config:=yolo_coco.yaml|yolo_fire.yaml] [mapper:=true] [rviz:=true] [objects_file:=…]
      navigation.launch.xml 처럼 운용 화면을 이미 띄운 launch 와 같이 켤 때는 rviz:=false -->
 <launch>
   <arg name="config" default="yolo_coco.yaml" description="모델 설정: yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
@@ -18,8 +16,6 @@
   <arg name="new_container" default="true" description="false 면 container 로 준 이미 있는 컨테이너에 올린다"/>
   <arg name="container" default="/perception_container"/>
   <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음 · /perception/save_objects 로 씀). 저장 지도 옆 &lt;이름&gt;_objects.txt"/>
-  <arg name="search" default="false" description="설명 글로 물체 찾기 (SigLIP2 object_search + object_map 물체 사진) — 엔진을 만든 뒤 true. mapper:=true 필요"/>
-  <arg name="embeddings_file" default="" description="물체 사진 벡터 파일 (물체 지도 파일 옆 &lt;이름&gt;_objects.emb)"/>
 
   <!-- CUDA 커널을 쓸 때만 올림(지연 로딩): GPU·CPU 메모리를 줄인다. CUDA 12.2+ 는 기본이지만 환경에 따라 꺼져 있을 수 있어 못 박음 -->
   <set_env name="CUDA_MODULE_LOADING" value="LAZY"/>
@@ -42,18 +38,6 @@
       <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectMapNode" name="object_map" namespace="perception">
         <param from="$(find-pkg-share limo_fire_perception)/config/$(var config)"/>
         <param name="objects_file" value="$(var objects_file)"/>
-        <param from="$(find-pkg-share limo_fire_perception)/config/object_search.yaml"/>
-        <param name="publish_views" value="$(var search)"/>
-        <param name="use_sim_time" value="$(var use_sim_time)"/>
-        <extra_arg name="use_intra_process_comms" value="true"/>
-      </composable_node>
-    </load_composable_node>
-  </group>
-  <group if="$(var search)">
-    <load_composable_node target="$(var container)">
-      <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectSearchNode" name="object_search" namespace="perception">
-        <param from="$(find-pkg-share limo_fire_perception)/config/object_search.yaml"/>
-        <param name="embeddings_file" value="$(var embeddings_file)"/>
         <param name="use_sim_time" value="$(var use_sim_time)"/>
         <extra_arg name="use_intra_process_comms" value="true"/>
       </composable_node>

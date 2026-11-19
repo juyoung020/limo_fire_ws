@@ -22,7 +22,6 @@
 #include <deque>
 #include <cmath>
 #include <cstdio>
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -135,11 +134,8 @@ class ExplorerNode : public rclcpp::Node {
       dp.obj_max = (int)declare_parameter<int>("decider_obj_max", dp.obj_max);              // 물체 후보 칸 (따라가기 포함, 합쳐 decider_max_cands)
       dp.obj_always = declare_parameter<bool>("decider_obj_always", dp.obj_always);          // 지시 없어도 물체 후보 (끄면 지시 없는 탐사 요청이 예전과 바이트 같음)
       dp.vis_s = (float)declare_parameter<double>("decider_vis_s", dp.vis_s);               // 이 안에 본 물체 = 지금 보임
-      dp.sem_max = (int)declare_parameter<int>("decider_sem_max", dp.sem_max);              // 뜻 물체 칸 (0 = 끔 — 요청이 예전과 바이트 같음)
-      dp.sem_thr = (float)declare_parameter<double>("decider_sem_thr", dp.sem_thr);         // 뜻 물체 칸 문턱 (맞음 확률)
       dp.front_max_instr = (int)declare_parameter<int>("decider_front_max_instr", dp.front_max_instr);   // 지시 있을 때 프론티어 칸 상한 (0 = 예전)
       dp.obj_fill = declare_parameter<bool>("decider_obj_fill", dp.obj_fill);               // 이름 물체 칸을 클래스 안 맞는 가까운 물체로도 채움
-      dp.sem_first = declare_parameter<bool>("decider_sem_first", dp.sem_first);            // 뜻 물체 칸을 이름 물체 칸 앞 글자에
       dp.timeout_steps = std::max(1, (int)std::lround(dec_timeout / dt()));
       dec_up_ = std::make_unique<lxd::Upper>(dp);
       dec_obj_always_ = dp.obj_always;
@@ -235,20 +231,6 @@ class ExplorerNode : public rclcpp::Node {
     latched_sub.use_intra_process_comm = rclcpp::IntraProcessSetting::Disable;
     sub_objects_ = create_subscription<vision_msgs::msg::Detection3DArray>("/perception/objects", tl,
       [this](vision_msgs::msg::Detection3DArray::ConstSharedPtr m) { objects_ = m; }, latched_sub);
-    // 뜻 물체 칸 (decider_sem_max > 0 일 때만): 지시 글을 인식 object_search 에 묻고 (/perception/object_query), 물체마다 맞음 확률을 받음
-    // (/perception/object_query_result — score = 물체 사진들 중 가장 높은 sigmoid(scale·cos + bias), limo_fire_perception/sem_score.hpp). 끄면 토픽을 안 만듦
-    sem_strip_ = declare_parameter<std::vector<std::string>>("decider_sem_strip", std::vector<std::string>{});   // 지시 → 명사구 (class_alias.h query_phrase)
-    if (dec_up_->params().sem_max > 0) {
-      pub_query_ = create_publisher<std_msgs::msg::String>("/perception/object_query", tl, latched);   // 늦게 뜬 object_search 도 지금 지시를 받게
-      sub_query_ = create_subscription<vision_msgs::msg::Detection3DArray>("/perception/object_query_result", tl,
-        [this](vision_msgs::msg::Detection3DArray::ConstSharedPtr m) {
-          // 지금 지시를 보낸 뒤에 셈한 결과만 (옛 지시로 셈해 오던 결과 · 늦게 붙어 받은 옛 결과가 새 지시 점수로 붙지 않게 — 같은 시계, object_search 는 셈한 때를 찍음)
-          if (instruction_.empty() || rclcpp::Time(m->header.stamp, get_clock()->get_clock_type()) < query_t_) return;
-          sem_.clear();
-          for (const auto& d : m->detections) if (!d.results.empty()) sem_[d.id] = (float)d.results[0].hypothesis.score;
-          obj_dirty_ = true;
-        }, latched_sub);
-    }
     srv_enable_ = create_service<std_srvs::srv::SetBool>("enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
     watchdog_ = create_wall_timer(std::chrono::milliseconds(50), [this] { check_inputs(); });
@@ -285,9 +267,6 @@ class ExplorerNode : public rclcpp::Node {
       dec_up_->set_class_hint(target_class_);
     }
     instruction_ = text;
-    sem_.clear();   // 옛 지시의 점수는 버림 (새 답이 오면 다시 채움 — 그 전까지 뜻 칸은 빔)
-    query_t_ = now();
-    if (pub_query_) { std_msgs::msg::String q; q.data = text.empty() ? text : query_phrase(text, sem_strip_); pub_query_->publish(q); }
     end_follow("");
     end_goto();
     fails_.clear();
@@ -886,7 +865,6 @@ class ExplorerNode : public rclcpp::Node {
       o.x = (float)d.bbox.center.position.x;
       o.y = (float)d.bbox.center.position.y;
       o.match = !target_class_.empty() && o.cls == target_class_ ? 1.f : 0.f;
-      if (const auto it = sem_.find(o.oid); it != sem_.end()) o.sem = it->second;
       o.seen_s = (float)seen_s_of(d);
       if (o.seen_s > obj_stale_s_) continue;
       if (fails_.blocked(o.oid, o.cls, o.x, o.y, now().seconds())) continue;   // 못 간 물체는 잠시 뺌 (task_sup.h Fails)
@@ -1158,11 +1136,7 @@ class ExplorerNode : public rclcpp::Node {
   Aliases aliases_;
   bool debug_ = false;
   double obj_stale_s_ = 600.0;
-  rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_, sub_query_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_query_;
-  std::map<std::string, float> sem_;   // 지금 지시에 대한 물체별 뜻 맞음 확률 (object_search 답)
-  rclcpp::Time query_t_;                 // 지금 지시를 object_search 에 보낸 때 (on_goal 이 now() 로 — 지시가 빈 동안은 안 견줌)
-  std::vector<std::string> sem_strip_;  // decider_sem_strip
+  rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
   bool obj_dirty_ = false;
   ofl::Follower follower_;

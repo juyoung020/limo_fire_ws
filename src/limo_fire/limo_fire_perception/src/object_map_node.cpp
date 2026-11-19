@@ -7,8 +7,6 @@
 // 늘 최신 쪽이 남음)에 넣고 바로 돌아오고, 처리는 process_period 타이머가 그 시각 TF 가 있는 장부터 한다(tf_wait 지나도 없으면 버림).
 // TF 도 이 노드의 콜백으로 받는다(따로 스레드 없음). 깊이 영상은 같은 프로세스의 탐사와 구독 하나를 나눠 쓴다(shared_image.hpp — 역직렬화 한 번, 받기 메시지를 돌려 씀).
 // stats_period 마다 짝 못 지은 탐지 비율(탐지↔깊이 max_sync_dt)·줄 지연·처리 시간을 로그로 낸다
-// publish_views(기본 꺼짐 — launch search:=true 가 켬)면 설명 글로 물체 찾기(object_search)용 물체별 원본 사진을 object_views 로 낸다.
-// 켜도 그 구독자가 있을 때만 컬러 영상을 구독하고, 꺼져 있으면 사진 몫 일(구독·자르기·파라미터)이 하나도 없다
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -193,17 +191,6 @@ public:
     for (const auto & n : declare_parameter<std::vector<std::string>>("ignore_classes", std::vector<std::string>{})) {ignored_.push_back(n);}
     // 물체 지도 파일 (클래스·위치·크기·본 횟수·마지막 본 시각). 있으면 켤 때 읽는다 — 저장한 지도(map_saver)와 같이 다시 쓰려고
     objects_file_ = declare_parameter<std::string>("objects_file", "");
-    // 물체 찾기용 원본 사진 (README "설명 글로 물체 찾기"): 지도에 올라간 물체가 지금까지 낸 사진 품질(상자 넓이 × 점수)의
-    // views_ratio 배보다 좋게 views_period 초 넘어 다시 찍히면 상자 + views_margin 여백을 원본 컬러 영상에서 잘라 냄 (frame_id = "chair-1")
-    if (declare_parameter<bool>("publish_views", false)) {
-      views_ratio_ = declare_parameter<double>("views_ratio", 0.7);
-      views_period_ = declare_parameter<double>("views_period", 1.0);
-      views_margin_ = declare_parameter<double>("views_margin", 0.1);
-      views_wait_ = declare_parameter<double>("views_wait", 1.0);
-      views_keep_ = static_cast<size_t>(std::max<int64_t>(1, declare_parameter<int>("views_keep_images", 10)));
-      color_topic_ = declare_parameter<std::string>("color_topic", "/camera/color/image_raw");
-      views_pub_ = create_publisher<sensor_msgs::msg::Image>("object_views", 10);
-    }
 
     // 늦게 켠 RViz 도 받게 transient_local. 프로세스 안 전달(intra-process)은 volatile 만 되므로 이 둘은 끈다
     rclcpp::PublisherOptions latched;
@@ -230,7 +217,6 @@ public:
     clear_srv_ = create_service<std_srvs::srv::Trigger>("clear_objects",
         [this](std_srvs::srv::Trigger::Request::SharedPtr, std_srvs::srv::Trigger::Response::SharedPtr res) {
           landmarks_.clear();
-          view_crops_.clear();   // 지운 물체 자리를 가리키는 사진 자르기 요청
           std::fill(counters_.begin(), counters_.end(), 0);
           visualization_msgs::msg::MarkerArray arr;
           arr.markers.emplace_back().action = Marker::DELETEALL;
@@ -366,16 +352,6 @@ private:
     double mx = 0, my = 0, mz = 0;   // 그 측정들의 평균 (옮겨진 자리)
     bool gone = false;       // 없어짐 (못 본 수 neg_misses 번 · 움직이는 클래스는 dynamic_ttl 초) — 표시·목록·저장에서 뺌, 같은 자리 탐지는 새 물체로
     bool deleted = false;    // 없어진 물체 마커를 지웠음
-    double view_q = 0, view_t = -1e9;   // 물체 찾기 사진(object_views)으로 마지막 낸 것의 품질 · 받은 시각 (publish_views 일 때만 씀)
-  };
-
-  // 물체 찾기 사진을 자를 장면: 같은 시각 원본 컬러 영상이 오면 잘라 낸다
-  struct ViewCrop
-  {
-    builtin_interfaces::msg::Time stamp;
-    size_t index;
-    int x0, y0, x1, y1;
-    double quality;
   };
 
   // 탐지 하나를 지도에 올릴 값: 영상 좌표 (u, v), 거리 z, 앞면 넓이
@@ -632,89 +608,8 @@ private:
       const size_t idx = add_seen(seen_now, cls, p_map.point.x, p_map.point.y, p_map.point.z, view_yaw,
           d.results[0].hypothesis.score, m.area, d.bbox.size_x * m.z / fx);
       if (scanned) {footprint(fx, fy, cx, cy, tf, landmarks_[idx]);}   // scan_mask 의 pts_ (그 뒤 box_depth 만 vals_ 를 씀)
-      if (color_sub_) {want_view(dets->header.stamp, idx, d);}
     }
     negative_evidence(*depth, info, tf, sx, sy, fx, fy, cx, cy, seen_now);
-  }
-
-  // 물체 찾기 사진: 이 물체의 지금까지 사진보다 views_ratio 배 넘게 좋고 views_period 초가 지났으면 자를 장면으로 (여러 장 — 보는 방향마다)
-  void want_view(const builtin_interfaces::msg::Time & stamp, size_t idx, const vision_msgs::msg::Detection2D & d)
-  {
-    Landmark & l = landmarks_[idx];
-    const double quality = d.bbox.size_x * d.bbox.size_y * d.results[0].hypothesis.score;
-    if (l.number == 0 || quality <= views_ratio_ * l.view_q || t_obs_ - l.view_t <= views_period_) {return;}
-    const double mx = views_margin_ * d.bbox.size_x, my = views_margin_ * d.bbox.size_y;
-    view_crops_.push_back({stamp, idx,
-        static_cast<int>(d.bbox.center.position.x - d.bbox.size_x / 2 - mx), static_cast<int>(d.bbox.center.position.y - d.bbox.size_y / 2 - my),
-        static_cast<int>(d.bbox.center.position.x + d.bbox.size_x / 2 + mx), static_cast<int>(d.bbox.center.position.y + d.bbox.size_y / 2 + my),
-        quality});
-    l.view_t = t_obs_;
-    while (view_crops_.size() > 4 * views_keep_) {view_crops_.pop_front();}
-    take_views();
-  }
-
-  // 기다리던 장면의 원본 영상이 있으면 잘라 object_views 로. 원본이 views_wait 초 넘게 지나도 안 오면 버림
-  void take_views()
-  {
-    for (auto it = view_crops_.begin(); it != view_crops_.end(); ) {
-      sensor_msgs::msg::Image::ConstSharedPtr img;
-      for (const auto & c : colors_) {
-        if (c->header.stamp == it->stamp) {img = c;}
-      }
-      const bool stale = !colors_.empty() &&
-        (rclcpp::Time(colors_.back()->header.stamp) - rclcpp::Time(it->stamp)).seconds() > views_wait_;
-      if (img && it->index < landmarks_.size()) {
-        Landmark & l = landmarks_[it->index];
-        auto out = crop(*img, it->x0, it->y0, it->x1, it->y1);
-        if (out && !l.gone && l.number > 0) {
-          out->header.frame_id = class_names_[l.cls] + "-" + std::to_string(l.number);
-          views_pub_->publish(std::move(out));
-          l.view_q = std::max(l.view_q, it->quality);
-        }
-      }
-      it = (img || stale) ? view_crops_.erase(it) : std::next(it);
-    }
-  }
-
-  // 영상 조각 (화소 3 바이트 형식만 — rgb8·bgr8). 범위가 영상 밖이면 잘라 맞추고, 너무 작으면 nullptr
-  static std::unique_ptr<sensor_msgs::msg::Image> crop(const sensor_msgs::msg::Image & img, int x0, int y0, int x1, int y1)
-  {
-    if (img.encoding != "rgb8" && img.encoding != "bgr8") {return nullptr;}
-    x0 = std::clamp(x0, 0, static_cast<int>(img.width) - 1);
-    x1 = std::clamp(x1, 0, static_cast<int>(img.width) - 1);
-    y0 = std::clamp(y0, 0, static_cast<int>(img.height) - 1);
-    y1 = std::clamp(y1, 0, static_cast<int>(img.height) - 1);
-    if (x1 - x0 < 8 || y1 - y0 < 8) {return nullptr;}
-    auto out = std::make_unique<sensor_msgs::msg::Image>();
-    out->header.stamp = img.header.stamp;
-    out->encoding = img.encoding;
-    out->width = static_cast<uint32_t>(x1 - x0 + 1);
-    out->height = static_cast<uint32_t>(y1 - y0 + 1);
-    out->step = out->width * 3;
-    out->data.resize(static_cast<size_t>(out->step) * out->height);
-    for (uint32_t y = 0; y < out->height; ++y) {
-      std::copy_n(img.data.data() + static_cast<size_t>(y0 + y) * img.step + static_cast<size_t>(x0) * 3, out->step,
-        out->data.data() + static_cast<size_t>(y) * out->step);
-    }
-    return out;
-  }
-
-  // 원본 컬러 영상은 object_views 를 받는 쪽(object_search)이 있을 때만 구독한다 (publish 타이머가 봄)
-  void update_view_sub()
-  {
-    const bool want = views_pub_->get_subscription_count() + views_pub_->get_intra_process_subscription_count() > 0;
-    if (want && !color_sub_) {
-      color_sub_ = create_subscription<sensor_msgs::msg::Image>(color_topic_, rclcpp::SensorDataQoS(),
-        [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {
-          colors_.push_back(msg);
-          if (colors_.size() > views_keep_) {colors_.pop_front();}
-          take_views();
-        });
-    } else if (!want && color_sub_) {
-      color_sub_.reset();
-      colors_.clear();
-      view_crops_.clear();
-    }
   }
 
   // 물체 목록에 넣고 그 물체의 번호(landmarks_ 안 위치)를 돌려준다
@@ -1165,7 +1060,6 @@ private:
     if (!arr.markers.empty()) {marker_pub_->publish(arr);}
     publish_objects();
     if (++tick_ % 5 == 0) {publish_summary();}
-    if (views_pub_) {update_view_sub();}
   }
 
   // ~/objects: 물체 하나 = Detection3D (id "fire-1", 클래스·최고 점수, 위치, 크기 y = 앞면 넓이의 제곱근, 모르면 0)
@@ -1333,14 +1227,6 @@ private:
   rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr objects_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr clear_srv_;
   rclcpp::TimerBase::SharedPtr timer_, proc_timer_;
-  // 물체 찾기 사진 (publish_views 일 때만 — 꺼져 있으면 views_pub_ 가 비어 아무것도 안 함)
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr views_pub_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr color_sub_;
-  std::deque<sensor_msgs::msg::Image::ConstSharedPtr> colors_;
-  std::deque<ViewCrop> view_crops_;
-  std::string color_topic_;
-  double views_ratio_ = 0.7, views_period_ = 1.0, views_margin_ = 0.1, views_wait_ = 1.0;
-  size_t views_keep_ = 10;
 };
 
 }  // namespace limo_fire_perception

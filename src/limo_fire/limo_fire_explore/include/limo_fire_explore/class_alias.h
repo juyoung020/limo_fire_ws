@@ -49,25 +49,4 @@ inline std::string class_of(const std::string& text, const Aliases& aliases, con
   return best;
 }
 
-// 지시 글 → 그림·글 모델에 물을 명사구 ("의자로 가" → "의자", "Find the bicycle." → "bicycle"): strip 의 낱말을 끝(뒤붙음)·앞(영문 앞붙음, 대소문자 무시)에서
-// 더 안 바뀔 때까지 뗌. 실사진 검색에서 명사구가 문장 전체보다 1 위가 잘 맞음 (upper_lora/README "뜻 물체 칸"). 다 떼면 원래 글
-inline std::string query_phrase(const std::string& text, const std::vector<std::string>& strip) {
-  const auto trim = [](std::string t) {
-    while (!t.empty() && (t.back() == ' ' || t.back() == '.' || t.back() == '?' || t.back() == '!')) t.pop_back();
-    while (!t.empty() && t.front() == ' ') t.erase(t.begin());
-    return t;
-  };
-  const auto lower = [](std::string t) { for (auto& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return t; };
-  std::string t = trim(text);
-  for (bool ch = true; ch;) {
-    ch = false;
-    for (const auto& w : strip) {
-      if (w.empty()) continue;
-      if (t.size() > w.size() && t.compare(t.size() - w.size(), w.size(), w) == 0) { t = trim(t.substr(0, t.size() - w.size())); ch = true; }
-      if (t.size() > w.size() && lower(t.substr(0, w.size())) == lower(w)) { t = trim(t.substr(w.size())); ch = true; }
-    }
-  }
-  return t.empty() ? trim(text) : t;
-}
-
 }  // namespace limo_fire_explore

@@ -38,7 +38,6 @@ find_package(message_filters REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(rviz_2d_overlay_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(CUDAToolkit REQUIRED)
@@ -62,18 +61,8 @@ if(TENSORRT_INCLUDE_DIR AND NVINFER_LIB)
   rclcpp_components_register_node(object_detector_component
     PLUGIN "limo_fire_perception::ObjectDetectorNode" EXECUTABLE object_detector)
   list(APPEND PERCEPTION_TARGETS trt_yolo object_detector_component)
-
-  # 설명 글로 물체 찾기 (기본 꺼짐 — launch search:=true 일 때만 올라감). 모델 판은 Embedder 틀 뒤 (embedder.cpp 가 backend 이름으로 고름)
-  add_library(object_search_component SHARED src/object_search_node.cpp src/embedder.cpp src/trt_siglip.cpp)
-  target_include_directories(object_search_component PRIVATE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> ${TENSORRT_INCLUDE_DIR})
-  target_link_libraries(object_search_component ${NVINFER_LIB} CUDA::cudart opencv_core opencv_imgproc)
-  ament_target_dependencies(object_search_component rclcpp rclcpp_components sensor_msgs std_msgs std_srvs vision_msgs ament_index_cpp)
-  rclcpp_components_register_node(object_search_component
-    PLUGIN "limo_fire_perception::ObjectSearchNode" EXECUTABLE object_search)
-  list(APPEND PERCEPTION_TARGETS object_search_component)
 else()
-  message(WARNING "TensorRT(NvInfer.h, libnvinfer) 가 없어 object_detector·object_search 는 빼고 object_map 만 빌드함 (탐지는 로봇에서)")
+  message(WARNING "TensorRT(NvInfer.h, libnvinfer) 가 없어 object_detector 는 빼고 object_map 만 빌드함 (탐지는 로봇에서)")
 endif()
 
 # 한 프로세스 안에서 영상 구독 하나를 여러 노드가 나눠 씀 (깊이: object_map · 탐사 explorer — 역직렬화 한 번). 공유 라이브러리라 프로세스에 표가 하나
@@ -91,7 +80,7 @@ ament_export_dependencies(rclcpp sensor_msgs)
 add_library(object_map_component SHARED src/object_map_node.cpp)
 target_link_libraries(object_map_component limo_fire_shared_image)
 ament_target_dependencies(object_map_component rclcpp rclcpp_components sensor_msgs vision_msgs
-  visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs std_msgs rviz_2d_overlay_msgs ament_index_cpp)
+  visualization_msgs geometry_msgs message_filters tf2_ros tf2_geometry_msgs std_srvs rviz_2d_overlay_msgs ament_index_cpp)
 rclcpp_components_register_node(object_map_component
   PLUGIN "limo_fire_perception::ObjectMapNode" EXECUTABLE object_map)
 
@@ -106,7 +95,7 @@ endif()
 install(TARGETS ${PERCEPTION_TARGETS}
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY launch config icons DESTINATION share/${PROJECT_NAME})
-# 엔진(기기마다 만듦, git 에 없음): models/ 에 두면 설치되고 engine_path 에 파일 이름만 써도 찾는다 (SigLIP2 어휘·병합·토큰 표도)
-install(DIRECTORY models/ DESTINATION share/${PROJECT_NAME}/models FILES_MATCHING PATTERN "*.engine" PATTERN "siglip2_*.txt" PATTERN "siglip2_*.f16")
+# 엔진(기기마다 만듦, git 에 없음): models/ 에 두면 설치되고 engine_path 에 파일 이름만 써도 찾는다
+install(DIRECTORY models/ DESTINATION share/${PROJECT_NAME}/models FILES_MATCHING PATTERN "*.engine")
 
 ament_package()

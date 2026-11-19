@@ -446,7 +446,7 @@ ros2 launch limo_fire_explore app.launch.xml perception:=true camera_in_app:=tru
 | `state.map_image` | 지도 사진 범례 (흰 빈 곳·검은 벽·회색 모름, 파란 화살표 = 로봇, 글자 동그라미 = 후보, 보라 = 지나온 길 60 s, ✓·× = 지난 목표) |
 | `state.candidate_fields` | 짧은 키 뜻 |
 | `state.hint` | "Rules of thumb …" (`decider_hint`) |
-| `state.candidates[]` | 후보 최대 `decider_max_cands` 6 개. 프론티어: `id`(글자) `t`(가는 시간 s) `len`(경로 m) `bear`(방위 도, 왼쪽 +) `new`(새로 보일 넓이 m²) `w`(프론티어 폭 m) `room` `cur` `fail` `fail_s` `seen`. 물체(지시가 있을 때 앞 글자, 최대 `decider_obj_max` 3 — 힌트 클래스·따라가기만): `kind`(`object`·`follow`) `object`(클래스) `oid`(`chair-3`) `len` `bear` `dist` `seen_s` `vis`. 뜻 물체(지시가 있고 object_search 점수 ≥ `decider_sem_thr` 일 때 맨 앞, 최대 `decider_sem_max` 3): `kind: semantic` + `score`. 지시가 있으면 프론티어는 최대 `decider_front_max_instr` 3, `kind: frontier` |
+| `state.candidates[]` | 후보 최대 `decider_max_cands` 6 개. 프론티어: `id`(글자) `t`(가는 시간 s) `len`(경로 m) `bear`(방위 도, 왼쪽 +) `new`(새로 보일 넓이 m²) `w`(프론티어 폭 m) `room` `cur` `fail` `fail_s` `seen`. 물체(지시가 있을 때 앞 글자, 최대 `decider_obj_max` 3 — 힌트 클래스·따라가기만): `kind`(`object`·`follow`) `object`(클래스) `oid`(`chair-3`) `len` `bear` `dist` `seen_s` `vis`. 지시가 있으면 프론티어는 최대 `decider_front_max_instr` 3, `kind: frontier` |
 | `state.decision_log_newest_first[]` | 최근 `decider_log_k` 4 결정 (언제·고른 후보·이어 감/바꿈·결과) |
 | `state.instruction` · `class_hint` · `known_objects[]` · `candidate_kinds` | 지시가 있을 때. `known_objects` 는 가까운 10 개 `"chair-3 chair 1.2 m front-left seen 4 s visible"` |
 | `images[]` | `"data:image/png;base64,…"` — 지도 사진 288 px 한 장 |
