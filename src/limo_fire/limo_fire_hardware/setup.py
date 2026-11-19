@@ -10,7 +10,7 @@ setup(
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml', 'README.md', 'REAL_AIM_TEST.md']),
+        ('share/' + package_name, ['package.xml', 'README.md', 'REAL_AIM_TEST.md', 'AIM_LEARNING_PREP.md']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
     ],

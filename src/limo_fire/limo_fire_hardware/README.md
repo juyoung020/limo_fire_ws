@@ -4,6 +4,8 @@
 
 금요일 실물 치수 입력과 무장전 시험 순서는 [REAL_AIM_TEST.md](REAL_AIM_TEST.md)를 따른다.
 
+발사 결과 기록과 오프라인 보정 후보 학습은 [AIM_LEARNING_PREP.md](AIM_LEARNING_PREP.md)를 따른다. 현재 조준 실행에는 학습 모델이 연결되지 않는다.
+
 ## 확인한 발사장치 구성
 
 2026-11-18에는 Arduino Uno로 분리 모터 진단을 했다. 이번 통합 시험의 대상은 **ESP32-S3 GPIO4 레버·GPIO5 상하**다. 상하 모터는 사용자 제공 DSSERVO 20kg, 270° 위치형 가정이며 실물 각도·영점은 아직 측정되지 않았다.
