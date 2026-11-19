@@ -125,6 +125,11 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.low_idle_d = num("stall_dist", 0.3f);
       c.low_idle_steps = (int)std::lround(num("stall_time", 10.f) / pv);
     }
+    // 경로를 다시 살피는 주기 (s — low_rl.h lowrl_period, 목표가 바뀌면 바로): 결정 주기와 뗌. 없으면 0 = 결정 주기 (옛 동작)
+    if (ap["replan_period"]) {
+      c.low_period = (int)std::lround(ap["replan_period"].as<float>() / pv);
+      if (c.low_period < 1) throw std::runtime_error(path + ": action.path.replan_period 는 행동 주기 이상");
+    }
     c.path_cost_reg = ap["use_cost_regulated_linear_velocity_scaling"].as<bool>() ? 1 : 0;
     c.path_cs_dist = ap["cost_scaling_dist"].as<float>();
     c.path_cs_gain = ap["cost_scaling_gain"].as<float>();
@@ -188,11 +193,14 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     // 복구 (hier_path.h "복구"): 절이 없으면 끔. 물러나기 걸음 = BT BackUp backup_dist / backup_speed / 행동 주기. SIM_PATH_RECOVERY=0/1 (앞뒤 비교)
     c.rec_on = c.rec_backup_steps = c.rec_bl_steps = 0;
     c.rec_bl_r = 0.f;
+    c.rec_win = 0;
     if (const YAML::Node rc = ap["recovery"]) {
       c.rec_on = rc["enabled"].as<bool>() ? 1 : 0;
       c.rec_backup_steps = (int)std::lround(rc["backup_dist"].as<float>() / c.path_backup_v / pv);
       c.rec_bl_steps = (int)std::lround(rc["blacklist_time"].as<float>() / pv);
       c.rec_bl_r = rc["same_goal_radius"].as<float>();
+      c.rec_win = (int)std::lround((rc["blocked_window"] ? rc["blocked_window"].as<float>() : dp) / pv);   // 없으면 결정 주기 (옛 동작)
+      if (c.rec_win < 1) throw std::runtime_error(path + ": recovery.blocked_window 는 행동 주기 이상");
     }
     if (const char* g = std::getenv("SIM_PATH_RECOVERY")) c.rec_on = (g[0] == '1' && c.rec_bl_r > 0.f) ? 1 : 0;
   }

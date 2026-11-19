@@ -525,8 +525,20 @@ DEV int path_recovery(const EnvBatch& b, EnvState& e, int env, int k, int* force
   }
   if (!c.rec_on) return k;
   const int32_t* C = act_cells(b, env);
-  // 지난 결정이 목표로 못 나아갔나
-  bool stuck = e.p_blk_now * 2 > c.decide_steps;   // (a)
+  const int tgt = k >= 0 ? C[k] : -1;
+  const bool same = tgt >= 0 && e.goal_cell >= 0 && path_near(c, m, tgt, e.goal_cell, c.rec_bl_r);
+  // 판정 창 (EnvCfg::rec_win — 시간): 같은 목표 칸이면 창이 찰 때까지 판정을 미룸 (막힌 걸음은 이어 셈). 목표 칸이 바뀌면(가까운 칸이라도) 바로 판정 (옛 동작 그대로 —
+  // 결정 1 s · 창 1 s 면 같은 칸 판정은 늘 창이 찬 때라 옛 동작과 바이트 같음)
+  const int win = c.rec_win > 0 ? c.rec_win : c.decide_steps;
+  if (same && tgt == e.goal_cell && e.p_blk_win < win) {
+    if (tgt < 0 || !path_blacklisted(c, m, e, tgt)) return k;
+    for (int j = 0; j < (low_follow(b, env) ? 1 : act_slots(b)); ++j)
+      if (C[j] >= 0 && !path_blacklisted(c, m, e, C[j])) return j;
+    return -1;
+  }
+  e.p_blk_win = 0;
+  // 지난 창이 목표로 못 나아갔나
+  bool stuck = e.p_blk_now * 2 > win;   // (a)
   const bool blocked = stuck;
   e.p_blk_now = 0;
   if (e.goal_cell >= 0 && e.p_n == 0) stuck = true;   // (b)
@@ -537,8 +549,6 @@ DEV int path_recovery(const EnvBatch& b, EnvState& e, int env, int k, int* force
       stuck = stuck || dx * dx + dy * dy <= c.goal_tol * c.goal_tol;
     }
   }
-  const int tgt = k >= 0 ? C[k] : -1;
-  const bool same = tgt >= 0 && e.goal_cell >= 0 && path_near(c, m, tgt, e.goal_cell, c.rec_bl_r);
   e.p_blk = (same && stuck) ? e.p_blk + 1 : 0;
   if (e.p_blk >= 4) {   // 포기 (BT NavigateRecovery 가 재시도를 다 쓰면 목표 실패)
     const int i = e.p_gaveup % kRecBl;

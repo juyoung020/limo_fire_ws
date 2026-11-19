@@ -79,6 +79,7 @@ struct LowEp {
   float ab_dist[kLowAng];          // 그 이동 거리 (m)
   float left_sum;                  // 도착 전에 바뀔 때 옛 경로 끝까지 남았던 직선 거리의 합 (m)
   int32_t n_goal;                  // 목적지를 받은 수 (없음 → 칸 포함)
+  int32_t imm_n, wedge;            // 충돌 검사에 걸린 걸음 · 그중 제자리 회전 두 쪽도 막힌 걸음 (진짜 끼임 — 물러나기가 실제로 필요했던 몫, env.h path_step_b)
   int32_t end;                     // kLowEnd*
   // 목표 따라가기 (follow ≠ 0)
   int32_t following;               // 이 판이 목표 따라가기 구간에 들어감 (들어갈 때 위 누적을 0 으로)

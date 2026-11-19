@@ -140,6 +140,9 @@ struct EnvCfg {
   // 다시 계획 → 물러나기(rec_backup_steps 걸음, BackUp 0.30 m @ 0.05 m/s) → 그 목표 포기(rec_bl_steps 걸음 동안 그 둘레 rec_bl_r m 안 후보를 고르면 제자리 회전)
   int rec_on, rec_backup_steps, rec_bl_steps;
   float rec_bl_r;
+  int32_t rec_win;   // (a) 막힘 판정 창 (걸음 — env.yaml recovery.blocked_window, s): 같은 목표에서 이 창이 찰 때마다 한 번 판정 (절반 넘게 막힘 → 막힌 창).
+                     //   결정·계획 주기(decide_steps · low_period)와 떼어 냄 (2026-11-19 — 결정 0.1 s 면 1 걸음 창이라 막힘 한 번에 물러나기·포기가 0.4 s 만에 나던 것).
+                     //   0 = decide_steps (녹화 판 6 이하 — 그때 동작)
   // 아래층 계측·목표 넣기 (include/low_task.h · env.yaml action.path.follow — 스위치 둘은 도구가 켠다, 기본 0)
   int low_stat, low_task;          // 1 = 걸음 분류 누적(EnvBatch::low) · 1 = 호스트가 목표 칸을 넣음(합친 탐사 low_explore 와 같이만 — EnvBatch::lowcmd, low_stat 도 켜짐)
   int low_idle_steps;              // 정체 걸음 수 (막힘 신호)
@@ -236,6 +239,7 @@ struct EnvState {
   int16_t wp[2 * mdp::hier::kPathMax];
   // 복구 (rec_on, hier_path.h "복구"): 이번 결정에서 충돌 검사가 막은 걸음, 이어진 막힌 결정 수, 남은 물러나기 걸음, 포기한 목표 칸 (−1 없음)·포기 끝 걸음, 판 동안 포기 수 (기록)
   int32_t p_blk_now, p_blk, p_rec, p_gaveup;
+  int32_t p_blk_win, p_blk_pad;   // 지난 판정 뒤 걸음 수 (막힘 판정 창 — EnvCfg::rec_win) · 8 바이트 맞춤
   int32_t p_bl_cell[kRecBl], p_bl_until[kRecBl];   // 포기한 목표 칸 (−1 없음)·포기 끝 걸음 — 고리 (p_gaveup % kRecBl 자리에 새로)
   // 판 끝 뒤 멈춤 (EnvCfg::end_hold — 녹화용): 1 이면 판이 끝났고 리셋 없이 서 있는 중. 명령은 0, 판 끝 판정 없음 (리셋이 0 으로)
   int32_t halt, pad_halt;
@@ -493,6 +497,7 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.p_n = e.p_i = e.p_trunc = e.p_stops = 0;
   e.p_mode = e.p_fb = e.p_plans = e.p_mon = 0;
   e.p_blk_now = e.p_blk = e.p_rec = e.p_gaveup = 0;
+  e.p_blk_win = e.p_blk_pad = 0;
   for (int i = 0; i < kRecBl; ++i) { e.p_bl_cell[i] = -1; e.p_bl_until[i] = 0; }
   people_reset(b, e);   // 사람 놓기 (로봇 자세·world_seed 뒤)
 }
@@ -624,6 +629,7 @@ DEV void path_step_a(const EnvBatch& b, EnvState& e, int env, const PathPre* pre
 DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const PathPre* pre, PathStep& s) {
   const EnvCfg& c = b.cfg;
   float vc = s.vc, wc = s.wc;
+  e.p_blk_win += 1;   // 막힘 판정 창 (hier_path.h path_recovery)
   // RPP 충돌 검사 (hier_path.h path_imminent): 걸리면 Nav2 BT 복구의 BackUp 처럼 물러남 (뒤도 막히면 섬)
   if (e.p_rec > 0) {   // 복구 물러나기 (hier_path.h "복구" — Nav2 BT BackUp): 추종기 대신. 뒤가 막히면 그만
     e.p_rec -= 1;
@@ -632,6 +638,11 @@ DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const Pa
     wc = 0.f;
     if (vc == 0.f) e.p_rec = 0;
   } else if (imm) {
+    if (b.low) {   // 계측: 진짜 끼임 — 앞(충돌 검사)도 제자리 회전 두 쪽도 모두 막힘 (low_task.h LowEp::wedge)
+      const bool rp = path_imminent(b, e, env, 0.f, c.rot_w, 1e9f), rn = path_imminent(b, e, env, 0.f, -c.rot_w, 1e9f);
+      b.low[env].imm_n += 1;
+      b.low[env].wedge += rp && rn;
+    }
     vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;   // 0.1 m = 결정 둘(2 s) 동안 물러나는 거리
     s.bkind = 2;
     wc = 0.f;

@@ -213,6 +213,8 @@ int main(int argc, char** argv) {
   bool dec_stop = lxd::Params{}.stop_cand;
   int dec_px = lxd::Params{}.px;
   std::string dec_input = "both", dec_url;
+  long tl_n = 0, tl_fast = 0, tl_zero = 0, tl_zero_k[sim::kLowKinds] = {};   // --time-log 몸통 속도 몫 (걸음 · v ≥ 0.9 · v < 0.05 · 그 분류별)
+  std::string time_log;   // --time-log: 판 끝마다 아래층 걸음 분류(low_task.h kLow* 17 칸 걸음 수) · 이동 거리 · 도착 전 버린 구간 걸음·거리 · 남았던 거리 · 목적지 수 (실물 쪽 RobotEnv LowEp — 시간 손실 분해)
   std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
   bool dec_fake_a = false, dec_fake_follow = false, dec_fake_obj = false, dec_fake_stop = false, follow_on = false, goto_on = false;
   tsk::Params tsp;
@@ -303,6 +305,7 @@ int main(int argc, char** argv) {
     else if (a == "--ep-log") ep_log = nx();
     else if (a == "--contact-log") contact_log = nx();
     else if (a == "--lat-log") lat_log = nx();
+    else if (a == "--time-log") time_log = nx();
     else if (a == "--dec-fake") { const std::string f = nx(); dec_fake_a = f == "A"; dec_fake_follow = f == "follow"; dec_fake_obj = f == "obj"; dec_fake_stop = f == "stop";
                                   dec_fault = f == "down" ? 1 : f == "garbled" ? 2 : f == "oor" ? 3 : 0; }
     else if (a == "--follow") follow_on = true;
@@ -1078,6 +1081,21 @@ int main(int argc, char** argv) {
           l_fb0 = n_fb_all + us.n_fallback();
           l_sent0 = n_sent_all + us.n_sent(); l_ans0 = n_ans; l_pf0 = 0; l_pt0 = 0;   // us 는 판마다 새로 (restart) — 고름 셈도 0 부터
         }
+        if (!time_log.empty()) {
+          if (FILE* tf = std::fopen(time_log.c_str(), "a")) {
+            const sim::LowEp& le = robot.low_ep();
+            std::fprintf(tf, "%ld\t%d\t%.1f\t%d", n_ep, end_code, robot.state().step * dt, le.steps);
+            for (int k = 0; k < sim::kLowKinds; ++k) std::fprintf(tf, "%s%d", k ? "," : "\t", le.n[k]);
+            int abn = 0; float abd = 0.f;
+            for (int k = 0; k < sim::kLowAng; ++k) { abn += le.ab_n[k]; abd += le.ab_dist[k]; }
+            std::fprintf(tf, "\t%.2f\t%d\t%.2f\t%.2f\t%d\t%ld\t%ld\t%ld\t%ld\t%ld\t%ld\t", le.dist_all, abn, abd, le.left_sum, le.n_goal, cr.n_dec(), cr.n_reach(), n_sw, tl_n, tl_fast, tl_zero);
+            for (int k = 0; k < sim::kLowKinds; ++k) std::fprintf(tf, "%s%ld", k ? "," : "", tl_zero_k[k]);
+            std::fprintf(tf, "\t%d\t%d\n", le.imm_n, le.wedge);
+            tl_n = tl_fast = tl_zero = 0;
+            for (long& q : tl_zero_k) q = 0;
+            std::fclose(tf);
+          }
+        }
         if (!ep_log.empty()) {
           if (FILE* ef = std::fopen(ep_log.c_str(), "a")) {
             std::fprintf(ef, "%ld\t%d\t%.1f\t%ld\t%ld\t%.4f\t%.2f\t%ld\n", n_ep, end_code, robot.state().step * (double)hc.cfg.substeps * hc.cfg.dt, n_dec - ep_dec0, n_sw - ep_sw0,
@@ -1114,6 +1132,12 @@ int main(int argc, char** argv) {
       }
       if (stop_instr_end && i_end != "none") break;
       cpu.get_low_rl(R); cpu.get_low(L);
+      if (!time_log.empty()) {   // 몸통 속도 몫 (참 v): ≥ 0.9 m/s · < 0.05 m/s (그때 걸음 분류별)
+        const float av = std::fabs(st[0].v);
+        tl_fast += av >= 0.9f;
+        if (av < 0.05f) { ++tl_zero; if (L[0].kind >= 0 && L[0].kind < sim::kLowKinds) ++tl_zero_k[L[0].kind]; }
+        ++tl_n;
+      }
       if (st[0].step > 0) ep_path += std::hypot(st[0].x - ep_px, st[0].y - ep_py);
       ep_px = st[0].x; ep_py = st[0].y;
       if (st[0].goal_cell >= 0 && st[0].goal_cell != ep_goal) { ep_gsw += ep_goal >= 0; ep_goal = st[0].goal_cell; }
