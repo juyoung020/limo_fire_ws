@@ -1,0 +1,50 @@
+launcher_approach_aim:
+  ros__parameters:
+    motion_enabled: false
+    mount_calibrated: false
+    # Measured pitch-pivot position in base_link, metres. Zeroes are placeholders.
+    mount_xyz_m: [0.0, 0.0, 0.0]
+    # Fixed horizontal offset of launcher forward direction from base_link +x.
+    mount_yaw_deg: 0.0
+    # Example positioning distance. Calibrate against the actual launcher before use.
+    desired_distance_m: 1.2
+    distance_tolerance_m: 0.15
+    pitch_min_deg: 5.0
+    pitch_max_deg: 30.0
+    yaw_tolerance_deg: 3.0
+    # nav2: send a second orientation goal. yaw_rate: rotate in place using /cmd_vel.
+    yaw_alignment_mode: nav2
+    # Set true only after /limo_status.motion_mode confirms diff (0) or mecanum (2).
+    yaw_rate_drive_mode_verified: false
+    yaw_velocity_topic: /cmd_vel
+    yaw_rate_gain: 1.2
+    yaw_rate_min_rps: 0.05
+    yaw_rate_max_rps: 0.25
+    yaw_rate_timeout_s: 8.0
+    yaw_rate_max_error_deg: 45.0
+    # User-confirmed physical launch speed, 2026-11-18 (approximately 14.04 km/h).
+    # Slight sideways curvature was reported; its correction is not yet measured.
+    aiming_model: ballistic
+    measured_launch_speed_mps: 3.9
+    candidate_offsets_deg: [0.0, 15.0, -15.0, 30.0, -30.0, 60.0, -60.0]
+    odom_topic: /odometry/filtered
+    costmap_topic: /global_costmap/costmap
+    fire_topic: /fire/observations
+    robot_radius_m: 0.22
+    footprint_margin_m: 0.03
+    # ESP32/Uno firmware echoes commands. Actual encoder feedback is optional.
+    require_pitch_feedback: false
+    pitch_feedback_topic: /launcher/joint_states
+    pitch_joint: launcher_pitch_joint
+
+pitch_serial_bridge:
+  ros__parameters:
+    enabled: false
+    # Use the verified /dev/serial/by-id/... device, not a guessed ttyUSB number.
+    serial_port: ''
+    baud_rate: 115200
+    min_pitch_deg: 5.0
+    max_pitch_deg: 30.0
+    ack_timeout_s: 3.0
+    startup_delay_s: 2.0
+    startup_timeout_s: 8.0
