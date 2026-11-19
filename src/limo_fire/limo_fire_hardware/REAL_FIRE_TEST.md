@@ -44,7 +44,7 @@ GUI 터미널이 없으면 위의 `ros2 run` 명령을 직접 사용한다. 이�
 
 ## 탐지·이동·조준 후 자동 장전·발사
 
-실물 카메라 표적의 지도 좌표와 거리, 장착 치수, Nav2 도착·차체 정지, 좌우 오차와 상하각을 확인한 뒤 실행한다. 별도 `launcher_control_terminal`은 열지 않는다.
+실물 카메라 표적의 지도 좌표와 거리, 장착 치수, Nav2 도착·차체 정지, 좌우 오차와 상하각을 확인한 뒤 실행한다. launch를 시작한 다음 별도 `launcher_control_terminal`에서 `a`를 한 번 입력해 자동 임무를 시작한다.
 
 ```bash
 source /opt/ros/humble/setup.bash
