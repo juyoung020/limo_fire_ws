@@ -14,6 +14,7 @@
 //     --dec-url http://127.0.0.1:8171: 가짜 대신 진짜 llama-server (실물 노드와 같은 비차단 소켓 limo_fire_explore/decider_client.h). 시뮬 시계는 답을 기다리는 동안 멈추고,
 //     답은 --dec-latency 초 뒤 걸음에 줌 (실물 답 시간을 시뮬 걸음으로). 실물 쪽은 같은 답을 같은 차례로 받음 — 판단 모델 위층을 시뮬에서 실물과 같은 코드로 평가
 // 지도 자세 오차는 끈다 (실물 노드는 지도 자세를 그대로 받으므로). 판이 끝나면 둘 다 새 판 (위층 기억도 비움).
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -53,7 +54,7 @@ double rough_cover(const int16_t* L, int stride, const uint8_t* grid, int gw, in
   return nb ? (double)nk / nb : 0.0;
 }
 // 실물 쪽 걸음 시간 (이 기기 한 코어) — RobotEnv::step(라이다 장 → 지도·관측·닫힘) · low_prepare · 위층 결정(Ctl::decide)
-double t_step = 0, t_obs = 0, t_dec = 0, t_dec_max = 0;
+double t_step = 0, t_obs = 0, t_dec = 0, t_dec_max = 0, t_act = 0, t_act_max = 0;   // t_act: 아래층 명령 (RobotEnv::low_act — 추종기·지역 계획기)
 long n_reuse = 0;   // 실물 쪽 후보 뽑기가 같은 걸음 관측의 프론티어 찾기를 쓴 결정 수 (RobotEnv::reach_keep)
 long n_step = 0, n_tdec = 0;
 // 가짜 판단 모델: 본문 해시로 글자, lat 걸음 뒤 답 (now 는 부르는 쪽이 걸음마다 맞춤)
@@ -214,6 +215,7 @@ int main(int argc, char** argv) {
   int dec_px = lxd::Params{}.px;
   std::string dec_input = "both", dec_url;
   long tl_n = 0, tl_fast = 0, tl_zero = 0, tl_zero_k[sim::kLowKinds] = {};   // --time-log 몸통 속도 몫 (걸음 · v ≥ 0.9 · v < 0.05 · 그 분류별)
+  std::string vid_log;    // --vid-log 접두: 그림용 기록 (0.5 s 마다 참 자세 · 지도 자세 · 목표 · 경로 · 명령 · 사람 → 접두.frames.tsv, 로봇 지도 0 모름 · 1 빈 · 2 막힘 → 접두.maps.bin)
   std::string time_log;   // --time-log: 판 끝마다 아래층 걸음 분류(low_task.h kLow* 17 칸 걸음 수) · 이동 거리 · 도착 전 버린 구간 걸음·거리 · 남았던 거리 · 목적지 수 (실물 쪽 RobotEnv LowEp — 시간 손실 분해)
   std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
   bool dec_fake_a = false, dec_fake_follow = false, dec_fake_obj = false, dec_fake_stop = false, follow_on = false, goto_on = false;
@@ -306,6 +308,7 @@ int main(int argc, char** argv) {
     else if (a == "--contact-log") contact_log = nx();
     else if (a == "--lat-log") lat_log = nx();
     else if (a == "--time-log") time_log = nx();
+    else if (a == "--vid-log") vid_log = nx();
     else if (a == "--dec-fake") { const std::string f = nx(); dec_fake_a = f == "A"; dec_fake_follow = f == "follow"; dec_fake_obj = f == "obj"; dec_fake_stop = f == "stop";
                                   dec_fault = f == "down" ? 1 : f == "garbled" ? 2 : f == "oor" ? 3 : 0; }
     else if (a == "--follow") follow_on = true;
@@ -942,7 +945,43 @@ int main(int argc, char** argv) {
           std::printf("  걸음 %d 속도 다듬기 상태 시뮬 (%g, %g) 실물 (%g, %g) · 시뮬 몸통 닿음 %d\n", t, st[0].vs, st[0].ws, robot.state().vs, robot.state().ws, st[0].collided);
       }
       float v, w;
-      robot.low_act(&v, &w);
+      {
+        const auto t0 = std::chrono::steady_clock::now();
+        robot.low_act(&v, &w);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        t_act += ms;
+        t_act_max = std::max(t_act_max, ms);
+      }
+      if (!vid_log.empty() && t % 5 == 0) {   // --vid-log: 그림용 (결정·명령과 무관 — 실물 쪽 RobotEnv 값 · 사람·참 자세는 시뮬)
+        static FILE* vf = std::fopen((vid_log + ".frames.tsv").c_str(), "w");
+        static FILE* vm = std::fopen((vid_log + ".maps.bin").c_str(), "wb");
+        const sim::EnvState& re = robot.state();
+        const sim::EnvState& e = st[0];
+        const float res = hc.cfg.res;
+        const auto cx = [&](int c) { return rw.ox + ((float)(c % rw.gw) + 0.5f) * res; };
+        const auto cy = [&](int c) { return rw.oy + ((float)(c / rw.gw) + 0.5f) * res; };
+        std::fprintf(vf, "F\t%d\t%.1f\t%d\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.3f\t%.3f\t%.4f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f", t, t * dt, (int)n_ep, rw.gw, rw.gh, rw.ox, rw.oy, res, e.x, e.y, e.th,
+                     re.goal_cell >= 0 ? cx(re.goal_cell) : -99.f, re.goal_cell >= 0 ? cy(re.goal_cell) : -99.f, v, w, e.v, e.w);
+        std::string wp;
+        for (int i = 0; i < re.p_n; ++i) {
+          char b[48];
+          std::snprintf(b, sizeof(b), "%s%.2f,%.2f", i ? ";" : "", rw.ox + ((float)re.wp[2 * i] + 0.5f) * res, rw.oy + ((float)re.wp[2 * i + 1] + 0.5f) * res);
+          wp += b;
+        }
+        std::fprintf(vf, "\t%s\t%d", wp.empty() ? "-" : wp.c_str(), e.people.n);
+        for (int q = 0; q < e.people.n; ++q) std::fprintf(vf, "\t%.2f,%.2f,%.2f", e.people.cyl[q].x, e.people.cyl[q].y, e.people.cyl[q].r);
+        std::fprintf(vf, "\n");
+        std::fflush(vf);
+        std::vector<uint8_t> m8((size_t)rw.gw * rw.gh);
+        const int16_t* lmr = robot.lmap();
+        for (int y = 0; y < rw.gh; ++y)
+          for (int x = 0; x < rw.gw; ++x) {
+            const int16_t q = lmr[(size_t)y * hc.cfg.size + x];
+            m8[(size_t)y * rw.gw + x] = q == mdp::kUnknownL ? 0 : (mdp::cell_class(q) == mdp::kOcc ? 2 : 1);
+          }
+        std::fwrite(m8.data(), 1, m8.size(), vm);
+        std::fflush(vm);
+      }
       std::vector<sim::EnvState> st_pre;
       if (!contact_log.empty()) cpu.get_state(st_pre);
       cpu.step(act.data());
@@ -1239,6 +1278,7 @@ int main(int argc, char** argv) {
     std::printf("실물 쪽 시간 (이 기기 한 코어): step 평균 %.2f ms · low_prepare %.2f ms · 위층 결정 평균 %.2f ms (최대 %.2f, %ld 번 · 후보 찾기 재사용 %ld · 칸 기억 전체 %ld 점검 %ld 다름 %ld)\n", n_step ? t_step / n_step : 0.0,
                 n_obs ? t_obs / n_obs : 0.0, n_tdec ? t_dec / n_tdec : 0.0, t_dec_max, n_tdec, n_reuse, robot.frontier_cache().n_full, robot.frontier_cache().n_check,
                 robot.frontier_cache().n_bad);
+    std::printf("실물 쪽 아래층 명령 (low_act, 이 기기 한 코어): 평균 %.3f ms · 최대 %.3f ms\n", n_step ? t_act / n_step : 0.0, t_act_max);
     std::printf("RobotEnv vs CPU 시뮬: 위층 명령 다름 %ld · 경로 다름 %ld · 아래층 명령·판 끝 다름 %ld\n", d_dec, d_path, d_cmd);
     const bool ok = d_dec == 0 && d_path == 0 && d_cmd == 0 && d_body == 0 && f_diff == 0 && !(use_cand && g_refail > 0);   // 후보 규칙이 최근 실패 후보를 다시 고르면 틀림
     std::printf("%s%s\n", ok ? "통과: 실물 합친 탐사 노드 == 시뮬 (비트)" : "다름", first_bad >= 0 ? (" — 처음 다른 걸음 " + std::to_string(first_bad)).c_str() : "");

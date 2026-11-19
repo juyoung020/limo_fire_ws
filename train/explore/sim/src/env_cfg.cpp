@@ -203,6 +203,58 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       if (c.rec_win < 1) throw std::runtime_error(path + ": recovery.blocked_window 는 행동 주기 이상");
     }
     if (const char* g = std::getenv("SIM_PATH_RECOVERY")) c.rec_on = (g[0] == '1' && c.rec_bl_r > 0.f) ? 1 : 0;
+    // 아래층 지역 계획기 (include/local_planner.h): 절이 없거나 enabled false 면 끔 (RPP 추종기 그대로 — 비트 같음). SIM_LOCAL_PLANNER=0/1 (앞뒤 비교)
+    c.lp = LpCfg{};
+    if (const YAML::Node lp = ap["local_planner"]) {
+      LpCfg& L = c.lp;
+      L.on = lp["enabled"].as<bool>() ? 1 : 0;
+      L.n_steps = (int)std::lround(lp["horizon"].as<float>() / pv);
+      L.k_switch = (int)std::lround(lp["switch_time"].as<float>() / pv);
+      L.block_steps = (int)std::lround(lp["block_time"].as<float>() / pv);
+      L.rot_on = lp["rotate_in_place"].as<bool>() ? 1 : 0;
+      L.mon_real_w = lp["monitor_real_w"].as<bool>() ? 1 : 0;
+      L.bumper_scaled = lp["bumper_scaled"].as<bool>() ? 1 : 0;
+      const auto list = [&](const char* k, float* dst, int cap) {
+        const YAML::Node n = lp[k];
+        if (!n || !n.IsSequence() || n.size() < 1 || (int)n.size() > cap)
+          throw std::runtime_error(path + ": local_planner." + k + " 는 1~" + std::to_string(cap) + " 개 목록");
+        for (size_t i = 0; i < n.size(); ++i) dst[i] = n[i].as<float>();
+        return (int)n.size();
+      };
+      L.n_v = list("speeds", L.v, kLpV);
+      L.n_k1 = list("curvatures_first", L.k1, kLpK1);
+      L.n_k2 = list("curvatures_second", L.k2, kLpK2);
+      L.lag_mix = lp["lag_mix"].as<float>();
+      L.ring = lp["scan_memory"].as<bool>() ? 1 : 0;
+      L.ring_range = lp["scan_memory_range"].as<float>();
+      if (const YAML::Node pp = lp["predict_moving"]) {
+        L.ppl = pp["enabled"].as<bool>() ? 1 : 0;
+        L.ppl_r = pp["clear"].as<float>();
+        L.ppl_hard_t = pp["hard_time"].as<float>();
+        L.ppl_vmin = pp["speed_min"].as<float>();
+        L.ppl_vmax = pp["speed_max"].as<float>();
+        L.w_ppl = pp["weight"].as<float>();
+      }
+      L.slow_dist = lp["slow_dist"].as<float>();
+      L.slow_min = lp["slow_min"].as<float>();
+      L.margin = lp["margin"].as<float>();
+      L.center_min = lp["center_clear"].as<float>();
+      L.r_soft = lp["soft_dist"].as<float>();
+      L.fwd_off = lp["window_forward"].as<float>();
+      const YAML::Node wt = lp["weights"];
+      L.w_prog = wt["progress"].as<float>();
+      L.w_v = wt["speed"].as<float>();
+      L.w_dev = wt["deviation"].as<float>();
+      L.dev_free = wt["deviation_free"].as<float>();
+      L.w_head = wt["heading"].as<float>();
+      L.w_clr = wt["clearance"].as<float>();
+      L.w_hys = wt["hysteresis"].as<float>();
+      L.w_rot = wt["rotate"].as<float>();
+      L.w_flip = wt["flip"].as<float>();
+      if (L.n_steps < 1 || L.n_steps > kLpN || L.k_switch < 0 || L.block_steps < 0 || !(L.r_soft > 0.f) || L.lag_mix < 0.f || L.lag_mix > 1.f)
+        throw std::runtime_error(path + ": local_planner (horizon 1~" + std::to_string(kLpN) + " 걸음, soft_dist > 0, lag_mix 0~1)");
+    }
+    if (const char* g = std::getenv("SIM_LOCAL_PLANNER")) c.lp.on = (g[0] == '1' && c.lp.n_steps > 0) ? 1 : 0;
   }
 
   // 섀시 구동 (drive.h) · 바닥 재질

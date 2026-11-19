@@ -32,6 +32,7 @@
 #include "people.h"
 #include "sensor_model.h"
 #include "sensors.h"
+#include "lp_cfg.h"        // 아래층 지역 계획기 설정 (local_planner.h)
 #include "low_task.h"      // 아래층 계측·목표 넣기·합친 탐사 기록 꼴 (걸음 함수는 아래 low_step.h)
 
 namespace sim {
@@ -156,6 +157,7 @@ struct EnvCfg {
                                    //     녹화 판 2 이전 머리에는 없음 — 읽을 때 0 (sim/tools/low_node_rec.h)
   int32_t cam_lw, cam_lh;          // 깊이 카메라 층 전용 픽셀 격자 (열 · 행, env.yaml camera_obstacles.layer_grid). 0 = 깊이 관측(64 × 40)을 그대로 씀(옛 동작).
                                    //     열은 DEPTH_W 의 배수 (collision_monitor 열 점은 관측 열마다 하나 — 그 열에 든 층 열들 중 가장 가까운 점). 녹화 판 3 이전은 0
+  LpCfg lp;                        // 아래층 지역 계획기 (include/local_planner.h · env.yaml action.path.local_planner). lp.on 0 = 끔 (RPP 추종기 그대로). 녹화 판 7 이전은 0
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -240,6 +242,8 @@ struct EnvState {
   // 복구 (rec_on, hier_path.h "복구"): 이번 결정에서 충돌 검사가 막은 걸음, 이어진 막힌 결정 수, 남은 물러나기 걸음, 포기한 목표 칸 (−1 없음)·포기 끝 걸음, 판 동안 포기 수 (기록)
   int32_t p_blk_now, p_blk, p_rec, p_gaveup;
   int32_t p_blk_win, p_blk_pad;   // 지난 판정 뒤 걸음 수 (막힘 판정 창 — EnvCfg::rec_win) · 8 바이트 맞춤
+  float lp_k1;                     // 지역 계획기가 지난 걸음에 고른 앞 곡률 (떨림 막기 항 — local_planner.h)
+  int32_t lp_n;                    // 0 = 아직 고른 적 없음 (판 시작)
   int32_t p_bl_cell[kRecBl], p_bl_until[kRecBl];   // 포기한 목표 칸 (−1 없음)·포기 끝 걸음 — 고리 (p_gaveup % kRecBl 자리에 새로)
   // 판 끝 뒤 멈춤 (EnvCfg::end_hold — 녹화용): 1 이면 판이 끝났고 리셋 없이 서 있는 중. 명령은 0, 판 끝 판정 없음 (리셋이 0 으로)
   int32_t halt, pad_halt;
@@ -498,6 +502,8 @@ DEV void reset_state(const EnvBatch& b, EnvState& e) {
   e.p_mode = e.p_fb = e.p_plans = e.p_mon = 0;
   e.p_blk_now = e.p_blk = e.p_rec = e.p_gaveup = 0;
   e.p_blk_win = e.p_blk_pad = 0;
+  e.lp_k1 = 0.f;
+  e.lp_n = 0;
   for (int i = 0; i < kRecBl; ++i) { e.p_bl_cell[i] = -1; e.p_bl_until[i] = 0; }
   people_reset(b, e);   // 사람 놓기 (로봇 자세·world_seed 뒤)
 }
@@ -605,6 +611,7 @@ DEV float sweep_scale(const EnvBatch& b, const EnvState& e, int env, float v, fl
 }
 
 #include "hier_path.h"   // 계층형 경로 추종 (apply_action 이 부름)
+#include "local_planner.h"   // 아래층 지역 계획기 (path_step_a 가 EnvCfg::lp 로 갈라 부름)
 #include "low_step.h"    // 아래층 계측·합친 탐사 걸음 함수
 #include "low_rl.h"      // 아래층 걸음 길 함수 (low_step.h 뒤)
 #include "contact.h"     // 로봇이 재는 간격·닿음
@@ -617,12 +624,17 @@ struct PathStep {
   int want_imm;       // RPP 충돌 검사를 볼 차례인가 (복구 물러나기 중이 아니고 명령이 0 이 아님)
   PathWhy why;        // 아래층 계측 (low_task.h — EnvBatch::low 가 있을 때만 채움)
   int bkind;          // path_step_b 가지: 0 없음 · 1 복구 물러나기 · 2 충돌 검사 멈춤·물러남 · 3 제자리 회전 막힘
+  int lp_block;       // 지역 계획기: 가장 좋은 궤적도 곧 부딪힘 (진짜 끼임) → 충돌 검사 막힘 가지로
 };
 // a: 추종기
 DEV void path_step_a(const EnvBatch& b, EnvState& e, int env, const PathPre* pre, PathStep& s) {
-  path_follow(b, e, env, &s.vc, &s.wc, &s.cd, pre, b.low ? &s.why : nullptr);
+  s.lp_block = 0;
+  // 지역 계획기 (EnvCfg::lp — 켰을 때만): 쓰면 RPP 추종기·RPP 충돌 검사 대신 (계획기가 궤적마다 충돌을 봄). 도착·목표 없음·경로 없음은 추종기 그대로
+  const bool lp = b.cfg.lp.on && lp_follow(b, e, env, &s.vc, &s.wc, &s.lp_block, b.low ? &s.why : nullptr);
+  if (lp) s.cd = 1e9f;
+  else path_follow(b, e, env, &s.vc, &s.wc, &s.cd, pre, b.low ? &s.why : nullptr);
   s.bkind = 0;
-  s.want_imm = e.p_rec <= 0 && (s.vc != 0.f || s.wc != 0.f) ? 1 : 0;
+  s.want_imm = !lp && e.p_rec <= 0 && (s.vc != 0.f || s.wc != 0.f) ? 1 : 0;
   s.v = s.w = 0.f;
 }
 // b: 복구·충돌 검사 결과(imm = want_imm 이고 path_imminent)·제자리 회전 검사 → velocity_smoother
@@ -637,7 +649,7 @@ DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const Pa
     vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;
     wc = 0.f;
     if (vc == 0.f) e.p_rec = 0;
-  } else if (imm) {
+  } else if (imm || s.lp_block) {
     if (b.low) {   // 계측: 진짜 끼임 — 앞(충돌 검사)도 제자리 회전 두 쪽도 모두 막힘 (low_task.h LowEp::wedge)
       const bool rp = path_imminent(b, e, env, 0.f, c.rot_w, 1e9f), rn = path_imminent(b, e, env, 0.f, -c.rot_w, 1e9f);
       b.low[env].imm_n += 1;
@@ -672,7 +684,9 @@ DEV void path_step_c(const EnvBatch& b, EnvState& e, int env, float k, const Pat
     w *= k;
     e.p_mon += 1;
   }
-  if (c.safety && v > 0.f && front_gap(b, e, env) < c.safety_dist) { v = 0.f; low_safe = true; }
+  // 앞 범퍼 정지: 지역 계획기가 켜지고 bumper_scaled 면 문턱을 속도에 비례 (1 m/s 에서 그대로 — 계획기가 궤적마다 충돌·틈을 보므로 느릴 때 붙어 지나가게)
+  const float sdist = (c.lp.on && c.lp.bumper_scaled) ? c.safety_dist * dm::minf(1.f, v / c.path_v) : c.safety_dist;
+  if (c.safety && v > 0.f && front_gap(b, e, env) < sdist) { v = 0.f; low_safe = true; }
   if (c.sweep_guard) {
     const float k2 = sweep_scale(b, e, env, v, 0.f, w);
     v *= k2;

@@ -323,6 +323,7 @@ DEV void path_monitor_poses(const EnvBatch& b, int env, float v, float w, MonPos
   P.n = 0;
   P.n_cam = 0;
   if (!c.mon_on || (v == 0.f && w == 0.f)) return;
+  if (c.lp.on && c.lp.mon_real_w) w *= turn_gain(c.drive, v);   // 지역 계획기: 굴리는 ω 를 섀시가 실제로 내는 ω 로 (명령 ω 는 달리며 1/turn_gain 배)
   const int n = (int)(c.mon_t / c.mon_dt + 1e-3f);   // 굴릴 걸음 수 (≤ 64, env_host 가 확인)
   const float hl = c.half_len + c.path_fp_pad, hw = c.half_wid + c.path_fp_pad;
   // 굴린 자세 (지금 base_link 기준, Euler — nav2 projectState 와 같은 차례: 방향을 먼저 돌리고 그 방향으로 나아감)
