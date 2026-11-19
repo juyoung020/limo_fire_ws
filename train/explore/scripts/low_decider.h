@@ -58,13 +58,15 @@ struct Params {
   bool obj_always = false;  // 지시가 없어도 물체 후보를 넣음 (기본 끔 — 지시 없는 탐사 요청은 예전과 바이트 같음)
   float vis_s = 1.0f;       // 이 안에 본 물체 = 지금 보임 (vis)
   // 뜻 물체 후보 (지시가 있을 때만 — 9 칸 꼴): 지시 글과 물체 사진의 그림·글 모델 점수(Obj::sem, 확률 0–1 — 인식 object_search) 위 sem_max 개를
-  // 이름 물체 칸 뒤에 (이름 칸과 같은 물체는 빼고 다음 순위로 채움). 문턱 sem_thr 아래면 칸을 비움 (맞는 게 없으면 프론티어만 → 계속 찾음).
-  // sem_max 0 이면 끔 — 요청이 예전과 바이트 같음
-  int sem_max = 0;
+  // 이름 물체 칸 앞(sem_first) 또는 뒤에 (이름 칸과 같은 물체는 빼고 다음 순위로 채움). 문턱 sem_thr 아래면 칸을 비움 (맞는 게 없으면 프론티어만 → 계속 찾음).
+  // 점수가 없으면 (object_search 꺼짐 · 답 없음 — Obj::sem < 0) 칸이 비어 이름 물체 + 프론티어 ≤ front_max_instr 만. sem_max 0 이면 끔.
+  // 기본 = HSSD 13 집 · 지시 83 · 332 짝 시뮬 실험의 권장 (upper_lora/README "뜻 물체 칸", 2026-11-19): 뜻 3 · 프론티어 3 · 채움 끔 · 뜻 칸 앞 글자 · 문턱 0.01
+  int sem_max = 3;
   float sem_thr = 0.01f;    // 실사진 물체 59 · 지시 30 의 맞춤 반쪽 최선 F1 문턱 (upper_lora/README "뜻 물체 칸")
-  int front_max_instr = 0;  // 지시가 있을 때 프론티어 칸 상한 (0 = 예전: max_cands − 물체 칸)
-  bool obj_fill = true;     // 이름 물체 칸이 남으면 클래스가 안 맞는 가까운 물체로도 채움 (예전 동작). 끄면 따라가기 · 힌트 클래스 물체만
-  bool sem_first = false;   // 뜻 물체 칸을 이름 물체 칸 앞 글자에 (3B 판단 모델은 앞 글자 A 로 쏠림 — 순서 효과 견줌용)
+  int front_max_instr = 3;  // 지시가 있을 때 프론티어 칸 상한 (0 = max_cands − 물체 칸) — 3 과 6 이 시뮬 성공 차 없음(−0.024 ± 0.023), 요청이 짧음
+  bool obj_fill = false;    // 지시가 있을 때 이름 물체 칸이 남으면 클래스가 안 맞는 가까운 물체로도 채움 — 켜면 판단 모델이 첫 글자로 쏠려 엉뚱한 물체 0.89 (끄면 0.09,
+                            //   성공 같음). 지시 없이 obj_always 일 때는 늘 채움 (맞출 지시가 없음)
+  bool sem_first = true;    // 뜻 물체 칸을 이름 물체 칸 앞 글자에 (3B 판단 모델은 앞 글자 A 로 쏠림 — 시뮬 성공 +0.018 ± 0.020, 엉뚱함 −0.018 ± 0.013)
   std::vector<std::string> known_objects;   // "cup 1.2 m ahead-left" 꼴 짧은 글 (노드가 물체 지도에서 만듦)
   // 물체 후보 (지시가 있을 때만): 지시에 맞는 지도 위 물체의 설 자리. 후보 목록 앞 칸에 들어가 프론티어 후보와 섞임 (합쳐 max_cands)
   struct Obj {
@@ -287,12 +289,14 @@ class Upper {
     const sim::EnvState& s = *v.s;
     if ((p_.instruction.empty() && !p_.obj_always) || p_.objects.empty()) {   // 지시 없음: 예전과 같은 요청 (바이트 같음)
       obj_req_.clear();
+      spots_req_.clear();
       if (co.c.size() < 2) return false;
       return render_cand(p_, co.c, ctl.cand_mem(), decs_, hist_, s.step, s.x + s.ex, s.y + s.ey, s.th + s.eth, *v.c, *v.W, v.lmap, r);
     }
     Params P = p_;
     const std::vector<Params::Obj> spots = object_spots(v, co);
-    P.objects = pick_objects(spots, p_.obj_max, p_.obj_fill);
+    spots_req_ = spots;
+    P.objects = pick_objects(spots, p_.obj_max, p_.obj_fill || p_.instruction.empty());
     if (p_.sem_max > 0 && !p_.instruction.empty()) {
       const std::vector<Params::Obj> sm = pick_semantic(spots, P.objects, p_.sem_max, p_.sem_thr);
       P.objects.insert(p_.sem_first ? P.objects.begin() : P.objects.end(), sm.begin(), sm.end());
@@ -711,6 +715,7 @@ class Upper {
   // 판단 모델이 멈춤 후보를 골랐나 (한 번 꺼내면 지움) — 노드는 따라가기 · 물체로 가기를 끝내고 멈춤
   bool take_stop_pick() { const bool b = stop_pick_; stop_pick_ = false; return b; }
   const std::vector<Params::Obj>& last_objects() const { return obj_req_; }   // 마지막 요청의 물체 후보 (글자 A … 차례, RViz 용)
+  const std::vector<Params::Obj>& last_spots() const { return spots_req_; }   // 마지막 물체 요청에서 설 자리가 있던 물체 모두 (후보에 안 든 까닭 진단 — 시뮬 --instr-log)
   int last_send() const { return last_send_; }   // 마지막으로 보낸 걸음 (−1 = 아직)
   long n_sent() const { return n_sent_; }
   long n_ans() const { return n_ans_; }
@@ -751,6 +756,7 @@ class Upper {
   static constexpr int kStopId = -500;    // 멈춤 후보 안정 번호 (물체 kObjId0 − 차례 · 프론티어 0 이상과 겹치지 않음)
   bool stop_pick_ = false;
   std::vector<Params::Obj> obj_req_;      // 마지막 요청의 물체 후보 (번호 차례)
+  std::vector<Params::Obj> spots_req_;    // 마지막 물체 요청의 설 자리 있는 물체 (진단용 — 요청에 안 씀)
   Params::Obj obj_last_;
   bool obj_pick_ = false;
   Req req_;

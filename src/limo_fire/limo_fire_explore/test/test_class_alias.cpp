@@ -20,6 +20,14 @@ TEST(ClassAlias, ClassOf) {
   EXPECT_EQ(class_of("tv 앞으로", al, {"tv"}), "tv");
 }
 
+// 영문 클래스 이름 지시는 그 클래스가 물체 지도에 들어온 뒤에야 풀림 → 노드 refresh_class 가 물체 후보를 줄 때마다 다시 풂
+TEST(ClassAlias, EnglishNeedsKnownClass) {
+  const auto al = parse_aliases({"침대=bed"});
+  EXPECT_EQ(class_of("find the bed", al, {}), "");
+  EXPECT_EQ(class_of("find the bed", al, {"chair", "bed"}), "bed");
+  EXPECT_EQ(class_of("go to the potted plant", al, {"potted_plant"}), "potted_plant");
+}
+
 TEST(ClassAlias, QueryPhrase) {
   EXPECT_EQ(query_phrase("의자로 가", kStrip), "의자");
   EXPECT_EQ(query_phrase("앉을 수 있는 곳으로 가", kStrip), "앉을 수 있는 곳");

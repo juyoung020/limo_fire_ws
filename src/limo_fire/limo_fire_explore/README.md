@@ -198,16 +198,22 @@ ros2 topic echo /explore/goal_status        # 푼 클래스 · 고른 물체 · 
 - RViz: `/explore/candidates_text` 끝 줄(지시 · 마지막 진행) · `/explore/candidates` 의 물체 후보 글자.
 - **판단 모델이 고름**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다 — explorer 는 지시 글과 선택적 클래스 힌트
   (`include/limo_fire_explore/class_alias.h` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 비움 — 판단 모델이 글을 읽음)만 판단 모델 글에 넣는다. (2026-11-18 전에는 따로 노드 `object_goto` 가 이 일을 해 `/explore/instruction` · `/explore/target_class` 로 넘겼다) 설 자리를 바로 `/explore/goto` 로 주던 길(`direct`)은 2026-11-17 지움. 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
-  물체 지도의 **모든 클래스** 물체 설 자리가 물체 후보(`kind: object` — `object` 클래스 · `oid` 지도 번호 · `len` 길 m · `bear` · `dist` 직선 m · `seen_s` · `vis` 지금 보임)로 들어가
-  프론티어 후보와 섞인다(합쳐 6 개). 칸보다 많으면 힌트 클래스 먼저, 한 무리 안에선 길 거리 순으로 고르게 벌려(가장 가까운 것·가장 먼 것 늘 포함 — "가장 먼 의자" 같은 지시). 
+  물체 지도의 **힌트 클래스** 물체 설 자리가 물체 후보(`kind: object` — `object` 클래스 · `oid` 지도 번호 · `len` 길 m · `bear` · `dist` 직선 m · `seen_s` · `vis` 지금 보임)로 들어가
+  프론티어 후보와 섞인다. 칸보다 많으면 길 거리 순으로 고르게 벌려(가장 가까운 것·가장 먼 것 늘 포함 — "가장 먼 의자" 같은 지시).
+  남는 칸을 클래스 안 맞는 가까운 물체로 채우던 동작(`decider_obj_fill`)은 2026-11-19 부터 기본 끔 — 판단 모델이 첫 물체 글자로 쏠려 엉뚱한 물체에 가는 몫이 0.89 였다.
+  힌트는 물체 후보를 줄 때마다 지금 물체 지도로 다시 푼다(`refresh_class`): 영문 클래스 이름 지시("find the bed")는 그 물체를 지도에서 본 뒤에야 풀리기 때문이다. 
   글에는 지시 원문(`instruction`) · 힌트(`class_hint`) · 아는 물체 10 개(`known_objects`: "chair-3 chair 4.1 m front-left seen 2 s visible") · 후보 종류 설명(`candidate_kinds`)이 들어가고
   질문은 "지시를 가장 잘 따르는 후보 (탐사 지시거나 후보에 없으면 가장 빨리 지도를 넓히는 곳)". 지시가 바뀌면 하던 물체로 가기를 그만두고 바로 다시 묻는다.
   설 자리는 이번 결정의 후보 뽑기 BFS(계획 몸통 반경 · 깊이 층 — 프론티어 후보와 같은 잣대)가 닿은 칸 중 물체에 가까운 0.6~1.2 m 고리부터. 오래(600 s) 안 본 물체는 뺀다.
   지도 그림에서 물체 후보는 하늘색 네모, 프론티어 후보는 노란 점. 판단 모델이 물체 후보를 고르면 그 설 자리로 가서 물체를 바라보고 멈춘다. RViz /explore/candidates 에 물체 후보 글자(ns cand_obj).
   지시가 없으면 요청 본문은 예전과 바이트까지 같다(`decider_obj_always: false` 기본 — 켜면 지시 없어도 물체 후보). 확인: `low_explore_check --dec-instr 글 --dec-class-hint 클래스 --dec-obj 클래스,x,y`
   (·`--dec-obj-always`) 로 시뮬 == 실물 비트, 지시 없을 때 요청(DEC_BODY_LOG 걸음·본문 해시) 앞 커밋과 같음.
-- **뜻 물체 칸 (9 칸 꼴, 기본 끔 — `decider_sem_max: 0`)**: 켜면 지시가 있을 때 후보가 프론티어 ≤ `decider_front_max_instr`(권장 3) + 이름 물체 ≤ `decider_obj_max`(3, 위 별칭 클래스)
-  + **뜻 물체 ≤ `decider_sem_max`(권장 3)** 가 된다. 뜻 물체 = 물체 사진과 지시 글의 그림·글 모델(SigLIP2, 인식 `object_search` — `app.launch.xml perception:=true search:=true`)
+- **뜻 물체 칸 (9 칸 꼴, 2026-11-19 부터 기본 켬 — `decider_sem_max: 3`, 0 = 끔)**: 지시가 있을 때 후보가 프론티어 ≤ `decider_front_max_instr`(3) + 이름 물체 ≤ `decider_obj_max`(3, 위 별칭 클래스)
+  + **뜻 물체 ≤ `decider_sem_max`(3, `decider_sem_first: true` 면 앞 글자)** 가 된다. 지시가 없으면 요청은 예전과 바이트 같다.
+  `object_search` 를 안 띄웠거나(`search:=false` 기본) 답이 없으면 점수가 없어 뜻 칸은 비고 이름 물체 + 프론티어 ≤ 3 만 남는다(시뮬 확인은 `train/explore/upper_lora/README.md`).
+  지시를 보낸 뒤에 셈한 결과(`header.stamp` ≥ 보낸 때)만 받아, 옛 지시의 점수가 새 지시에 붙지 않는다.
+  **주의:** 시뮬(332 짝)에서는 뜻 칸이 채워지면 비었을 때보다 성공이 낮다(0.133 대 0.172, −0.039 ± 0.020 — 미세조정 전 판단 모델이 9 칸에서 덜 고름).
+  판단 모델을 지시로 미세조정하기 전에는 `search:=true` 를 켜지 않는 편이 낫다 (`train/explore/upper_lora/README.md` "후보 고침"). 뜻 물체 = 물체 사진과 지시 글의 그림·글 모델(SigLIP2, 인식 `object_search` — `app.launch.xml perception:=true search:=true`)
   맞음 확률이 `decider_sem_thr`(0.01) 이상인 물체를 확률 순으로, 이름 칸에 이미 든 물체는 빼고 다음 순위로 채운다 (`kind: semantic`, `score` 확률 — 이름 칸 물체에도 점수가 있으면 붙음).
   explorer 는 지시가 바뀔 때 명사구(`decider_sem_strip` 낱말을 떼어 — "의자로 가" → "의자", `class_alias.h query_phrase`)를 `/perception/object_query` 로 묻고
   `/perception/object_query_result`(물체마다 score, 사진 없으면 −1) 를 받는다. 맞는 게 없으면 뜻 칸은 비고 프론티어만 남아 계속 찾는다(`instruction_limit_s` · 못 찾음 그대로).
