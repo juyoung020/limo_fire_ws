@@ -2,7 +2,8 @@
 //
 //   ros2 topic pub --once /explore/goal std_msgs/msg/String "{data: '소화기'}"     # 탐사 중(app.launch.xml)과 같은 토픽 — 둘을 같이 띄우지 않는다
 //
-// 찾기: 글 → 클래스는 explorer 와 같은 코드(limo_fire_explore/class_alias.h)·같은 별칭(limo_fire_explore config/explorer.yaml 의 /explore/** aliases).
+// 찾기: 글 → 클래스는 explorer 와 같은 코드(limo_fire_explore/class_ask.h — 판단 모델에 탐지기 클래스 목록 중 하나 / none 을 한 번 물음)·
+//   같은 설정(limo_fire_explore config/explorer.yaml 의 /explore/** decider_url · class_files).
 //   같은 클래스가 여럿이면 로봇에서 가장 가까운 것. 지도에 없으면 물체 지도가 바뀔 때마다 다시 찾아 나타나는 즉시 그리로 간다.
 // 설 자리: 물체 둘레 stand_dist ~ stand_dist + stand_band 고리의 지도 칸 가운데, 로봇 반경(robot_radius) 안이 모두 빈 칸이고
 //   로봇에서 빈 칸으로 이어지는(BFS) 칸 중 로봇에서 길이 가장 짧은 칸. 방향은 물체를 봄.
@@ -27,7 +28,9 @@
 #include "std_msgs/msg/string.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
-#include "limo_fire_explore/class_alias.h"
+#include "ament_index_cpp/get_package_share_directory.hpp"
+#include "limo_fire_explore/class_ask.h"
+#include "limo_fire_explore/decider_client.h"
 #include "vision_msgs/msg/detection3_d_array.hpp"
 
 namespace {
@@ -43,7 +46,20 @@ class ObjectGoto : public rclcpp::Node {
     stand_band_ = declare_parameter<double>("stand_band", 0.6);
     robot_radius_ = declare_parameter<double>("robot_radius", 0.25);
     occ_threshold_ = declare_parameter<int>("occupied_threshold", 50);
-    aliases_ = limo_fire_explore::parse_aliases(declare_parameter<std::vector<std::string>>("aliases", std::vector<std::string>{}));
+    {   // 지시 → 클래스 (판단 모델에 묻기 — explorer 와 같은 class_ask.h · 같은 설정 /explore/**)
+      const std::string url = declare_parameter<std::string>("decider_url", "http://127.0.0.1:8171");
+      const double timeout = declare_parameter<double>("decider_timeout", 8.0);
+      const auto files = declare_parameter<std::vector<std::string>>("class_files", std::vector<std::string>{"yolo_coco.yaml"});
+      try {
+        ask_ = limo_fire_explore::ClassAsk(limo_fire_explore::load_class_files(files,
+          ament_index_cpp::get_package_share_directory("limo_fire_perception") + "/config"));
+      } catch (const std::exception & e) {
+        RCLCPP_ERROR(get_logger(), "class_files 를 못 읽음 (%s) — 지시 클래스를 못 풂", e.what());
+      }
+      cli_ = std::make_unique<limo_fire_explore::DeciderClient>(url, static_cast<int>(std::lround(timeout * 1000.0)));
+      ask_timeout_ = static_cast<int>(std::lround(timeout / kAskPeriod)) + 1;
+      ask_timer_ = create_wall_timer(std::chrono::milliseconds(50), [this] {poll_class();});
+    }
     status_pub_ = create_publisher<std_msgs::msg::String>("/explore/goal_status", rclcpp::QoS(1).transient_local());
     objects_sub_ = create_subscription<vision_msgs::msg::Detection3DArray>(
       "/perception/objects", rclcpp::QoS(1).transient_local(),
@@ -78,32 +94,36 @@ class ObjectGoto : public rclcpp::Node {
     } catch (const tf2::TransformException &) {return std::nullopt;}
   }
 
-  std::string class_of(const std::string & text) const {
-    std::vector<std::string> known;
-    if (objects_) {
-      for (const auto & d : objects_->detections) {
-        if (!d.results.empty()) {known.push_back(d.results[0].hypothesis.class_id);}
-      }
-    }
-    return limo_fire_explore::class_of(text, aliases_, known);
-  }
-
   void on_goal(const std::string & text) {
     goal_text_ = text;
+    cls_.clear();
     searching_ = false;
+    ask_.ask(*cli_, text, ticks_);
     if (text.empty()) {
       say("지시 지움");
       return;
     }
+    say("'" + goal_text_ + "' — 판단 모델에 클래스를 묻는 중");
+  }
+
+  // 클래스 답 (kAskPeriod 마다): 오면 그 클래스로 찾음
+  void poll_class() {
+    ++ticks_;
+    if (!ask_.poll(*cli_, ticks_, ask_timeout_) || goal_text_.empty() || ask_.instruction() != goal_text_) {return;}
+    cls_ = ask_.cls();
+    if (cls_.empty()) {
+      say("'" + goal_text_ + "' — 클래스 없음 (" + (ask_.err().empty() ? std::string("none") : ask_.err()) + ") — 물체 지도에서 찾지 않음");
+      return;
+    }
     if (!try_name()) {
       searching_ = true;
-      say("'" + goal_text_ + "' — 지도에 없음. 물체 지도에 나타나면 바로 감");
+      say("'" + goal_text_ + "' → 클래스 " + cls_ + " — 지도에 없음. 물체 지도에 나타나면 바로 감");
     }
   }
 
-  // 클래스 이름·별칭으로 찾아 가면 true
+  // 판단 모델이 고른 클래스의 물체로 찾아 가면 true
   bool try_name() {
-    const std::string cls = class_of(goal_text_);
+    const std::string & cls = cls_;
     if (!cls.empty() && objects_) {
       const auto r = robot_xy();
       const vision_msgs::msg::Detection3D * best = nullptr;
@@ -213,7 +233,12 @@ class ObjectGoto : public rclcpp::Node {
   std::string map_frame_, robot_frame_, goal_text_;
   double stand_dist_, stand_band_, robot_radius_;
   int occ_threshold_;
-  limo_fire_explore::Aliases aliases_;
+  static constexpr double kAskPeriod = 0.05;   // s — 클래스 답 확인 주기 (ask_timer_)
+  limo_fire_explore::ClassAsk ask_;
+  std::unique_ptr<limo_fire_explore::DeciderClient> cli_;
+  rclcpp::TimerBase::SharedPtr ask_timer_;
+  int ticks_ = 0, ask_timeout_ = 0;
+  std::string cls_;   // 지금 지시의 클래스 (판단 모델 답, 빈 글 = 아직 · 없음)
   bool searching_ = false;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;
   nav_msgs::msg::OccupancyGrid::ConstSharedPtr map_;

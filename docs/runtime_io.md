@@ -388,7 +388,7 @@ ros2 launch limo_fire_explore app.launch.xml perception:=true camera_in_app:=tru
 | 받음 | `depth_topic` · `depth_info_topic` | `Image` 16UC1 · `CameraInfo` | SensorData (깊이 영상은 `object_map` 과 구독 하나를 나눠 씀 — `shared_image.hpp`) | 30 Hz | `depth_timeout` 0.5 s 넘은 깊이는 안 씀 (구멍 0) |
 | 받음 | `rc_topic` = `/rc_state` | `Joy` | SensorData 깊이 5 (R 발행자와도 맞음) | 40 Hz | `buttons[1] == 2` 가 아니거나 0.5 s 안 오면 멈추고 꺼짐. 발행자가 있는데 2 s 못 받으면 구독을 새로 만듦 |
 | 받음 | `/perception/objects` | `Detection3DArray` | R / TL / 1 | 10 Hz | 지시가 있을 때 물체 후보·`known_objects` |
-| 받음 | `/explore/goal` | `std_msgs/String` | 10 | | 사용자 지시 글 (빈 글 = 지시 지움 → 보통 탐사). 글 그대로 판단 모델 글에, 별칭(`aliases`)·물체 지도 클래스 이름으로 푼 클래스는 힌트(물체 후보 차례에서 앞으로) |
+| 받음 | `/explore/goal` | `std_msgs/String` | 10 | | 사용자 지시 글 (빈 글 = 지시 지움 → 보통 탐사). 판단 모델에 탐지기 클래스를 한 번 묻고(아래 HTTP 클래스 물음) 답이 오면 그 클래스를 힌트로(그 클래스 물체만 물체 후보), 글 그대로 판단 모델 글에 |
 | 받음 | `/tf` `/tf_static` | | 리스너 스레드 없음 | | `map_frame`(map) → `base_frame`(base_link) |
 | 서비스 | `/explore/enable` | `std_srvs/SetBool` | | | true: 리모컨 오토일 때만 켬 (아니면 `success: false` + 까닭). false: 멈춤 |
 | 냄 | `cmd_vel_topic` = `/cmd_vel` | `Twist` | 10 | 10 Hz (장마다) | **`dry_run: false` 일 때만 발행자를 만듦**. 켜짐·입력 정상일 때만 냄, 멈출 때 0 한 번 |
@@ -402,6 +402,7 @@ ros2 launch limo_fire_explore app.launch.xml perception:=true camera_in_app:=tru
 | 냄 | `/explore/candidates_text` | `OverlayText` | R / TL / 1 | 결정 차례 | 후보 표 글 + 지시와 마지막 진행 (`debug` 만) |
 | 냄 | `/explore/decider_image` | `Image` rgb8 | R / TL / 1 | 판단 모델 요청마다 (처음엔 회색 판) | `map` (보기만, `debug` 만) |
 | HTTP | `decider_url` + `/v1/systemone` | JSON | 비차단 소켓, 연결마다 닫음 | `decider_mode: event` (목표 1 m 앞·실패·후보 크게 바뀜·최대 10 s) | 아래 |
+| HTTP | `decider_url` + `/v1/systemone` (클래스 물음, 위층과 따로 둔 소켓) | JSON | 같음 | 지시를 받을 때 한 번 | 질문 `cls` (choice: `class_files` 의 `class_names` 전체 + `none`), 답 `answers.cls.choice` |
 | 파일 | `record` | `low_node_rec.h` 꼴 | | 비우면 안 씀 | 입력·명령 녹화 (`low_explore_replay` 로 다시 돌림) |
 
 타이머: 입력 감시 50 ms(벽시계), TF 기다림 장 처리 5 ms(벽시계).
@@ -454,7 +455,7 @@ ros2 launch limo_fire_explore app.launch.xml perception:=true camera_in_app:=tru
 
 답: HTTP 200 JSON 의 `answers.pick.choice` = 글자 하나(`"A"` …). 다른 꼴·늦은 답(8 s)·`http <코드>` 는 버리고 지금 목표 그대로 (`/explore/status` 의 실패·시간 끝 수). 고른 후보 칸에서 `decider_match_r` 1.5 m 안의 지금 후보로 맞춘다.
 
-### 저장 지도 "○○ 로 가" — `/explore/object_goto` (`limo_fire_navigation/src/object_goto_node.cpp`, 설정 `config/object_goto.yaml` + 별칭 `limo_fire_explore/config/explorer.yaml` 의 `/explore/**`, `navigation.launch.xml` 이 띄움)
+### 저장 지도 "○○ 로 가" — `/explore/object_goto` (`limo_fire_navigation/src/object_goto_node.cpp`, 설정 `config/object_goto.yaml` + `limo_fire_explore/config/explorer.yaml` 의 `/explore/**` (`decider_url` · `class_files`), `navigation.launch.xml` 이 띄움)
 
 저장 지도 위 Nav2 주행 때만. 탐사 중(`app.launch.xml`)에는 explorer 가 `/explore/goal` 을 직접 받는다 — 둘을 같이 띄우지 않는다.
 
@@ -470,10 +471,10 @@ ros2 launch limo_fire_explore app.launch.xml perception:=true camera_in_app:=tru
 
 | 방향 | 토픽 | 타입 | QoS | 뜻 |
 |---|---|---|---|---|
-| 받음 | `/explore/goal` | `String` | 10 | 지시 글 (별칭·영문 클래스, explorer 와 같은 `class_alias.h`). 빈 글 = 지움 |
+| 받음 | `/explore/goal` | `String` | 10 | 지시 글 — explorer 와 같은 `class_ask.h` 로 판단 모델에 클래스를 물음 (`decider_url`, 50 ms 마다 답 확인). 빈 글 = 지움 |
 | 받음 | `/perception/objects` | `Detection3DArray` | R / TL / 1 | 지도에 없으면 물체 수가 바뀔 때 다시 찾음 |
 | 받음 | `/map` | `OccupancyGrid` | R / TL / 1 | 설 자리 BFS |
-| 냄 | `/explore/goal_status` | `String` | R / TL / 1 | `대기 — …` · `'<글>' → <id> … Nav2 주행` · `'<글>' — 지도에 없음 …` · `도착: <id>` · `지시 지움` |
+| 냄 | `/explore/goal_status` | `String` | R / TL / 1 | `대기 — …` · `'<글>' — 판단 모델에 클래스를 묻는 중` · `'<글>' → <id> … Nav2 주행` · `'<글>' → 클래스 <c> — 지도에 없음 …` · `'<글>' — 클래스 없음 …` · `도착: <id>` · `지시 지움` |
 | 액션 | `/navigate_to_pose` | `nav2_msgs/NavigateToPose` | | 설 자리 (물체를 바라봄) |
 
 ### 탐사 — `/explore/frontier_explorer` 프론티어 탐사 노드 (`limo_fire_explore/src/frontier_explorer_node.cpp`, 설정 `config/frontier_explorer.yaml`)

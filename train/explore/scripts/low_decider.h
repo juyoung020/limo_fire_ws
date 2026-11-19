@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 
 #include "decider.h"
+#include "limo_fire_explore/decider_io.h"   // Req · Answer · Transport (실물 노드 · 저장 지도 object_goto 와 같이 씀)
 #include "low_explore_ctl.h"
 
 namespace lxd {
@@ -53,7 +54,7 @@ struct Params {
   // 사용자 지시 (실물 노드 ~/instruction — 아무 글: "가장 먼 의자로", "사람 따라가", "탐사해", "TV 옆으로"). 비면 글이 예전과 바이트까지 같음 —
   // 차면 지시를 그대로 "instruction" 칸에, 물체 후보(아래)·"known_objects" 를 넣고 질문을 "지시를 가장 잘 따르는 후보"로. 무엇을 할지는 판단 모델이 고름
   std::string instruction;
-  std::string class_hint;   // 선택: 지시에서 풀어 낸 클래스 (object_goto 별칭·설명 검색). 그 클래스 물체를 물체 후보 칸 앞에 — 비어도 됨 (모든 클래스가 후보)
+  std::string class_hint;   // 지시의 클래스 (판단 모델에 물어 받은 것 — limo_fire_explore/class_ask.h). 그 클래스 물체만 물체 후보 칸에 (obj_fill 끔) — 비면 물체 칸 빔
   int obj_max = 3;          // 물체 후보 칸 수 (따라가기 후보 포함, 합쳐 max_cands — 프론티어는 남은 칸)
   bool obj_always = false;  // 지시가 없어도 물체 후보를 넣음 (기본 끔 — 지시 없는 탐사 요청은 예전과 바이트 같음)
   float vis_s = 1.0f;       // 이 안에 본 물체 = 지금 보임 (vis)
@@ -82,15 +83,6 @@ struct Params {
   float match_r = 1.5f;     // 답의 후보 안정 번호가 사라졌을 때 그 서는 자리 → 지금 후보 (m)
 };
 
-// 보낸 요청 하나
-struct Req {
-  long id = 0;
-  int step = 0;
-  std::string body;
-  std::vector<int> cells;   // 글자 차례의 후보 서는 자리 칸
-  std::vector<int> ids;     // 글자 차례의 안정 번호
-  std::string why;          // 묻는 까닭 (period · start · goal failed or lost · approaching goal · current goal's frontier gone · much better candidate · max interval)
-};
 // 위층 결정 하나 (후보 모드 — 판단 모델 답을 따른 것 · 규칙으로 대신 고른 것 모두)
 struct Dec {
   int step;
@@ -99,35 +91,6 @@ struct Dec {
   int kept;        // 1 = 지금 목표를 이어 감 · 0 = 바꿈
   int src;         // 0 = 판단 모델 답 · 1 = 규칙 (목표가 죽어 대신)
 };
-struct Answer {
-  long id = 0;
-  bool ok = false;
-  std::string choice;   // 고른 글자 ("A" …)
-  std::string err;
-  double ms = 0;
-};
-class Transport {
- public:
-  virtual ~Transport() = default;
-  virtual void send(const Req& r) = 0;    // 기다리지 않음
-  virtual bool poll(Answer* a) = 0;       // 와 있는 답 하나 (없으면 false) — 기다리지 않음
-};
-
-// 답 고르기: answers.pick.choice (llama-server /v1/systemone 의 choice 답)
-inline Answer parse_answer(long id, const std::string& raw) {
-  Answer a;
-  a.id = id;
-  const auto j = nlohmann::json::parse(raw, nullptr, false);
-  if (!j.is_object() || !j.contains("answers") || !j["answers"].is_object() || !j["answers"].contains("pick") || !j["answers"]["pick"].is_object() ||
-      !j["answers"]["pick"].contains("choice") || !j["answers"]["pick"]["choice"].is_string()) {
-    a.err = "answer shape";
-    return a;
-  }
-  a.choice = j["answers"]["pick"]["choice"].get<std::string>();
-  a.ok = a.choice.size() == 1 && a.choice[0] >= 'A' && a.choice[0] <= 'Z';
-  if (!a.ok) a.err = "unknown option " + a.choice;
-  return a;
-}
 
 class Upper {
  public:

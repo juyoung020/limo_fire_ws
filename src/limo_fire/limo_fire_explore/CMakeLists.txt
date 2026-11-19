@@ -45,15 +45,15 @@ set_target_properties(limo_fire_explore_core PROPERTIES POSITION_INDEPENDENT_COD
 find_package(rclcpp_components REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)   # 판단 모델 그림을 RViz 용 sensor_msgs/Image 로 풀 때 (decider_image)
+find_package(ament_index_cpp REQUIRED)
 add_library(explorer_component SHARED src/explorer_node.cpp ${EXPLORE_DIR}/scripts/decider.cpp)
 target_link_libraries(explorer_component ZLIB::ZLIB PNG::PNG limo_fire_explore_core limo_fire_perception::limo_fire_shared_image)
 target_include_directories(explorer_component PRIVATE ${EXPLORE_DIR}/sim/tools ${EXPLORE_DIR}/scripts)   # low_node_rec.h (녹화 꼴) · low_explore_ctl.h (위층 — combine_run 과 같은 코드)
 target_compile_definitions(explorer_component PRIVATE LIMO_FIRE_EXPLORE_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
-ament_target_dependencies(explorer_component rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs vision_msgs)
+ament_target_dependencies(explorer_component rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs vision_msgs ament_index_cpp)
 rclcpp_components_register_nodes(explorer_component "limo_fire_explore::ExplorerNode")
 
 # 프론티어 탐사 노드: 탐사 기준선과 같은 찾기(mdp/frontier.h)·고르기(baselines/frontier/include/explore_lite.h), 값도 기준선 설정 그대로
-find_package(ament_index_cpp REQUIRED)
 add_executable(frontier_explorer src/frontier_explorer_node.cpp)
 target_include_directories(frontier_explorer PRIVATE ${EXPLORE_DIR}/sim/include ${EXPLORE_DIR}/mdp ${EXPLORE_DIR}/baselines/frontier/include)
 target_link_libraries(frontier_explorer yaml-cpp)
@@ -62,7 +62,7 @@ ament_target_dependencies(frontier_explorer rclcpp rclcpp_action nav2_msgs nav_m
 
 install(TARGETS frontier_explorer DESTINATION lib/${PROJECT_NAME})
 install(TARGETS explorer_component ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
-# include/limo_fire_explore/class_alias.h (지시 글 → 클래스) 는 저장 지도 object_goto(limo_fire_navigation) 도 씀
+# include/limo_fire_explore/class_ask.h (지시 → 클래스 묻기) · decider_client.h · decider_io.h 는 저장 지도 object_goto(limo_fire_navigation) 도 씀
 install(DIRECTORY include/ DESTINATION include)
 ament_export_include_directories(include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
@@ -73,9 +73,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_rc_watch test/test_rc_watch.cpp TIMEOUT 60)
   target_include_directories(test_rc_watch PRIVATE include)
   ament_target_dependencies(test_rc_watch rclcpp sensor_msgs)
-  # 지시 글 풀기 시험 (class_alias.h — 클래스 힌트)
-  ament_add_gtest(test_class_alias test/test_class_alias.cpp TIMEOUT 30)
-  target_include_directories(test_class_alias PRIVATE include)
+  # 지시 클래스 묻기 시험 (class_ask.h — 요청 본문 · 답 → 클래스 · 시간 끝 · 클래스 목록 읽기)
+  ament_add_gtest(test_class_ask test/test_class_ask.cpp TIMEOUT 30)
+  target_include_directories(test_class_ask PRIVATE include)
+  target_link_libraries(test_class_ask yaml-cpp)
 endif()
 
 ament_package()

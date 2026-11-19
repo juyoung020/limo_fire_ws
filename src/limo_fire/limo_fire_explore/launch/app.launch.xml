@@ -33,6 +33,7 @@
       <param name="dry_run" value="$(var dry_run)"/>
       <param name="debug" value="$(var debug)"/>
       <param name="record" value="$(var record)"/>
+      <param name="class_files" value="[$(var perception_config)]"/>
       <extra_arg name="use_intra_process_comms" value="true"/>
     </composable_node>
   </node_container>

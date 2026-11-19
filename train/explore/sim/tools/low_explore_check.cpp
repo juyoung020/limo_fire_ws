@@ -32,7 +32,7 @@
 #include "task_sup.h"
 #include "low_explore_ctl.h"
 #include "cand_view.h"
-#include "limo_fire_explore/class_alias.h"
+#include "limo_fire_explore/class_ask.h"
 #include "cand_quality.h"
 
 namespace {
@@ -129,6 +129,39 @@ struct FakeModel : lxd::Transport {
     return true;
   }
 };
+// 지시 클래스 묻기의 보내는 쪽 (limo_fire_explore/class_ask.h — 노드는 위층과 따로 둔 DeciderClient): 진짜 서버면 시뮬 쪽이 답을 기다려 기록하고 실물 쪽은 같은 차례로 읽음,
+// 아니면 정해진 가짜 답(--cls-fake). 답은 lat 걸음 뒤 (위층 요청과 같은 지연 모델)
+struct FakeCls : lxd::Transport {
+  int lat = 26, now = 0;
+  std::string fake = limo_fire_explore::ClassAsk::kNone;   // 가짜 답 (선택지 이름)
+  limo_fire_explore::DeciderClient* real = nullptr;
+  std::vector<lxd::Answer>* log = nullptr;
+  size_t replay = 0;
+  std::vector<std::pair<int, lxd::Answer>> q;
+  void send(const lxd::Req& r) override {
+    lxd::Answer a;
+    if (real) {
+      real->send(r);
+      while (!real->poll(&a)) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      log->push_back(a);
+    } else if (log && replay < log->size()) {
+      a = (*log)[replay++];
+    } else if (log) {
+      a.err = "답 기록 없음";
+    } else {
+      a.ok = true;
+      a.choice = fake;
+    }
+    a.id = r.id;
+    q.push_back({now + lat, a});
+  }
+  bool poll(lxd::Answer* a) override {
+    if (q.empty() || q.front().first > now) return false;
+    *a = q.front().second;
+    q.erase(q.begin());
+    return true;
+  }
+};
 void write_text(const std::string& p, const std::string& t) { std::FILE* f = std::fopen(p.c_str(), "wb"); if (f) { std::fwrite(t.data(), 1, t.size(), f); std::fclose(f); } }
 struct Tap : sim::CpuTap {
   limo_fire_explore::RobotEnv* robot = nullptr;
@@ -195,9 +228,9 @@ int main(int argc, char** argv) {
   int max_ep = 0;
   // 지시 물체 찾기 실험 (--obj-file): 장면 물체 표(물체 번호 · 클래스 · x · y …)의 물체가 카메라(--follow-fov · --follow-range, 로봇 지도 가림)에 처음 보이면 물체 지도에 들어감 —
   // 실물 노드의 물체 지도(/perception/objects) 자리
-  std::string obj_file, alias_file, instr_log, gt_csv;
+  std::string obj_file, instr_log, gt_csv, cls_fake = limo_fire_explore::ClassAsk::kNone;
+  std::vector<std::string> class_files;
   float obj_min_size = 0.f;
-  bool hint_once = false;
   int dec_front_instr = lxd::Params{}.front_max_instr;
   bool dec_obj_fill = lxd::Params{}.obj_fill, stop_instr_end = false, instr_hold_done = false;
   bool close_lidar = false;
@@ -288,8 +321,8 @@ int main(int argc, char** argv) {
     else if (a == "--max-ep") max_ep = std::stoi(nx());
     else if (a == "--obj-file") obj_file = nx();          // 장면 물체 표 (tsv: oid yolo_class x y … size_m — 클래스 '-' 는 탐지 못 하는 물체라 뺌)
     else if (a == "--obj-min-size") obj_min_size = std::stof(nx());   // 이보다 작은 물체는 뺌 (m)
-    else if (a == "--aliases") alias_file = nx();         // 지시 글 → 클래스 힌트를 실물 노드처럼 (explorer.yaml 의 aliases 줄, class_alias.h class_of — 지시 때 물체 지도는 빔)
-    else if (a == "--hint-once") hint_once = true;        // --aliases 힌트를 지시 때 한 번만 풂 (2026-11-19 전 노드 — 견줌용)
+    else if (a == "--class-file") class_files.push_back(nx());   // 인식 설정(class_names) — 주면 지시 클래스를 판단 모델에 물음 (class_ask.h, 노드 on_goal 처럼). 여러 번 = 합침
+    else if (a == "--cls-fake") cls_fake = nx();          // --dec-url 이 없을 때 클래스 물음의 가짜 답 (선택지 이름 — "potted plant" · none)
     else if (a == "--dec-front-max-instr") dec_front_instr = std::stoi(nx());   // lxd::Params::front_max_instr
     else if (a == "--dec-obj-fill") dec_obj_fill = std::stoi(nx()) != 0;   // lxd::Params::obj_fill
     else if (a == "--gt") gt_csv = nx();                  // 정답 물체 번호들 (쉼표) — --instr-log 셈만
@@ -378,7 +411,15 @@ int main(int argc, char** argv) {
     tsk::Instr ins_s(tsp);
     if (!dec_instr.empty()) ins_s.start(0.0);
     long g_stop = 0, g_start = 0, g_arrive = 0, g_nofail = 0, g_gone = 0, g_moved = 0, g_giveup_fail = 0, g_giveup_time = 0, g_instr_change = 0;
-    if (!dec_instr.empty()) { us.set_instruction(dec_instr); ur.set_instruction(dec_instr); }
+    // 지시 클래스 묻기 (--class-file, --dec-class-hint 가 없을 때): 노드처럼 답이 올 때까지 위층에는 지시 없음 → 답이 오면 힌트 · 지시를 넘김
+    const bool cls_on = use_dec && !class_files.empty() && dec_hint_cls.empty();
+    limo_fire_explore::ClassAsk cks(cls_on ? limo_fire_explore::load_class_files(class_files, ".") : std::vector<std::string>{}), ckr = cks;
+    FakeCls cts, ctr;
+    cts.lat = ctr.lat = std::max(0, (int)std::lround(dec_lat / dt));
+    cts.fake = ctr.fake = cls_fake;
+    long cls_diff = 0;
+    double cls_t = -1;   // 클래스 답을 받은 시각 (s)
+    if (!dec_instr.empty() && !cls_on) { us.set_instruction(dec_instr); ur.set_instruction(dec_instr); }
     us.set_class_hint(dec_hint_cls); ur.set_class_hint(dec_hint_cls);
     if (!dec_objs.empty()) {
       std::vector<lxd::Params::Obj> ob;
@@ -403,9 +444,6 @@ int main(int argc, char** argv) {
     const auto split = [](const std::string& l) { std::vector<std::string> f; size_t q = 0; for (;;) { const size_t e = l.find('\t', q); f.push_back(l.substr(q, e == std::string::npos ? std::string::npos : e - q)); if (e == std::string::npos) break; q = e + 1; } return f; };
     const auto read_lines = [](const std::string& p) { std::vector<std::string> v; std::FILE* f = std::fopen(p.c_str(), "r"); if (!f) throw std::runtime_error("못 읽음: " + p);
                                                        char b[4096]; while (std::fgets(b, sizeof b, f)) { std::string l(b); while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back(); v.push_back(l); } std::fclose(f); return v; };
-    std::vector<std::string> alias_lines;
-    limo_fire_explore::Aliases aliases;
-    bool hint_live = false;   // --aliases: 클래스 힌트를 결정 차례마다 지금 물체 지도 클래스로 다시 풂 (노드 refresh_class 와 같음 — 영문 클래스 이름 지시도 그 물체를 본 뒤 풀림)
     if (!obj_file.empty()) {
       const auto L = read_lines(obj_file);
       for (size_t q = 1; q < L.size(); ++q) {   // 머리줄: oid yolo_class x y z_lo z_hi size_m …
@@ -414,18 +452,6 @@ int main(int argc, char** argv) {
         SimObj so;
         so.o.oid = f[0]; so.o.cls = f[1]; so.o.x = std::stof(f[2]); so.o.y = std::stof(f[3]); so.size = std::stof(f[6]);
         sobj.push_back(so);
-      }
-      if (!alias_file.empty() && !dec_instr.empty()) {   // explorer.yaml 의 aliases: [ "한글=영문", … ] 줄들
-        auto& al = alias_lines;
-        for (const auto& l : read_lines(alias_file)) {
-          if (l.find("aliases") == std::string::npos && (al.empty() || l.find('"') == std::string::npos || l.find('=') == std::string::npos || l.find(':') != std::string::npos)) continue;
-          for (size_t q = l.find('"'); q != std::string::npos;) { const size_t e = l.find('"', q + 1); if (e == std::string::npos) break; al.push_back(l.substr(q + 1, e - q - 1)); q = l.find('"', e + 1); }
-          if (l.find(']') != std::string::npos) break;
-        }
-        aliases = limo_fire_explore::parse_aliases(al);
-        hint_live = !hint_once;
-        dec_hint_cls = limo_fire_explore::class_of(dec_instr, aliases, {});
-        us.set_class_hint(dec_hint_cls); ur.set_class_hint(dec_hint_cls);
       }
       for (auto& so : sobj) so.o.match = !dec_hint_cls.empty() && so.o.cls == dec_hint_cls ? 1.f : 0.f;
       goto_on = true;   // 물체 답이면 노드처럼 그 설 자리로 감
@@ -460,6 +486,13 @@ int main(int argc, char** argv) {
       real = std::make_unique<limo_fire_explore::DeciderClient>(dec_url, 60000);
       ms.real = real.get();
       ms.log = mr.log = &real_log;
+    }
+    std::unique_ptr<limo_fire_explore::DeciderClient> real_cls;   // 클래스 물음 (노드처럼 위층과 따로)
+    std::vector<lxd::Answer> cls_log;
+    if (cls_on && !dec_url.empty()) {
+      real_cls = std::make_unique<limo_fire_explore::DeciderClient>(dec_url, 60000);
+      cts.real = real_cls.get();
+      cts.log = ctr.log = &cls_log;
     }
     long d_body = 0, n_ans = 0, n_sent_all = 0, n_nomatch_all = 0, n_fb_all = 0;
     long fbw_all[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, fb_wait_all = 0, src_all[2] = {0, 0}, hold_all = 0;   // 판단 모델: 규칙이 대신 고른 까닭 · 답 오는 중 · 결정 출처
@@ -547,11 +580,32 @@ int main(int argc, char** argv) {
         int why = 0;
         const long a0 = us.n_ans();
         std::vector<ofl::Person> persons;   // 따라가기: 지금 (마지막으로 본) 사람들 — 실물 노드의 물체 지도 사람 항목 자리
+        cts.now = ctr.now = t;
+        if (cls_on && t == 0 && !dec_instr.empty()) { cks.ask(cts, dec_instr, t); ckr.ask(ctr, dec_instr, t); }   // 노드 on_goal: 판 처음에 받은 지시
         if (t == instr_at_step) {   // 노드 ~/instruction 콜백과 같은 차례: 따라가기·물체로 가기 끝 → 새 지시
           fs.stop(); fr.stop(); gs_.cancel(); gr_.cancel(); us.set_external(false); ur.set_external(false);
-          us.set_instruction(instr_at_text); ur.set_instruction(instr_at_text);
+          if (cls_on) {   // 노드 on_goal: 힌트 · 지시를 비우고 클래스를 물음
+            dec_instr = instr_at_text;
+            dec_hint_cls.clear();
+            us.set_class_hint(""); ur.set_class_hint(""); us.set_instruction(""); ur.set_instruction(""); us.set_objects({}); ur.set_objects({});
+            cks.ask(cts, instr_at_text, t); ckr.ask(ctr, instr_at_text, t);
+          } else {
+            us.set_instruction(instr_at_text); ur.set_instruction(instr_at_text);
+          }
           if (instr_at_text.empty()) ins_s.stop(); else ins_s.start(t * dt);
           ++g_instr_change;
+        }
+        if (cls_on) {   // 노드 poll_class 와 같은 차례 (물체 후보 재료 앞): 답이 오면 힌트 · 지시를 위층에
+          const bool gs = cks.poll(cts, t, dp.timeout_steps), gr = ckr.poll(ctr, t, dp.timeout_steps);
+          if (gs != gr || cks.cls() != ckr.cls()) { ++cls_diff; ++d_body; if (first_bad < 0) first_bad = t; }
+          if (gs && !dec_instr.empty() && cks.instruction() == dec_instr) {
+            dec_hint_cls = cks.cls();
+            cls_t = t * dt;
+            us.set_class_hint(dec_hint_cls); ur.set_class_hint(dec_hint_cls);
+            us.set_instruction(dec_instr); ur.set_instruction(dec_instr);
+            for (auto& so : sobj) so.o.match = !dec_hint_cls.empty() && so.o.cls == dec_hint_cls ? 1.f : 0.f;
+            for (auto& o : base_objs) o.match = !dec_hint_cls.empty() && o.cls == dec_hint_cls ? 1.f : 0.f;
+          }
         }
         if (goto_on && obj_move_step >= 0 && t == obj_move_step) {   // 시험: 물체를 옮김 (고른 뒤 지도에서 옮겨진 물체)
           for (auto& o : base_objs) { o.x += obj_move_dx; o.y += obj_move_dy; }
@@ -579,17 +633,6 @@ int main(int argc, char** argv) {
             o.seen_s = (float)(tn - so.seen_t);
             base_objs.push_back(o);
             kn.push_back({o.oid, o.cls, o.x, o.y, o.seen_s});
-          }
-          if (hint_live) {   // 지금 물체 지도(이번 차례에 처음 보인 것 포함)의 클래스로 힌트를 다시 풂 — 노드 refresh_class 와 같은 class_of · 같은 차례(물체 후보 재료 직전)
-            std::vector<std::string> known;
-            for (const auto& o : base_objs) known.push_back(o.cls);
-            const std::string h = limo_fire_explore::class_of(dec_instr, aliases, known);
-            if (h != dec_hint_cls) {
-              dec_hint_cls = h;
-              us.set_class_hint(h); ur.set_class_hint(h);
-            }
-            for (auto& so : sobj) so.o.match = !h.empty() && so.o.cls == h ? 1.f : 0.f;
-            for (auto& o : base_objs) o.match = !h.empty() && o.cls == h ? 1.f : 0.f;
           }
           const auto kl = lxd::Upper::known_lines(kn, rx, ry, rth, dp.vis_s);
           us.set_known_objects(kl); ur.set_known_objects(kl);
@@ -1109,16 +1152,19 @@ int main(int argc, char** argv) {
     sim::set_cpu_tap(nullptr);
     if (lf) std::fclose(lf);
     if (!instr_log.empty()) {   // 지시 하나: 끝 · 닿은 물체 · 끝 시각 · 정답 처음 봄 · 정답이 후보에 처음 듦 · 요청 수 · 정답 든 요청 수 · 평균 글 바이트 · 평균 답 ms · 본 물체 수 ·
-                                // 마지막 클래스 힌트 · 정답이 지도에 있는데 후보에 안 든 요청 수 (설 자리 없음 · 클래스 안 맞음 · 칸 수에 밀림)
+                                // 마지막 클래스 힌트 · 정답이 지도에 있는데 후보에 안 든 요청 수 (설 자리 없음 · 클래스 안 맞음 · 칸 수에 밀림) · 클래스 답 받은 시각 (s, 안 물었으면 −1)
       if (FILE* f = std::fopen(instr_log.c_str(), "a")) {
         double rm = 0; for (const auto& x : real_log) rm += x.ms;
         long nseen = 0; for (const auto& so : sobj) nseen += so.seen_t > -1e8;
-        std::fprintf(f, "%s\t%s\t%.1f\t%.1f\t%.1f\t%ld\t%ld\t%.0f\t%.0f\t%ld\t%s\t%ld\t%ld\t%ld\n", i_end.c_str(), i_oid.c_str(), i_end_t, i_gt_seen_t, i_gt_cand_t, i_req, i_gt_req,
+        std::fprintf(f, "%s\t%s\t%.1f\t%.1f\t%.1f\t%ld\t%ld\t%.0f\t%.0f\t%ld\t%s\t%ld\t%ld\t%ld\t%.1f\n", i_end.c_str(), i_oid.c_str(), i_end_t, i_gt_seen_t, i_gt_cand_t, i_req, i_gt_req,
                      i_req ? (double)i_body / i_req : 0.0, real_log.empty() ? 0.0 : rm / real_log.size(), nseen, dec_hint_cls.empty() ? "-" : dec_hint_cls.c_str(),
-                     i_miss_nospot, i_miss_nomatch, i_miss_cap);
+                     i_miss_nospot, i_miss_nomatch, i_miss_cap, cls_t);
         std::fclose(f);
       }
     }
+    if (cls_on)
+      std::printf("지시 클래스 (판단 모델에 물음, %zu 클래스 중): '%s' → %s · 답 %.1f s%s · 두 쪽 다름 %ld\n", cks.classes().size(), dec_instr.c_str(),
+                  dec_hint_cls.empty() ? "없음" : dec_hint_cls.c_str(), cls_t, cls_log.empty() ? "" : (" (서버 " + std::to_string((int)cls_log[0].ms) + " ms)").c_str(), cls_diff);
     for (const auto& x : real_log) { real_ms += x.ms; real_max = std::max(real_max, x.ms); }
     if (real) std::printf("진짜 판단 모델 %s: 답 %zu 개 · 평균 %.0f ms · 최대 %.0f ms (시뮬 시계에는 --dec-latency %.1f s 로)\n", dec_url.c_str(), real_log.size(),
                           real_log.empty() ? 0.0 : real_ms / real_log.size(), real_max, dec_lat);

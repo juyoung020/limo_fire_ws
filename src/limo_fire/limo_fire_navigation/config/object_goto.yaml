@@ -1,4 +1,4 @@
-# "○○ 로 가" 저장 지도 주행 (object_goto — navigation.launch.xml): 설 자리로 Nav2 NavigateToPose. 별칭(aliases)은 limo_fire_explore config/explorer.yaml 의 /explore/** 칸을 같이 읽음
+# "○○ 로 가" 저장 지도 주행 (object_goto — navigation.launch.xml): 설 자리로 Nav2 NavigateToPose. 판단 모델 주소 · 지시 클래스 목록(decider_url · class_files)은 limo_fire_explore config/explorer.yaml 의 /explore/** 칸을 같이 읽음
 /explore/object_goto:   # 노드 /explore/object_goto (navigation.launch.xml 이 이름공간 explore 로 띄움)
   ros__parameters:
     stand_dist: 0.6        # m, 물체 가운데에서 설 자리까지 최소 거리 (로봇 반 길이 0.16 + 물체 반 너비 여유) — 잠정

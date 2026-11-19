@@ -189,25 +189,26 @@ ros2 topic echo /explore/done            # true 면 끝 (지도 닫힘)
 `app.launch.xml perception:=true` 면 YOLO 분할 + 물체 지도(limo_fire_perception)가 같은 프로세스 `/app` 에 같이 뜬다. 지시는 explorer 가 직접 받는다.
 
 ```bash
-ros2 topic pub -1 /explore/goal std_msgs/msg/String "{data: '의자'}"   # 한글 별칭(config/explorer.yaml aliases) 또는 영문 클래스 이름. 빈 글 = 지시 지움
+ros2 topic pub -1 /explore/goal std_msgs/msg/String "{data: '앉을 수 있는 곳으로 가'}"   # 아무 글 (한글 · 영어). 빈 글 = 지시 지움
 ros2 topic echo /explore/goal_status        # 푼 클래스 · 고른 물체 · 가는 중 · 도착
 ```
 
 - 판단 모델이 물체 후보를 고르면 `explorer` 이 그 설 자리로 같은 A* 아래층으로 가고, `goto_arrive_m`(0.4 m) 안에 들면 물체 쪽으로 제자리에서 돌아(남은 각 < `goto_face_tol` 0.15 rad 또는 5 s)
   "도착" 을 알리고 멈춘다 (기본 `goto_resume: false`, true 면 탐사를 이어 감). 가는 동안은 탐사 끝 판정을 하지 않는다.
 - RViz: `/explore/candidates_text` 끝 줄(지시 · 마지막 진행) · `/explore/candidates` 의 물체 후보 글자.
-- **판단 모델이 고름**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다 — explorer 는 지시 글과 선택적 클래스 힌트
-  (`include/limo_fire_explore/class_alias.h` — 글 안에 든 가장 긴 별칭·클래스 이름, 없으면 비움 — 판단 모델이 글을 읽음)만 판단 모델 글에 넣는다. (2026-11-18 전에는 따로 노드 `object_goto` 가 이 일을 해 `/explore/instruction` · `/explore/target_class` 로 넘겼다) 설 자리를 바로 `/explore/goto` 로 주던 길(`direct`)은 2026-11-17 지움. 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
+- **지시 클래스도 판단 모델이 고름** (`include/limo_fire_explore/class_ask.h`): 지시를 받으면 explorer 가 판단 모델(`decider_url`)에 choice 질문을 한 번 보낸다 —
+  "이 지시가 가리키는 탐지기 클래스는?" 선택지 = 인식 설정의 `class_names` 전체(`class_files`, app.launch.xml 은 `perception_config` — 지금 물체 지도에 있는 것만이 아님) + `none`.
+  답을 기다리는 동안은 지시 없는 탐사 그대로, 답이 오면(none · 실패 · `decider_timeout` 이면 클래스 없음) 그 클래스를 힌트(`class_hint`)로, 지시 글을 위층에 넘긴다. 진행은 `/explore/goal_status`.
+- **판단 모델이 고름**: 무엇을 할지는 판단 모델이 지시 글을 그대로 보고 고른다. 지시가 있으면 요청 후보 목록 앞 `decider_obj_max`(3) 칸에
   물체 지도의 **힌트 클래스** 물체 설 자리가 물체 후보(`kind: object` — `object` 클래스 · `oid` 지도 번호 · `len` 길 m · `bear` · `dist` 직선 m · `seen_s` · `vis` 지금 보임)로 들어가
   프론티어 후보와 섞인다. 칸보다 많으면 길 거리 순으로 고르게 벌려(가장 가까운 것·가장 먼 것 늘 포함 — "가장 먼 의자" 같은 지시).
-  남는 칸을 클래스 안 맞는 가까운 물체로 채우던 동작(`decider_obj_fill`)은 2026-11-19 부터 기본 끔 — 판단 모델이 첫 물체 글자로 쏠려 엉뚱한 물체에 가는 몫이 0.89 였다.
-  힌트는 물체 후보를 줄 때마다 지금 물체 지도로 다시 푼다(`refresh_class`): 영문 클래스 이름 지시("find the bed")는 그 물체를 지도에서 본 뒤에야 풀리기 때문이다. 
+  힌트 클래스가 아닌 물체로는 칸을 채우지 않는다(`decider_obj_fill: false` — 판단 모델이 첫 물체 글자로 쏠려 엉뚱한 물체로 가지 않게). 클래스가 없으면 물체 칸은 비고 프론티어만.
   글에는 지시 원문(`instruction`) · 힌트(`class_hint`) · 아는 물체 10 개(`known_objects`: "chair-3 chair 4.1 m front-left seen 2 s visible") · 후보 종류 설명(`candidate_kinds`)이 들어가고
   질문은 "지시를 가장 잘 따르는 후보 (탐사 지시거나 후보에 없으면 가장 빨리 지도를 넓히는 곳)". 지시가 바뀌면 하던 물체로 가기를 그만두고 바로 다시 묻는다.
   설 자리는 이번 결정의 후보 뽑기 BFS(계획 몸통 반경 · 깊이 층 — 프론티어 후보와 같은 잣대)가 닿은 칸 중 물체에 가까운 0.6~1.2 m 고리부터. 오래(600 s) 안 본 물체는 뺀다.
   지도 그림에서 물체 후보는 하늘색 네모, 프론티어 후보는 노란 점. 판단 모델이 물체 후보를 고르면 그 설 자리로 가서 물체를 바라보고 멈춘다. RViz /explore/candidates 에 물체 후보 글자(ns cand_obj).
   지시가 없으면 요청 본문은 예전과 바이트까지 같다(`decider_obj_always: false` 기본 — 켜면 지시 없어도 물체 후보). 확인: `low_explore_check --dec-instr 글 --dec-class-hint 클래스 --dec-obj 클래스,x,y`
-  (·`--dec-obj-always`) 로 시뮬 == 실물 비트, 지시 없을 때 요청(DEC_BODY_LOG 걸음·본문 해시) 앞 커밋과 같음.
+  (·`--dec-obj-always`, 클래스 묻기까지는 `--class-file 인식설정.yaml [--cls-fake 답 | --dec-url …]`) 로 시뮬 == 실물 비트, 지시 없을 때 요청(DEC_BODY_LOG 걸음·본문 해시) 앞 커밋과 같음.
   지시가 있으면 프론티어 후보는 `decider_front_max_instr`(3) 개까지 (이름 물체 ≤ 3 + 프론티어 ≤ 3).
 - **사람 따라가기** (`scripts/obj_follow.h` — 노드와 시뮬이 같은 코드): 지시가 있을 때 지금 보이는(`decider_vis_s`) `follow_classes`(person) 물체는 `kind: follow` 후보로도 들어간다.
   판단 모델이 고르면 노드가 목표를 쥔다: 같은 사람을 지도 번호로, 없으면 예측 자리 둘레 문(`follow_gate` + 못 본 시간 × `follow_gate_v`, 3 m 까지) 안 가장 가까운 사람으로 잡고,

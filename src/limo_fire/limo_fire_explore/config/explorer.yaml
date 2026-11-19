@@ -1,27 +1,24 @@
 # 합친 탐사 실물 노드 (src/explorer_node.cpp — 위층 판단 모델 + 아래층 A* 경로 추종). 관측·결정 주기·판 끝은 시뮬 설정
 # (train/explore/sim/config/env.yaml)을 그대로 읽는다 — 여기에는 ROS 쪽과 위층·닿음 값만
-# 지시 글 → 클래스 별칭: 이름공간 explore 의 모든 노드 (explorer · 저장 지도 object_goto — navigation.launch.xml 도 이 파일을 읽음)
+# 판단 모델 · 지시 클래스: 이름공간 explore 의 모든 노드 (explorer · 저장 지도 object_goto — navigation.launch.xml 도 이 파일을 읽음)
 /explore/**:
   ros__parameters:
-    # 한글 이름 = 물체 지도 클래스 이름 (COCO 80 종 · 화재 7 종). 영문 클래스 이름은 그대로 써도 된다
-    aliases: ["사람=person", "의자=chair", "소파=couch", "침대=bed", "식탁=dining_table", "책상=dining_table", "변기=toilet",
-              "티비=tv", "TV=tv", "노트북=laptop", "마우스=mouse", "리모컨=remote", "키보드=keyboard", "휴대폰=cell_phone", "핸드폰=cell_phone",
-              "전자레인지=microwave", "오븐=oven", "토스터=toaster", "싱크대=sink", "냉장고=refrigerator", "책=book", "시계=clock",
-              "꽃병=vase", "가위=scissors", "곰인형=teddy_bear", "칫솔=toothbrush", "병=bottle", "컵=cup", "그릇=bowl", "숟가락=spoon",
-              "포크=fork", "칼=knife", "가방=backpack", "배낭=backpack", "핸드백=handbag", "우산=umbrella", "여행가방=suitcase", "캐리어=suitcase",
-              "화분=potted_plant", "자전거=bicycle", "공=sports_ball", "바나나=banana", "사과=apple", "오렌지=orange",
-              "불=fire", "연기=smoke", "소화기=fire_extinguisher", "비상구=exit_sign", "유도등=exit_sign", "문=door", "계단=stairs"]
+    decider_url: http://127.0.0.1:8171   # 위층 판단 모델 — 로봇 안 llama-server (POST /v1/systemone, README)
+    decider_timeout: 8.0      # s, 이보다 늦은 답은 버림 (지금 목표 그대로)
+    # 지시 → 클래스: 지시를 받으면 판단 모델에 한 번 "이 지시가 가리키는 탐지기 클래스는? (아래 목록 중 하나 / none)" 을 묻고 그 답을 힌트로
+    # (그 클래스 물체만 물체 후보 칸에). 목록 = 인식 설정의 class_names (이름만 쓰면 limo_fire_perception 설치 config/, 여러 개면 합침).
+    # app.launch.xml 은 explorer 에 perception_config 를 넣음
+    class_files: ["yolo_coco.yaml"]
 
 /explore/explorer:          # 노드 /explore/explorer (app.launch.xml 이 컨테이너 /app 에 이름공간 explore 로 올림)
   ros__parameters:
     debug: false              # true: RViz 표시 토픽(candidates · candidates_text · decider_image · goal_marker)과 cmd_debug 도 냄 (app.launch.xml 은 rviz:=true 면 켬)
     dry_run: true             # true: /cmd_vel 발행자를 안 만들고 명령을 /explore/cmd_debug 에만. 실제 주행은 false (README 점검표 뒤)
     enabled: false            # 늘 꺼진 채 뜸 → /explore/enable true (RViz 탐사 패널 "/explore") — 리모컨 오토일 때만 켜짐
-    decider_url: http://127.0.0.1:8171   # 위층 판단 모델 — 로봇 안 llama-server (POST /v1/systemone, README)
     decider_max_cands: 6      # 요청에 넣는 후보 수 상한 (0 = 다) — 시뮬 위층 비교에서 6 이 가장 빠름 (upper_lora/README), 라벨 굴리기(dec_rollout)와 같은 값
     decider_hold_extra: 5     # 걸음 — 목표가 죽었는데 답이 오는 중이면 (걸음으로 잰 답 지연 + 이것)까지 기다림, 규칙이 대신 안 고름 (−1 = 바로 대신)
     decider_ask_lead_s: 1.0   # s — event: 남은 길 / 0.98 m/s ≤ 답 지연 + 이것 이면 미리 물음 (닿기 전에 답, −1 = 끔 — 남은 1 m 만)
-    decider_obj_max: 3        # 지시가 있을 때 물체 후보 칸 (지도 물체 모든 클래스 + 지금 보이는 사람 따라가기, 힌트 클래스 먼저 · 많으면 가깝고 먼 것 고르게) — 프론티어는 남은 칸
+    decider_obj_max: 3        # 지시가 있을 때 물체 후보 칸 (지금 보이는 사람 따라가기 + 힌트 클래스 물체, 많으면 가깝고 먼 것 고르게)
     decider_obj_always: false # true = 지시 없어도 물체 후보 (false 면 지시 없는 탐사 요청은 예전과 바이트 같음)
     decider_vis_s: 1.0        # s — 이 안에 본 물체 = 지금 보임 (요청 vis)
     decider_obj_stale_s: 600.0  # s — 이보다 오래 안 본 물체는 물체 후보에서 뺌
@@ -49,7 +46,6 @@
     goto_max_fail: 3          # 한 지시에서 못 감이 이만큼이면 멈추고 "못 감"
     goto_fail_ttl_s: 120.0    # s — 못 간 물체(같은 번호 · 같은 클래스 0.5 m 안)를 후보에서 빼는 시간
     instruction_limit_s: 300.0  # s — 지시 하나를 이만큼 못 끝내면 멈추고 "못 찾음" (0 = 끔)
-    decider_timeout: 8.0      # s, 이보다 늦은 답은 버림 (지금 목표 그대로)
     decider_px: 288           # 지도 사진 한 변 — 그림 약 81 토큰
     decider_compact: true     # 짧은 꼴(짧은 키 · 힌트를 후보 앞 · 최근 목표 목록 뺌): 로봇 Orin 요청 약 2 s (긴 꼴 + 카메라는 약 5.6 s) — 미세조정 v1 이 이 꼴로 학습됨
     decider_fmt: 1            # 요청 꼴: 1 = state JSON 객체 (미세조정 v1 꼴) · 2 = state 글 하나 (바뀌지 않는 글·지시를 앞에, 후보 한 줄씩 — 토큰이 적고 지시가 같은 동안 앞부분이 서버 캐시에)

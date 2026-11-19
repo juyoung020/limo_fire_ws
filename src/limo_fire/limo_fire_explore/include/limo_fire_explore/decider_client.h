@@ -1,4 +1,4 @@
-// 위층 판단 모델 요청을 로봇 안의 llama-server 로 보내는 것 (/explore/explorer 위층 — scripts/low_decider.h 의 Transport).
+// 판단 모델 요청을 로봇 안의 llama-server 로 보내는 것 (decider_io.h 의 Transport — /explore/explorer 위층 · 지시 클래스 풀기 · 저장 지도 object_goto).
 // 스레드 없음: send 는 줄에 넣고 비차단 연결만 시작하고, poll (노드가 걸음마다 부름)이 비차단 소켓을 한 단계씩 진행한다
 // (연결 → HTTP/1.1 POST 보내기 → 답 받기 → 해석, 연결마다 닫음). 라이다 콜백은 막지 않고, 노드는 한 스레드로 돈다.
 // 로봇에는 libcurl 개발 헤더가 없어서 POSIX 소켓으로 직접 쓴다 (localhost · 평문 HTTP 만 — url 은 http://호스트:포트).
@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-#include "low_decider.h"
+#include "limo_fire_explore/decider_io.h"
 
 namespace limo_fire_explore {
 
@@ -53,7 +53,7 @@ class DeciderClient : public lxd::Transport {
   ~DeciderClient() override { if (fd_ >= 0) close(fd_); }
   void send(const lxd::Req& r) override {
     keep_png(r.body);
-    todo_.push_back({r.id, r.body});
+    todo_.push_back({r.id, r.body, r.qid});
     step();
   }
   // 마지막으로 보낸 요청의 첫 그림(지도 PNG 바이트)과 그 번호 — 노드가 RViz 로 보여 줌 (~/decider_image)
@@ -105,6 +105,7 @@ class DeciderClient : public lxd::Transport {
   struct Job {
     long id;
     std::string body;
+    std::string qid;   // 답을 읽을 질문 (lxd::Req::qid)
   };
   struct Addr {
     int family, socktype, proto;
@@ -191,7 +192,7 @@ class DeciderClient : public lxd::Transport {
           if (n == 0) {   // 서버가 닫음 = 답 끝
             std::string raw, err;
             lxd::Answer a;
-            if (parse_http(resp_, &raw, &err)) a = lxd::parse_answer(cur_.id, raw);
+            if (parse_http(resp_, &raw, &err)) a = lxd::parse_answer(cur_.id, raw, cur_.qid);
             else { a.id = cur_.id; a.err = err; }
             finish(std::move(a));
             break;

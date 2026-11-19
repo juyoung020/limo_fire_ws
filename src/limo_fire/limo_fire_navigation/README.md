@@ -132,9 +132,9 @@ ros2 topic pub -1 /explore/goal std_msgs/msg/String "{data: '소화기'}"   # �
 ros2 topic echo /explore/goal_status
 ```
 
-- 설정은 `config/object_goto.yaml`(설 자리 거리 · 로봇 반경), 한글 별칭은 explorer 와 같은 것(`limo_fire_explore/config/explorer.yaml` 의 `/explore/**` 칸 — `navigation.launch.xml` 이 같이 읽음), 글 → 클래스 코드도 같은 것(`limo_fire_explore/class_alias.h`).
+- 설정은 `config/object_goto.yaml`(설 자리 거리 · 로봇 반경), 판단 모델 주소 · 클래스 목록은 explorer 와 같은 것(`limo_fire_explore/config/explorer.yaml` 의 `/explore/**` 칸 `decider_url` · `class_files` — `navigation.launch.xml` 이 같이 읽음), 글 → 클래스 코드도 같은 것(`limo_fire_explore/class_ask.h`).
 - 물체 지도는 `perception.launch.xml objects_file:=<지도이름>_objects.txt` 로 읽는다 (`save_map.launch.xml` 이 지도 옆에 저장).
-- 이름 → 클래스(별칭) → 같은 클래스 중 로봇에서 가장 가까운 것. 설 자리: 물체 둘레 `stand_dist`~`stand_dist + stand_band` 고리에서 `robot_radius` 안이 빈 칸이고 로봇에서 빈 칸으로 이어지는(BFS) 칸 중 길이 가장 짧은 칸, 물체를 바라봄.
+- 지시 글 → 판단 모델에 탐지기 클래스를 한 번 물음(목록 중 하나 / none — 없으면 찾지 않음) → 같은 클래스 중 로봇에서 가장 가까운 것. 설 자리: 물체 둘레 `stand_dist`~`stand_dist + stand_band` 고리에서 `robot_radius` 안이 빈 칸이고 로봇에서 빈 칸으로 이어지는(BFS) 칸 중 길이 가장 짧은 칸, 물체를 바라봄.
   지도에 없으면 상태에 "지도에 없음" 을 내고 물체 지도가 바뀔 때마다 다시 찾는다.
 - 2026-11-18: 탐사 모드(`mode: explore` — 지시를 `/explore/instruction` · `/explore/target_class` 로 넘기던 것)를 explorer 안으로 옮기고 이 노드는 저장 지도만 남김. `~/goal` · `~/status` · `~/target` · `~/overlay` → `/explore/goal` · `/explore/goal_status`.
 - 확인 (2026-11-17, PC): 저장 지도 lab_1116b + 가짜 물체 지도(의자 (1.5, 0.5)) → "의자" 에 설 자리 (0.43, 0.02)(물체에서 1.17 m). 탐사 중 설 자리를 `/explore/goto` 로 바로 주던 `direct` 모드는 2026-11-17 지움(판단 모델 물체 후보가 대신).

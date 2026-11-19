@@ -12,7 +12,7 @@
 // dry_run:=true (기본): /cmd_vel 발행자를 아예 안 만들고 같은 명령을 cmd_debug 에만.
 // 컴포넌트: app.launch.xml 이 인식(object_detector · object_map)과 한 프로세스 · 한 스레드 실행기에 올린다 (docs/runtime_io.md).
 //   늦게 뜬 쪽도 받아야 하는 토픽(transient_local)만 프로세스 안 전달을 끔.
-// 지시 "○○ 로 가": /explore/goal 글 하나 (빈 글 = 지움) — 별칭으로 클래스를 풀어(class_alias.h) 판단 모델에 힌트로, 진행은 /explore/goal_status.
+// 지시 "○○ 로 가": /explore/goal 글 하나 (빈 글 = 지움) — 판단 모델에 탐지기 클래스를 물어(class_ask.h) 힌트로, 진행은 /explore/goal_status.
 // debug:=false 면 RViz 용 표시 토픽(candidates · candidates_text · decider_image · goal_marker)과 cmd_debug(dry run 이 아닐 때)를 안 만든다.
 // 위층: 로봇 안 llama-server 판단 모델 (scripts/low_decider.h — 사건 때 비동기 요청, 기다리는 동안 지금 목표로 몰고, 답이 오면 바꿈). 후보는 scripts/cand_view.h,
 //   답이 없거나 잇따라 틀리면 규칙(Ctl::cand_pick — 후보 0 번, 지금 목표 붙듦)이 대신. candidates 에 후보 그림 (결정마다).
@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -49,10 +50,11 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <rviz_2d_overlay_msgs/msg/overlay_text.hpp>
 
-#include "limo_fire_explore/class_alias.h"
+#include "limo_fire_explore/class_ask.h"
 #include "limo_fire_explore/decider_client.h"
 #include "limo_fire_explore/rc_watch.h"
 #include "limo_fire_explore/robot_env.h"
+#include "low_decider.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
 #include "obj_follow.h"
@@ -80,7 +82,15 @@ class ExplorerNode : public rclcpp::Node {
     max_speed_ = declare_parameter<double>("max_speed", -1.0);
     record_ = declare_parameter<std::string>("record", "");
     debug_ = declare_parameter<bool>("debug", false);   // RViz 표시 토픽 (끄면 안 만듦 — 판단·명령은 같음)
-    aliases_ = parse_aliases(declare_parameter<std::vector<std::string>>("aliases", std::vector<std::string>{}));
+    {   // 지시 → 클래스: 판단 모델이 탐지기 클래스 목록(인식 설정 class_names) 중에서 고름 (class_ask.h)
+      const auto files = declare_parameter<std::vector<std::string>>("class_files", std::vector<std::string>{"yolo_coco.yaml"});
+      try {
+        cls_ask_ = ClassAsk(load_class_files(files, ament_index_cpp::get_package_share_directory("limo_fire_perception") + "/config"));
+      } catch (const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "class_files 를 못 읽음 (%s) — 지시 클래스 없이 (물체 후보 칸 빔)", e.what());
+      }
+      RCLCPP_INFO(get_logger(), "지시 클래스: 판단 모델이 %zu 클래스 중에서 고름", cls_ask_.classes().size());
+    }
     const bool camera_layer = declare_parameter<bool>("camera_layer", true);
     const std::string scan_topic = declare_parameter<std::string>("scan_topic", "/scan");
     const std::string odom_topic = declare_parameter<std::string>("odom_topic", "/odom");
@@ -158,6 +168,7 @@ class ExplorerNode : public rclcpp::Node {
       }
       dec_vis_s_ = dp.vis_s;
       dec_cli_ = std::make_unique<DeciderClient>(dec_url, (int)std::lround(dec_timeout * 1000.0));
+      cls_cli_ = std::make_unique<DeciderClient>(dec_url, (int)std::lround(dec_timeout * 1000.0));
       RCLCPP_INFO(get_logger(), "위층 판단 모델 %s · 사건 때 물음 · 후보 최대 %d · 한도 %.1f s — 기다리는 동안 지금 목표로, 목표가 죽으면 답을 기다리고 답이 잇따라 틀리면 규칙이 대신",
                   dec_url.c_str(), dp.max_cands, dp.timeout_steps * dt());
     }
@@ -259,49 +270,38 @@ class ExplorerNode : public rclcpp::Node {
   }
   bool running() const { return enabled_ && !finished_; }
 
-  // 지시 "○○ 로 가" (/explore/goal): 글에서 클래스를 풀어 판단 모델에 힌트로 주고(물체 후보 차례에서 앞으로), 지시 글은 판단 모델 글에 그대로.
+  // 지시 "○○ 로 가" (/explore/goal): 먼저 판단 모델에 지시가 가리키는 탐지기 클래스를 묻고(class_ask.h), 답이 오면(또는 실패 · 시간 끝) 그 클래스를 힌트로
+  // (그 클래스 물체만 물체 후보 칸에), 지시 글은 판단 모델 글에 그대로 넘김. 답을 기다리는 동안은 지시 없는 탐사.
   // 빈 글 = 지시 지움 → 보통 탐사. 지시가 바뀌면 하던 따라가기·물체로 가기는 끝내고 판단 모델이 새로 고름 (바로 물음 — Upper "new instruction")
   void on_goal(const std::string& text) {
-    if (!text.empty()) {
-      target_class_ = class_of(text, aliases_, object_classes());
-      dec_up_->set_class_hint(target_class_);
-    }
     instruction_ = text;
+    target_class_.clear();
     end_follow("");
     end_goto();
     fails_.clear();
+    dec_up_->set_class_hint("");
+    dec_up_->set_instruction("");
+    dec_up_->set_objects({});
     if (instruction_.empty()) {
       instr_.stop();
-      target_class_.clear();
-      dec_up_->set_objects({});
       say_goto("지시 없음 — 보통 탐사");
     } else {
       instr_.start(now().seconds());
-      say_goto("지시: " + instruction_ + (target_class_.empty() ? std::string(" (클래스 못 풂 — 판단 모델이 글을 읽음)") : " → 클래스 " + target_class_) +
-               " — 판단 모델이 후보(지도 물체 옆 · 프론티어) 중에서 고름");
+      say_goto("지시: " + instruction_ + " — 판단 모델에 클래스를 묻는 중");
     }
+    cls_ask_.ask(*cls_cli_, instruction_, env_->state().step);
+  }
+  // 클래스 답 (도는 동안 걸음마다 · 꺼진 동안 check_inputs 50 ms 마다): 답이 오면 힌트 · 지시를 위층에 (low_explore_check 와 같은 차례: 물체 후보 재료 앞)
+  void poll_class() {
+    if (!cls_ask_.poll(*cls_cli_, env_->state().step, dec_up_->params().timeout_steps) || instruction_.empty() || cls_ask_.instruction() != instruction_) return;
+    target_class_ = cls_ask_.cls();
+    dec_up_->set_class_hint(target_class_);
     dec_up_->set_instruction(instruction_);
     obj_dirty_ = true;   // 다음 걸음에 물체 후보를 새로 채움 (판단 모델이 "new instruction" 으로 바로 물을 때 같이 들어가게)
+    say_goto("지시: " + instruction_ + (target_class_.empty() ? " → 클래스 없음 (" + (cls_ask_.err().empty() ? std::string("none") : cls_ask_.err()) + " — 판단 모델이 글을 읽음)"
+                                                         : " → 클래스 " + target_class_) +
+             " — 판단 모델이 후보(지도 물체 옆 · 프론티어) 중에서 고름");
   }
-  // 지시의 클래스를 지금 물체 지도로 다시 풂: 영문 클래스 이름 지시("find the bed")는 별칭 표에 없고 물체 지도 클래스로만 풀리는데, 지시 때 그 물체를
-  // 아직 못 봤으면 힌트가 끝까지 비어 이름 물체 칸이 안 참 (시뮬 332 짝에서 "봤지만 후보에 안 듦" 의 까닭 하나). 물체 후보 재료를 줄 때마다 (low_explore_check 와 같은 차례)
-  void refresh_class() {
-    if (instruction_.empty()) return;
-    const std::string c = class_of(instruction_, aliases_, object_classes());
-    if (c == target_class_) return;
-    target_class_ = c;
-    dec_up_->set_class_hint(c);
-    if (!c.empty()) say_goto("지시: " + instruction_ + " → 클래스 " + c + " (물체 지도에서 풂)");
-  }
-  // 지금 물체 지도에 있는 클래스 이름 (영문 클래스 이름으로 지시해도 풀리게)
-  std::vector<std::string> object_classes() const {
-    std::vector<std::string> v;
-    if (objects_)
-      for (const auto& d : objects_->detections)
-        if (!d.results.empty()) v.push_back(d.results[0].hypothesis.class_id);
-    return v;
-  }
-
   void send_zero(const char* why) {   // 멈춤: 0 명령 (실제 주행이면 /cmd_vel 도)
     if (pub_cmd_) {
       geometry_msgs::msg::TwistStamped c;
@@ -375,6 +375,7 @@ class ExplorerNode : public rclcpp::Node {
   // 20 Hz: 입력 끊김 · 리모컨 끊김 · 닿음 뒤 저절로 켜기
   void check_inputs() {
     const rclcpp::Time t = now();
+    if (!running()) poll_class();   // 꺼진 동안 받은 지시도 클래스 답을 받음 (도는 동안은 걸음마다 decide 가 — 시뮬과 같은 차례)
     if (sub_rc_ && rc_watch_.want_resub(std::chrono::steady_clock::now(), sub_rc_->get_publisher_count(), rc_resub_s_)) {
       RCLCPP_WARN(get_logger(), "/rc_state 발행자는 있는데 %.1f s 넘게 못 받음 — 구독을 새로 만듦 (%s)", rc_resub_s_, rc_info().c_str());
       subscribe_rc();
@@ -600,6 +601,7 @@ class ExplorerNode : public rclcpp::Node {
   // 위층: 판단 모델 (기다리지 않음 — 요청은 비차단 소켓으로 걸음마다 조금씩, 답은 다음 걸음들에서 꺼냄) · 물체로 가기 · 따라가기.
   // 걸린 ms (꺼져 있으면 −1)
   double decide() {
+    poll_class();
     if (!running()) {
       if (env_->low_cmd().follow != 0) env_->set_cmd(sim::LowCmd{-1, 0});
       return -1.0;
@@ -610,7 +612,6 @@ class ExplorerNode : public rclcpp::Node {
     int why = 0;
     if ((!instruction_.empty() || dec_obj_always_) && objects_ && (env_->state().step % lp_.decide_steps == 0 || obj_dirty_)) {
       obj_dirty_ = false;
-      refresh_class();
       dec_up_->set_known_objects(known_objects());
       dec_up_->set_objects(map_objects());   // 지도 물체 모두 (설 자리는 Upper::object_spots 가 탐사 지도에서, 칸 고르기는 Upper::pick_objects)
     }
@@ -1133,7 +1134,8 @@ class ExplorerNode : public rclcpp::Node {
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_goal_status_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_goal_;
   std::string target_class_, goal_status_;
-  Aliases aliases_;
+  ClassAsk cls_ask_;
+  std::unique_ptr<DeciderClient> cls_cli_;   // 지시 클래스 묻기 (위층 요청과 따로 — 답이 섞이지 않게)
   bool debug_ = false;
   double obj_stale_s_ = 600.0;
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;

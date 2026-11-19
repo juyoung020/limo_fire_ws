@@ -235,7 +235,7 @@ QoS 는 `신뢰/지속` 으로: R = RELIABLE, BE = BEST_EFFORT, V = VOLATILE, TL
 | `/explore/frontier_explorer` (Nav2 판 탐사, 기준선·BT `ExploreFrontiers`) | `/map` R/V, TF | `~/state`·`~/done` (TL), `~/status`, `~/frontiers` | 서버 `~/enable` SetBool, 클라이언트 액션 `/navigate_to_pose`·`/spin` | `config/frontier_explorer.yaml` (`occupied_thresh 65`) | 실행기 1 + TF 리스너 스레드, 200 ms 벽시계 타이머 |
 | `/perception/object_detector` 📄 | `/camera/color/image_raw` BE (실행기 콜백, GPU 가 일하는 동안 최근 장만 쥠) | `~/detections` Detection2DArray, `~/mask` mono8(먼저), `~/image`(구독자 있을 때만) | — | `limo_fire_perception/config/yolo_coco.yaml`·`yolo_fire.yaml` | `/app` 실행기 1 (2 ms 타이머가 GPU 끝났나 물음 — 2026-11-18 전엔 GPU 작업 스레드) |
 | `/perception/object_map` 📄 | `/perception/detections`+`/camera/depth/image_raw` (ApproximateTime 0.05 s), `~/mask`, depth `camera_info`, TF, `/clicked_point`, `~/save_to` | `~/objects` Detection3DArray **R/TL 10 Hz** (map 틀), `~/markers`, `~/summary`, `~/selected` | 서버 `~/clear` `~/save` `~/load` (Trigger) | 같은 파일 `object_map:` | 컨테이너 실행기 1, 20 ms 처리 타이머 |
-| `/explore/object_goto` (저장 지도만) | `/explore/goal` String(사람 지시), `/perception/objects`, `/map` + TF | `/explore/goal_status`(TL) | 클라이언트 액션 `/navigate_to_pose` | `limo_fire_navigation/config/object_goto.yaml` + 별칭 `explorer.yaml` `/explore/**` | 실행기 1 + TF 스레드 |
+| `/explore/object_goto` (저장 지도만) | `/explore/goal` String(사람 지시), `/perception/objects`, `/map` + TF | `/explore/goal_status`(TL) | 클라이언트 액션 `/navigate_to_pose` | `limo_fire_navigation/config/object_goto.yaml` + `explorer.yaml` `/explore/**` (`decider_url` · `class_files`) | 실행기 1 + TF 스레드 |
 | `/limo_fire_rviz` (RViz2) | 지도·스캔·경로·물체·상태 글 | `/goal_pose`(2D Goal Pose), `/initialpose`(2D Pose Estimate), `/clicked_point`(Publish Point) | 클라이언트 `/explore/frontier_explorer/enable` 또는 `/explore/enable` (탐사 패널) | `limo_fire_description/rviz/limo_fire.rviz` (운용 화면 하나) | Qt + ROS 스레드 |
 | `/mission` 📄 (팀원) | `IsTopicAlive` 로 `/scan /odom /imu /odometry/filtered /camera/* /perception/detections`(generic 구독, SensorData), `/rc_state`, `/perception/objects`(R/TL), `/map`, `/amcl_pose`, TF | `/mission/events`(JSON 한 줄, R 깊이 50), `/mission/overlay`, `/cmd_vel`(StopRobot 0), `/nozzle/command`, `/mission/call119`(꺼짐) | 서버 `/mission/request_survivor_search` SetBool; 클라이언트 액션 `/navigate_to_pose`, 서비스 `/lifecycle_manager_*/is_active`(Trigger)·`/smoke_mode/set`·`/explore/frontier_explorer/enable`·`/pump/set`·`/speaker/evacuation` | `limo_fire_bt/config/limo_fire_bt.yaml` (+ `_sim.yaml`), 트리 `behavior_trees/limo_fire_bt.xml` | 한 스레드, 10 Hz 틱 |
 
@@ -340,7 +340,7 @@ camera_link ──(Orbbec 드라이버 · 시뮬 /camera/camera)──▶ camera
 | 8 | 아래층이 로봇 지도 위 A* 경로를 따라 속도 명령 | `/cmd_vel` 10 Hz (`dry_run:=false` 일 때만), `~/cmd_debug`(dry run·debug 일 때) |
 | 9 | 섀시는 SWB 오토일 때만 따름 | UART |
 | 10 | (perception) YOLO → 물체 지도 | `/perception/mask`·`detections`(프로세스 안) → `object_map` ← 깊이 → `/perception/objects` R/TL 10 Hz → `explorer` (모두 `/app` 한 스레드 안) |
-| 11 | (지시) 사람이 글을 줌 | `/explore/goal "의자로 가"` → explorer 가 별칭으로 클래스 chair 를 풀어 → 판단 모델 후보에 물체 옆 설 자리 → `/explore/goal_status "지시: … → 클래스 chair"` … `"도착: …"` |
+| 11 | (지시) 사람이 글을 줌 | `/explore/goal "의자로 가"` → explorer 가 판단 모델에 탐지기 클래스를 물어(답 chair) → 판단 모델 후보에 chair 옆 설 자리 → `/explore/goal_status "지시: … → 클래스 chair"` … `"도착: …"` |
 | 12 | 끝: 대충 다 앎·지도 닫힘·진척 없음·시간 한도 | `~/state = done`, `~/done = true` |
 | 13 | 저장 | `save_map.launch.xml name:=<이름>` → `map_saver_cli` 가 `/map` 을 받아 PGM+YAML, `/perception/save_objects_to` 로 `<이름>_objects.txt` |
 
