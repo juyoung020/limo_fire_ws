@@ -28,7 +28,14 @@ def main(argv=None):
     from std_msgs.msg import String
     from std_srvs.srv import SetBool, Trigger
 
-    rclpy.init()
+    # Keep Python's own SIGINT handling: rclpy's default handler shuts the
+    # context down first, so the explorer-disable and mission-cancel requests
+    # in the cleanup paths below could never be sent after Ctrl+C.
+    try:
+        from rclpy.signals import SignalHandlerOptions
+        rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    except ImportError:
+        rclpy.init()
     node = rclpy.create_node('launcher_control_terminal')
     statuses = []
     aim_statuses = []
@@ -60,6 +67,11 @@ def main(argv=None):
     clients = {name: node.create_client(Trigger, '/launcher/' + name)
                for name in ('cock', 'fire', 'shot')}
     aim_client = node.create_client(Trigger, '/launcher/approach_and_aim')
+    cancel_client = node.create_client(Trigger, '/launcher/cancel')
+    # Set once an automatic mission may have requested a shot. A further 'a'
+    # (including one typed ahead while the mission ran) is refused until the
+    # operator confirms reloading with 'r'.
+    auto_shot_spent = False
     explore_client = node.create_client(SetBool, '/explore/frontier_explorer/enable')
     log = open(args.log, 'a', encoding='utf-8', buffering=1) if args.log else None
 
@@ -123,9 +135,14 @@ def main(argv=None):
 
     def search_until_target():
         # A fresh observation can be used directly, but never compete with an active explorer.
-        warmup_deadline = time.monotonic() + 1.0
-        while time.monotonic() < warmup_deadline:
+        # Spin at least 1 s for fresh observations; unless searching is
+        # disabled, keep waiting (up to 5 s) for the explorer's latched state,
+        # since discovery of a separate process can take longer than 1 s.
+        warmup_started = time.monotonic()
+        while time.monotonic() - warmup_started < 5.0:
             rclpy.spin_once(node, timeout_sec=0.1)
+            if time.monotonic() - warmup_started >= 1.0 and (args.no_search or explorer_states):
+                break
         if explorer_states and explorer_states[-1][0] == 'running':
             raise RuntimeError('이미 다른 프론티어 탐사가 진행 중입니다. 탐사를 정지한 뒤 다시 시도하세요.')
         if target_visible():
@@ -136,16 +153,30 @@ def main(argv=None):
             raise RuntimeError('프론티어 탐사 상태를 확인하지 못했습니다.')
         exploring = False
         try:
+            enable_requested_at = time.monotonic()
             set_exploration(True)
             exploring = True
             print('표적을 찾을 때까지 프론티어 탐사를 진행합니다.')
             deadline = time.monotonic() + args.search_timeout_s
+            running_deadline = time.monotonic() + 3.0
+            # The service reply and the latched state topic are separate DDS
+            # streams. Ignore the pre-enable idle/done state until this run
+            # has been seen as running, otherwise a late 'running' sample
+            # makes a fresh search look already finished.
+            seen_running = False
             while rclpy.ok() and time.monotonic() < deadline:
                 rclpy.spin_once(node, timeout_sec=0.1)
+                if not seen_running:
+                    seen_running = any(state == 'running' and stamp >= enable_requested_at
+                                       for state, stamp in explorer_states)
                 if target_visible():
                     break
-                if explorer_states and explorer_states[-1][0] in ('done', 'idle'):
+                latest = explorer_states[-1] if explorer_states else None
+                if (seen_running and latest[1] >= enable_requested_at
+                        and latest[0] in ('done', 'idle')):
                     raise RuntimeError('탐사가 끝났지만 유효한 표적을 찾지 못했습니다.')
+                if not seen_running and time.monotonic() > running_deadline:
+                    raise RuntimeError('프론티어 탐사 running 상태를 확인하지 못했습니다.')
             else:
                 raise RuntimeError('탐색 제한 시간이 지났거나 ROS가 종료됐습니다.')
             stop_requested_at = time.monotonic()
@@ -177,7 +208,8 @@ def main(argv=None):
                     record('exploration_stop_unconfirmed', reason=str(error))
 
     try:
-        print('ROS launcher terminal: a=탐색·접근·조준·발사, c=장전, f=발사, s=장전+발사 1회, ?=상태, q=종료')
+        print('ROS launcher terminal: a=탐색·접근·조준·발사, r=공 재장전 확인(다음 a 허용), '
+              'c=장전, f=발사, s=장전+발사 1회, ?=상태, q=종료')
         print('조준 브리지가 같은 USB 포트를 소유합니다. 명령 완료는 실제 공의 비행을 측정하지 않습니다.')
         while rclpy.ok():
             command = input('launcher> ').strip().lower()
@@ -188,12 +220,30 @@ def main(argv=None):
                 print('aim:', latest_aim_status() or '조준 상태 없음')
                 print('launcher:', statuses[-1] if statuses else '장전·발사 상태 없음')
                 continue
+            if command == 'r':
+                auto_shot_spent = False
+                record('reload_confirmed')
+                print('재장전 확인. 다음 a 한 번을 허용합니다.')
+                continue
             if command == 'a':
+                if auto_shot_spent:
+                    print('이전 자동 임무가 발사를 요청했을 수 있습니다. 공과 발사기를 확인한 뒤 r을 입력하세요.')
+                    record('auto_mission_refused', reason='reload_not_confirmed')
+                    continue
                 # Wait through one status heartbeat so a previous transient-local
                 # publisher cannot mask the live controller after a restart.
-                status_deadline = time.monotonic() + 1.2
-                while time.monotonic() < status_deadline:
+                # Require a status received during this wait (the controller
+                # republishes every 1 s), allowing time for DDS discovery.
+                received_before = len(aim_statuses)
+                wait_started = time.monotonic()
+                while time.monotonic() - wait_started < 5.0:
                     rclpy.spin_once(node, timeout_sec=0.1)
+                    if (time.monotonic() - wait_started >= 1.2
+                            and len(aim_statuses) > received_before):
+                        break
+                if len(aim_statuses) <= received_before:
+                    print('5초 안에 조준 노드 상태를 받지 못했습니다. approach_aim 실행과 ROS 도메인을 확인하세요.')
+                    continue
                 aim_status = latest_aim_status()
                 if not aim_status or aim_status.get('auto_fire_enabled') is not True:
                     print('자동 발사가 꺼져 있습니다. launch에서 auto_fire_enabled:=true를 지정하세요.')
@@ -229,24 +279,42 @@ def main(argv=None):
                 last_state = None
                 terminal_states = {'SHOT_COMMAND_ACKNOWLEDGED', 'SHOT_REJECTED',
                                    'SHOT_UNCONFIRMED', 'FAILED', 'CANCELLED', 'STOP_UNCONFIRMED'}
+                shot_states = {'WAIT_SHOT_ACCEPT', 'WAIT_SHOT', 'SHOT_COMMAND_ACKNOWLEDGED',
+                               'SHOT_REJECTED', 'SHOT_UNCONFIRMED'}
                 deadline = time.monotonic() + 130.0
-                while rclpy.ok() and time.monotonic() < deadline:
-                    rclpy.spin_once(node, timeout_sec=0.1)
-                    current_status = latest_aim_status()
-                    if not current_status:
-                        continue
-                    if current_status.get('stamp', 0) <= baseline_stamp:
-                        continue
-                    state = current_status.get('state')
-                    if state != last_state:
-                        print('aim:', state, current_status.get('reason', ''))
-                        record('mission_status', **current_status)
-                        last_state = state
-                    if state in terminal_states:
-                        break
-                else:
-                    print('임무 완료를 확인하지 못했습니다. 재시작 전에 로봇과 발사기를 점검하세요.')
-                    record('mission_unconfirmed')
+                try:
+                    while rclpy.ok() and time.monotonic() < deadline:
+                        rclpy.spin_once(node, timeout_sec=0.1)
+                        current_status = latest_aim_status()
+                        if not current_status:
+                            continue
+                        if current_status.get('stamp', 0) <= baseline_stamp:
+                            continue
+                        state = current_status.get('state')
+                        if state != last_state:
+                            print('aim:', state, current_status.get('reason', ''))
+                            record('mission_status', **current_status)
+                            last_state = state
+                        if state in shot_states:
+                            auto_shot_spent = True
+                        if state in terminal_states:
+                            break
+                    else:
+                        auto_shot_spent = True
+                        print('임무 완료를 확인하지 못했습니다. 재시작 전에 로봇과 발사기를 점검하세요.')
+                        record('mission_unconfirmed')
+                except KeyboardInterrupt:
+                    auto_shot_spent = True
+                    print('Ctrl+C: 조준 임무 취소를 요청합니다. 로봇 정지를 직접 확인하세요.')
+                    reply = None
+                    if cancel_client.wait_for_service(timeout_sec=1.0):
+                        future = cancel_client.call_async(Trigger.Request())
+                        rclpy.spin_until_future_complete(node, future, timeout_sec=2.0)
+                        reply = future.result() if future.done() else None
+                    print('취소 응답:', reply.message if reply else '확인하지 못함')
+                    record('mission_cancel_requested', accepted=bool(reply and reply.success),
+                           message=reply.message if reply else 'no reply')
+                    raise
                 continue
             if command not in ('c', 'f', 's'):
                 print('a, c, f, s, ?, q 중 하나를 입력하세요.')

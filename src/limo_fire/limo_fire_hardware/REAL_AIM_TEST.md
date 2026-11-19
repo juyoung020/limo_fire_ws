@@ -20,7 +20,7 @@
 
 ESP32-S3 펌웨어의 GPIO4는 레버, GPIO5는 270° 상하 서보다. 개인 저장소 배치는 `hardware/launcher_test`, 주영 저장소 배치는 `hardware/modeling/탁구공발사대/firmware/launcher_test`가 소스 폴더다. 11월 19일 노트북의 Arduino ESP32 코어 3.3.12로 S3 소스를 **컴파일**했고 Wego에 4MB 통합 이미지를 복사했다. Wego의 PlatformIO 보드 도구 다운로드는 디스크 여유가 줄어 중단하고 방금 받은 캐시를 정리했다. 따라서 금요일에는 아래의 사전 빌드 이미지를 사용한다. 업로드와 실물 서보 반응은 아직 검증되지 않았다. 서보 외부 전원 GND와 ESP32 GND를 공통으로 연결한다. 브리지는 `e5`만 보내며 GPIO4 레버와 발사 명령은 건드리지 않는다. `e5` 순간 1500µs로 모터가 움직일 수 있다.
 
-ESP32-S3 보드가 연결된 뒤 **장치 경로가 이 보드인지 확인하고**, 다음 명령으로 이미지를 업로드한다. 현재 보이는 CP2102 장치는 ESP32로 확인되지 않았으므로 사용하지 않는다.
+ESP32-S3 보드가 연결된 뒤 **장치 경로가 이 보드인지 확인하고**, 다음 명령으로 이미지를 업로드한다. 2026-11-20 확인: Wego에 보이는 CP2102(`10c4:ea60`, `ttyUSB0`)는 udev 규칙상 `/dev/ydlidar`, 즉 **라이다**다. 이 포트에 esptool을 쓰거나 발사 브리지를 연결하지 않는다. 당시 ESP32-S3는 연결돼 있지 않았다(Espressif `303a` 장치 없음). ESP32를 꽂기 전후로 `ls -l /dev/serial/by-id/`를 비교해 새로 생긴 장치만 사용한다.
 
 ```bash
 sha256sum /home/wego/launcher_aim_friday_20261120/firmware/launcher_s3_arduino_3.3.12_20261119.merged.bin

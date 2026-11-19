@@ -5,6 +5,7 @@ Run on an isolated ROS_DOMAIN_ID. No robot driver or serial bridge is started.
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -39,6 +40,7 @@ class FakeRobot(Node):
         self.pose = (0.0, 0.0, 0.0)
         self.target_x = 2.0
         self.publish_target = True
+        self.target_confidence = 0.9
         self.delay_navigation = delay_navigation
         self.nav_yaw_bias_deg = nav_yaw_bias_deg
         self.angular_rate = 0.0
@@ -186,7 +188,7 @@ class FakeRobot(Node):
         fire.position.x = self.target_x
         fire.position.z = 0.4
         fire.position_valid = True
-        fire.confidence = 0.9
+        fire.confidence = self.target_confidence
         if self.publish_target:
             self.fire_pub.publish(fire)
         odom = Odometry()
@@ -429,6 +431,217 @@ class AutoFireRosTest(RosFixture):
         finally:
             self.executor.remove_node(explorer)
             explorer.destroy_node()
+
+    def run_terminal_with_explorer(self, on_enable, terminal_args=(), timeout=25,
+                                   initial_state='idle'):
+        """Run one terminal mission against a scripted fake frontier explorer."""
+        explorer = Node('fake_frontier_explorer_scripted')
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        state_pub = explorer.create_publisher(String, '/explore/frontier_explorer/state', latched)
+        calls = []
+
+        def enable(request, response):
+            calls.append(request.data)
+            on_enable(request.data, state_pub)
+            response.success = True
+            response.message = 'running' if request.data else 'idle'
+            return response
+
+        explorer.create_service(SetBool, '/explore/frontier_explorer/enable', enable,
+                                callback_group=ReentrantCallbackGroup())
+        self.executor.add_node(explorer)
+        state_pub.publish(String(data=initial_state))
+        try:
+            command = [sys.executable, '-c',
+                       'import sys; from limo_fire_hardware.launcher_control_terminal import main; '
+                       'main(sys.argv[1:])', *terminal_args]
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, text=True, env=os.environ.copy())
+            output, _ = process.communicate('a\nq\n', timeout=timeout)
+            self.assertEqual(process.returncode, 0, output)
+            return calls, output
+        finally:
+            self.executor.remove_node(explorer)
+            explorer.destroy_node()
+
+    def test_late_running_state_does_not_abort_search(self):
+        # Real DDS can deliver the enable reply before the latched 'running' sample.
+        self.robot.publish_target = False
+        time.sleep(1.2)
+
+        def on_enable(enabled, state_pub):
+            if not enabled:
+                state_pub.publish(String(data='idle'))
+                return
+
+            def later():
+                time.sleep(0.4)
+                state_pub.publish(String(data='running'))
+                time.sleep(0.3)
+                self.robot.publish_target = True
+            threading.Thread(target=later, daemon=True).start()
+
+        calls, output = self.run_terminal_with_explorer(on_enable)
+        self.assertEqual(calls, [True, False], output)
+        self.assertIn('SHOT_COMMAND_ACKNOWLEDGED', output)
+        self.assertEqual(self.robot.shot_requests, 1)
+
+    def test_explorer_done_without_target_never_fires(self):
+        self.robot.publish_target = False
+        time.sleep(1.2)
+
+        def on_enable(enabled, state_pub):
+            if not enabled:
+                state_pub.publish(String(data='idle'))
+                return
+
+            def later():
+                state_pub.publish(String(data='running'))
+                time.sleep(0.5)
+                state_pub.publish(String(data='done'))
+            threading.Thread(target=later, daemon=True).start()
+
+        calls, output = self.run_terminal_with_explorer(on_enable)
+        self.assertEqual(calls, [True, False], output)
+        self.assertIn('탐사가 끝났지만', output)
+        self.assertEqual(self.robot.shot_requests, 0)
+
+    def test_already_running_explorer_is_not_taken_over(self):
+        self.robot.publish_target = False
+        time.sleep(1.2)
+        calls, output = self.run_terminal_with_explorer(
+            lambda enabled, state_pub: None, initial_state='running')
+        self.assertEqual(calls, [], output)
+        self.assertIn('이미 다른 프론티어 탐사', output)
+        self.assertEqual(self.robot.shot_requests, 0)
+
+    def test_low_confidence_detection_does_not_hand_off(self):
+        # A weak detection is treated as a false positive; search times out, no shot.
+        self.robot.publish_target = False
+        time.sleep(1.2)
+
+        def on_enable(enabled, state_pub):
+            state_pub.publish(String(data='running' if enabled else 'idle'))
+            if enabled:
+                self.robot.target_confidence = 0.3
+                self.robot.publish_target = True
+
+        calls, output = self.run_terminal_with_explorer(
+            on_enable, terminal_args=('--search-timeout-s', '2'))
+        self.assertEqual(calls, [True, False], output)
+        self.assertIn('탐색 제한 시간', output)
+        self.assertEqual(self.robot.shot_requests, 0)
+
+    def test_one_mission_requests_exactly_one_shot(self):
+        command = [sys.executable, '-c',
+                   'from limo_fire_hardware.launcher_control_terminal import main; main()']
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, env=os.environ.copy())
+        output, _ = process.communicate('a\n?\nq\n', timeout=20)
+        self.assertEqual(process.returncode, 0, output)
+        time.sleep(2.0)
+        self.assertEqual(self.robot.shot_requests, 1, output)
+
+    def terminal(self, *args):
+        command = [sys.executable, '-c',
+                   'import sys; from limo_fire_hardware.launcher_control_terminal import main; '
+                   'main(sys.argv[1:])', *args]
+        return subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, env=os.environ.copy())
+
+    def test_typed_ahead_second_a_is_refused_until_reload_confirmed(self):
+        # Both 'a' lines are already buffered; the second is read only after
+        # the first mission ends and must not start another shot.
+        output, _ = self.terminal('--no-search').communicate('a\na\nq\n', timeout=30)
+        self.assertIn('SHOT_COMMAND_ACKNOWLEDGED', output)
+        self.assertIn('r을 입력하세요', output)
+        time.sleep(1.0)
+        self.assertEqual(self.robot.shot_requests, 1, output)
+
+    def test_reload_confirmation_allows_exactly_one_more_mission(self):
+        output, _ = self.terminal('--no-search').communicate('a\nr\na\na\nq\n', timeout=40)
+        self.assertEqual(output.count('SHOT_COMMAND_ACKNOWLEDGED'), 2, output)
+        time.sleep(1.0)
+        self.assertEqual(self.robot.shot_requests, 2, output)
+
+    def test_ctrl_c_during_search_disables_explorer_without_shot(self):
+        self.robot.publish_target = False
+        time.sleep(1.2)
+        explorer = Node('fake_frontier_explorer_sigint')
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        state_pub = explorer.create_publisher(String, '/explore/frontier_explorer/state', latched)
+        calls = []
+
+        def enable(request, response):
+            calls.append(request.data)
+            state_pub.publish(String(data='running' if request.data else 'idle'))
+            response.success = True
+            response.message = 'running' if request.data else 'idle'
+            return response
+
+        explorer.create_service(SetBool, '/explore/frontier_explorer/enable', enable,
+                                callback_group=ReentrantCallbackGroup())
+        self.executor.add_node(explorer)
+        state_pub.publish(String(data='idle'))
+        try:
+            process = self.terminal()
+            process.stdin.write('a\n')
+            process.stdin.flush()
+            self.wait_for(lambda: calls == [True], 10)
+            time.sleep(0.5)
+            process.send_signal(signal.SIGINT)
+            output, _ = process.communicate(timeout=15)
+            self.assertEqual(calls, [True, False], output)
+            self.assertEqual(self.robot.shot_requests, 0, output)
+        finally:
+            self.executor.remove_node(explorer)
+            explorer.destroy_node()
+
+    def test_real_frontier_explorer_service_hands_off_one_shot(self):
+        """Uses the installed limo_fire_explore frontier_explorer binary, not a fake."""
+        try:
+            prefix = subprocess.run(['ros2', 'pkg', 'prefix', 'limo_fire_explore'],
+                                    capture_output=True, text=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            self.skipTest('ros2 CLI unavailable')
+        if prefix.returncode != 0:
+            self.skipTest('limo_fire_explore is not installed in this environment')
+        share = os.path.join(prefix.stdout.strip(), 'share', 'limo_fire_explore')
+        self.robot.publish_target = False
+        time.sleep(1.2)
+        states = []
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+
+        def state_received(message):
+            states.append(message.data)
+            if message.data == 'running':
+                self.robot.publish_target = True
+
+        watcher = Node('real_explorer_state_watcher')
+        watcher.create_subscription(String, '/explore/frontier_explorer/state', state_received, latched)
+        self.executor.add_node(watcher)
+        explorer = subprocess.Popen(
+            ['ros2', 'run', 'limo_fire_explore', 'frontier_explorer', '--ros-args',
+             '-r', '__ns:=/explore', '-r', '__node:=frontier_explorer',
+             '--params-file', os.path.join(share, 'config', 'frontier_explorer.yaml'),
+             '-p', 'enabled:=false'],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            self.wait_for(lambda: states[-1:] == ['idle'], 15)
+            output, _ = self.terminal().communicate('a\nq\n', timeout=40)
+            self.assertIn('SHOT_COMMAND_ACKNOWLEDGED', output)
+            self.wait_for(lambda: states[-1:] == ['idle'], 5)
+            self.assertIn('running', states, output)
+            self.assertEqual(states[-1], 'idle', output)
+            self.assertEqual(self.robot.shot_requests, 1, output)
+        finally:
+            explorer.send_signal(signal.SIGINT)
+            try:
+                explorer.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                explorer.kill()
+            self.executor.remove_node(watcher)
+            watcher.destroy_node()
 
 
 class AutoFireFeedbackRosTest(RosFixture):
