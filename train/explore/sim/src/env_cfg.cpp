@@ -193,7 +193,15 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     // 복구 (hier_path.h "복구"): 절이 없으면 끔. 물러나기 걸음 = BT BackUp backup_dist / backup_speed / 행동 주기. SIM_PATH_RECOVERY=0/1 (앞뒤 비교)
     c.rec_on = c.rec_backup_steps = c.rec_bl_steps = 0;
     c.rec_bl_r = 0.f;
-    c.rec_win = 0;
+    c.rec_win = c.rec_nobk = c.imm_rot = c.rec_abort = 0;
+    {   // '대충 다 앎' 끝 기다림: 0 · 없으면 close_idle_s (옛 동작)
+      const float rw = ap["rough_done_wait"] ? ap["rough_done_wait"].as<float>() : 0.f;
+      if (rw < 0.f) throw std::runtime_error(path + ": action.path.rough_done_wait 는 0 이상 (s, 0 = close_idle_s)");
+      c.rough_wait = rw > 0.f ? std::max(1, (int)std::lround(rw / pv)) : 0;
+    }
+    c.spin_free = ap["turn_while_driving"] && ap["turn_while_driving"].as<bool>() ? 1 : 0;   // 없으면 제자리 회전 (옛 동작)
+    c.spin_v = c.spin_free ? need(ap, "turn_drive_v", path).as<float>() : 0.f;
+    if (c.spin_free && !(c.spin_v > 0.f && c.spin_v <= c.path_v)) throw std::runtime_error(path + ": action.path.turn_drive_v 는 (0, v]");
     if (const YAML::Node rc = ap["recovery"]) {
       c.rec_on = rc["enabled"].as<bool>() ? 1 : 0;
       c.rec_backup_steps = (int)std::lround(rc["backup_dist"].as<float>() / c.path_backup_v / pv);
@@ -201,6 +209,11 @@ EnvHostCfg load_env_cfg(const std::string& path) {
       c.rec_bl_r = rc["same_goal_radius"].as<float>();
       c.rec_win = (int)std::lround((rc["blocked_window"] ? rc["blocked_window"].as<float>() : dp) / pv);   // 없으면 결정 주기 (옛 동작)
       if (c.rec_win < 1) throw std::runtime_error(path + ": recovery.blocked_window 는 행동 주기 이상");
+      c.rec_nobk = rc["backup"] && !rc["backup"].as<bool>() ? 1 : 0;              // 없으면 물러남 (옛 동작)
+      c.imm_rot = rc["blocked_turn"] && rc["blocked_turn"].as<bool>() ? 1 : 0;   // 없으면 섬
+      const float ga = rc["goal_abort"] ? rc["goal_abort"].as<float>() : 0.f;     // 없으면 끔
+      if (ga < 0.f) throw std::runtime_error(path + ": recovery.goal_abort 는 0 이상 (s, 0 = 끔)");
+      c.rec_abort = ga > 0.f ? std::max(1, (int)std::lround(ga / pv)) : 0;
     }
     if (const char* g = std::getenv("SIM_PATH_RECOVERY")) c.rec_on = (g[0] == '1' && c.rec_bl_r > 0.f) ? 1 : 0;
     // 아래층 지역 계획기 (include/local_planner.h): 절이 없거나 enabled false 면 끔 (RPP 추종기 그대로 — 비트 같음). SIM_LOCAL_PLANNER=0/1 (앞뒤 비교)

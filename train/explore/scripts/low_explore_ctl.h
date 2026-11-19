@@ -36,6 +36,7 @@ struct Params {
   int approach_steps = 200;   // 20 s (잠정)
   float approach_m = 0.5f;    // m (Nav2 progress_checker required_movement_radius 와 같은 값)
   int cand_commit = 0;      // 후보 0 번 규칙의 붙들기: 0 = 고른 차례 점수(겹침 뺀 값)로 keep 배 · 1 = 겹침 안 뺀 점수(넓이/시간)로 keep 배 (FUEL 처럼 새 것이 margin 넘게 좋을 때만 바꿈)
+  int blk_abort_steps = 0;  // 지금 목표로 가며 충돌 검사 막힘(kLowImm) 걸음이 이만큼이면 그 목표 실패 · 피함 · 다시 결정 (EnvCfg::rec_abort — env.yaml recovery.goal_abort, 0 = 끔)
   bool use_cand = false;    // 위층 후보 = scripts/cand_view.h (서는 자리 ≤ 8 개, 안정 번호). decide 는 후보 고르기(cand_pick)로, 판단 모델은 build_cands → go_cand
   cand::Opt cand;
   static Params from_cfg(const sim::EnvCfg& c) {
@@ -44,8 +45,9 @@ struct Params {
     const double dt = (double)c.substeps * c.dt;
     p.bl_r = c.rec_bl_r > 0.f ? c.rec_bl_r : 0.5f;
     p.bl_steps = c.rec_bl_steps > 0 ? c.rec_bl_steps : (int)std::lround(10.0 / dt);
-    p.rough_steps = std::max(1, (int)std::lround(c.close_idle_s / dt));
+    p.rough_steps = c.rough_wait > 0 ? c.rough_wait : std::max(1, (int)std::lround(c.close_idle_s / dt));
     p.approach_steps = (int)std::lround(20.0 / dt);
+    p.blk_abort_steps = c.rec_abort;
     return p;
   }
 };
@@ -152,6 +154,7 @@ class Ctl {
     const cand::Cand& c = cout_.c[idx];
     if (c.recent_fail) ++n_refail_;   // 최근 실패한 후보로 감 (판단 모델이 골랐을 때만 생겨야 — 규칙은 안 고름)
     cmem_.note_target(c.id, s.step, v.W->ox + (c.vp % v.W->gw + 0.5f) * v.c->res, v.W->oy + (c.vp / v.W->gw + 0.5f) * v.c->res);
+    if (c.id != cur_id_ || cmd_.follow == 0) blk_n_ = 0;   // 목표가 바뀌면 막힘 셈을 새로
     cur_id_ = c.id;
     cmd_ = sim::LowCmd{c.vp, 1};   // 규칙 추종기: 목표 칸 그대로 (fuel 과 같은 길)
     slot_ = 0;
@@ -203,6 +206,17 @@ class Ctl {
       if (p_.avoid) redo_ = true;
     }
     sig_prev_ = rl.stall;
+    if (p_.blk_abort_steps > 0 && cmd_.follow != 0 && !redo_) {   // 충돌 검사에 오래 막힘 → 그 목표 버림 (blk_abort_steps)
+      if (L.kind == sim::kLowImm) ++blk_n_;
+      if (blk_n_ >= p_.blk_abort_steps) {
+        if (p_.use_cand) cmem_.note_end(cur_id_, s.step, cand::kStall);
+        ++n_blk_;
+        avoid_add(cmd_.target, s.step);
+        fmem_ = fu::Mem();
+        redo_ = true;
+        blk_n_ = 0;
+      }
+    }
     const bool far_ = approach_check(s);   // 목표에 다가가지 못함 (approach_steps)
     if (far_) {
       if (p_.use_cand) cmem_.note_end(cur_id_, s.step, cand::kTimeout);
@@ -240,6 +254,7 @@ class Ctl {
   long n_reach() const { return n_reach_; }
   long n_stall() const { return n_stall_; }
   long n_far() const { return n_far_; }   // 목표에 다가가지 못해 버린 수 (approach_steps)
+  long n_blk() const { return n_blk_; }   // 충돌 검사 막힘으로 버린 목표 수 (blk_abort_steps)
   const fu::Mem& mem() const { return fmem_; }
   bool avoided(int cell, int step) const {
     if (!p_.avoid || cell < 0) return false;
@@ -277,6 +292,8 @@ class Ctl {
   int ap_tgt_ = -1, ap_step_ = 0;   // 다가감 재기: 기준 목표 칸 · 남은 길이가 마지막으로 줄어든 걸음
   float ap_best_ = 0.f;             // 그때 남은 경로 길이 (m)
   long n_far_ = 0;
+  int blk_n_ = 0;     // 지금 목표로 가며 충돌 검사에 막힌 걸음
+  long n_blk_ = 0;
   // 목표에 다가가지 못함: 목표가 fail_m(1 m) 넘게 옮기면 새로 잼. 남은 길이 = 지금 구간 다음 경로 점들 사이 길이 합 (칸 × 칸 크기) — 경로가 있을 때만 줄었나 봄
   bool approach_check(const sim::EnvState& s) {
     if (p_.approach_steps <= 0 || cmd_.follow == 0 || cmd_.target < 0) { ap_tgt_ = -1; return false; }

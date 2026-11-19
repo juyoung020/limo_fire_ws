@@ -158,6 +158,17 @@ struct EnvCfg {
   int32_t cam_lw, cam_lh;          // 깊이 카메라 층 전용 픽셀 격자 (열 · 행, env.yaml camera_obstacles.layer_grid). 0 = 깊이 관측(64 × 40)을 그대로 씀(옛 동작).
                                    //     열은 DEPTH_W 의 배수 (collision_monitor 열 점은 관측 열마다 하나 — 그 열에 든 층 열들 중 가장 가까운 점). 녹화 판 3 이전은 0
   LpCfg lp;                        // 아래층 지역 계획기 (include/local_planner.h · env.yaml action.path.local_planner). lp.on 0 = 끔 (RPP 추종기 그대로). 녹화 판 7 이전은 0
+  // 막힘 처리 (2026-11-19 사용자 결정 — 덜 덮어도 빠르게, limo_upper_keep/reports/fast_explore.md RA2). 모두 0 = 옛 동작 (녹화 판 8 이하 — 물러남).
+  // lp 뒤에 붙여 판 8 꼴 칸 자리는 그대로 (sim/tools/low_node_rec.h 판 9)
+  int32_t rec_nobk;    // 1 = 물러나기 없음 (env.yaml recovery.backup false): 충돌 검사에 걸리면 물러나지 않음 · 복구 사다리 3 번째(BackUp)는 다시 계획만
+  int32_t imm_rot;     // 1 = 물러나기 없음일 때 충돌 검사에 걸리면 당근 쪽(막히면 반대쪽)으로 제자리 회전, 둘 다 막히면 섬 (recovery.blocked_turn)
+  int32_t rec_abort;   // 위층: 지금 목표로 가며 충돌 검사에 막힌 걸음이 이만큼이면 그 목표 실패 · 피함 · 다시 결정 (걸음 — recovery.goal_abort s, 0 = 끔.
+                       //   scripts/low_explore_ctl.h Ctl::after_step)
+  int32_t spin_free;   // 1 = 제자리 회전 없음 (env.yaml action.path.turn_while_driving): 목표 없음·도착·방향 차 > rotate_to_heading_min_angle 의 제자리 회전 대신
+                       //   spin_v 로 달리며 rot_w 로 돎 (작은 원 — 그 호가 충돌 검사에 걸리면 반대쪽, 둘 다면 섬). 충돌 검사에 걸려도 제자리 회전 안 함(imm_rot 무시). 0 = 옛 동작
+  float spin_v;        // 그때 앞 속도 (m/s, action.path.turn_drive_v)
+  int32_t rough_wait;  // 위층 '대충 다 앎' 끝: 후보 0 · 남은 덩어리 모두 구멍·버림이 이 걸음 이어지면 끝 (action.path.rough_done_wait s — scripts/low_explore_ctl.h rough_steps).
+                       //   0 = close_idle_s (10 s, 옛 동작)
 };
 
 // 칸 격자 비트 (MapDev::grid, World::grid — env_host.cpp build_world)
@@ -625,12 +636,14 @@ struct PathStep {
   PathWhy why;        // 아래층 계측 (low_task.h — EnvBatch::low 가 있을 때만 채움)
   int bkind;          // path_step_b 가지: 0 없음 · 1 복구 물러나기 · 2 충돌 검사 멈춤·물러남 · 3 제자리 회전 막힘
   int lp_block;       // 지역 계획기: 가장 좋은 궤적도 곧 부딪힘 (진짜 끼임) → 충돌 검사 막힘 가지로
+  float lp_w;         // 그때 가장 좋은 궤적이 돌려던 쪽 (local_planner.h lp_follow w_want — 막히면 회전 EnvCfg::imm_rot 의 쪽, wc 는 0 이라)
 };
 // a: 추종기
 DEV void path_step_a(const EnvBatch& b, EnvState& e, int env, const PathPre* pre, PathStep& s) {
   s.lp_block = 0;
+  s.lp_w = 0.f;
   // 지역 계획기 (EnvCfg::lp — 켰을 때만): 쓰면 RPP 추종기·RPP 충돌 검사 대신 (계획기가 궤적마다 충돌을 봄). 도착·목표 없음·경로 없음은 추종기 그대로
-  const bool lp = b.cfg.lp.on && lp_follow(b, e, env, &s.vc, &s.wc, &s.lp_block, b.low ? &s.why : nullptr);
+  const bool lp = b.cfg.lp.on && lp_follow(b, e, env, &s.vc, &s.wc, &s.lp_block, b.low ? &s.why : nullptr, &s.lp_w);
   if (lp) s.cd = 1e9f;
   else path_follow(b, e, env, &s.vc, &s.wc, &s.cd, pre, b.low ? &s.why : nullptr);
   s.bkind = 0;
@@ -646,7 +659,7 @@ DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const Pa
   if (e.p_rec > 0) {   // 복구 물러나기 (hier_path.h "복구" — Nav2 BT BackUp): 추종기 대신. 뒤가 막히면 그만
     e.p_rec -= 1;
     s.bkind = 1;
-    vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;
+    vc = !c.rec_nobk && path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;
     wc = 0.f;
     if (vc == 0.f) e.p_rec = 0;
   } else if (imm || s.lp_block) {
@@ -655,9 +668,15 @@ DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const Pa
       b.low[env].imm_n += 1;
       b.low[env].wedge += rp && rn;
     }
-    vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;   // 0.1 m = 결정 둘(2 s) 동안 물러나는 거리
+    vc = !c.rec_nobk && path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;   // 물러나기 없음(rec_nobk)이면 섬. 0.1 m = 결정 둘(2 s) 동안 물러나는 거리
     s.bkind = 2;
     wc = 0.f;
+    if (c.rec_nobk && c.imm_rot && !c.spin_free) {   // 서는 대신 당근 쪽으로 제자리 회전 (EnvCfg::imm_rot) — 막히면 반대쪽, 둘 다 막히면 섬
+      // 지역 계획기 끼임(lp_block)은 wc 가 0 이라 그 계획기가 돌려던 쪽(lp_w)으로
+      const float w1 = ((s.lp_block ? s.lp_w : s.wc) >= 0.f ? 1.f : -1.f) * c.rot_w;
+      if (!path_imminent(b, e, env, 0.f, w1, 1e9f)) wc = w1;
+      else if (!path_imminent(b, e, env, 0.f, -w1, 1e9f)) wc = -w1;
+    }
     e.p_stops += 1;
     e.p_blk_now += 1;
   } else if (c.mon_on && vc == 0.f && wc != 0.f && (pre ? pre->rot_cnt > c.mon_max_points : path_rotate_blocked(b, e, env))) {

@@ -558,7 +558,7 @@ DEV int path_recovery(const EnvBatch& b, EnvState& e, int env, int k, int* force
     e.p_blk = 0;
     e.p_gaveup += 1;
   } else if (e.p_blk == 3 && blocked) {   // 물러나기 (BT BackUp backup_dist 0.30 · backup_speed 0.05) 뒤 다시 계획
-    e.p_rec = c.rec_backup_steps;
+    if (!c.rec_nobk) e.p_rec = c.rec_backup_steps;   // 물러나기 없음(rec_nobk): 다시 계획만
     *force = 1;
   } else if (e.p_blk > 0) {   // 다시 계획 (BT ComputePathToPose·FollowPath RecoveryNode)
     *force = 1;
@@ -685,7 +685,17 @@ DEV bool path_imminent_roll(const EnvBatch& b, const EnvState& e, int env, float
 }
 // now_hit: 지금 자세가 패딩 발자국으로 걸림 (path_now_hits). 걸렸고 path_consistent 가 아니면 굴린 자세는 안 보고 true (옛 동작 — Nav2 그대로)
 DEV bool path_imminent_now(const EnvCfg& c, bool now_hit) { return now_hit && !c.path_consistent; }
-DEV bool path_imminent(const EnvBatch& b, const EnvState& e, int env, float v, float w, float carrot_dist, bool check_now = true, bool unk = false) {
+DEV bool path_imminent(const EnvBatch& b, const EnvState& e, int env, float v, float w, float carrot_dist, bool check_now = true, bool unk = false);
+// 제자리 회전 대신 달리며 돎 (EnvCfg::spin_free): (spin_v, ±rot_w) 작은 원 — 바라는 쪽(sgn) 호가 충돌 검사에 걸리면 반대쪽, 둘 다 걸리면 섬 (v = w = 0)
+DEV void path_arc_turn(const EnvBatch& b, const EnvState& e, int env, float sgn, float* v, float* w) {
+  const EnvCfg& c = b.cfg;
+  const float w1 = (sgn >= 0.f ? 1.f : -1.f) * c.rot_w;
+  *v = c.spin_v;
+  if (!path_imminent(b, e, env, c.spin_v, w1, 1e9f)) { *w = w1; return; }
+  if (!path_imminent(b, e, env, c.spin_v, -w1, 1e9f)) { *w = -w1; return; }
+  *v = *w = 0.f;
+}
+DEV bool path_imminent(const EnvBatch& b, const EnvState& e, int env, float v, float w, float carrot_dist, bool check_now, bool unk) {
   // 지금 자세가 이미 패딩에 걸림: 옛 동작(Nav2 그대로)은 모든 명령 막힘 → 추종 중 갇힘의 41~59 %. path_consistent 면 굴린 자세를 몸통으로만 검사 (빠져나오기)
   const bool now_hit = check_now && path_now_hits(b, e, env);
   if (path_imminent_now(b.cfg, now_hit)) return true;
@@ -730,7 +740,10 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
   *wc_o = 0.f;
   if (carrot_o) *carrot_o = 1e9f;   // 제자리 회전이면 당근 거리 무한 (기준선과 같음)
   if (e.p_n <= 0) {   // 목표 없음: 후보가 없을 때(판 시작·모두 닫힘)는 제자리 회전, 목표는 있는데 경로를 못 짰으면 섬
-    if (e.goal_cell < 0) *wc_o = path_idle_w(b, e, env);
+    if (e.goal_cell < 0) {
+      *wc_o = path_idle_w(b, e, env);
+      if (c.spin_free && *wc_o != 0.f && path_face(b, env) < 0) path_arc_turn(b, e, env, *wc_o, vc_o, wc_o);   // 서서 돌지 않고 작은 원
+    }
     if (why) { why->kind = e.goal_cell < 0 ? kWhyNoGoal : kWhyNoPath; why->bind = kLowFull; why->vc = 0.f; why->err = 0.f; why->d_goal = 0.f; }
     return;
   }
@@ -784,13 +797,15 @@ DEV void path_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float
   // 도착: 다음 결정까지 제자리 회전 — 라이다가 뒤 140° 를 못 봐서(sensor_model.yaml fov 220°) 목표 덩어리가 로봇 뒤·발밑에 남는 일이 많다
   // (2026-11-08 규칙 정책 시험: 서 있기만 하면 0 번 후보가 거리 0 인 채로 안 풀려 128 판 모두 진행 없음 실패)
   if (d_goal <= c.goal_tol) {   // (모름 칸까지 막힘으로 보면 판 시작의 뒤쪽 모름 때문에 영영 안 돌아 128 판 모두 정체 — 지도 막힘만 봄)
-    if (!(pre ? pre->arr_hit != 0 : path_imminent(b, e, env, 0.f, c.rot_w, 1e9f))) *wc_o = path_face(b, env) >= 0 ? path_idle_w(b, e, env) : c.rot_w;
+    if (c.spin_free && path_face(b, env) < 0) path_arc_turn(b, e, env, 1.f, vc_o, wc_o);   // 서서 돌지 않고 작은 원
+    else if (!(pre ? pre->arr_hit != 0 : path_imminent(b, e, env, 0.f, c.rot_w, 1e9f))) *wc_o = path_face(b, env) >= 0 ? path_idle_w(b, e, env) : c.rot_w;
     if (why) { why->kind = *wc_o != 0.f ? kWhyArrive : kWhyArriveStop; why->bind = kLowFull; why->vc = 0.f; why->err = 0.f; why->d_goal = d_goal; }
     return;
   }
   const float err = dm::wrap_pi(dm::atan2f_d(cy - py, cx - px) - pth);
   if (dm::absf(err) > c.rot_min_angle) {
     *wc_o = err > 0.f ? c.rot_w : -c.rot_w;
+    if (c.spin_free) path_arc_turn(b, e, env, err, vc_o, wc_o);   // 서서 돌지 않고 작은 원으로 돌며 감
     if (why) { why->kind = kWhyRot; why->bind = kLowFull; why->vc = 0.f; why->err = err; why->d_goal = d_goal; }
     return;
   }

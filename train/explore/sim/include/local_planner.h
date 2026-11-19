@@ -142,7 +142,8 @@ DEV void lp_proj(const LpPath& P, float px, float py, float s_lim, float* s, flo
 
 // 지역 계획기 한 번: 쓰면 true (vc · wc = velocity_smoother 앞 목표 명령, *block = 진짜 끼임). 도착(goal_tol 안)·목표 없음·경로 없음이면 false —
 // 아무 상태도 안 바꾸고 부르는 쪽(env.h path_step_a)이 RPP 추종기를 그대로 부른다
-DEV bool lp_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* wc_o, int* block, PathWhy* why) {
+// w_want (있으면): 막힘(*block)일 때도 가장 좋은 궤적이 돌려던 쪽 (그 첫 ω, 거의 0 이면 경로 방향 − 지금 방향) — 막히면 회전(EnvCfg::imm_rot)이 쓸 쪽
+DEV bool lp_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* wc_o, int* block, PathWhy* why, float* w_want = nullptr) {
   const EnvCfg& c = b.cfg;
   const LpCfg& L = c.lp;
   const MapDev& m = b.maps[e.map];
@@ -366,6 +367,7 @@ DEV bool lp_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* 
   *block = (b_coll >= 0 && b_coll < L.block_steps) ? 1 : 0;
   *vc_o = *block ? 0.f : b_vc;
   *wc_o = *block ? 0.f : b_wc;
+  if (w_want) *w_want = dm::absf(b_wc) > 1e-3f ? b_wc : dm::wrap_pi(tan0 - pth);
   e.lp_k1 = b_k1;
   e.lp_n = 1;
   if (why) {

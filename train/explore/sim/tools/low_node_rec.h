@@ -1,7 +1,10 @@
 // 실물 합친 탐사 노드 녹화 꼴 (limo_fire_explore explorer record:= · 시뮬 room_run --rec 가 쓰고, low_explore_replay · node_stats 가 읽는다):
 // RobotEnv 가 받은 입력을 부른 차례대로 + 그때 낸 명령. 노드 차례를 그대로 다시 돌려 위층 결정·명령이 같은지 본다.
 //
-// 판 8 (2026-11-19 —): 판 7 과 같고 EnvHostCfg 에 EnvCfg::lp(아래층 지역 계획기 설정 LpCfg) 칸. 판 7 이하는 그 칸에 0 (= 끔 — 그때 동작)을 끼워 읽는다.
+// 판 9 (2026-11-20 —): 판 8 과 같고 EnvHostCfg 에 EnvCfg::rec_nobk · imm_rot · rec_abort(막힘 처리 — 물러나기 없음·막히면 회전·목표 버림) ·
+//   spin_free · spin_v(제자리 회전 대신 달리며 돎) · rough_wait('대충 다 앎' 끝 기다림) 칸 (lp 뒤). 판 8 이하는 그 칸들에 0 (= 물러남 · 회전 없음 · 버림 없음 ·
+//   제자리 회전 · close_idle_s — 그때 동작)을 끼워 읽는다.
+// 판 8 (2026-11-19 — 11-20): 판 7 과 같고 EnvHostCfg 에 EnvCfg::lp(아래층 지역 계획기 설정 LpCfg) 칸. 판 7 이하는 그 칸에 0 (= 끔 — 그때 동작)을 끼워 읽는다.
 // 판 7 (2026-11-19): 판 6 과 같고 EnvHostCfg 에 EnvCfg::rec_win(복구 막힘 판정 창, 걸음) 칸. 판 6 이하는 그 칸에 0 (= 결정 주기 — 그때 동작)을 끼워 읽는다.
 // 판 6 (2026-11-18 — 11-19): 판 5 와 같고 EnvHostCfg 에서 EnvCfg::finish_declare(판단 모델 끝 선언) · max_delay(관측 지연) · n_dir · n_dist · dist · goal_margin
 //   (목표점 행동) 칸이 빠짐 — 그만둔 RL 관측·옛 실험 길을 지우며. 옛 판(1~5)은 판 5 꼴로 맞춘 뒤 그 자리(kV5Gone)를 빼 읽는다 (그 칸들은 다시 돌리기에 안 쓰임).
@@ -33,7 +36,7 @@
 
 namespace lowrec {
 constexpr int32_t kMagic = 0x4E574F4C;   // "LOWN"
-constexpr int32_t kVersion = 8;
+constexpr int32_t kVersion = 9;
 // 판 5 꼴 EnvHostCfg (1616 바이트) — 판 6 에서 지운 칸 [시작, 끝) 바이트: finish_declare · max_delay … goal_margin. 나머지는 차례·크기 그대로라 이 자리만 빼면 지금 구조체
 constexpr size_t kV5Size = 1616;
 constexpr std::pair<size_t, size_t> kV5Gone[] = {{788, 792}, {868, 900}};
@@ -55,7 +58,11 @@ constexpr size_t kV7Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg,
 constexpr size_t kV7Size = kV6Size + kV7Len;
 // 판 8 에서 더한 칸 (판 8 꼴 안 자리 = offsetof — EnvCfg 끝에 붙여 앞 칸들은 판 7 과 같은 자리)
 constexpr size_t kV8Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, lp), kV8Len = sizeof(sim::LpCfg);   // EnvCfg::lp
-static_assert(kV7Size + kV8Len == sizeof(sim::EnvHostCfg),
+constexpr size_t kV8Size = kV7Size + kV8Len;
+// 판 9 에서 더한 칸 (lp 바로 뒤 — 판 9 꼴 안 자리 = offsetof, 앞 칸들은 판 8 과 같은 자리)
+constexpr size_t kV9Off = offsetof(sim::EnvHostCfg, cfg) + offsetof(sim::EnvCfg, rec_nobk), kV9Len = 6 * sizeof(int32_t);   // EnvCfg::rec_nobk · imm_rot · rec_abort · spin_free · spin_v · rough_wait
+static_assert(kV9Off == kV8Off + kV8Len, "판 9 칸은 lp 바로 뒤");
+static_assert(kV8Size + kV9Len == sizeof(sim::EnvHostCfg),
               "EnvHostCfg 가 바뀜 — 녹화 판 번호(kVersion)를 올리고 옛 판을 새 구조체로 옮기는 길을 Reader 에 더할 것");
 using Window = limo_fire_explore::RobotEnv::Window;
 // 'A' 사건의 아래층 목적지: 0 없음 · 1 세계 좌표 (x, y) · 2 판 1 녹화 — 지도 자세 기준 (x = 거리 m, y = 방향 rad, 그 걸음 지도 자세에서 셈)
@@ -135,7 +142,7 @@ class Reader {
     if (hd[1] >= 2 && hd[1] <= kVersion) {
       int32_t sz[3];
       r(sz, sizeof(sz));
-      const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : hd[1] == 7 ? kV7Size : hd[1] == 6 ? kV6Size : hd[1] == 5 ? kV5Size : hd[1] == 4 ? kV4Size : hd[1] == 3 ? kV3Size : kV2Size;
+      const size_t want = hd[1] == kVersion ? sizeof(sim::EnvHostCfg) : hd[1] == 8 ? kV8Size : hd[1] == 7 ? kV7Size : hd[1] == 6 ? kV6Size : hd[1] == 5 ? kV5Size : hd[1] == 4 ? kV4Size : hd[1] == 3 ? kV3Size : kV2Size;
       if (sz[0] != (int32_t)want || sz[1] != (int32_t)sizeof(limo_fire_explore::Proprio) || sz[2] != (int32_t)sizeof(Window))
         throw std::runtime_error("구조체 크기가 녹화와 다름 (소스 판이 다름?)");
       version = hd[1];
@@ -262,21 +269,29 @@ class Reader {
   // 판 ver 꼴 EnvHostCfg 바이트 → 지금 구조체: 판 5 아래면 그 뒤 판에서 더한 칸 자리에 0 을 끼워 판 5 꼴로, 판 5 꼴이면 판 6 에서 지운 칸을 뺌
   void from_old(const uint8_t* src, int ver) {
     if (ver == kVersion) { std::memcpy(&hc, src, sizeof(hc)); return; }
-    std::vector<uint8_t> v7(kV7Size, 0);
-    if (ver == 7) {
-      std::memcpy(v7.data(), src, kV7Size);
+    std::vector<uint8_t> v8(kV8Size, 0);
+    if (ver == 8) {
+      std::memcpy(v8.data(), src, kV8Size);
     } else {
-      std::vector<uint8_t> v6(kV6Size, 0);
-      if (ver == 6) std::memcpy(v6.data(), src, kV6Size);
-      else from_v5(src, ver, v6.data());
-      uint8_t* d = v7.data();   // 판 7 칸(rec_win) 자리에 0
-      std::memcpy(d, v6.data(), kV7Off);
-      std::memcpy(d + kV7Off + kV7Len, v6.data() + kV7Off, kV6Size - kV7Off);
+      std::vector<uint8_t> v7(kV7Size, 0);
+      if (ver == 7) {
+        std::memcpy(v7.data(), src, kV7Size);
+      } else {
+        std::vector<uint8_t> v6(kV6Size, 0);
+        if (ver == 6) std::memcpy(v6.data(), src, kV6Size);
+        else from_v5(src, ver, v6.data());
+        uint8_t* d = v7.data();   // 판 7 칸(rec_win) 자리에 0
+        std::memcpy(d, v6.data(), kV7Off);
+        std::memcpy(d + kV7Off + kV7Len, v6.data() + kV7Off, kV6Size - kV7Off);
+      }
+      uint8_t* d = v8.data();   // 판 8 칸(lp) 자리에 0 (= 지역 계획기 끔)
+      std::memcpy(d, v7.data(), kV8Off);
+      std::memcpy(d + kV8Off + kV8Len, v7.data() + kV8Off, kV7Size - kV8Off);
     }
-    uint8_t* d = reinterpret_cast<uint8_t*>(&hc);   // 판 8 칸(lp) 자리에 0 (= 지역 계획기 끔)
-    std::memcpy(d, v7.data(), kV8Off);
-    std::memset(d + kV8Off, 0, kV8Len);
-    std::memcpy(d + kV8Off + kV8Len, v7.data() + kV8Off, kV7Size - kV8Off);
+    uint8_t* d = reinterpret_cast<uint8_t*>(&hc);   // 판 9 칸(rec_nobk … rough_wait) 자리에 0 — 옛 동작(물러남)
+    std::memcpy(d, v8.data(), kV9Off);
+    std::memset(d + kV9Off, 0, kV9Len);
+    std::memcpy(d + kV9Off + kV9Len, v8.data() + kV9Off, kV8Size - kV9Off);
   }
   // 판 ver(≤ 5) 꼴 → 판 6 꼴 바이트 (d, kV6Size)
   void from_v5(const uint8_t* src, int ver, uint8_t* d) {

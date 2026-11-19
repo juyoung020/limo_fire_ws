@@ -214,7 +214,8 @@ int main(int argc, char** argv) {
   bool dec_stop = lxd::Params{}.stop_cand;
   int dec_px = lxd::Params{}.px;
   std::string dec_input = "both", dec_url;
-  long tl_n = 0, tl_fast = 0, tl_zero = 0, tl_zero_k[sim::kLowKinds] = {};   // --time-log 몸통 속도 몫 (걸음 · v ≥ 0.9 · v < 0.05 · 그 분류별)
+  long tl_n = 0, tl_fast = 0, tl_zero = 0, tl_zero_k[sim::kLowKinds] = {}, tl_stuck_run = 0, tl_stuck_max = 0, tl_stuck_long = 0, tl_plan_n = 0, tl_back = 0, tl_spin = 0;   // --time-log 몸통 속도 몫 (걸음 · v ≥ 0.9 · v < 0.05 · 그 분류별) · 충돌 검사로 선 토막 · 뒤로(v < −0.02) · 제자리 회전(|v| < 0.05, |ω| > 0.3)
+  double tl_plan_ms = 0.0, tl_plan_max = 0.0;   // --time-log 계획 단계를 돈 준비(low_prepare) 시간
   std::string vid_log;    // --vid-log 접두: 그림용 기록 (0.5 s 마다 참 자세 · 지도 자세 · 목표 · 경로 · 명령 · 사람 → 접두.frames.tsv, 로봇 지도 0 모름 · 1 빈 · 2 막힘 → 접두.maps.bin)
   std::string time_log;   // --time-log: 판 끝마다 아래층 걸음 분류(low_task.h kLow* 17 칸 걸음 수) · 이동 거리 · 도착 전 버린 구간 걸음·거리 · 남았던 거리 · 목적지 수 (실물 쪽 RobotEnv LowEp — 시간 손실 분해)
   std::string ep_log, lat_log, contact_log;   // --lat-log: 판 끝마다 (판 · 끝 코드 · 끝 시각 · 규칙 대신 · 답 기다리는 중 닿음 · 보냄 · 답 적용 · 실패 기록 후보 고름 · 1 순위 고름 · 정답 바닥 칸 수 · 덮음 지표 9 개(가는 칸, 굵은 0.5 m × 문턱 0.1/0.2/0.3/0.5, 굵은 1.0 m × 같은 문턱 — scripts/coverage.h)를 1 s 마다: 지표 사이 ; 값 사이 ,)
@@ -927,7 +928,8 @@ int main(int argc, char** argv) {
         cpu.get_layer_depth(ldep);
         robot.set_layer_depth(ldep.data());
       }
-      { const auto t0 = std::chrono::steady_clock::now(); robot.low_prepare(); t_obs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+      { const auto t0 = std::chrono::steady_clock::now(); robot.low_prepare(); const double dp_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); t_obs += dp_;
+        if (!time_log.empty() && robot.low_rl().p_step == robot.state().step) { tl_plan_ms += dp_; tl_plan_max = std::max(tl_plan_max, dp_); ++tl_plan_n; } }   // 계획 단계를 돈 준비 (A* 포함)
       cpu.get_state(st_prep);
       ++n_obs;
       {   // 준비 뒤 경로 (목표 칸 · 경로 점 · 지금 구간 · 고른 후보) — 두 쪽 같아야
@@ -1129,8 +1131,11 @@ int main(int argc, char** argv) {
             for (int k = 0; k < sim::kLowAng; ++k) { abn += le.ab_n[k]; abd += le.ab_dist[k]; }
             std::fprintf(tf, "\t%.2f\t%d\t%.2f\t%.2f\t%d\t%ld\t%ld\t%ld\t%ld\t%ld\t%ld\t", le.dist_all, abn, abd, le.left_sum, le.n_goal, cr.n_dec(), cr.n_reach(), n_sw, tl_n, tl_fast, tl_zero);
             for (int k = 0; k < sim::kLowKinds; ++k) std::fprintf(tf, "%s%ld", k ? "," : "", tl_zero_k[k]);
-            std::fprintf(tf, "\t%d\t%d\n", le.imm_n, le.wedge);
-            tl_n = tl_fast = tl_zero = 0;
+            if (tl_stuck_run >= 100) tl_stuck_long += tl_stuck_run;
+            std::fprintf(tf, "\t%d\t%d\t%ld\t%ld\t%ld\t%ld\t%.3f\t%.3f\t%ld\t%ld\n", le.imm_n, le.wedge, tl_stuck_max, tl_stuck_long, tl_stuck_run, tl_plan_n, tl_plan_n ? tl_plan_ms / tl_plan_n : 0.0, tl_plan_max,
+                         tl_back, tl_spin);
+            tl_n = tl_fast = tl_zero = tl_stuck_run = tl_stuck_max = tl_stuck_long = tl_plan_n = tl_back = tl_spin = 0;
+            tl_plan_ms = tl_plan_max = 0.0;
             for (long& q : tl_zero_k) q = 0;
             std::fclose(tf);
           }
@@ -1176,6 +1181,11 @@ int main(int argc, char** argv) {
         tl_fast += av >= 0.9f;
         if (av < 0.05f) { ++tl_zero; if (L[0].kind >= 0 && L[0].kind < sim::kLowKinds) ++tl_zero_k[L[0].kind]; }
         ++tl_n;
+        tl_back += st[0].v < -0.02f;
+        tl_spin += av < 0.05f && std::fabs(st[0].w) > 0.3f;
+        // 갇힘: 충돌 검사로 서 있는(v < 0.05) 걸음이 이어진 길이 — 가장 긴 것 · 10 s 넘는 토막의 걸음 합
+        if (av < 0.05f && L[0].kind == sim::kLowImm) { ++tl_stuck_run; tl_stuck_max = std::max(tl_stuck_max, tl_stuck_run); }
+        else { if (tl_stuck_run >= 100) tl_stuck_long += tl_stuck_run; tl_stuck_run = 0; }
       }
       if (st[0].step > 0) ep_path += std::hypot(st[0].x - ep_px, st[0].y - ep_py);
       ep_px = st[0].x; ep_py = st[0].y;
