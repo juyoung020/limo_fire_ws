@@ -38,7 +38,7 @@ bash /home/wego/limo_fire_ws/tools/hardware_check/open_ros_launcher_terminal.sh
 ros2 run limo_fire_hardware launcher_control_terminal --log /home/wego/launcher-commands.jsonl
 ```
 
-터미널에서 `c`는 장전, `f`는 앞선 `c`의 응답을 받은 뒤 발사, `s`는 장전·발사 한 번, `?`는 마지막 상태, `q`는 종료다. 브리지는 `e4` 레버 활성화 응답과 명령별 펌웨어 응답을 확인한다. 서비스의 `accepted`는 완료가 아니므로 터미널에서 `completed`를 확인한다. 연결 오류나 시간 초과가 나면 하드웨어 상태를 확인한 뒤 브리지를 다시 시작한다.
+터미널에서 `c`는 장전, `f`는 앞선 `c`의 응답을 받은 뒤 발사, `s`는 장전·발사 한 번, `?`는 마지막 상태, `q`는 종료다. `a`는 아래의 자동 발사 launch가 켜진 경우에만 탐지·이동·조준·발사 임무를 시작한다. 브리지는 `e4` 레버 활성화 응답과 명령별 펌웨어 응답을 확인한다. 서비스의 `accepted`는 완료가 아니므로 터미널에서 `completed`를 확인한다. 연결 오류나 시간 초과가 나면 하드웨어 상태를 확인한 뒤 브리지를 다시 시작한다.
 
 GUI 터미널이 없으면 위의 `ros2 run` 명령을 직접 사용한다. 이미 장전된 상태에서 `c`나 `s`를 다시 보내지 못하도록 브리지가 막는다. 먼저 상태를 확인하고 `f` 또는 종료를 선택한다.
 
@@ -56,6 +56,6 @@ ros2 launch limo_fire_hardware real_camera_aim.launch.py \
   serial_port:=/dev/serial/by-id/<ESP32_확인한_장치>
 ```
 
-다른 터미널에서 실제 `/fire/observations`와 `map → base_link` TF를 확인한 다음 `ros2 service call /launcher/approach_and_aim std_srvs/srv/Trigger '{}'`를 한 번 실행한다. 상태는 `/launcher/approach_aim_status`, `/launcher/pitch_status`, `/launcher/shot_status`에서 확인한다. 예상 종료 상태는 `SHOT_COMMAND_ACKNOWLEDGED`다. 공의 비행과 명중은 별도 촬영·관측이 필요하다.
+다른 터미널에서 실제 `/fire/observations`와 `map → base_link` TF를 확인한 다음, 별도 터미널의 `a`를 입력하거나 `ros2 service call /launcher/approach_and_aim std_srvs/srv/Trigger '{}'`를 한 번 실행한다. `a`는 launch의 `auto_fire_enabled:=true`를 켜는 스위치가 아니라 현재 설정된 자동 임무를 한 번 시작하는 명령이다. 상태는 `/launcher/approach_aim_status`, `/launcher/pitch_status`, `/launcher/shot_status`에서 확인한다. 예상 종료 상태는 `SHOT_COMMAND_ACKNOWLEDGED`다. 공의 비행과 명중은 별도 촬영·관측이 필요하다.
 
 `fire_on_pitch_ack:=true`는 현재 각도 센서가 없으므로 펌웨어의 상하각 **명령 응답**을 실제 각도 대신 허용하는 명시적 선택이다. 실제 각도 센서를 연결하면 `require_pitch_feedback: true`를 설정하고 `fire_on_pitch_ack:=false`로 시험한다. 기본값은 `firing_enabled:=false`, `auto_fire_enabled:=false`, `fire_on_pitch_ack:=false`다. 상하 피드백이 없고 `fire_on_pitch_ack`도 꺼져 있으면 자동 발사는 시작하지 않는다.

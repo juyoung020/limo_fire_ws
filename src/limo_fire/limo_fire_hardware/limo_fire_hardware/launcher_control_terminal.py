@@ -20,6 +20,7 @@ def main(argv=None):
     rclpy.init()
     node = rclpy.create_node('launcher_control_terminal')
     statuses = []
+    aim_statuses = []
     qos = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
     def status_received(message):
@@ -29,8 +30,16 @@ def main(argv=None):
             pass
 
     node.create_subscription(String, '/launcher/shot_status', status_received, qos)
+    def aim_received(message):
+        try:
+            aim_statuses.append(json.loads(message.data))
+        except ValueError:
+            pass
+
+    node.create_subscription(String, '/launcher/approach_aim_status', aim_received, qos)
     clients = {name: node.create_client(Trigger, '/launcher/' + name)
                for name in ('cock', 'fire', 'shot')}
+    aim_client = node.create_client(Trigger, '/launcher/approach_and_aim')
     log = open(args.log, 'a', encoding='utf-8', buffering=1) if args.log else None
 
     def record(event, **fields):
@@ -39,7 +48,7 @@ def main(argv=None):
                                       event=event, **fields), ensure_ascii=False) + '\n')
 
     try:
-        print('ROS launcher terminal: c=장전, f=발사, s=장전+발사 1회, ?=상태, q=종료')
+        print('ROS launcher terminal: a=자동 임무 시작, c=장전, f=발사, s=장전+발사 1회, ?=상태, q=종료')
         print('조준 브리지가 같은 USB 포트를 소유합니다. 명령 완료는 실제 공의 비행을 측정하지 않습니다.')
         while rclpy.ok():
             command = input('launcher> ').strip().lower()
@@ -47,10 +56,62 @@ def main(argv=None):
                 break
             if command == '?':
                 rclpy.spin_once(node, timeout_sec=0.2)
-                print(statuses[-1] if statuses else '아직 장전·발사 상태가 없습니다.')
+                print('aim:', aim_statuses[-1] if aim_statuses else '조준 상태 없음')
+                print('launcher:', statuses[-1] if statuses else '장전·발사 상태 없음')
+                continue
+            if command == 'a':
+                status_deadline = time.monotonic() + 2.0
+                while not aim_statuses and time.monotonic() < status_deadline:
+                    rclpy.spin_once(node, timeout_sec=0.1)
+                if not aim_statuses or aim_statuses[-1].get('auto_fire_enabled') is not True:
+                    print('자동 발사가 꺼져 있습니다. launch에서 auto_fire_enabled:=true를 지정하세요.')
+                    continue
+                if not aim_client.wait_for_service(timeout_sec=2.0):
+                    print('조준 임무 서비스가 없습니다.')
+                    continue
+                baseline_stamp = aim_statuses[-1].get('stamp', 0)
+                future = aim_client.call_async(Trigger.Request())
+                rclpy.spin_until_future_complete(node, future, timeout_sec=3.0)
+                if not future.done() or future.result() is None:
+                    print('임무 요청 응답을 확인하지 못했습니다. 상태를 먼저 확인하세요.')
+                    record('mission_unconfirmed')
+                    continue
+                reply = future.result()
+                record('mission_request', accepted=reply.success, message=reply.message)
+                if not reply.success:
+                    print('임무 거부:', reply.message)
+                    continue
+                print('자동 임무 시작. 탐지·이동·조준·발사 상태를 기다립니다.')
+                last_state = None
+                terminal_states = {'SHOT_COMMAND_ACKNOWLEDGED', 'SHOT_REJECTED',
+                                   'SHOT_UNCONFIRMED', 'FAILED', 'CANCELLED', 'STOP_UNCONFIRMED'}
+                deadline = time.monotonic() + 130.0
+                while rclpy.ok() and time.monotonic() < deadline:
+                    rclpy.spin_once(node, timeout_sec=0.1)
+                    if not aim_statuses:
+                        continue
+                    if aim_statuses[-1].get('stamp', 0) <= baseline_stamp:
+                        continue
+                    state = aim_statuses[-1].get('state')
+                    if state != last_state:
+                        print('aim:', state, aim_statuses[-1].get('reason', ''))
+                        record('mission_status', **aim_statuses[-1])
+                        last_state = state
+                    if state in terminal_states:
+                        break
+                else:
+                    print('임무 완료를 확인하지 못했습니다. 재시작 전에 로봇과 발사기를 점검하세요.')
+                    record('mission_unconfirmed')
                 continue
             if command not in ('c', 'f', 's'):
-                print('c, f, s, ?, q 중 하나를 입력하세요.')
+                print('a, c, f, s, ?, q 중 하나를 입력하세요.')
+                continue
+            rclpy.spin_once(node, timeout_sec=0.2)
+            if (aim_statuses and aim_statuses[-1].get('state') not in
+                    ('IDLE', 'PREVIEW_READY', 'PITCH_ACKNOWLEDGED', 'AIM_VERIFIED',
+                     'SHOT_COMMAND_ACKNOWLEDGED', 'SHOT_REJECTED', 'SHOT_UNCONFIRMED',
+                     'FAILED', 'CANCELLED', 'STOP_UNCONFIRMED')):
+                print('자동 조준 임무가 진행 중입니다. 수동 장전·발사 명령을 보내지 않습니다.')
                 continue
             action = {'c': 'cock', 'f': 'fire', 's': 'shot'}[command]
             client = clients[action]

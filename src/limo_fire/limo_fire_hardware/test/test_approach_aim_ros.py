@@ -4,6 +4,9 @@ Run on an isolated ROS_DOMAIN_ID. No robot driver or serial bridge is started.
 """
 import json
 import math
+import os
+import subprocess
+import sys
 import threading
 import time
 import unittest
@@ -344,6 +347,17 @@ class AutoFireRosTest(RosFixture):
         self.wait_for(lambda: any(s['state'] == 'SHOT_COMMAND_ACKNOWLEDGED' for s in self.robot.statuses))
         terminal = next(s for s in self.robot.statuses if s['state'] == 'SHOT_COMMAND_ACKNOWLEDGED')
         self.assertFalse(terminal['measured'])
+        self.assertTrue(terminal['auto_fire_enabled'])
+
+    def test_separate_terminal_starts_one_automatic_mission(self):
+        command = [sys.executable, '-c',
+                   'from limo_fire_hardware.launcher_control_terminal import main; main()']
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, env=os.environ.copy())
+        output, _ = process.communicate('a\nq\n', timeout=20)
+        self.assertEqual(process.returncode, 0, output)
+        self.assertIn('SHOT_COMMAND_ACKNOWLEDGED', output)
+        self.assertEqual(self.robot.shot_requests, 1)
 
 
 class AutoFireFeedbackRosTest(RosFixture):

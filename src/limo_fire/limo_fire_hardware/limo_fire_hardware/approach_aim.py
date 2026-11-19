@@ -292,6 +292,7 @@ class ApproachAim(Node):
         self.phase = phase
         self.phase_at = time.monotonic()
         report = dict(state=phase, reason=reason, motion_enabled=self.cfg['motion_enabled'],
+                      auto_fire_enabled=self.cfg['auto_fire_enabled'],
                       stamp=self.get_clock().now().nanoseconds * 1e-9, **details)
         self.last_status = String(data=json.dumps(report, allow_nan=False))
         self.status_pub.publish(self.last_status)
