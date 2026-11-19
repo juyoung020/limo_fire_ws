@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.8)
 project(limo_fire_explore)
+option(LIMO_FIRE_FRONTIER_ONLY "Build the Nav2 frontier explorer without the shared perception component" OFF)
 
 # 시뮬과 같은 지도·관측 코드(train/explore/sim·mdp 헤더)를 그대로 컴파일한다 — 같은 입력이면 시뮬 CPU 참조판과 비트까지 같게:
 # -ffp-contract=off (곱셈·덧셈 합치기 끔 — aarch64 g++ 는 기본으로 합쳐 값이 달라짐, sim/CMakeLists.txt 와 같은 플래그). CUDA 는 안 씀
@@ -25,7 +26,10 @@ find_package(visualization_msgs REQUIRED)
 find_package(vision_msgs REQUIRED)
 find_package(rviz_2d_overlay_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
-find_package(limo_fire_perception REQUIRED)   # 깊이 구독을 같은 프로세스의 물체 지도와 나눠 씀 (limo_fire_shared_image)
+find_package(ament_index_cpp REQUIRED)
+if(NOT LIMO_FIRE_FRONTIER_ONLY)
+  find_package(limo_fire_perception REQUIRED)   # 깊이 구독을 같은 프로세스의 물체 지도와 나눠 씀 (limo_fire_shared_image)
+endif()
 
 set(EXPLORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../train/explore)
 get_filename_component(EXPLORE_DIR ${EXPLORE_DIR} ABSOLUTE)
@@ -34,6 +38,7 @@ if(NOT EXISTS ${EXPLORE_DIR}/sim/include/obs_ref.h)
 endif()
 
 # ROS 없는 부분: RobotEnv(관측) + 설정 읽기 (시뮬 소스 그대로)
+if(NOT LIMO_FIRE_FRONTIER_ONLY)
 add_library(limo_fire_explore_core STATIC src/robot_env.cpp ${EXPLORE_DIR}/sim/src/env_cfg.cpp ${EXPLORE_DIR}/sim/src/sensor_model.cpp)
 target_include_directories(limo_fire_explore_core PUBLIC include ${EXPLORE_DIR}/sim/include ${EXPLORE_DIR}/mdp)
 target_link_libraries(limo_fire_explore_core PUBLIC yaml-cpp)
@@ -45,13 +50,13 @@ set_target_properties(limo_fire_explore_core PROPERTIES POSITION_INDEPENDENT_COD
 find_package(rclcpp_components REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)   # 판단 모델 그림을 RViz 용 sensor_msgs/Image 로 풀 때 (decider_image)
-find_package(ament_index_cpp REQUIRED)
 add_library(explorer_component SHARED src/explorer_node.cpp ${EXPLORE_DIR}/scripts/decider.cpp)
 target_link_libraries(explorer_component ZLIB::ZLIB PNG::PNG limo_fire_explore_core limo_fire_perception::limo_fire_shared_image)
 target_include_directories(explorer_component PRIVATE ${EXPLORE_DIR}/sim/tools ${EXPLORE_DIR}/scripts)   # low_node_rec.h (녹화 꼴) · low_explore_ctl.h (위층 — combine_run 과 같은 코드)
 target_compile_definitions(explorer_component PRIVATE LIMO_FIRE_EXPLORE_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
 ament_target_dependencies(explorer_component rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs vision_msgs ament_index_cpp)
 rclcpp_components_register_nodes(explorer_component "limo_fire_explore::ExplorerNode")
+endif()
 
 # 프론티어 탐사 노드: 탐사 기준선과 같은 찾기(mdp/frontier.h)·고르기(baselines/frontier/include/explore_lite.h), 값도 기준선 설정 그대로
 add_executable(frontier_explorer src/frontier_explorer_node.cpp)
@@ -61,10 +66,12 @@ target_compile_definitions(frontier_explorer PRIVATE LIMO_FIRE_FRONTIER_YAML="${
 ament_target_dependencies(frontier_explorer rclcpp rclcpp_action nav2_msgs nav_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs ament_index_cpp)
 
 install(TARGETS frontier_explorer DESTINATION lib/${PROJECT_NAME})
+if(NOT LIMO_FIRE_FRONTIER_ONLY)
 install(TARGETS explorer_component ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 # include/limo_fire_explore/class_ask.h (지시 → 클래스 묻기) · decider_client.h · decider_io.h 는 저장 지도 object_goto(limo_fire_navigation) 도 씀
 install(DIRECTORY include/ DESTINATION include)
 ament_export_include_directories(include)
+endif()
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)

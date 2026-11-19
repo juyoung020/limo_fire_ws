@@ -99,6 +99,8 @@
 판단 모델은 시뮬에서 후보마다 실제로 굴려 본 결과로 미세조정(LoRA)하는 중이다 — [upper_lora](train/explore/upper_lora/README.md).
 실행 방법은 [limo_fire_explore](src/limo_fire/limo_fire_explore/README.md), 시뮬·확인 도구는 [train/explore](train/explore/README.md).
 
+실물 단발 임무의 `a` 명령은 최근 표적이 없으면 프론티어 탐사를 켜고, 표적을 발견하면 탐사를 멈춘 뒤 접근·조준·장전·발사로 이어진다. [실행 순서와 검증 범위](src/limo_fire/limo_fire_hardware/REAL_FIRE_TEST.md). 탐색 노드는 별도로 실행해야 하며 실물 전체 연속 발사는 아직 검증하지 않았다.
+
 <br>
 
 ## 하드웨어

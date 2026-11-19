@@ -42,13 +42,34 @@ ros2 run limo_fire_hardware launcher_control_terminal --log /home/wego/launcher-
 
 GUI 터미널이 없으면 위의 `ros2 run` 명령을 직접 사용한다. 이미 장전된 상태에서 `c`나 `s`를 다시 보내지 못하도록 브리지가 막는다. 먼저 상태를 확인하고 `f` 또는 종료를 선택한다.
 
-## 탐지·이동·조준 후 자동 장전·발사
+## 탐색·탐지·이동·조준 후 자동 장전·발사
 
-실물 카메라 표적의 지도 좌표와 거리, 장착 치수, Nav2 도착·차체 정지, 좌우 오차와 상하각을 확인한 뒤 실행한다. launch를 시작한 다음 별도 `launcher_control_terminal`에서 `a`를 한 번 입력해 자동 임무를 시작한다.
+실물 카메라 표적의 지도 좌표와 거리, 장착 치수, Nav2 도착·차체 정지, 좌우 오차와 상하각을 확인한 뒤 실행한다. `a`를 누를 때 최근 표적이 없으면 주영의 프론티어 탐사를 켠다. 지도 좌표가 있는 같은 표적을 서로 다른 영상 시각으로 세 번 확인하면 탐사를 끄고, `idle` 상태와 차체 정지 0.5초를 확인한 뒤 기존 접근·조준·발사 임무를 시작한다. 180초 안에 표적이 없거나 지도가 닫혀 탐사가 끝나면 발사하지 않는다. 탐사 서비스가 없거나 다른 탐사가 이미 진행 중이어도 시작하지 않는다.
+
+Wego의 기존 작업공간에는 `limo_fire_explore`가 설치돼 있지 않아, 2026-11-19에 `/home/wego/launcher_auto_fire_20261119` 시험 오버레이에 프론티어 실행 파일만 빌드했다. 이 빌드는 `-DLIMO_FIRE_FRONTIER_ONLY=ON`을 사용했고, 기존 인식·Nav2 설치본은 바꾸지 않았다. `ros2 pkg prefix limo_fire_explore`가 이 오버레이를 가리키는지 확인한다. 새 저장소 전체를 빌드할 때는 기본 옵션으로 전체 탐사 컴포넌트를 빌드할 수 있다.
+
+표적을 탐색하며 지도를 새로 만들 때는 첫 터미널에서 로봇을, 둘째 터미널에서 Cartographer·Nav2·멈춘 프론티어 탐사 노드를 실행한다. 각 터미널의 ROS 도메인을 맞추고 RViz에서 위치·지도·장애물을 확인한다. 저장된 지도에 미지 영역이 없으면 프론티어 탐사는 곧 `done`이 된다.
+
+```bash
+source /home/wego/limo_fire_ws/env.sh
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
+ros2 launch limo_fire_bringup robot.launch.xml base:=true viz:=false max_clocks:=false
+```
+
+```bash
+source /home/wego/limo_fire_ws/env.sh
+source /home/wego/launcher_auto_fire_20261119/install/local_setup.bash
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
+ros2 launch limo_fire_explore frontier_explorer.launch.xml stack:=true rviz:=true
+```
+
+셋째 터미널에서 카메라 인식·관측 브리지·조준·발사 브리지를 실행한다. 아래 실측 YAML과 ESP32 장치 경로는 현장에서 확인한 값으로 바꾼다. `fire_on_pitch_ack:=true`는 각도 센서 대신 펌웨어 명령 응답으로 진행하겠다는 명시적 선택이다.
 
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/wego/limo_fire_ws/install/local_setup.bash
+source /home/wego/launcher_auto_fire_20261119/install/local_setup.bash
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
 ros2 launch limo_fire_hardware real_camera_aim.launch.py \
   config:=/home/wego/launcher_aim_measured.yaml \
   motion_enabled:=true serial_enabled:=true firing_enabled:=true \
@@ -56,6 +77,8 @@ ros2 launch limo_fire_hardware real_camera_aim.launch.py \
   serial_port:=/dev/serial/by-id/<ESP32_확인한_장치>
 ```
 
-다른 터미널에서 실제 `/fire/observations`와 `map → base_link` TF를 확인한 다음, 별도 터미널의 `a`를 입력하거나 `ros2 service call /launcher/approach_and_aim std_srvs/srv/Trigger '{}'`를 한 번 실행한다. `a`는 launch의 `auto_fire_enabled:=true`를 켜는 스위치가 아니라 현재 설정된 자동 임무를 한 번 시작하는 명령이다. 상태는 `/launcher/approach_aim_status`, `/launcher/pitch_status`, `/launcher/shot_status`에서 확인한다. 예상 종료 상태는 `SHOT_COMMAND_ACKNOWLEDGED`다. 공의 비행과 명중은 별도 촬영·관측이 필요하다.
+넷째 터미널에서 같은 ROS 환경을 불러온 뒤 `ros2 run limo_fire_hardware launcher_control_terminal`을 실행하고 `a`를 한 번 입력한다. `--search-timeout-s 180`은 기본 탐색 제한 시간이며 `--no-search`는 탐색 없이 현재 보이는 표적만 사용한다. GUI 새 창은 `LIMO_FIRE_AIM_OVERLAY=/home/wego/launcher_auto_fire_20261119 bash /home/wego/launcher_auto_fire_20261119/tools/hardware_check/open_ros_launcher_terminal.sh`로 연다. `a`는 launch의 `auto_fire_enabled:=true`를 켜는 스위치가 아니라 현재 설정된 자동 임무를 한 번 시작하는 명령이다. 직접 `/launcher/approach_and_aim` 서비스를 호출하면 탐색 단계는 거치지 않는다.
+
+실제 `/fire/observations`와 `map → base_link` TF를 확인한다. 상태는 `/explore/frontier_explorer/state`, `/launcher/approach_aim_status`, `/launcher/pitch_status`, `/launcher/shot_status`에서 확인한다. 예상 종료 상태 `SHOT_COMMAND_ACKNOWLEDGED`는 펌웨어 응답이며, 공의 비행과 명중은 별도 촬영·관측이 필요하다. 탐색을 중간에 멈추려면 `/explore/frontier_explorer/enable`에 `false`를 보내고 로봇 정지를 확인한다. 터미널에서 Ctrl+C가 발생하면 탐사 정지를 요청하지만, 정지 응답을 받지 못하면 현장에서 직접 상태를 확인한다.
 
 `fire_on_pitch_ack:=true`는 현재 각도 센서가 없으므로 펌웨어의 상하각 **명령 응답**을 실제 각도 대신 허용하는 명시적 선택이다. 실제 각도 센서를 연결하면 `require_pitch_feedback: true`를 설정하고 `fire_on_pitch_ack:=false`로 시험한다. 기본값은 `firing_enabled:=false`, `auto_fire_enabled:=false`, `fire_on_pitch_ack:=false`다. 상하 피드백이 없고 `fire_on_pitch_ack`도 꺼져 있으면 자동 발사는 시작하지 않는다.

@@ -26,7 +26,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.time import Time
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64, String
-from std_srvs.srv import Trigger
+from std_srvs.srv import SetBool, Trigger
 from tf2_ros import TransformBroadcaster
 
 from limo_fire_hardware.approach_aim import ApproachAim
@@ -38,6 +38,7 @@ class FakeRobot(Node):
         self.group = ReentrantCallbackGroup()
         self.pose = (0.0, 0.0, 0.0)
         self.target_x = 2.0
+        self.publish_target = True
         self.delay_navigation = delay_navigation
         self.nav_yaw_bias_deg = nav_yaw_bias_deg
         self.angular_rate = 0.0
@@ -186,7 +187,8 @@ class FakeRobot(Node):
         fire.position.z = 0.4
         fire.position_valid = True
         fire.confidence = 0.9
-        self.fire_pub.publish(fire)
+        if self.publish_target:
+            self.fire_pub.publish(fire)
         odom = Odometry()
         odom.header.frame_id = 'odom'
         odom.header.stamp = now.to_msg()
@@ -358,6 +360,75 @@ class AutoFireRosTest(RosFixture):
         self.assertEqual(process.returncode, 0, output)
         self.assertIn('SHOT_COMMAND_ACKNOWLEDGED', output)
         self.assertEqual(self.robot.shot_requests, 1)
+
+    def test_terminal_explores_then_hands_off_one_shot(self):
+        self.robot.publish_target = False
+        time.sleep(1.2)
+        explorer = Node('fake_frontier_explorer')
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        state_pub = explorer.create_publisher(String, '/explore/frontier_explorer/state', latched)
+        calls = []
+
+        def enable(request, response):
+            calls.append(request.data)
+            state_pub.publish(String(data='running' if request.data else 'idle'))
+            if request.data:
+                self.robot.publish_target = True
+            response.success = True
+            response.message = 'running' if request.data else 'idle'
+            return response
+
+        explorer.create_service(SetBool, '/explore/frontier_explorer/enable', enable,
+                                callback_group=ReentrantCallbackGroup())
+        self.executor.add_node(explorer)
+        state_pub.publish(String(data='idle'))
+        try:
+            command = [sys.executable, '-c',
+                       'from limo_fire_hardware.launcher_control_terminal import main; main()']
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, text=True, env=os.environ.copy())
+            output, _ = process.communicate('a\nq\n', timeout=25)
+            self.assertEqual(process.returncode, 0, output)
+            self.assertEqual(calls, [True, False], output)
+            self.assertIn('SHOT_COMMAND_ACKNOWLEDGED', output)
+            self.assertEqual(self.robot.shot_requests, 1)
+        finally:
+            self.executor.remove_node(explorer)
+            explorer.destroy_node()
+
+    def test_search_timeout_stops_explorer_without_shot(self):
+        self.robot.publish_target = False
+        time.sleep(1.2)
+        explorer = Node('fake_frontier_explorer_timeout')
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        state_pub = explorer.create_publisher(String, '/explore/frontier_explorer/state', latched)
+        calls = []
+
+        def enable(request, response):
+            calls.append(request.data)
+            state_pub.publish(String(data='running' if request.data else 'idle'))
+            response.success = True
+            response.message = 'running' if request.data else 'idle'
+            return response
+
+        explorer.create_service(SetBool, '/explore/frontier_explorer/enable', enable,
+                                callback_group=ReentrantCallbackGroup())
+        self.executor.add_node(explorer)
+        state_pub.publish(String(data='idle'))
+        try:
+            command = [sys.executable, '-c',
+                       'from limo_fire_hardware.launcher_control_terminal import main; '
+                       'main(["--search-timeout-s", "1"])']
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, text=True, env=os.environ.copy())
+            output, _ = process.communicate('a\nq\n', timeout=15)
+            self.assertEqual(process.returncode, 0, output)
+            self.assertEqual(calls, [True, False], output)
+            self.assertIn('탐색 제한 시간', output)
+            self.assertEqual(self.robot.shot_requests, 0)
+        finally:
+            self.executor.remove_node(explorer)
+            explorer.destroy_node()
 
 
 class AutoFireFeedbackRosTest(RosFixture):
