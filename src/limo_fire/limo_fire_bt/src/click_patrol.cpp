@@ -4,8 +4,10 @@
 //   - ~/start 로 출발, ~/stop 으로 멈춤(Nav2 목표 취소), ~/undo 마지막 점 지우기, ~/clear 다 지우기 (std_srvs/Trigger)
 //   - 경유지 모드(remove_on_arrival, ~/waypoint_mode std_srvs/SetBool): 도착한 점을 지우고 다음 점으로, 다 지나면 멈춤
 //   - 바뀔 때마다 out_file 에 patrol: [[x, y], ...] 로 저장 (임무 BT patrol_file 과 같은 형식)
+//   - 바뀔 때마다 route_topic(nav_msgs/Path)으로 냄 → 임무 BT 가 다음 순찰점부터 이 점들로 순찰 (실물은 이것만 씀)
 //   - ~/markers: 번호·순서 선, 지금 가는 점은 초록
 // 설정: config/click_patrol.yaml. 실행: ros2 launch limo_fire_bt click_patrol.launch.xml
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -14,6 +16,7 @@
 #include <vector>
 
 #include <geometry_msgs/msg/point_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -50,6 +53,9 @@ public:
       out_file_ = std::string(home ? home : "/tmp") + "/limo_fire_patrol.yaml";
     }
     nav_ = rclcpp_action::create_client<Nav>(this, declare_parameter<std::string>("action_name", "/navigate_to_pose"));
+    // 임무 BT 순찰점: 바뀔 때마다 순서대로 낸다 (늦게 뜬 BT 도 받게 transient local) — BT GetNextWaypoint route_topic
+    route_pub_ = create_publisher<nav_msgs::msg::Path>(declare_parameter<std::string>("route_topic", "/patrol/route"),
+        rclcpp::QoS(1).reliable().transient_local());
     marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/markers",
         rclcpp::QoS(1).reliable().transient_local());
     click_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
@@ -259,6 +265,27 @@ private:
       arr.markers.push_back(label);
     }
     marker_pub_->publish(arr);
+
+    nav_msgs::msg::Path path;
+    path.header.frame_id = frame_;
+    path.header.stamp = now();
+    for (const auto & p : points_) {
+      geometry_msgs::msg::PoseStamped s;
+      s.header = path.header;
+      s.pose.position.x = p.x;
+      s.pose.position.y = p.y;
+      s.pose.orientation.w = 1.0;
+      path.poses.push_back(s);
+    }
+    if (published_ && path.poses.size() == last_sent_.size() &&
+      std::equal(points_.begin(), points_.end(), last_sent_.begin(),
+      [](const Point2 & a, const Point2 & b) {return a.x == b.x && a.y == b.y;}))
+    {
+      return;   // 출발·멈춤으로 다시 그릴 때는 같은 순찰을 또 내지 않는다 (BT 가 첫 점부터 다시 시작하지 않게)
+    }
+    route_pub_->publish(path);
+    last_sent_ = points_;
+    published_ = true;
   }
 
   std::string frame_, out_file_;
@@ -271,6 +298,9 @@ private:
   rclcpp_action::ClientGoalHandle<Nav>::SharedPtr goal_;
   rclcpp::TimerBase::SharedPtr retry_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr route_pub_;
+  std::vector<Point2> last_sent_;
+  bool published_ = false;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr click_sub_;
   std::vector<rclcpp::Service<Trigger>::SharedPtr> srvs_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr mode_srv_;

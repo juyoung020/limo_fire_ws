@@ -1,11 +1,13 @@
 // 주행 노드: 순찰점 읽기·고르기, Nav2 목표, 멈춤, 안전거리 감시, 연기 구역 훑기, 프론티어 탐사
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <behaviortree_cpp/action_node.h>
 #include <algorithm>
 #include <geometry_msgs/msg/twist.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <sensor_msgs/msg/range.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -98,6 +100,12 @@ public:
   NodeStatus tick() override
   {
     const auto file = need<std::string>(*this, "file");
+    if (file.empty()) {
+      // 실물: 순찰점은 RViz 에서 찍은 것(click_patrol → route_topic)만 쓴다. 기본 순찰점을 두지 않는다
+      RCLCPP_INFO(ctx_->logger(), "순찰점 파일 없음 — RViz Publish Point 로 찍은 순찰점을 기다림");
+      setOutput("route", Route{});
+      return NodeStatus::SUCCESS;
+    }
     Route route;
     try {
       const YAML::Node y = YAML::LoadFile(file);
@@ -131,26 +139,57 @@ private:
   std::shared_ptr<RosContext> ctx_;
 };
 
-// 순찰점을 차례로 (끝나면 처음부터). 다음 순찰을 이어서 하도록 위치는 노드가 기억한다
-class GetNextWaypoint : public BT::SyncActionNode
+// 순찰점을 차례로 (끝나면 처음부터). 다음 순찰을 이어서 하도록 위치는 노드가 기억한다.
+// route_topic(nav_msgs/Path — RViz 에서 찍는 click_patrol 이 냄)에 순찰이 오면 그 뒤로는 파일 순찰 대신 그것만 쓴다:
+// 바뀌면 첫 점부터, 비면(다 지움) 기다림. 순찰점이 하나도 없으면 RUNNING 으로 기다린다 (그동안에도 불 감지는 돈다)
+class GetNextWaypoint : public BT::StatefulActionNode
 {
 public:
   GetNextWaypoint(const std::string & name, const BT::NodeConfig & cfg, std::shared_ptr<RosContext> ctx)
-  : BT::SyncActionNode(name, cfg), ctx_(std::move(ctx)) {}
-  static PortsList providedPorts() {return {InputPort<Route>("route"), OutputPort<Pose2>("goal")};}
-  NodeStatus tick() override
+  : BT::StatefulActionNode(name, cfg), ctx_(std::move(ctx)) {}
+  static PortsList providedPorts()
   {
-    const auto route = need<Route>(*this, "route");
-    if (route.empty()) {return NodeStatus::FAILURE;}
+    return {InputPort<Route>("route"),
+      InputPort<std::string>("route_topic", "/patrol/route", "nav_msgs/Path (click_patrol). 비면 파일 순찰만"),
+      OutputPort<Pose2>("goal")};
+  }
+  NodeStatus onStart() override {return pick();}
+  NodeStatus onRunning() override {return pick();}
+  void onHalted() override {}
+
+private:
+  NodeStatus pick()
+  {
+    if (const auto topic = need<std::string>(*this, "route_topic"); !topic.empty()) {
+      const auto msg = ctx_->latest<nav_msgs::msg::Path>(topic, rclcpp::QoS(1).reliable().transient_local());
+      if (msg && msg != used_) {
+        used_ = msg;
+        Route r;
+        for (const auto & p : msg->poses) {r.push_back({p.pose.position.x, p.pose.position.y, 0.0});}
+        for (size_t i = 0; i < r.size(); ++i) {
+          const auto & n = r[(i + 1) % r.size()];
+          r[i].yaw = r.size() > 1 ? std::atan2(n.y - r[i].y, n.x - r[i].x) : 0.0;
+        }
+        topic_route_ = r;
+        next_ = 0;
+        RCLCPP_INFO(ctx_->logger(), "순찰점 바뀜: %zu 개 (%s) — 첫 점부터", r.size(), topic.c_str());
+      }
+    }
+    const Route route = topic_route_ ? *topic_route_ : need<Route>(*this, "route");
+    if (route.empty()) {
+      ctx_->set_status("patrol", "순찰점 기다림 — RViz Publish Point 로 찍기");
+      return NodeStatus::RUNNING;
+    }
     const size_t i = next_++ % route.size();
     setOutput("goal", route[i]);
     ctx_->set_status("patrol", std::to_string(i + 1) + "/" + std::to_string(route.size()) + " (" + to_text(route[i]) + ")");
     return NodeStatus::SUCCESS;
   }
 
-private:
   std::shared_ptr<RosContext> ctx_;
   size_t next_ = 0;
+  nav_msgs::msg::Path::ConstSharedPtr used_;
+  std::optional<Route> topic_route_;
 };
 
 // Nav2 navigate_to_pose 로 goal 까지
@@ -410,6 +449,7 @@ public:
     if (!enable_) {enable_ = std::make_unique<SetBoolCall>(*ctx_, ns + "/enable");}
     state_topic_ = ns + "/state";
     enabled_ = false;
+    ctx_->set_bt_exploring(true);   // BT 가 켠 탐사 — 순찰을 끄지 않게
     enable_->send(true);
     return NodeStatus::RUNNING;
   }
@@ -421,6 +461,7 @@ public:
       const auto s = enable_->poll();
       if (s == CallState::Failed) {
         RCLCPP_WARN(ctx_->logger(), "탐사 못 켬: %s", enable_->error().c_str());
+        ctx_->set_bt_exploring(false);
         return NodeStatus::FAILURE;
       }
       if (s != CallState::Succeeded) {return NodeStatus::RUNNING;}
@@ -432,10 +473,13 @@ public:
     if (!st || (ctx_->now() - started_).seconds() < 1.0) {return NodeStatus::RUNNING;}
     if (st->data == "done") {
       enable_->fire_and_forget(false);
+      ctx_->set_bt_exploring(false);
       return NodeStatus::SUCCESS;
     }
-    if (st->data == "idle") {
-      RCLCPP_WARN(ctx_->logger(), "탐사 노드가 멈춤(idle)");
+    if (st->data == "idle" || st->data == "paused") {
+      // paused = 탐사 노드가 스스로 멈춤 (리모컨 오토 아님·부딪힘·지시 실패) — 기다리지 않고 실패로 알려 베이직으로
+      RCLCPP_WARN(ctx_->logger(), "탐사 노드가 멈춤(%s)", st->data.c_str());
+      ctx_->set_bt_exploring(false);
       return NodeStatus::FAILURE;
     }
     return NodeStatus::RUNNING;
@@ -443,6 +487,7 @@ public:
   void onHalted() override
   {
     if (enable_ && !enable_->fire_and_forget(false)) {RCLCPP_WARN(ctx_->logger(), "탐사 끄기 못 보냄");}
+    ctx_->set_bt_exploring(false);
   }
 
 private:

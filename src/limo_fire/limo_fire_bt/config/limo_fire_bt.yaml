@@ -5,7 +5,10 @@ mission:
     tick_hz: 10.0
     groot_port: 1667            # Groot2 Monitor 가 붙는 포트 (다른 사람 시뮬과 겹치면 바꿈)
     btlog_dir: ""               # 비어 있지 않으면 판마다 .btlog (Groot2 로 다시 보기)
-    patrol_file: ""             # 순찰점 yaml (patrol: [[x, y], ...], 지도 좌표). 실물 순찰점은 아직 없음
+    patrol_file: ""             # 순찰점 yaml (patrol: [[x, y], ...], 지도 좌표). 비면 RViz 에서 찍은 순찰점(click_patrol → /patrol/route)만 쓴다 — 실물 기본
+    explorer: /explore          # 탐사 노드 이름 (~/enable SetBool, ~/state idle·running·paused·done). 실물은 합친 탐사(app.launch.xml)
+    patrol:
+      enabled_at_start: false   # 실물: 운용 화면 순찰 패널(/mission/set_patrol)로 켤 때까지 순찰하지 않음 (리모컨 오토로 바로 움직이지 않게)
     record_dir: /tmp/limo_fire_incidents   # 사건 위치·사진
     event_topic: /mission/events           # 관리자 알림 (std_msgs/String, JSON 한 줄)
 

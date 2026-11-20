@@ -5,4 +5,7 @@
   <class name="limo_fire_rviz/SmokePanel" type="limo_fire_rviz::SmokePanel" base_class_type="rviz_common::Panel">
     <description>연기 모드 켜기·끄기 (/smoke_mode/set) — 라이다·카메라 없이 바퀴 + IMU 로 주행, 상태와 추정 불확실성</description>
   </class>
+  <class name="limo_fire_rviz/PatrolPanel" type="limo_fire_rviz::PatrolPanel" base_class_type="rviz_common::Panel">
+    <description>임무 BT 순찰 켜기·끄기 (/mission/set_patrol) — RViz Publish Point 로 찍은 점(/patrol/route)을 돌고, 점 지우기</description>
+  </class>
 </library>

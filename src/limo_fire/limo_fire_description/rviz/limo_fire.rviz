@@ -11,6 +11,8 @@ Panels:
     mode: explorer
   - Class: limo_fire_rviz/SmokePanel
     Name: Smoke
+  - Class: limo_fire_rviz/PatrolPanel
+    Name: Patrol
 Visualization Manager:
   Class: ""
   Displays:

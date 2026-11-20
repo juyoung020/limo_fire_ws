@@ -66,6 +66,26 @@ RosContext::RosContext(rclcpp::Node::SharedPtr node)
         RCLCPP_INFO(logger(), "%s", r->message.c_str());
       });
 
+  // 순찰 켜기·끄기 (운용 화면 순찰 패널): ros2 service call /mission/set_patrol std_srvs/srv/SetBool "{data: true}"
+  patrol_enabled_ = node_->declare_parameter<bool>("patrol.enabled_at_start", true);
+  patrol_pub_ = node_->create_publisher<std_msgs::msg::Bool>("~/patrol_active", rclcpp::QoS(1).reliable().transient_local());
+  std_msgs::msg::Bool first;
+  first.data = patrol_enabled_;
+  patrol_pub_->publish(first);
+  patrol_srv_ = node_->create_service<std_srvs::srv::SetBool>("~/set_patrol",
+      [this](std_srvs::srv::SetBool::Request::SharedPtr q, std_srvs::srv::SetBool::Response::SharedPtr r) {
+        set_patrol(q->data, "PANEL");
+        r->success = true;
+        r->message = q->data ? "순찰 켬" : "순찰 끔";
+      });
+  const std::string explorer = node_->has_parameter("explorer") ? node_->get_parameter("explorer").as_string() : "/explore";
+  explore_enable_ = node_->create_client<std_srvs::srv::SetBool>(explorer + "/enable");
+  explore_state_sub_ = node_->create_subscription<std_msgs::msg::String>(explorer + "/state",
+      rclcpp::QoS(1).reliable().transient_local(), [this](std_msgs::msg::String::ConstSharedPtr m) {
+        // 탐사 패널 버튼 등 BT 밖에서 탐사를 켜면 순찰을 끈다 (둘이 같이 목표를 내면 서로 끊는다)
+        if (m->data == "running" && patrol_enabled_ && !bt_exploring_) {set_patrol(false, "EXPLORE_STARTED");}
+      });
+
   // 발행자가 늦게 뜬 토픽도 첫 점검 전에 구독되게
   watch_timer_ = node_->create_wall_timer(std::chrono::seconds(1), [this]() {
       for (const auto & [name, mon] : rates_) {
@@ -322,6 +342,21 @@ std::optional<double> RosContext::since_incident_handled(int id) const
   const auto it = incident_handled_.find(id);
   if (it == incident_handled_.end()) {return std::nullopt;}
   return (node_->now() - it->second).seconds();
+}
+
+void RosContext::set_patrol(bool on, const std::string & why)
+{
+  if (on == patrol_enabled_) {return;}
+  patrol_enabled_ = on;
+  std_msgs::msg::Bool m;
+  m.data = on;
+  patrol_pub_->publish(m);
+  event(std::string("{\"event\":\"") + (on ? "PATROL_ON" : "PATROL_OFF") + "\",\"reason\":\"" + why + "\"}");
+  if (on && explore_enable_->service_is_ready()) {
+    auto q = std::make_shared<std_srvs::srv::SetBool::Request>();
+    q->data = false;   // 순찰과 탐사가 같이 목표를 내지 않게 탐사를 끈다
+    explore_enable_->async_send_request(q);
+  }
 }
 
 void RosContext::event(const std::string & json)

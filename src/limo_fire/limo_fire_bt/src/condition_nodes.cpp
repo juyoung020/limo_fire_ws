@@ -320,6 +320,20 @@ public:
 };
 
 // 관리자가 요구조자 수색을 요청했는가 (~/request_survivor_search)
+// 순찰이 켜져 있는가 (운용 화면 순찰 패널 → /mission/set_patrol). 꺼져 있으면 현황판에 알린다
+class IsPatrolEnabled : public RosCondition
+{
+public:
+  using RosCondition::RosCondition;
+  static PortsList providedPorts() {return {};}
+  NodeStatus tick() override
+  {
+    if (ctx_->patrol_enabled()) {return NodeStatus::SUCCESS;}
+    ctx_->set_status("patrol", "순찰 꺼짐 — 운용 화면 순찰 패널에서 켬");
+    return NodeStatus::FAILURE;
+  }
+};
+
 class IsSurvivorSearchRequested : public RosCondition
 {
 public:
@@ -495,6 +509,7 @@ void register_condition_nodes(BT::BehaviorTreeFactory & f, const std::shared_ptr
   f.registerNodeType<IsKnownHazard>("IsKnownHazard", ctx);
   f.registerNodeType<IsServiceAvailable>("IsServiceAvailable", ctx);
   f.registerNodeType<IsSmallFire>("IsSmallFire");
+  f.registerNodeType<IsPatrolEnabled>("IsPatrolEnabled", ctx);
   f.registerNodeType<IsSurvivorSearchRequested>("IsSurvivorSearchRequested", ctx);
   f.registerNodeType<IsTemperatureDropped>("IsTemperatureDropped", ctx);
   f.registerNodeType<IsWithinTimeLimit>("IsWithinTimeLimit", ctx);

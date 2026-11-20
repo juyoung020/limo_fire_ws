@@ -14,7 +14,9 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <vision_msgs/msg/detection2_d_array.hpp>
@@ -112,6 +114,12 @@ public:
   // 마지막 처리 뒤 지난 시간 (s). 처리한 적 없으면 nullopt
   std::optional<double> since_incident_handled(int id) const;
   bool survivor_search_requested() const {return survivor_search_;}
+  // 순찰 켜짐 (운용 화면 순찰 패널 → ~/set_patrol). 켜면 탐사를 끄고, BT 가 켜지 않은 탐사가 running 이 되면 순찰을 끈다 —
+  // Nav2·탐사 목표를 내는 쪽이 하나만 되게. 상태는 ~/patrol_active (Bool, transient local)
+  bool patrol_enabled() const {return patrol_enabled_;}
+  void set_patrol(bool on, const std::string & why);
+  // 임무 BT 가 탐사를 켰는가 (ExploreFrontiers) — 그때 탐사가 running 이 되어도 순찰을 끄지 않는다
+  void set_bt_exploring(bool on) {bt_exploring_ = on;}
 
   // 관리자 알림: /mission/events 에 한 줄 JSON + 로그
   void event(const std::string & json);
@@ -163,6 +171,12 @@ private:
   std::deque<std::pair<double, std::string>> events_;
   std::map<std::string, std::string> status_;
   bool survivor_search_ = false;
+  bool patrol_enabled_ = true;
+  bool bt_exploring_ = false;
+  rclcpp::ServiceBase::SharedPtr patrol_srv_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr patrol_pub_;
+  rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr explore_enable_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr explore_state_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr event_pub_;
   rclcpp::ServiceBase::SharedPtr survivor_srv_;
   rclcpp::TimerBase::SharedPtr watch_timer_;

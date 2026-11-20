@@ -144,33 +144,41 @@
         <ReactiveSequence name="PatrolWithWatchdog">
           <IsTopicAlive topic="/scan"              min_hz="7"  window_s="2.0" _onFailure="fail_reason:='LIDAR_TOPIC_LOST'"/>
           <IsTopicAlive topic="/odometry/filtered" min_hz="20" window_s="1.0" _onFailure="fail_reason:='EKF_TOPIC_LOST'"/>
-          <Repeat num_cycles="-1">
-            <Sequence name="PatrolStep">
-              <GetNextWaypoint route="{patrol_route}" goal="{patrol_goal}"/>
-              <Fallback name="NavigateOrSkip">
-                <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
-                <!-- 지도 만들기 중 순찰점이 아직 안 그린 곳(지도 밖)이면 Nav2 가 바로 거절한다 → 프론티어 탐사로 지도를 넓힌 뒤 다시 간다.
-                     탐사가 닫힘으로 끝나면(map_closed) 다시 하지 않는다. 탐사 중에도 위 DetectHazard 가 돌아 불을 보면 탐사를 끄고 멈춘다.
-                     저장 지도에서는 순찰점이 늘 지도 안이라 이 갈래로 오지 않는다 -->
-                <Sequence name="ExploreTowardPoint">
-                  <ScriptCondition code="map_closed == false"/>
-                  <Inverter>
-                    <IsGoalInKnownMap goal="{patrol_goal}" map_topic="/map"/>
-                  </Inverter>
-                  <Timeout msec="300000">
-                    <ExploreFrontiers explorer="/explore" objects_topic="/perception/objects"/>
-                  </Timeout>
-                  <Script code="map_closed:=true"/>
+          <!-- 순찰은 운용 화면 순찰 패널(/mission/set_patrol)로 켜고 끈다. 끄면 가던 Nav2 목표를 바로 취소하고 기다린다(불 감지는 계속).
+               실물은 꺼진 채 시작(patrol.enabled_at_start: false), 시뮬은 켜진 채 -->
+          <WhileDoElse name="PatrolIfEnabled">
+            <IsPatrolEnabled/>
+            <Repeat num_cycles="-1">
+              <Sequence name="PatrolStep">
+                <GetNextWaypoint route="{patrol_route}" route_topic="/patrol/route" goal="{patrol_goal}"/>
+                <Fallback name="NavigateOrSkip">
                   <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
-                </Sequence>
-                <!-- 못 가면 알리고 잠깐 쉰 뒤 다음 순찰점 (Nav2 가 바로 실패하면 순찰점을 몇 초 만에 다 넘기지 않게) -->
-                <Sequence name="SkipPoint">
-                  <LogPatrolIssue goal="{patrol_goal}"/>
-                  <Sleep msec="3000"/>
-                </Sequence>
-              </Fallback>
-            </Sequence>
-          </Repeat>
+                  <!-- 지도 만들기 중 순찰점이 아직 안 그린 곳(지도 밖)이면 Nav2 가 바로 거절한다 → 프론티어 탐사로 지도를 넓힌 뒤 다시 간다.
+                       탐사가 닫힘으로 끝나면(map_closed) 다시 하지 않는다. 탐사 중에도 위 DetectHazard 가 돌아 불을 보면 탐사를 끄고 멈춘다.
+                       저장 지도에서는 순찰점이 늘 지도 안이라 이 갈래로 오지 않는다 -->
+                  <Sequence name="ExploreTowardPoint">
+                    <ScriptCondition code="map_closed == false"/>
+                    <Inverter>
+                      <IsGoalInKnownMap goal="{patrol_goal}" map_topic="/map"/>
+                    </Inverter>
+                    <Timeout msec="300000">
+                      <ExploreFrontiers explorer="{explorer_ns}" objects_topic="/perception/objects"/>
+                    </Timeout>
+                    <Script code="map_closed:=true"/>
+                    <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
+                  </Sequence>
+                  <!-- 못 가면 알리고 잠깐 쉰 뒤 다음 순찰점 (Nav2 가 바로 실패하면 순찰점을 몇 초 만에 다 넘기지 않게) -->
+                  <Sequence name="SkipPoint">
+                    <LogPatrolIssue goal="{patrol_goal}"/>
+                    <Sleep msec="3000"/>
+                  </Sequence>
+                </Fallback>
+              </Sequence>
+            </Repeat>
+            <KeepRunningUntilFailure>
+              <AlwaysSuccess/>
+            </KeepRunningUntilFailure>
+          </WhileDoElse>
         </ReactiveSequence>
       </ReactiveFallback>
       <StopRobot cmd_vel_topic="/cmd_vel"/>
@@ -389,7 +397,7 @@
           <IsTopicAlive topic="/scan" min_hz="7" window_s="2.0" _onFailure="fail_reason:='LIDAR_TOPIC_LOST'"/>
           <IsWithinTimeLimit start_time="{frontier_start}" limit_sec="300"
                              _onFailure="fail_reason:='EXPLORATION_TIMEOUT'"/>
-          <ExploreFrontiers explorer="/explore"
+          <ExploreFrontiers explorer="{explorer_ns}"
                             objects_topic="/perception/objects"
                             survivors="{survivors}" _onFailure="fail_reason:='EXPLORATION_FAILED'"/>
         </ReactiveSequence>
@@ -455,6 +463,7 @@
     </Action>
     <Action ID="GetNextWaypoint">
       <output_port name="goal" type="limo_fire_bt::Pose2"/>
+      <input_port name="route_topic" type="std::string" default="/patrol/route">nav_msgs/Path (click_patrol). 비면 파일 순찰만</input_port>
       <input_port name="route" type="std::vector&lt;limo_fire_bt::Pose2, std::allocator&lt;limo_fire_bt::Pose2&gt; &gt;"/>
     </Action>
     <Condition ID="HasRobotPose">
@@ -509,6 +518,7 @@
       <input_port name="max_xy_std_m" type="double" default="0.300000"/>
       <input_port name="pose_topic" type="std::string" default="/amcl_pose">geometry_msgs/PoseWithCovarianceStamped</input_port>
     </Condition>
+    <Condition ID="IsPatrolEnabled"/>
     <Condition ID="IsSameIncident">
       <input_port name="measured" type="bool" default="true"/>
       <input_port name="approx_radius_m" type="double">measured=false 일 때 반경</input_port>

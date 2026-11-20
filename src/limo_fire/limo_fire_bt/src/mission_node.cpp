@@ -25,6 +25,7 @@ void declare_params(rclcpp::Node & n)
 {
   n.declare_parameter<std::string>("tree_file", "");
   n.declare_parameter<std::string>("patrol_file", "");
+  n.declare_parameter<std::string>("explorer", "/explore");
   n.declare_parameter<double>("tick_hz", 10.0);
   n.declare_parameter<int>("groot_port", 1667);
   n.declare_parameter<std::string>("btlog_dir", "");
@@ -92,6 +93,7 @@ int main(int argc, char ** argv)
     // ROS 설정 → 트리가 읽는 블랙보드 값
     auto bb = BT::Blackboard::create();
     bb->set("patrol_file", node->get_parameter("patrol_file").as_string());
+    bb->set("explorer_ns", node->get_parameter("explorer").as_string());
     tree = factory.createTree("MainTree", bb);
   } catch (const std::exception & e) {
     RCLCPP_FATAL(log, "트리를 못 만듦: %s", e.what());

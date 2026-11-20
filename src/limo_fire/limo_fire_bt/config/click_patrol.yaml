@@ -4,6 +4,7 @@ click_patrol:
     frame: map                     # 찍은 점이 이 frame 이어야 받음 (RViz Fixed Frame)
     clicked_topic: /clicked_point  # RViz Publish Point 도구가 내는 곳
     action_name: /navigate_to_pose
+    route_topic: /patrol/route     # 찍은 순찰점을 내는 곳 (nav_msgs/Path) — 임무 BT 가 이것으로 순찰
     remove_radius_m: 0.3           # 이미 찍은 점에서 이만큼 안을 다시 찍으면 그 점을 지움
     retry_wait_s: 3.0              # 못 가면 이만큼 쉬고 다음 점 (Nav2 가 바로 실패해도 점을 몇 초 만에 다 넘기지 않게)
     loop: true                     # 끝 점 뒤 처음부터 다시
