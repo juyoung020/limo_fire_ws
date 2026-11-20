@@ -16,16 +16,21 @@ struct Grid {
   int occupied_threshold = 65;    // 이 값 이상이면 벽
 };
 
-// 지도 좌표 (x, y) 가 벽 칸이면 true. 지도 밖·모름은 벽이 아니다(통과).
-inline bool occupied(const Grid& g, double x, double y) {
+// 지도 좌표 (x, y) 의 칸 번호 (data 의 자리). 지도 밖이면 −1
+inline long cell_index(const Grid& g, double x, double y) {
   const double c = std::cos(-g.origin_yaw), s = std::sin(-g.origin_yaw);
   const double dx = x - g.origin_x, dy = y - g.origin_y;
   const double lx = c * dx - s * dy, ly = s * dx + c * dy;
   const int ix = static_cast<int>(std::floor(lx / g.resolution));
   const int iy = static_cast<int>(std::floor(ly / g.resolution));
-  if (ix < 0 || iy < 0 || ix >= g.width || iy >= g.height) return false;
-  const int8_t v = g.data[static_cast<size_t>(iy) * g.width + ix];
-  return v >= g.occupied_threshold;
+  if (ix < 0 || iy < 0 || ix >= g.width || iy >= g.height) return -1;
+  return static_cast<long>(iy) * g.width + ix;
+}
+
+// 지도 좌표 (x, y) 가 벽 칸이면 true. 지도 밖·모름은 벽이 아니다(통과).
+inline bool occupied(const Grid& g, double x, double y) {
+  const long i = cell_index(g, x, y);
+  return i >= 0 && g.data[static_cast<size_t>(i)] >= g.occupied_threshold;
 }
 
 // (x, y) 에서 방향 yaw 로 range_max 까지. 벽에 닿으면 그 거리, 안 닿으면 범위 밖 값 no_hit.

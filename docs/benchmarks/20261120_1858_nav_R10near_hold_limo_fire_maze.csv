@@ -1,0 +1,2 @@
+goal,goal_x,goal_y,result,time_s,truth_x,truth_y,est_x,est_y,arrive_err_m,est_err_m,dist_m,dist_total_m,obstacle_clear_m
+1,3.8,0.25,succeeded,62.28,3.6626,0.178381,3.5548,0.160793,0.154949,0.109223,4.71535,4.71535,0.0982828

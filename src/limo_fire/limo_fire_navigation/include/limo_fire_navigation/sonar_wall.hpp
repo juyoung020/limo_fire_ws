@@ -12,11 +12,13 @@
 //   고침 δ = (dx, dy, dyaw) 는 Σ w·(e + n·J·δ)² + 사전(δ²/σ²) 를 최소로. 한 벽만 보이면 그 벽에 수직인 방향만 정보가 있어
 //   → 복도를 따라가는 방향은 사전 때문에 그대로 둔다(복도 착각이 구조적으로 안 생김).
 //   잔차 큰 메아리는 Huber 무게로 덜 믿는다.
-//   사전 σ 는 부르는 쪽이 준다(칼만 꼴): 지금 추정의 불확실성 — 움직인 만큼 커지고 맞출 때마다 줄어든다(결과의 var_*).
+//   사전은 부르는 쪽이 준다(칼만 꼴): 지금 추정의 불확실성 3 × 3 공분산 — 움직인 만큼 커지고 맞출 때마다 줄어든다(결과의 cov).
+//   방향을 그대로 들고 간다: 옆 벽만 본 뒤에는 옆은 확실·앞뒤는 그대로라, 다음에 앞 벽이 보이면 앞뒤를 제 무게로 고친다.
 //   이렇게 해야 지도와 조금 다른 물체가 같은 쪽으로 계속 당겨도 추정이 끝없이 밀려가지 않는다.
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -132,8 +134,8 @@ struct WallParams {
   double sigma = 0.05;          // 끝점 ↔ 벽 면 거리 잡음 (m)
   double huber = 0.08;          // 이보다 큰 잔차는 무게를 줄임 (m)
   double min_normal = 0.5;      // 거리 지도 기울기 크기가 이보다 작으면(모서리·벽 속) 버림
-  double prior_xy = 0.05;       // 사전 σ (부르는 쪽이 지금 추정 불확실성으로 줌) — 정보 없는 방향은 그대로 (m)
-  double prior_yaw = 0.03;      // (rad)
+  // 사전 공분산 (dx, dy, dyaw) 3 × 3 행 우선, m² · rad² — 부르는 쪽이 지금 추정 불확실성으로 줌. 정보 없는 방향은 그대로
+  std::array<double, 9> prior_cov = {0.05 * 0.05, 0, 0, 0, 0.05 * 0.05, 0, 0, 0, 0.03 * 0.03};
   double max_step_xy = 0.10;    // 한 번에 고치는 최대 (m)
   double max_step_yaw = 0.05;   // (rad)
   int iterations = 3;           // 가우스-뉴턴 횟수
@@ -144,7 +146,7 @@ struct WallResult {
   int used = 0;                            // 맞추기에 쓴 메아리 수 (마지막 반복)
   double rms0 = 0.0, rms = 0.0;            // 고치기 전·후 쓴 메아리의 잔차 제곱 평균 제곱근 (m)
   double info_min = 0.0;                   // 자료 정보 행렬(xy) 의 작은 고윳값 — 0 에 가까우면 한 방향(한 벽)만 봄
-  double var_x = 0.0, var_y = 0.0, var_yaw = 0.0;   // 고친 뒤 불확실성 (정규 행렬 역의 대각, m² · rad²). 메아리를 못 쓰면 사전 그대로
+  std::array<double, 9> cov{};             // 고친 뒤 불확실성 (정규 행렬의 역, 행 우선 m² · rad²). 메아리를 못 쓰면 사전 그대로
 };
 
 namespace detail {
@@ -217,14 +219,27 @@ inline bool solve3(double A[3][3], double b[3], double x[3]) {
   }
   return true;
 }
+
+// 3 × 3 역행렬 (여인수). 특이하면 false
+inline bool inv3(const std::array<double, 9>& m, std::array<double, 9>& o) {
+  const double c00 = m[4] * m[8] - m[5] * m[7], c01 = m[5] * m[6] - m[3] * m[8], c02 = m[3] * m[7] - m[4] * m[6];
+  const double det = m[0] * c00 + m[1] * c01 + m[2] * c02;
+  if (!(std::fabs(det) > 1e-30)) return false;
+  const double k = 1.0 / det;
+  o = {c00 * k, (m[2] * m[7] - m[1] * m[8]) * k, (m[1] * m[5] - m[2] * m[4]) * k,
+       c01 * k, (m[0] * m[8] - m[2] * m[6]) * k, (m[2] * m[3] - m[0] * m[5]) * k,
+       c02 * k, (m[1] * m[6] - m[0] * m[7]) * k, (m[0] * m[4] - m[1] * m[3]) * k};
+  return true;
+}
 }  // namespace detail
 
 // hits 는 지금 map → odom 으로 옮긴 센서 자세. (cx, cy) = 로봇 지금 자리(map) — 회전 중심
 inline WallResult match_walls(const DistField& f, const Grid& g, const std::vector<SonarHit>& hits, const WallParams& p,
                               double cx, double cy) {
   WallResult res;
-  res.var_x = res.var_y = p.prior_xy * p.prior_xy;
-  res.var_yaw = p.prior_yaw * p.prior_yaw;
+  res.cov = p.prior_cov;
+  std::array<double, 9> P;   // 사전 정보 행렬 = 사전 공분산의 역
+  if (!detail::inv3(p.prior_cov, P)) return res;
   const auto r0 = detail::rows(f, g, hits, p, cx, cy, 0, 0, 0);
   res.rms0 = detail::rms(r0);
   double x[3] = {0, 0, 0};
@@ -233,9 +248,14 @@ inline WallResult match_walls(const DistField& f, const Grid& g, const std::vect
     const auto r = it == 0 ? r0 : detail::rows(f, g, hits, p, cx, cy, x[0], x[1], x[2]);
     if (r.empty()) break;
     // 사전은 고침 전체(x)에 건다: 정규 방정식 (JᵀWJ + P) Δ = −JᵀWe − P x
-    double A[3][3] = {{1 / (p.prior_xy * p.prior_xy), 0, 0}, {0, 1 / (p.prior_xy * p.prior_xy), 0},
-                      {0, 0, 1 / (p.prior_yaw * p.prior_yaw)}};
-    double b[3] = {-A[0][0] * x[0], -A[1][1] * x[1], -A[2][2] * x[2]};
+    double A[3][3], b[3];
+    for (int i = 0; i < 3; ++i) {
+      b[i] = 0.0;
+      for (int j = 0; j < 3; ++j) {
+        A[i][j] = P[3 * i + j];
+        b[i] -= P[3 * i + j] * x[j];
+      }
+    }
     double Ixx = 0, Ixy = 0, Iyy = 0;
     for (const auto& row : r) {
       const double w = ws * detail::huber_w(row.e, p.huber);
@@ -248,20 +268,14 @@ inline WallResult match_walls(const DistField& f, const Grid& g, const std::vect
       Ixy += row.jx * row.jy;
       Iyy += row.jy * row.jy;
     }
-    // 고친 뒤 불확실성 = A⁻¹ 의 대각 (A 는 solve3 가 바꾸므로 먼저 단위 벡터로 푼다)
-    double var[3];
-    for (int k = 0; k < 3; ++k) {
-      double Ak[3][3], e[3] = {0, 0, 0}, col[3];
-      for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) Ak[i][j] = A[i][j];
-      e[k] = 1.0;
-      var[k] = detail::solve3(Ak, e, col) ? col[k] : 0.0;
-    }
+    // 고친 뒤 불확실성 = A⁻¹ (A 는 solve3 가 바꾸므로 먼저 구한다)
+    std::array<double, 9> Af, cov;
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j) Af[3 * i + j] = A[i][j];
+    if (!detail::inv3(Af, cov)) break;
     double d[3];
     if (!detail::solve3(A, b, d)) break;
-    res.var_x = var[0];
-    res.var_y = var[1];
-    res.var_yaw = var[2];
+    res.cov = cov;
     for (int i = 0; i < 3; ++i) x[i] += d[i];
     res.used = static_cast<int>(r.size());
     const double tr = Ixx + Iyy, det = Ixx * Iyy - Ixy * Ixy;

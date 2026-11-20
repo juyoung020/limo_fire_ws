@@ -83,6 +83,9 @@ controller_server:
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
+    # 장애물 지도를 비운 뒤(회복 동작) 다시 채워지기를 기다리는 시간. 기본 0.3 s 면 지역 지도가 못 채워져 "Costmap timed out" 으로
+    # 목표를 바로 포기했다(2026-11-20 연기 모드 상자 시험, Jazzy). Humble 컨트롤러는 이 값을 읽지 않는다
+    costmap_update_timeout: 1.0
     odom_topic: "odometry/filtered"
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
@@ -103,10 +106,11 @@ controller_server:
 
     # 경로 추종: Regulated Pure Pursuit (Nav2 가 차동 구동·좁은 통로에 권하는 단순한 방식). 경로 위 앞쪽 한 점을 따라가고,
     # 방향이 45° 넘게 다르면 제자리에서 먼저 돈다. WeGo 의 DWB(궤적 수백 개 평가 + 비평 7 개 손튜닝)는 덕트호스 미로의
-    # U 자 구간에서 제자리 좌우 회전만 하다 멈췄다(Webots limo_fire_maze). 속도는 velocity_smoother 한도(0.40 m/s)에 맞춘다. 0.26 → 0.40 (2026-11-18 사용자 요청: 탐사가 느림. LIMO Pro 무부하 최고 1 m/s)
+    # U 자 구간에서 제자리 좌우 회전만 하다 멈췄다(Webots limo_fire_maze). 속도는 velocity_smoother 한도(0.70 m/s)에 맞춘다. 0.26 → 0.40 (2026-11-18 사용자 요청: 탐사가 느림. LIMO Pro 무부하 최고 1 m/s)
+    # → 0.70 (2026-11-20 사용자 요청: 연기 모드 0.7 m/s — 시뮬 상자 16 판·순찰 8 판 확인, benchmarks 결과 9. 평상시 주행은 0.7 에서 따로 재지 않음, 실물은 낮게 시작)
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.40
+      desired_linear_vel: 0.70
       lookahead_dist: 0.5
       min_lookahead_dist: 0.3
       max_lookahead_dist: 0.9
@@ -132,7 +136,8 @@ controller_server:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 0.5
+      # 0.5 → 2.0 Hz (2026-11-20): 연기 모드가 새로 찾은 장애물이 경로 계획에 늦게(최대 2 s) 들어가 회복 동작을 다 쓰고 포기했다
+      update_frequency: 2.0
       publish_frequency: 0.5
       global_frame: map
       robot_base_frame: base_link
@@ -144,15 +149,9 @@ global_costmap:
       # 기본값이면 지도 만들며 주행할 때 static_layer 가 벽을 하나도 안 넣는다 → 라이다 3 m 밖 벽을 뚫는 경로. 0.65 = Cartographer ros_map occupied_thresh.
       # 저장 지도(map_server trinary: 0 · 100)에는 바뀌는 것 없음
       lethal_cost_threshold: 65
-      plugins: ["static_layer", "obstacle_layer", "range_layer", "inflation_layer"]
-      # 초음파 HC-SR04 × 2 (/ultrasonic/front_left·front_right) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
-      # 점으로 찍기만 해 잡음이 쌓였다. 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다. 값은 Nav2 기본 + 메아리 없음(최대 거리) = 지움
-      range_layer:
-        plugin: "nav2_costmap_2d::RangeSensorLayer"
-        enabled: True
-        topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
-        clear_on_max_reading: True
-        input_sensor_type: "ALL"
+      # 초음파는 Nav2 초음파 층(range_layer)을 쓰지 않는다: 원뿔(15°)을 호로 찍어 ±10° 초음파에서는 상자 옆 통로를 막았다(2026-11-20, "no valid path").
+      # 연기 모드(smoke_mode)가 지도에 없는 장애물을 기억해 가상 스캔(/scan_obstacles → obstacle_layer)에 넣는다 (smoke_mode.yaml sonar_obstacles)
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -186,7 +185,7 @@ global_costmap:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 2.0
+      update_frequency: 5.0            # 2 → 5 Hz (Nav2 기본, 2026-11-20): 회복 동작이 비운 뒤 1 s 안에 다시 채워지게
       publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_link
@@ -197,15 +196,7 @@ local_costmap:
       resolution: 0.05
       footprint: "[[-0.16, -0.11], [-0.16, 0.11], [0.16, 0.11], [0.16, -0.11]]"
       footprint_padding: 0.02
-      plugins: ["obstacle_layer", "range_layer", "inflation_layer"]
-      # 초음파 HC-SR04 × 2 (/ultrasonic/front_left·front_right) — Nav2 초음파 층: 원뿔을 확률로 찍고 지운다(연기 모드 4 단계). 2026-11-06 엔 장애물 층에
-      # 점으로 찍기만 해 잡음이 쌓였다. 센서가 없는 실물에서는 메시지가 없어 아무 일도 안 한다. 값은 Nav2 기본 + 메아리 없음(최대 거리) = 지움
-      range_layer:
-        plugin: "nav2_costmap_2d::RangeSensorLayer"
-        enabled: True
-        topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
-        clear_on_max_reading: True
-        input_sensor_type: "ALL"
+      plugins: ["obstacle_layer", "inflation_layer"]   # 초음파는 연기 모드 가상 스캔으로 (위 global_costmap 주석)
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -271,8 +262,8 @@ velocity_smoother:
     smoothing_frequency: 20.0  # 컨트롤러(20 Hz)와 같게. 5 Hz 면 명령이 0.2 초마다 한 번만 나간다
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.40, 0.0, 1.5]
-    min_velocity: [-0.40, 0.0, -1.5]
+    max_velocity: [0.70, 0.0, 1.5]     # 0.40 → 0.70 (2026-11-20, FollowPath 주석)
+    min_velocity: [-0.70, 0.0, -1.5]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: "odometry/filtered"

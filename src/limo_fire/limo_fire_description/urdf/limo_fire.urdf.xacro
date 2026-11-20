@@ -34,11 +34,12 @@
   <xacro:property name="launcher_xyz" value="${dict(real='-0.0399 0 0.065', webots='-0.0399 0 0.065')['$(arg platform)']}"/>
   <xacro:launcher_v5 parent="base_link" xyz="${launcher_xyz}" yaw="0.0"/>
 
-  <!-- 초음파 HC-SR04 × 2 (연기 모드, docs/smoke_mode_plan.md 2 단계). 앞 범퍼 아래 받침 하나에 좌우 ±20°·위 5° (hardware/mounts print_sonar, docs/wiring.md).
-       자리는 잠정 — 받침 조립 그림(hardware/mounts/limo_mounts.png)에서 읽은 값이고 실측 아님: 범퍼 앞 0.18 m, 가운데서 ±0.025 m(보드 폭 45 mm 둘),
-       높이 base_link −0.06 m = 바닥 위 약 0.085 m. 시뮬 LimoFire.proto ultrasonic 과 같은 값 -->
-  <xacro:ultrasonic parent="base_link" name="ultrasonic_front_left" xyz="0.18 0.025 -0.06" yaw="${20*pi/180}" pitch="${-5*pi/180}"/>
-  <xacro:ultrasonic parent="base_link" name="ultrasonic_front_right" xyz="0.18 -0.025 -0.06" yaw="${-20*pi/180}" pitch="${-5*pi/180}"/>
+  <!-- 초음파 HC-SR04 × 2 (연기 모드, docs/smoke_mode_plan.md 2 단계). 3D 출력 초음파 막대(hardware/mounts print_sonar.stl)대로 좌우 ±10°·위 5°.
+       자리는 CAD 값(hardware/modeling/LIMO센서/build_sonar.py — 지붕 좌표 앞판 x 181.5·|y| 25.0·원통 중심 z −57.5 mm)을 base_link 로 옮긴 것, 실측 아님:
+       base_link 는 지붕 원점보다 14.9 mm 앞·바닥 위 145 mm(지붕 윗면 140.5) → x 0.1666, z −0.062. 시뮬 LimoFire.proto ultrasonic 과 같은 값.
+       ±20° 에서 바꿈(2026-11-20): 출력물이 ±10° 로 나왔고(±20° 는 정면에 못 보는 띠, 설계.md) 시뮬을 출력물에 맞춤 -->
+  <xacro:ultrasonic parent="base_link" name="ultrasonic_front_left" xyz="0.1666 0.025 -0.062" yaw="${10*pi/180}" pitch="${-5*pi/180}"/>
+  <xacro:ultrasonic parent="base_link" name="ultrasonic_front_right" xyz="0.1666 -0.025 -0.062" yaw="${-10*pi/180}" pitch="${-5*pi/180}"/>
 
   <!-- 열화상 GY-MCU90640 (thermal_link)·레이더 HLK-LD2450 (radar_link) — 실물 ESP32 다리(limo_fire_esp32_bridge)가 /thermal/image·/radar/targets 의 프레임으로 쓴다.
        x 앞이 보는 방향. 자리는 **잠정**(로봇 미장착, 실측 아님): 앞 위쪽 가운데. 장착하면 줄자로 재서 여기만 고친다(launch 에 따로 두지 않는다) -->

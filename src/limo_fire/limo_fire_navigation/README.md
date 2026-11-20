@@ -33,7 +33,7 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 | IMU | 빛을 안 써서 영향 없음 | **씀** — 방향(EKF), 부딪힘 감지 |
 | 2D 라이다 YDLIDAR T-mini Plus | 연기 입자에 반사돼 거리가 틀어짐 | 안 씀 |
 | 깊이·컬러 카메라 Orbbec Dabai DC1 | 보이는 빛·적외선 패턴이 연기에 가림 | 안 씀 |
-| 초음파 HC-SR04 × 2 (앞 범퍼 아래 좌우 ±20°) | 빛이 아니라 소리라 덜 막힐 것으로 본다(잠정 — Starr & Lattimer 2014 시험 대상에 초음파 센서 2 종이 있으나 결과 수치는 원문 확인 필요, 열기·기류 영향도 확인 필요) | **씀** — 장애물·감속, `smoke_localization: wall` 이면 위치 보정도. 시뮬엔 있음, 실물은 장착 전([limo_fire_esp32_bridge](../limo_fire_esp32_bridge/README.md)) |
+| 초음파 HC-SR04 × 2 (앞 범퍼 아래 좌우 ±10°) | 빛이 아니라 소리라 덜 막힐 것으로 본다(잠정 — Starr & Lattimer 2014 시험 대상에 초음파 센서 2 종이 있으나 결과 수치는 원문 확인 필요, 열기·기류 영향도 확인 필요) | **씀** — 장애물·감속, `smoke_localization: wall` 이면 위치 보정도. 시뮬엔 있음, 실물은 장착 전([limo_fire_esp32_bridge](../limo_fire_esp32_bridge/README.md)) |
 | 레이더·열화상 | — | 아직 안 달아서 다루지 않음 (부품 대기, [spec.md](../../../docs/spec.md#연기-모드)) |
 
 근거: Starr & Lattimer, "Evaluation of Navigation Sensors in Fire Smoke Environments", *Fire Technology* 50, 2014
@@ -51,7 +51,8 @@ ros2 topic echo /smoke_mode/active                                        # 지�
 | `map → odom` TF | AMCL 자세(`/amcl_pose`)로 계산해 냄 | `hold`: 들어갈 때 값을 붙잡아 냄 → 위치는 EKF(바퀴 + IMU) 만 따라감 · `wall`: `hold` 에 더해 초음파 메아리를 저장 지도의 벽에 맞춰 조금씩 고침(아래) |
 | AMCL 이 받는 스캔 `scan_localization` | `/scan` 그대로 | 끊음 |
 | 장애물 지도가 받는 라이다 `scan_obstacles` | `/scan` 그대로 | 저장 지도에서 광선을 쏜 **가상 스캔** — 지도의 벽만 남고 연기가 찍은 가짜 장애물은 지워짐 |
-| 최고 속도 (`speed_limit`) | 한도 없음 | 0.20 m/s, 앞 초음파 0.6 m 안이면 0.08 m/s (`slow.*`, 잠정) |
+| 최고 속도 (`speed_limit`) | 한도 없음 | 0.70 m/s, 앞 초음파 0.6 m 안이면 0.08 m/s (`slow.*`, 잠정) |
+| 지도에 없는 장애물 | — | 초음파가 지도보다 가까이 잰 곳을 기억해 가상 스캔에 넣고(`sonar_obstacles.*`), 원뿔 안 빈 곳은 지움. 연기 모드를 나오면 지움 |
 | 추정 자세 `smoke_mode/pose` | — | 자세 + 이동·회전에 비례해 커지는 불확실성 |
 | 부딪힘 `smoke_mode/bump` | — | IMU 수평 가속도가 4 m/s² (잠정) 넘으면 그 지도 위치 |
 

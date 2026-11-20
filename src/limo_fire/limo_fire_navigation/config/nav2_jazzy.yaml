@@ -27,15 +27,3 @@ bt_navigator:
   ros__parameters:
     default_nav_to_pose_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml
     default_nav_through_poses_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
-
-# 초음파 층(range_layer)을 뺀다: 초음파가 없는 월드(limo_fire_maze 등 ultrasonic FALSE)에서 Jazzy 는 이 층이 costmap 갱신을
-# 붙잡아 제어 루프가 20 Hz 대신 3~4 Hz 로 돌고 로봇이 경로를 못 따라갔다(2026-11-13, 빼면 경고 0). Humble 에서도 그런지는 확인 안 함.
-# 초음파를 켠 월드(연기 모드)를 Jazzy 에서 돌릴 때는 이 블록을 빼야 한다
-global_costmap:
-  global_costmap:
-    ros__parameters:
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-local_costmap:
-  local_costmap:
-    ros__parameters:
-      plugins: ["obstacle_layer", "inflation_layer"]

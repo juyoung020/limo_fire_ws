@@ -74,8 +74,8 @@ TEST(SonarWall, CorrectsAcrossCorridorOnly) {
   EXPECT_NEAR(r.dx, 0.0, 0.02);     // 복도 방향은 정보가 없어 그대로
   EXPECT_LT(r.rms, r.rms0);
   // 불확실성: 옆(y)은 줄고, 앞뒤(x)는 사전 그대로
-  EXPECT_LT(r.var_y, 0.5 * p.prior_xy * p.prior_xy);
-  EXPECT_NEAR(r.var_x, p.prior_xy * p.prior_xy, 0.1 * p.prior_xy * p.prior_xy);
+  EXPECT_LT(r.cov[4], 0.5 * p.prior_cov[4]);
+  EXPECT_NEAR(r.cov[0], p.prior_cov[0], 0.1 * p.prior_cov[0]);
 }
 
 // 막다른 벽을 보면 앞뒤도 고친다

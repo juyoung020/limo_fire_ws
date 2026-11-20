@@ -14,10 +14,13 @@
 // 켜고 끄기: 서비스 smoke_mode/set (std_srvs/SetBool). 상태는 smoke_mode/active (std_msgs/Bool, 마지막 값 유지).
 // 나올 때 지금 추정 자세를 쌓인 불확실성과 함께 /initialpose 로 AMCL 에 넘겨 다시 맞추게 한다.
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <functional>
 #include <vector>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -30,6 +33,7 @@
 #include "nav2_msgs/msg/speed_limit.hpp"
 #include "nav2_msgs/srv/clear_entire_costmap.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
+#include "rclcpp/create_timer.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
@@ -117,6 +121,15 @@ class SmokeModeNode : public rclcpp::Node {
         wall_q_yaw_ < 0.0 || wp_.max_step_xy <= 0.0 ||
         wp_.max_step_yaw <= 0.0 || wp_.iterations < 1)
       throw std::invalid_argument("smoke_mode: wall.* 파라미터 확인 (blend·echo_max_ratio 는 (0, 1])");
+    // 지도에 없는 장애물 기억: 초음파가 저장 지도보다 min_gap 넘게 가까이 잰 곳을 두께 depth 만큼 덧그린 지도로 가상 스캔을 만든다
+    // (초음파는 앞면만 봐서, 그대로면 지나가며 옆·뒤 모서리를 스친다 — 2026-11-20 상자 시험). 연기 모드 동안만 기억
+    obs_enabled_ = declare_parameter<bool>("sonar_obstacles.enabled", true);
+    obs_min_gap_ = declare_parameter<double>("sonar_obstacles.min_gap", 0.25);
+    obs_max_range_ = declare_parameter<double>("sonar_obstacles.max_range", 1.5);
+    obs_depth_ = declare_parameter<double>("sonar_obstacles.depth", 0.3);
+    obs_min_hits_ = declare_parameter<int>("sonar_obstacles.min_hits", 2);
+    if (obs_min_gap_ <= 0.0 || obs_max_range_ <= 0.0 || obs_depth_ < 0.0 || obs_min_hits_ < 1 || obs_min_hits_ > 255)
+      throw std::invalid_argument("smoke_mode: sonar_obstacles.* 파라미터 확인");
     localization_ = declare_parameter<std::string>("smoke_localization", "hold");
     if (!valid_localization(localization_))
       throw std::invalid_argument("smoke_mode: smoke_localization 은 hold 또는 wall");
@@ -189,10 +202,14 @@ class SmokeModeNode : public rclcpp::Node {
     set_srv_ = create_service<std_srvs::srv::SetBool>(
         "smoke_mode/set", std::bind(&SmokeModeNode::on_set, this, _1, _2));
 
-    tf_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / tf_rate_), [this] { on_tf_tick(); });
-    scan_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / scan_rate_), [this] { on_scan_tick(); });
-    speed_timer_ = create_wall_timer(std::chrono::seconds(1), [this] { publish_speed_limit(); });
-    wall_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / wall_rate_), [this] { on_wall_tick(); });
+    // 노드 시계(use_sim_time 이면 시뮬 시간)로 돈다 — 시뮬을 실시간보다 빠르게(Webots fast) 돌려도 주기가 시뮬 기준으로 같다
+    const auto every = [this](double s, std::function<void()> f) {
+      return rclcpp::create_timer(this, get_clock(), rclcpp::Duration::from_seconds(s), std::move(f));
+    };
+    tf_timer_ = every(1.0 / tf_rate_, [this] { on_tf_tick(); });
+    scan_timer_ = every(1.0 / scan_rate_, [this] { on_scan_tick(); });
+    speed_timer_ = every(1.0, [this] { publish_speed_limit(); });
+    wall_timer_ = every(1.0 / wall_rate_, [this] { on_wall_tick(); });
 
     publish_active();
     RCLCPP_INFO(get_logger(), "연기 모드 준비 (map → odom 발행: %s)", publish_map_odom_ ? "예" : "아니오, SLAM 이 냄");
@@ -245,9 +262,13 @@ class SmokeModeNode : public rclcpp::Node {
     dist_m_ = 0.0;
     turn_rad_ = 0.0;
     echoes_.clear();
+    if (grid_) {
+      obs_grid_ = *grid_;
+      obs_count_.assign(grid_->data.size(), 0);
+    }
+    obs_cells_ = 0;
     wall_tried_ = wall_applied_ = 0;
-    var_xy_ = wall_init_xy_ * wall_init_xy_;
-    var_yaw_ = wall_init_yaw_ * wall_init_yaw_;
+    reset_wall_cov();
     wall_last_ob_ = *ob;
     clear_costmaps();
     publish_active();
@@ -266,6 +287,8 @@ class SmokeModeNode : public rclcpp::Node {
     if (est) initialpose_pub_->publish(*est);
     if (localization_ == "wall")
       RCLCPP_INFO(get_logger(), "연기 속 초음파 벽 맞추기: %d 번 중 %d 번 고침", wall_tried_, wall_applied_);
+    if (obs_enabled_) RCLCPP_INFO(get_logger(), "연기 속 지도에 없는 장애물로 기억한 칸 %d 개 (나오며 지움)", obs_cells_);
+    obs_grid_.reset();
     clear_costmaps();
     publish_active();
     publish_speed_limit();
@@ -285,8 +308,7 @@ class SmokeModeNode : public rclcpp::Node {
     if (set_map_pose(*msg, rclcpp::Time(0, 0, get_clock()->get_clock_type()))) {
       dist_m_ = 0.0;
       turn_rad_ = 0.0;
-      var_xy_ = wall_init_xy_ * wall_init_xy_;
-      var_yaw_ = wall_init_yaw_ * wall_init_yaw_;
+      reset_wall_cov();
       RCLCPP_INFO(get_logger(), "연기 모드: 사람이 준 자세로 옮김, 쌓인 불확실성 초기화");
     }
   }
@@ -318,7 +340,8 @@ class SmokeModeNode : public rclcpp::Node {
 
   // 메아리 하나를 그 시각 odom 에서 본 센서 자세와 함께 모은다. 메아리 없음(최대 거리 근처)은 버린다 — 비스듬한 벽은 메아리를 잃어 정보가 아니다
   void on_range(const sensor_msgs::msg::Range::SharedPtr m) {
-    if (!smoke_ || localization_ != "wall") return;
+    const bool want_wall = localization_ == "wall", want_obs = obs_enabled_ && obs_grid_ && map_odom_;
+    if (!smoke_ || (!want_wall && !want_obs)) return;
     const double r = m->range;
     if (!std::isfinite(r) || r <= m->min_range || r >= wall_echo_ratio_ * m->max_range) return;
     const rclcpp::Time t(m->header.stamp, get_clock()->get_clock_type());
@@ -332,7 +355,35 @@ class SmokeModeNode : public rclcpp::Node {
     }
     tf2::Transform os;
     tf2::fromMsg(ts.transform, os);
-    echoes_.push_back({t, os, r, m->field_of_view});
+    if (want_obs) mark_obstacle(*map_odom_ * os, r, m->field_of_view);
+    if (want_wall) echoes_.push_back({t, os, r, m->field_of_view});
+  }
+
+  // 메아리 하나가 저장 지도로 보여야 할 거리(원뿔 광선 중 가장 가까운 벽)보다 min_gap 넘게 가까우면 지도에 없는 장애물:
+  // 가운데 광선의 잰 거리부터 depth 만큼 뒤까지 칸을 세고, min_hits 번 넘게 찍힌 칸을 가상 스캔용 지도에 벽으로 넣는다
+  void mark_obstacle(const tf2::Transform& ms, double r, double fov) {
+    const double sx = ms.getOrigin().x(), sy = ms.getOrigin().y(), syaw = tf2::getYaw(ms.getRotation());
+    carve_free(sx, sy, syaw, r, fov);
+    if (r > obs_max_range_) return;
+    double r_exp = std::numeric_limits<double>::infinity();
+    for (int k = 0; k < wp_.rays; ++k) {
+      const double th = syaw + (wp_.rays == 1 ? 0.0 : -0.5 * fov + fov * k / (wp_.rays - 1));
+      r_exp = std::min(r_exp, cast(*grid_, sx, sy, th, 0.0, r + obs_min_gap_ + 0.1, std::numeric_limits<double>::infinity()));
+    }
+    if (r_exp - r <= obs_min_gap_) return;
+    const double ux = std::cos(syaw), uy = std::sin(syaw), step = 0.5 * grid_->resolution;
+    long last = -1;
+    for (double d = 0.0; d <= obs_depth_ + 1e-9; d += step) {
+      const long i = cell_index(*obs_grid_, sx + (r + d) * ux, sy + (r + d) * uy);
+      if (i < 0 || i == last) continue;
+      last = i;
+      auto& c = obs_count_[static_cast<size_t>(i)];
+      if (c < 255) ++c;
+      if (c == obs_min_hits_) {
+        obs_grid_->data[static_cast<size_t>(i)] = 100;
+        ++obs_cells_;
+      }
+    }
   }
 
   void on_wall_tick() {
@@ -353,14 +404,27 @@ class SmokeModeNode : public rclcpp::Node {
     }
     const tf2::Transform mb = *map_odom_ * *ob;
     const double cx = mb.getOrigin().x(), cy = mb.getOrigin().y();
-    // 지난 맞추기 뒤 움직인 만큼 불확실성을 키운다
+    // 지난 맞추기 뒤 움직인 만큼 불확실성을 키운다 (칼만 예측). 오차 상태 = 지금 자리 둘레 (dx, dy, dyaw) in map.
+    // 방향 오차 δθ 는 그 뒤 움직인 만큼 자리 오차가 된다: δp += δθ × Δ (Δ = map 에서 본 이동) → P = F P Fᵀ + Q
     const tf2::Transform step = wall_last_ob_.inverse() * *ob;
+    const tf2::Vector3 dm = tf2::Transform(map_odom_->getRotation()) * (ob->getOrigin() - wall_last_ob_.getOrigin());
     wall_last_ob_ = *ob;
-    var_xy_ += wall_q_xy_ * std::hypot(step.getOrigin().x(), step.getOrigin().y());
-    var_yaw_ += wall_q_yaw_ * std::fabs(tf2::getYaw(step.getRotation()));
+    const double dist = std::hypot(step.getOrigin().x(), step.getOrigin().y());
+    const std::array<double, 9> F = {1, 0, -dm.y(), 0, 1, dm.x(), 0, 0, 1};
+    std::array<double, 9> FP{}, P{};
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j)
+        for (int k = 0; k < 3; ++k) FP[3 * i + j] += F[3 * i + k] * wall_cov_[3 * k + j];
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j)
+        for (int k = 0; k < 3; ++k) P[3 * i + j] += FP[3 * i + k] * F[3 * j + k];
+    P[0] += wall_q_xy_ * dist;
+    P[4] += wall_q_xy_ * dist;
+    P[8] += wall_q_yaw_ * std::fabs(tf2::getYaw(step.getRotation()));
+    wall_cov_ = P;
     WallParams p = wp_;
-    p.prior_xy = std::sqrt(var_xy_);
-    p.prior_yaw = std::sqrt(var_yaw_);
+    p.prior_cov = wall_cov_;
+    const double prior_xy = std::sqrt(0.5 * (P[0] + P[4])), prior_yaw = std::sqrt(P[8]);
     // 한 메아리가 창(window) 안에 있는 동안 window × rate 번 다시 쓰이므로 그만큼 덜 믿는다
     p.sigma = wp_.sigma * std::sqrt(std::max(1.0, wall_window_ * wall_rate_));
     const auto t0 = std::chrono::steady_clock::now();
@@ -373,11 +437,10 @@ class SmokeModeNode : public rclcpp::Node {
     std_msgs::msg::Float64MultiArray rec;
     const bool apply = m.used >= wall_min_hits_ && m.rms <= m.rms0;
     rec.data = {static_cast<double>(m.used), static_cast<double>(hits.size()), m.rms0, m.rms, m.dx, m.dy, m.dyaw,
-                apply ? 1.0 : 0.0, m.info_min, p.prior_xy, p.prior_yaw};
+                apply ? 1.0 : 0.0, m.info_min, prior_xy, prior_yaw};
     wall_pub_->publish(rec);
     if (!apply) return;
-    var_xy_ = 0.5 * (m.var_x + m.var_y);
-    var_yaw_ = m.var_yaw;
+    wall_cov_ = m.cov;
     const double k = wall_blend_;
     // map 에서 (cx, cy) 둘레로 k·dyaw 돌리고 k·(dx, dy) 옮김 → map → odom 앞에 곱한다
     tf2::Quaternion q;
@@ -387,6 +450,34 @@ class SmokeModeNode : public rclcpp::Node {
     const tf2::Transform shift(tf2::Quaternion::getIdentity(), tf2::Vector3(k * m.dx, k * m.dy, 0));
     map_odom_ = shift * to_c * rot * to_c.inverse() * *map_odom_;
     ++wall_applied_;
+  }
+
+  void reset_wall_cov() {
+    wall_cov_ = {wall_init_xy_ * wall_init_xy_, 0, 0, 0, wall_init_xy_ * wall_init_xy_, 0, 0, 0, wall_init_yaw_ * wall_init_yaw_};
+  }
+
+  // 원뿔 안 광선마다 센서에서 r − carve_margin 까지의 칸: 찍힌 수 −1, min_hits 밑으로 떨어지면 원래 지도 값으로
+  void carve_free(double sx, double sy, double syaw, double r, double fov) {
+    const double reach = r - obs_carve_margin_;
+    if (reach <= 0.0) return;
+    const int n = std::max(3, static_cast<int>(std::ceil(fov / 0.035)) + 1);   // 약 2° 간격
+    const double step = 0.5 * grid_->resolution;
+    std::vector<long> seen;
+    for (int k = 0; k < n; ++k) {
+      const double th = syaw - 0.5 * fov + fov * k / (n - 1), ux = std::cos(th), uy = std::sin(th);
+      for (double d = step; d <= reach; d += step) {
+        const long i = cell_index(*obs_grid_, sx + d * ux, sy + d * uy);
+        if (i < 0 || std::find(seen.begin(), seen.end(), i) != seen.end()) continue;
+        seen.push_back(i);
+        auto& c = obs_count_[static_cast<size_t>(i)];
+        if (c == 0) continue;
+        if (c == obs_min_hits_) {
+          obs_grid_->data[static_cast<size_t>(i)] = grid_->data[static_cast<size_t>(i)];
+          --obs_cells_;
+        }
+        --c;
+      }
+    }
   }
 
   std::optional<tf2::Transform> odom_base() {
@@ -490,9 +581,10 @@ class SmokeModeNode : public rclcpp::Node {
     // 안 닿은 빔은 range_max 바로 안쪽: costmap 이 그 거리까지 비우고(raytrace), 장애물로는 안 찍는다(obstacle_max_range 밖)
     const double no_hit = scan_range_max_ - 1e-3;
     s.ranges.resize(n);
+    const Grid& g = obs_grid_ ? *obs_grid_ : *grid_;   // 지도에 없는 장애물을 덧그린 지도
     for (int i = 0; i < n; ++i) {
       s.ranges[i] = static_cast<float>(
-          cast(*grid_, lx, ly, lyaw + s.angle_min + i * s.angle_increment, scan_range_min_, no_hit, no_hit));
+          cast(g, lx, ly, lyaw + s.angle_min + i * s.angle_increment, scan_range_min_, no_hit, no_hit));
     }
     scan_obs_pub_->publish(s);
   }
@@ -553,6 +645,13 @@ class SmokeModeNode : public rclcpp::Node {
   bool smoke_ = false;
   std::optional<tf2::Transform> map_odom_;
   std::optional<Grid> grid_;
+  std::optional<Grid> obs_grid_;          // 연기 모드 동안 grid_ + 지도에 없는 장애물 (가상 스캔용)
+  std::vector<uint8_t> obs_count_;         // 칸마다 지도에 없는 장애물로 찍힌 수
+  int obs_cells_ = 0;
+  bool obs_enabled_ = true;
+  double obs_min_gap_ = 0.25, obs_max_range_ = 1.5, obs_depth_ = 0.3;
+  int obs_min_hits_ = 2;
+  double obs_carve_margin_ = 0.1;
   tf2::Transform last_odom_base_;
   double dist_m_ = 0.0, turn_rad_ = 0.0;
   std::optional<rclcpp::Time> last_bump_;
@@ -587,7 +686,8 @@ class SmokeModeNode : public rclcpp::Node {
   };
   std::vector<std::string> wall_topics_;
   double wall_window_, wall_rate_, wall_blend_, wall_echo_ratio_, wall_dist_cap_;
-  double wall_init_xy_, wall_init_yaw_, wall_q_xy_, wall_q_yaw_, var_xy_ = 0.0, var_yaw_ = 0.0;
+  double wall_init_xy_, wall_init_yaw_, wall_q_xy_, wall_q_yaw_;
+  std::array<double, 9> wall_cov_{};   // wall 추정 불확실성 (dx, dy, dyaw) 3 × 3 행 우선
   tf2::Transform wall_last_ob_;
   int wall_min_hits_, wall_max_hits_, wall_tried_ = 0, wall_applied_ = 0;
   WallParams wp_;

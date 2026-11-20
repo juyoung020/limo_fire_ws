@@ -18,7 +18,7 @@ Isaac Sim·Webots 결과를 실물 LIMO 에 반영하기 전에 준비할 것. �
 | ESP32 브리지 `limo_fire_esp32_bridge` | 줄 해석·가짜 ESP32 장면 시험 통과(2026-11-17, 단위 13 개) + 가짜 ESP32(pty)로 끝까지 통과(`scripts/fake_bridge_check.sh`: 값·`+inf`·깨진 줄·재연결). **실물 ESP32 연결은 아직** |
 | 핀 배치(`include/config.h`) | 잠정 — front_left Trig 6/Echo 7, front_right Trig 15/Echo 16 (ESP32-S3 기준) |
 | Echo 5 V → 3.3 V | 전압 분배(예 1 kΩ/2 kΩ) 필요 |
-| 마운트 자리·각도 | 잠정(앞 좌우 ±20°, 위 5°) |
+| 마운트 자리·각도 | 잠정(앞 좌우 ±10°, 위 5° — 3D 출력 초음파 막대 CAD 값) |
 
 ## 1. 하드웨어 준비
 
@@ -78,7 +78,7 @@ cmake -S tools/real_calib -B /tmp/real_calib_build && cmake --build /tmp/real_ca
 - [ ] 센서 차단 노드: 실물에서도 라이다·카메라 토픽을 끊는 방식이 시뮬과 같은지
 - [ ] 시작 순서: 라이다로 AMCL 초기 자세 → 라이다·카메라 차단 → `smoke_mode` 시작 (시뮬 절차와 같게)
 - [ ] 실물 `/odom`·`/imu` 의미 확인: 거리는 엔코더 평균, 헤딩은 IMU. 시뮬 `limo_sensors.py` 와 같은지
-- [ ] 비상정지: 리모컨 모드 스위치(SWB)가 하드웨어 우선(리모컨이 오토 모드 위여야 `/cmd_vel` 이 섀시에 가고, 내리면 ROS 명령이 끊김). 연기 모드 속도 한도(`speed_limit` 0.13 m/s)와 초음파 0.6 m 안 감속(`slow`)은 이미 있음. **별도 소프트웨어 비상정지 노드는 아직 없음**
+- [ ] 비상정지: 리모컨 모드 스위치(SWB)가 하드웨어 우선(리모컨이 오토 모드 위여야 `/cmd_vel` 이 섀시에 가고, 내리면 ROS 명령이 끊김). 연기 모드 속도 한도(`speed_limit` 0.70 m/s, 시뮬 기준 — 실물은 낮게 시작)와 초음파 0.6 m 안 감속(`slow`)은 이미 있음. **별도 소프트웨어 비상정지 노드는 아직 없음**
 
 ## 5. 지도·평가 준비
 
