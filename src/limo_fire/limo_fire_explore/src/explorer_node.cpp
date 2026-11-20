@@ -54,6 +54,7 @@
 #include "limo_fire_explore/decider_client.h"
 #include "limo_fire_explore/rc_watch.h"
 #include "limo_fire_explore/robot_env.h"
+#include "cam_floor.h"
 #include "low_decider.h"
 #include "low_explore_ctl.h"
 #include "low_node_rec.h"
@@ -92,6 +93,10 @@ class ExplorerNode : public rclcpp::Node {
       RCLCPP_INFO(get_logger(), "지시 클래스: 판단 모델이 %zu 클래스 중에서 고름", cls_ask_.classes().size());
     }
     const bool camera_layer = declare_parameter<bool>("camera_layer", true);
+    // 깊이 카메라 숙임 점검 (sim/include/cam_floor.h): 바닥 면으로 잰 숙임이 env.yaml body.camera_pitch 와 이만큼(°) 넘게 다르면 알림 (0 = 끔).
+    // 더 숙였으면 먼 바닥이 깊이 층에 장애물로 찍혀 후보가 사라지고 제자리에서 돌다 '대충 다 앎' 으로 끝난다 (2026-11-20 실물 — README "깊이 카메라 숙임")
+    pitch_check_deg_ = declare_parameter<double>("camera_pitch_check_deg", 1.0);
+    pitch_check_s_ = declare_parameter<double>("camera_pitch_check_s", 5.0);   // 이 간격(s)마다 모은 바닥 점으로 맞춤 (점은 1 s 마다 마지막 깊이 영상 한 장)
     const std::string scan_topic = declare_parameter<std::string>("scan_topic", "/scan");
     const std::string odom_topic = declare_parameter<std::string>("odom_topic", "/odom");
     const std::string imu_topic = declare_parameter<std::string>("imu_topic", "/imu");
@@ -104,6 +109,9 @@ class ExplorerNode : public rclcpp::Node {
     const int con_stall = (int)declare_parameter<int>("con_stall", -1);
     const double con_acc = declare_parameter<double>("con_acc", -1.0);
     // 위층 판단 모델 (scripts/low_decider.h). 사건 때만 물음 (event: 목표에 다가감 · 실패 · 후보 크게 바뀜 · 최대 간격), 지도 사진 + 후보 글
+    // false: 판단 모델을 안 씀 — 요청(지도 그림 포함)을 안 만들고 decider_image 도 안 냄, 위층은 늘 규칙(Ctl::cand_pick — 시뮬 low_explore_check --upper cand 와 같은 길).
+    // 지시(/explore/goal)는 판단 모델이 있어야 해서 받지 않음
+    use_dec_ = declare_parameter<bool>("decider", true);
     const std::string dec_url = declare_parameter<std::string>("decider_url", "http://127.0.0.1:8171");
     const double dec_timeout = declare_parameter<double>("decider_timeout", 8.0);
     lxd::Params dp;
@@ -169,13 +177,16 @@ class ExplorerNode : public rclcpp::Node {
       dec_vis_s_ = dp.vis_s;
       dec_cli_ = std::make_unique<DeciderClient>(dec_url, (int)std::lround(dec_timeout * 1000.0));
       cls_cli_ = std::make_unique<DeciderClient>(dec_url, (int)std::lround(dec_timeout * 1000.0));
-      RCLCPP_INFO(get_logger(), "위층 판단 모델 %s · 사건 때 물음 · 후보 최대 %d · 한도 %.1f s — 기다리는 동안 지금 목표로, 목표가 죽으면 답을 기다리고 답이 잇따라 틀리면 규칙이 대신",
-                  dec_url.c_str(), dp.max_cands, dp.timeout_steps * dt());
+      if (use_dec_)
+        RCLCPP_INFO(get_logger(), "위층 판단 모델 %s · 사건 때 물음 · 후보 최대 %d · 한도 %.1f s — 기다리는 동안 지금 목표로, 목표가 죽으면 답을 기다리고 답이 잇따라 틀리면 규칙이 대신",
+                    dec_url.c_str(), dp.max_cands, dp.timeout_steps * dt());
+      else
+        RCLCPP_INFO(get_logger(), "위층 판단 모델 끔 (decider: false) — 규칙이 후보 0 번을 고름 (판단 모델 요청 · decider_image 없음 · 지시 안 받음)");
     }
     RCLCPP_INFO(get_logger(),
-                "아래층 규칙 추종기 (A* + path_step) · 위층 판단 모델 · 결정 %d 걸음 · 피하기 %.2f m %.0f s · 닿음 마스크 %d "
+                "아래층 규칙 추종기 (A* + path_step) · 위층 %s · 결정 %d 걸음 · 피하기 %.2f m %.0f s · 닿음 마스크 %d "
                 "멈춤 %d 걸음 가속 %.1f m/s² · 최고 속도 %.2f m/s%s — %s",
-                lp_.decide_steps,
+                use_dec_ ? "판단 모델" : "규칙", lp_.decide_steps,
                 lp_.bl_r, lp_.bl_steps * dt(), c.con_mask, c.con_stall, c.con_acc, max_speed_, max_speed_ < c.act_v_fwd ? " (시뮬 한도보다 낮춤)" : "",
                 dry_run_ ? "dry run: /cmd_vel 안 냄, /explore/cmd_debug 에만" : "실제 주행: /cmd_vel 냄");
     if (!record_.empty()) rec_ = std::make_unique<lowrec::Writer>(record_, hc_);
@@ -211,9 +222,9 @@ class ExplorerNode : public rclcpp::Node {
     if (debug_) {
       pub_goal_ = create_publisher<visualization_msgs::msg::MarkerArray>("goal_marker", 10);
       pub_cand_ = create_publisher<visualization_msgs::msg::MarkerArray>("candidates", 10);
-      pub_dec_img_ = create_publisher<sensor_msgs::msg::Image>("decider_image", tl, latched);   // 판단 모델에 마지막으로 보낸 지도 그림 (보기만)
+      // 판단 모델에 보낸 지도 그림 (보기만) — 판단 모델을 쓸 때만, 그리고 서버가 한 번이라도 답한 뒤부터 냄 (서버가 없으면 쓸모없는 그림을 안 띄움)
+      if (use_dec_) pub_dec_img_ = create_publisher<sensor_msgs::msg::Image>("decider_image", tl, latched);
       pub_cand_txt_ = create_publisher<rviz_2d_overlay_msgs::msg::OverlayText>("candidates_text", tl, latched);
-      publish_dec_placeholder();   // 첫 요청 전에는 회색 판 (RViz 가 "No Image" 로 비지 않게)
     }
     // 지시 글 /explore/goal (판단 모델 글에 넣음) · 판단 모델이 물체 후보를 고르면 그 설 자리로 가기
     goto_resume_ = declare_parameter<bool>("goto_resume", false);   // 도착하면 멈춤 (true = 탐사 이어 감)
@@ -245,6 +256,7 @@ class ExplorerNode : public rclcpp::Node {
     srv_enable_ = create_service<std_srvs::srv::SetBool>("enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
     watchdog_ = create_wall_timer(std::chrono::milliseconds(50), [this] { check_inputs(); });
+    if (pitch_check_deg_ > 0.0) pitch_timer_ = create_wall_timer(std::chrono::seconds(1), [this] { check_pitch(); });
     tf_retry_ = create_wall_timer(std::chrono::milliseconds(5), [this] { try_scans(); });   // 장 시각 TF 를 기다리는 장 (막지 않고 5 ms 마다)
     if (enabled_ && require_rc_) {   // 켠 채로 띄워도 리모컨 오토를 한 번 본 뒤에만
       enabled_ = false;
@@ -274,6 +286,10 @@ class ExplorerNode : public rclcpp::Node {
   // (그 클래스 물체만 물체 후보 칸에), 지시 글은 판단 모델 글에 그대로 넘김. 답을 기다리는 동안은 지시 없는 탐사.
   // 빈 글 = 지시 지움 → 보통 탐사. 지시가 바뀌면 하던 따라가기·물체로 가기는 끝내고 판단 모델이 새로 고름 (바로 물음 — Upper "new instruction")
   void on_goal(const std::string& text) {
+    if (!use_dec_) {
+      say_goto(text.empty() ? "지시 없음 — 보통 탐사" : "지시를 받지 않음: 판단 모델이 꺼져 있음 (decider: false) — " + text);
+      return;
+    }
     instruction_ = text;
     target_class_.clear();
     end_follow("");
@@ -398,6 +414,32 @@ class ExplorerNode : public rclcpp::Node {
       ctl_->force_redo();
       set_state("running", "닿음 뒤 저절로 켬 (contact_resume_s)");
     }
+  }
+
+  // 깊이 카메라 숙임 점검 (1 s 마다, 켜짐·꺼짐 상관없이 — 켜기 전에 알 수 있게): 마지막 깊이 영상을 관측 깊이로 바꿔 바닥 점을 모으고 pitch_check_s 마다 맞춤.
+  // 판단·명령은 안 바꿈 (설정 그대로 — 시뮬과 같은 값). 어긋나면 경고와 /explore/status 에 실측 값
+  void check_pitch() {
+    if (!depth_ || !info_ || depth_->encoding != "16UC1" || (now() - rclcpp::Time(depth_->header.stamp)).seconds() > depth_timeout_) return;
+    std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE, 0);
+    env_->depth_from_image(reinterpret_cast<const uint16_t*>(depth_->data.data()), (int)depth_->width, (int)depth_->height, (int)(depth_->step / 2),
+                           (float)info_->k[0], (float)info_->k[4], (float)info_->k[2], (float)info_->k[5], dep.data());
+    floor_fit_.add(env_->cfg(), dep.data());
+    if (++pitch_n_ < std::max(1, (int)std::lround(pitch_check_s_)) || floor_fit_.size() < kPitchPts) return;   // 반들한 바닥은 1 m 밖이 구멍이라 점이 모일 때까지
+    pitch_n_ = 0;
+    const sim::FloorFit::Res r = floor_fit_.fit(env_->cfg());
+    if (!r.ok || r.rms > 0.01) return;   // 바닥이 덜 보이거나 바닥 아닌 낮은 물체가 많음 — 판정 안 함
+    const double cfg_deg = sim::cfg_pitch(env_->cfg()) * 57.2958, fit_deg = r.pitch * 57.2958;
+    char b[220];
+    if (std::fabs(fit_deg - cfg_deg) > pitch_check_deg_) {
+      std::snprintf(b, sizeof b, "깊이 카메라 숙임 실측 %.1f° · 설정 %.1f° (높이 실측 %.3f m) — 먼 바닥이 장애물로 찍혀 후보가 사라질 수 있음: env.yaml body.camera_pitch 를 고칠 것",
+                    fit_deg, cfg_deg, r.h);
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 30000, "%s", b);
+    } else {
+      std::snprintf(b, sizeof b, "깊이 카메라 숙임 실측 %.1f° · 설정 %.1f° 맞음", fit_deg, cfg_deg);
+      if (pitch_msg_.empty()) RCLCPP_INFO(get_logger(), "%s (바닥 점 %ld · 잔차 %.1f mm)", b, r.n, r.rms * 1000.0);
+    }
+    pitch_msg_ = b;
+    floor_fit_.clear();
   }
 
   Proprio proprio() const {
@@ -610,6 +652,17 @@ class ExplorerNode : public rclcpp::Node {
     const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur(), env_->reach_keep()};
     sim::LowCmd cmd;
     int why = 0;
+    if (!use_dec_) {   // 규칙만 (시뮬 low_explore_check --upper cand 와 같은 차례: 결정 차례에 Ctl::decide → 후보 만들기 · cand_pick)
+      if (ctl_->due(env_->state())) {
+        cmd = ctl_->decide(v, fwork_, &why);
+        env_->set_cmd(cmd);
+        why_dec_ = why;
+        publish_goal(cmd.target);
+      }
+      const double dec_ms = ms_since(t1);
+      if (env_->state().step % lp_.decide_steps == 0) publish_cands();
+      return dec_ms;
+    }
     if ((!instruction_.empty() || dec_obj_always_) && objects_ && (env_->state().step % lp_.decide_steps == 0 || obj_dirty_)) {
       obj_dirty_ = false;
       dec_up_->set_known_objects(known_objects());
@@ -645,7 +698,7 @@ class ExplorerNode : public rclcpp::Node {
     if (follower_.active()) follow_step();
     if (picked && !pick.follow) start_goto(pick);
     if (goto_.active()) apply_goto_cmd();
-    if (dec_cli_->n_png() != n_png_pub_ && !dec_cli_->last_png().empty()) {   // 새 요청을 보냈으면 그 지도 그림을 RViz 로
+    if (dec_up_->n_ans() > 0 && dec_cli_->n_png() != n_png_pub_ && !dec_cli_->last_png().empty()) {   // 서버가 답한 적 있고 새 요청을 보냈으면 그 지도 그림을 RViz 로
       n_png_pub_ = dec_cli_->n_png();
       publish_dec_png(dec_cli_->last_png());
     }
@@ -708,7 +761,9 @@ class ExplorerNode : public rclcpp::Node {
                   ctl_->n_dec(), ctl_->n_reach(), ctl_->n_stall(), sum_step_ / n_, sum_obs_ / n_, n_dec_ ? sum_dec_ / n_dec_ : 0.0, max_dec_);
     st.data = buf;
     st.data += " · " + rc_info();
-    if (dec_up_) {
+    if (!pitch_msg_.empty()) st.data += " · " + pitch_msg_;
+    if (!use_dec_) st.data += " · 위층 규칙 (판단 모델 끔)";
+    else if (dec_up_) {
       char b2[300];
       std::snprintf(b2, sizeof b2, " · 판단 모델: 보냄 %ld 답 %ld (마지막 %.0f ms) 시간 끝 %ld 실패 %ld%s%s 후보 안 맞음 %ld 규칙 대신 %ld%s", dec_up_->n_sent(), dec_up_->n_ans(), dec_up_->last_ms(),
                     dec_up_->n_timeout(), dec_up_->n_fail(), dec_up_->last_err().empty() ? "" : " — ", dec_up_->last_err().c_str(), dec_up_->n_nomatch(), dec_up_->n_fallback(),
@@ -1105,7 +1160,7 @@ class ExplorerNode : public rclcpp::Node {
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_dec_img_;
   // 판단 모델에 보낸 PNG 를 rgb8 로 풀어 decider_image 로 (보기만 — 요청에는 손대지 않음)
   void publish_dec_png(const std::vector<uint8_t>& png) {
-    if (!debug_) return;
+    if (!pub_dec_img_) return;
     png_image pi{};
     pi.version = PNG_IMAGE_VERSION;
     if (!png_image_begin_read_from_memory(&pi, png.data(), png.size())) return;
@@ -1121,22 +1176,20 @@ class ExplorerNode : public rclcpp::Node {
     im.step = pi.width * 3;
     pub_dec_img_->publish(im);
   }
-  void publish_dec_placeholder() {
-    sensor_msgs::msg::Image im;
-    im.header.stamp = now();
-    im.header.frame_id = "map";
-    im.width = im.height = 288;
-    im.encoding = "rgb8";
-    im.step = im.width * 3;
-    im.data.assign((size_t)im.step * im.height, 96);
-    pub_dec_img_->publish(im);
-  }
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_goal_status_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_goal_;
   std::string target_class_, goal_status_;
   ClassAsk cls_ask_;
   std::unique_ptr<DeciderClient> cls_cli_;   // 지시 클래스 묻기 (위층 요청과 따로 — 답이 섞이지 않게)
   bool debug_ = false;
+  bool use_dec_ = true;   // decider 파라미터 (false = 규칙만)
+  fu::Work fwork_;        // Ctl::decide 자리 (후보 모드에선 안 씀)
+  double pitch_check_deg_ = 1.0, pitch_check_s_ = 5.0;   // 깊이 카메라 숙임 점검 (check_pitch)
+  int pitch_n_ = 0;
+  static constexpr size_t kPitchPts = 3000;   // 맞춤에 쓸 바닥 후보 점 하한 (정지 한 장 ≈ 600 점 · 1116 강의실 ≈ 60 점)
+  sim::FloorFit floor_fit_{20000};
+  std::string pitch_msg_;
+  rclcpp::TimerBase::SharedPtr pitch_timer_;
   double obj_stale_s_ = 600.0;
   rclcpp::Subscription<vision_msgs::msg::Detection3DArray>::SharedPtr sub_objects_;
   vision_msgs::msg::Detection3DArray::ConstSharedPtr objects_;

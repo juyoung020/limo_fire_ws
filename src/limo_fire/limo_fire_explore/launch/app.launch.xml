@@ -1,7 +1,7 @@
 <!-- 우리 노드 전부를 한 프로세스 · 한 스레드에 (컨테이너 /app, rclcpp component_container = 한 스레드 실행기, 프로세스 안 전달 켬).
      먼저 로봇 드라이버: ros2 launch limo_fire_bringup robot.launch.xml   (센서·섀시·EKF — 따로 프로세스)
-     그리고 판단 모델 서버(llama-server, limo_fire_explore/README "위층 판단 모델 띄우기").
-       ros2 launch limo_fire_explore app.launch.xml [perception:=true] [stack:=true] [rviz:=true] [dry_run:=false]
+     그리고 판단 모델 서버(llama-server, limo_fire_explore/README "위층 판단 모델 띄우기") — 안 띄우면 decider:=false (규칙이 고름).
+       ros2 launch limo_fire_explore app.launch.xml [perception:=true] [stack:=true] [rviz:=true] [dry_run:=false] [decider:=false]
      /app 안:  /explore/explorer (탐사: 위층 판단 모델 + 아래층 A*)
                + perception:=true 면 /perception/object_detector (YOLO, GPU 비동기) · /perception/object_map (물체 지도)
      흐름: 카메라 → object_detector → (탐지·마스크, 복사 없음) → object_map → /perception/objects → explorer → /cmd_vel
@@ -11,8 +11,9 @@
   <arg name="dry_run" default="true" description="true: /cmd_vel 안 냄 (/explore/cmd_debug 에만) · false: 실제 주행"/>
   <arg name="perception" default="false" description="true: YOLO 탐지 + 물체 지도를 같은 프로세스에 (찾은 물체가 지도에 남고 '○○ 로 가' 후보가 됨)"/>
   <arg name="stack" default="false" description="true: Cartographer(지도 TF map → odom) 같이"/>
-  <arg name="rviz" default="false" description="true: 운용 화면 RViz (limo_fire_description viewer.launch.xml · limo_fire.rviz 하나 — 탐사 패널·후보·판단 모델 입력 지도 포함)"/>
+  <arg name="rviz" default="false" description="true: 운용 화면 RViz (limo_fire_description viewer.launch.xml · limo_fire.rviz 하나 — 탐사 패널·후보 포함, 판단 모델 입력 지도는 Displays 에서 켬)"/>
   <arg name="debug" default="$(var rviz)" description="true: RViz 표시 토픽(/explore/candidates …)도 냄 — 기본은 rviz 와 같음"/>
+  <arg name="decider" default="true" description="true: 위층 판단 모델(llama-server)을 씀 · false: 규칙만 — 서버를 안 띄울 때 (판단 모델 요청·입력 지도·지시 없음)"/>
   <arg name="record" default="" description="입력·명령 녹화 파일 (비우면 안 씀 — low_explore_replay 로 다시 돌림)"/>
   <arg name="perception_config" default="yolo_coco.yaml" description="인식 설정 (limo_fire_perception/config): yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
   <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음)"/>
@@ -32,6 +33,7 @@
       <param from="$(find-pkg-share limo_fire_explore)/config/explorer.yaml"/>
       <param name="dry_run" value="$(var dry_run)"/>
       <param name="debug" value="$(var debug)"/>
+      <param name="decider" value="$(var decider)"/>
       <param name="record" value="$(var record)"/>
       <param name="class_files" value="[$(var perception_config)]"/>
       <extra_arg name="use_intra_process_comms" value="true"/>

@@ -374,7 +374,7 @@ ros2 launch limo_fire_explore app.launch.xml perception:=true camera_in_app:=tru
 | 서비스 | `/explore/enable` | `std_srvs/srv/SetBool` |
 <!-- /io -->
 
-(위 생성 칸은 `debug:=true` 로 띄운 것. 기본 `debug: false` 면 `candidates` · `candidates_text` · `decider_image` · `goal_marker` 가 없고 `cmd_debug` 는 dry run 에만 — `app.launch.xml` 은 `rviz:=true` 면 debug 를 켬)
+(위 생성 칸은 `debug:=true` 로 띄운 것. 기본 `debug: false` 면 `candidates` · `candidates_text` · `decider_image` · `goal_marker` 가 없고 `cmd_debug` 는 dry run 에만 — `app.launch.xml` 은 `rviz:=true` 면 debug 를 켬. `decider_image` 는 `decider: true` 일 때만 있고 판단 모델 서버가 한 번 답한 뒤부터 나옴)
 
 아래 표는 QoS·주기·뜻까지 적은 손 표 (위 생성 칸이 이름·타입의 기준).
 

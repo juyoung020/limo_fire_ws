@@ -71,6 +71,13 @@ depth:
   - {bag: 1104_R_static_aligned, role: fit}   # 실험실 세워 둔 58 s: 시간 σ · 바닥·모서리 구멍 · 카메라 자세 · 유효 영역
   - {bag: 1104_M_cmd_mecanum, role: validate} # 실험실 명령 계단 88 s: 멈춘 구간 2 개로 시간 σ, 장마다 구멍
 
+# 깊이 카메라 숙임·높이 (env.yaml body.camera_pitch) — 노드 녹화의 관측 깊이 바닥 면 (sim/include/cam_floor.h):
+#   low_explore_replay <녹화> --floor-fit  (실물 노드도 같은 함수로 재서 설정과 1° 넘게 다르면 경고). 마운트가 손 고정이라 바뀌면 다시 맞춤
+depth_pitch:
+  - {bag: app_1120_1839, role: fit}        # 세워 둔 47 s — 0.1250 rad · 0.1868 m
+  - {bag: app_1120_1831, role: validate}   # 0.1250 · 0.1867
+  - {bag: app_1120_1842, role: validate}   # 제자리 회전 12.6 s, 가까운 물체 많음 — 0.1270 · 0.1862
+
 # 깊이 — 노드 녹화로 재는 것 (sim/tools/node_stats, real_limo.md "실물 방 재현"): 관측 깊이(64 × 40)의 바닥 구멍(입사 cos 구간 → sensor_model.yaml
 # depth.holes.floor_hi) · 영상 늦음(빨리 돌 때 깊이 점이 로봇 지도에 가장 잘 맞는 τ → depth.latency). 녹화는 ~/limo_bags/<bag>_node.bin
 depth_node:

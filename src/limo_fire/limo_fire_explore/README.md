@@ -110,14 +110,14 @@ Nav2 는 쓰지 않는다. Cartographer 는 지도 자세(TF `map → base_link`
 | 설정 | `RobotEnv` 합친 탐사 모드 — 목표는 위층, 탐사 판 끝 규칙, 막힘은 신호만 | `low_rl 1` · `low_explore 1` |
 | 결정 때 | 걸음 % 10 == 0 또는 다시 결정 | 같음 |
 | 위층 판단 모델 | 판단 모델(d1-3B, zero-shot)이 `scripts/cand_view.h` 후보 앞 6 개 중 고름 — `scripts/low_decider.h` (요청: 지도 사진 + 후보 글). 사건 때만(`decider_mode: event` — 목표에 1 m 다가감 · 목표 실패 · 후보 크게 바뀜 · 10 s 최대 간격) 비동기로 묻고, 기다리는 동안 지금 목표로 몰며, 답이 오면(그 후보가 아직 있으면) 바꿈. 목표가 죽으면(판 처음·켠 직후 포함) 바로 묻고 답을 (걸음으로 잰 답 지연 이동 평균 + `decider_hold_extra` 0.5 s)까지 기다림 — 그 사이 아래층은 지금 명령 그대로(목표 없으면 제자리), 그래도 안 오면 규칙(cand_pick)이 대신. 남은 길이 답 지연 + `decider_ask_lead_s` 안에 끝날 듯하면 미리 물음. 지시(`/explore/instruction`)가 바뀌면 다음 결정 차례에 바로 물음("new instruction"), 옛 지시 요청의 답은 버림. 둘 다 −1 이면 옛 동작(요청 바이트 같음). `decider_timeout`(8 s) 넘은 답은 버림. 정해진 주기로 묻기(periodic)는 시뮬 비교에서 덮음이 같아 노드에서 뺐다(시뮬 `--dec-mode periodic` 은 남음) | `low_explore_check --upper decider` |
-| 대신 고르는 규칙 | 답을 기다리다 시간이 넘거나 답이 잇따라 틀리면 `cand_view.h` 0 번 후보, 지금 목표 번호가 있으면 붙듦(`Ctl::cand_pick`) | `low_explore_check --upper cand` |
+| 대신 고르는 규칙 | 답을 기다리다 시간이 넘거나 답이 잇따라 틀리면 `cand_view.h` 0 번 후보, 지금 목표 번호가 있으면 붙듦(`Ctl::cand_pick`). `decider: false`(`app.launch.xml decider:=false` — 판단 모델 서버를 안 띄울 때)면 늘 이 규칙: 결정 차례마다 `Ctl::decide`, 판단 모델 요청·입력 지도를 안 만들고 지시(`/explore/goal`)를 안 받음 | `low_explore_check --upper cand` |
 | 아래층 | 규칙 추종기: 고른 후보의 서는 자리까지 A* 경로를 짜 따라감, 막히면 복구(물러나기·목표 포기 — `hier_path.h`) | 같은 함수 |
 | 목표 없음 | 규칙 추종기의 제자리 회전 | 같음 |
 | 다시 결정 | 통과 · 경로 끝 밖 · 경로 없음 · 막힘 신호 → 경로 끝 밖·없음·막힘은 그 칸 0.5 m 를 10 s 피함 | 같음 |
 | 끝 | 지도 닫힘 + 지도 진척 없음 10 s (성공) · 진척 없음 · 시간 → 명령 0, `/explore/done` true | `finish_step` |
 
 위층 결정·목표 넘기기는 `train/explore/scripts/low_explore_ctl.h` 하나를 노드와 확인 도구가 같이 쓴다.
-launch 인자는 `dry_run` · `record` · `decider_url` 등뿐이고, 나머지 값(`camera_layer` · `contact_resume_s` · `decider_max_cands` …)은
+launch 인자는 `dry_run` · `record` · `decider`(판단 모델 씀 · false = 규칙만) 등뿐이고, 나머지 값(`camera_layer` · `contact_resume_s` · `decider_max_cands` …)은
 `config/explorer.yaml` 에서 바꾼다. 2026-11-17 에 실물에서 안 쓰던 값(`decider_mode`·`decider_period`·`decider_input`·`decider_prompt`·`decider_cand`(옛 hier 8 칸 후보)·
 `decider_cam`·`cam_base_h`·`color_topic`(카메라 키프레임 기억)·`close_lidar`·`slot_vp`·`obs_all`·`frontier_cache`·`frontier_check_every`)과 `~/goto`·`~/goto_face` 를,
 2026-11-18 에 기준선 위층(`upper`·`fuel_*`)을 지웠다 —
@@ -136,6 +136,8 @@ launch 인자는 `dry_run` · `record` · `decider_url` 등뿐이고, 나머지 
 - `dry_run:=true`(기본): `/cmd_vel` 발행자를 아예 안 만들고 같은 명령을 `/explore/cmd_debug`(TwistStamped)에만. dry run 에서는 닿음의 "멈춤" 신호(명령 대비 바퀴 정지)를 뺀다 — 명령이 안 나가 늘 참.
 - `max_speed`: 기본 = 시뮬 한도(자르지 않음). 토픽: `/explore/state`(idle · running · paused · done) · `/explore/status`(한 줄 — 까닭·리모컨·목표·명령·시간) · `/explore/done` · `/explore/goal`(지시 글) · `/explore/goal_status`.
   `debug:=true`(`app.launch.xml` 은 `rviz:=true` 면 켬)일 때만 RViz 표시 토픽 `/explore/goal_marker` · `/explore/candidates` · `/explore/candidates_text` · `/explore/decider_image`, `cmd_debug` 는 dry run 이거나 debug 일 때.
+  `/explore/decider_image`(판단 모델에 보낸 지도 그림)는 `decider: true` 일 때만 만들고, 서버가 한 번이라도 답한 뒤부터 낸다(서버가 없으면 빈 회색 판도 안 냄).
+  운용 화면의 "판단 모델 입력 지도" 표시는 기본 꺼짐 — 판단 모델을 쓸 때 RViz Displays 에서 켠다.
 - `/explore/candidates` (MarkerArray, map 틀, 결정마다): 새 후보(`train/explore/scripts/cand_view.h`)마다 구(서는 자리)·글(판단 모델 글자 · 안정 번호 · 예상 넓이/시간)·덩어리 대표 칸까지 선·덩어리 프론티어 칸, 색 초록 보통 · 파랑 지금 목표 · 주황 실패 기억 · 회색 쉬는 덩어리, 로봇 자취(60 s), 판단 모델 답 수·마지막 답 시간. 운용 화면 `limo_fire.rviz` 의 Candidates 표시.
 - RViz 탐사 패널: 고르기에서 "합친 탐사 (/explore)". `paused` 면 상세 줄에 까닭.
 - 리모컨 칸 확인: 녹화 `1103_M_drive3`(리모컨으로 몬 것)의 `/rc_state` buttons 는 모두 `[3, 1, 3, 3]`, `1104_M_cmd_mix`(ROS 명령으로 몬 것)는 모두 `[3, 2, 3, 3]`.
@@ -245,6 +247,21 @@ ros2 topic echo /explore/goal_status        # 푼 클래스 · 고른 물체 · 
 깊이 카메라 장애물 층(env.yaml `camera_obstacles`, 걸음 0.1 s 마다 갱신 — `update_every_step`)은 후보·닫힘에서 막힌 곳을 뺀다. 층 전용 촘촘한 깊이 격자(`layer_grid`)는 시뮬에서 끝 무렵 길이 더 막혀 기본 끔. 실물 깊이가 시뮬 모델과 다르면(정렬 꺼짐·카메라 숙임 바뀜)
 바닥이 장애물로 찍혀 후보가 사라지고 **아직 안 본 곳이 있는데 "탐사 끝"** 이 난다 (옛 `explore_rl` 노드로 1103 녹화에서 확인 — 정렬 끈 깊이는 33 s 에 거짓 닫힘).
 의심되면 `camera_layer: false` 로 끈다.
+
+### 깊이 카메라 숙임 (2026-11-20 실물 — 제자리 회전 · '대충 다 앎' 끝)
+
+증상: 켜자마자 `목표 칸 -1 (목표 없음) · 명령 v 0.00 ω 1.80`(제자리 회전)이 이어지다 `끝: 대충 다 앎 (후보 0 …)`. 원인은 카메라 마운트(손 고정)가
+설정(env.yaml `body.camera_pitch` 5.2°)보다 2° 더 숙여져 있던 것(바닥 면 실측 7.2°) — 그러면 0.9 m 밖 바닥이 띠 아래 끝(3 cm)보다 높게 계산돼
+깊이 층에 **로봇을 둘러싼 장애물 고리**로 찍히고, 갈 수 있는 칸이 로봇 곁에 갇혀 지도 닫힘 → 후보 0 → 제자리 회전 → 5 s 뒤 '대충 다 앎'.
+녹화 `app_1120_1842` 를 다시 돌리면 설정 0.0902 에서 3 s 째 닫힘·후보 0 (노드 로그와 같은 8.0 s 에 끝), 0.1250 에서는 닫힘 없이 후보 6~8 개
+(근거·그림 `limo_upper_keep/reports/real_spin.md`). 그래서 env.yaml 숙임을 0.1250 으로 다시 맞췄다(시뮬도 같은 값).
+
+- **노드가 스스로 잼**: 1 s 마다 깊이 영상 한 장의 바닥 점을 모아 숙임·높이를 맞추고(`train/explore/sim/include/cam_floor.h` — 녹화 도구와 같은 함수),
+  설정과 `camera_pitch_check_deg`(1°) 넘게 다르면 경고 로그와 `/explore/status` 에 `깊이 카메라 숙임 실측 7.2° · 설정 5.2° …`. 켜기 전(idle)에도 잰다. 판단·명령은 안 바꾼다(설정 그대로 — 시뮬과 같은 값).
+- **녹화로 재기**: `low_explore_replay <녹화> --floor-fit` → 숙임·높이·잔차와, 그 바닥이 녹화 설정으로는 몇 cm 로 보이는지(3 cm 넘으면 층에 찍힘).
+  `--cam-pitch <rad>` 로 숙임만 바꿔 다시 돌리면 후보·닫힘이 어떻게 바뀌는지 본다 (`--upper cand` = 판단 모델이 없을 때의 노드와 같은 위층).
+- 경고가 나면: 마운트를 고치거나 `--floor-fit` 값으로 env.yaml `camera_pitch` 를 고치고(analysis/calibration.yaml `depth_pitch` 에 맞춤·확인 녹화), 노드를 다시 빌드·실행.
+- 발사대(launcher_v5)는 카메라 시야에 없다: 축이 base_link 뒤 0.04 m · 총구가 앞 0.01 m 쯤이고 카메라는 앞 0.15 m 에서 앞을 봄. 녹화에서도 늘 같은 픽셀에 찍히는 점이 없다(`--depth-pix`).
 
 ### 위층 판단 모델 띄우기
 
