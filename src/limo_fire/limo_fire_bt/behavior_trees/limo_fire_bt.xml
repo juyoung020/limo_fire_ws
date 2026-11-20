@@ -42,7 +42,7 @@
   <BehaviorTree ID="MainTree">
     <Sequence name="Boot">
       <Script name="InitBlackboard"
-              code="incident_id:=0; active_mode:='BASIC'; failed_mode:='NONE'; fail_reason:=''; fail_history:=''; reported_119:=false; water_failed:=false; smoke_failed:=false; frontier_failed:=false; depth_aligned:=false"/>
+              code="incident_id:=0; active_mode:='BASIC'; failed_mode:='NONE'; fail_reason:=''; fail_history:=''; reported_119:=false; water_failed:=false; smoke_failed:=false; frontier_failed:=false; depth_aligned:=false; map_closed:=false"/>
       <!-- 순찰점 파일은 mission 노드 설정 patrol_file (블랙보드 patrol_file) -->
       <LoadPatrolRoute file="{patrol_file}" route="{patrol_route}"/>
       <SubTree ID="CheckDepthAlignment" _autoremap="true"/>
@@ -149,6 +149,20 @@
               <GetNextWaypoint route="{patrol_route}" goal="{patrol_goal}"/>
               <Fallback name="NavigateOrSkip">
                 <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
+                <!-- 지도 만들기 중 순찰점이 아직 안 그린 곳(지도 밖)이면 Nav2 가 바로 거절한다 → 프론티어 탐사로 지도를 넓힌 뒤 다시 간다.
+                     탐사가 닫힘으로 끝나면(map_closed) 다시 하지 않는다. 탐사 중에도 위 DetectHazard 가 돌아 불을 보면 탐사를 끄고 멈춘다.
+                     저장 지도에서는 순찰점이 늘 지도 안이라 이 갈래로 오지 않는다 -->
+                <Sequence name="ExploreTowardPoint">
+                  <ScriptCondition code="map_closed == false"/>
+                  <Inverter>
+                    <IsGoalInKnownMap goal="{patrol_goal}" map_topic="/map"/>
+                  </Inverter>
+                  <Timeout msec="300000">
+                    <ExploreFrontiers explorer="/explore/frontier_explorer" objects_topic="/perception/objects"/>
+                  </Timeout>
+                  <Script code="map_closed:=true"/>
+                  <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
+                </Sequence>
                 <!-- 못 가면 알리고 잠깐 쉰 뒤 다음 순찰점 (Nav2 가 바로 실패하면 순찰점을 몇 초 만에 다 넘기지 않게) -->
                 <Sequence name="SkipPoint">
                   <LogPatrolIssue goal="{patrol_goal}"/>
@@ -476,6 +490,10 @@
       <input_port name="min_score" type="double" default="0.350000"/>
       <input_port name="target" type="limo_fire_bt::MapPoint"/>
       <input_port name="detections_topic" type="std::string" default="/perception/detections"/>
+    </Condition>
+    <Condition ID="IsGoalInKnownMap">
+      <input_port name="map_topic" type="std::string" default="/map"/>
+      <input_port name="goal" type="limo_fire_bt::Pose2"/>
     </Condition>
     <Condition ID="IsKnownHazard">
       <input_port name="recheck_s" type="double">처리 뒤 이 시간이 지나면 같은 자리 불도 다시 멈춰 감시</input_port>

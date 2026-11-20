@@ -371,6 +371,29 @@ public:
 };
 
 // near 둘레 radius_m 안에 프론티어 칸(빈 칸 옆 미지 칸)이 min_cells 이상인가
+// 점이 지도(map_topic) 안의 아는 칸(빈 곳이든 막힌 곳이든 -1 이 아님)에 있는가.
+// 지도 만들기 중에는 아직 안 그린 곳의 순찰점이 지도 밖이라 Nav2 가 바로 거절한다 — 그때 탐사로 넘어가는 데 쓴다
+class IsGoalInKnownMap : public RosCondition
+{
+public:
+  using RosCondition::RosCondition;
+  static PortsList providedPorts() {return {InputPort<Pose2>("goal"), InputPort<std::string>("map_topic", "/map", "")};}
+  NodeStatus tick() override
+  {
+    const auto map = ctx_->latest<nav_msgs::msg::OccupancyGrid>(need<std::string>(*this, "map_topic"),
+        rclcpp::QoS(1).reliable().transient_local());
+    if (!map || map->info.resolution <= 0) {return NodeStatus::FAILURE;}
+    const auto g = need<Pose2>(*this, "goal");
+    const auto & info = map->info;
+    const int x = static_cast<int>(std::floor((g.x - info.origin.position.x) / info.resolution));
+    const int y = static_cast<int>(std::floor((g.y - info.origin.position.y) / info.resolution));
+    if (x < 0 || y < 0 || x >= static_cast<int>(info.width) || y >= static_cast<int>(info.height)) {
+      return NodeStatus::FAILURE;
+    }
+    return map->data[static_cast<size_t>(y) * info.width + x] >= 0 ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
+  }
+};
+
 class HasUnexploredFrontier : public RosCondition
 {
 public:
@@ -468,6 +491,7 @@ void register_condition_nodes(BT::BehaviorTreeFactory & f, const std::shared_ptr
   f.registerNodeType<IsSurvivorSearchRequested>("IsSurvivorSearchRequested", ctx);
   f.registerNodeType<IsTemperatureDropped>("IsTemperatureDropped", ctx);
   f.registerNodeType<IsWithinTimeLimit>("IsWithinTimeLimit", ctx);
+  f.registerNodeType<IsGoalInKnownMap>("IsGoalInKnownMap", ctx);
   f.registerNodeType<HasUnexploredFrontier>("HasUnexploredFrontier", ctx);
   f.registerNodeType<IsDepthAlignedToColor>("IsDepthAlignedToColor", ctx);
 }
