@@ -105,6 +105,8 @@ class RobotEnv {
   int mask_cam_wall();
   // 지도 점(x, y 차례로 n 개)이 든 칸의 깊이 카메라 층 표시를 지움 (바닥이 보인 칸 — 주행 목표 모드). 지운 칸 수
   int clear_cam_cells(const float* xy, int n);
+  // 로봇 지도 막힘 칸(라이다가 이미 앎) 둘레 r m 안의 깊이 층 표시를 지움 — 로봇에서 win m 안만. 지운 칸 수
+  int mask_cam_near_occ(float r, float win);
   // 이번 걸음 아래층 명령(low_act) 앞에 깊이 열 점(cpts — 지역 계획기 거리 장 · 충돌 감시가 같이 씀) 뒤에 덧붙일 점 (지도 좌표 x, y 차례로 n 개).
   // 초음파 메아리 자리를 넣음. low_prepare 뒤 · low_act 앞에 부름. 깊이 층이 꺼져 있으면(cpts 없음) 아무것도 안 함 — 넣은 점 수를 돌려줌
   int add_points(const float* xy, int n);

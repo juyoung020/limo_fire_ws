@@ -294,6 +294,9 @@ class ExplorerNode : public rclcpp::Node {
       // 0.70 m 문이 지도에서 약 0.45 m 로 좁아졌다 (2026-11-20 시뮬 limo_fire_obstacles, nav_dump_dir 그림). 벽에 붙은 낮은 물체는 못 봄 — 0 = 끔
       nav_wall_ring_m_ = declare_parameter<double>("nav_wall_ring_m", 0.15);
       nav_np_backup_s_ = declare_parameter<double>("nav_nopath_backup_s", 1.0);
+      // 라이다 지도 막힘 칸 둘레 이 거리(m) 안 깊이 표시는 지움 (0 = 끔) — 그 물체는 라이다가 알고, 깊이 표시는 자세 흔들림만큼 둘레로 번져
+      // 문(0.70 m)과 문 앞 상자 사이 0.60 m 틈을 지도에서 닫았다 (2026-11-21 nav_dump: 깊이 층을 빼면 이어지고 넣으면 끊김)
+      nav_occ_ring_m_ = declare_parameter<double>("nav_occ_ring_m", 0.15);
       nav_floor_tol_ = declare_parameter<double>("nav_floor_tol", 0.02);      // 바닥 위 이 높이(m) 안 깊이 점 = 바닥 → 그 칸 깊이 표시 지움 (0 = 끔)
       nav_floor_range_ = declare_parameter<double>("nav_floor_range", 2.5);   // 그 점까지 깊이 (m)   // 경로 없음이 이만큼 이어지면 물러나기
       nav_backup_max_ = (int)declare_parameter<int>("nav_backups", 3);            // 목표 하나에 노드가 시키는 물러나기 수
@@ -875,13 +878,15 @@ class ExplorerNode : public rclcpp::Node {
     const auto t2 = clk::now();
     // 규칙 추종기: 경로 계획 후보 (combine_run 의 act[0] — 다음 결정까지 그대로). 따라가기 · 물체로 가기는 목표 칸을 노드가 줌 — 행동 칸 0 (low_follow 의 그 칸)
     env_->set_slot(follower_.active() || goto_.active() || nav_gh_ ? 0 : ctl_->slot());   // 주행 목표도 노드가 목표 칸을 쥠
-    if (nav_gh_) {   // 주행 목표: 저장 지도 벽 둘레 · 바닥이 보인 칸의 깊이 표시를 걷어내고 계획 (nav_wall_ring_m · nav_floor_tol)
+    if (nav_gh_) {   // 주행 목표: 저장 지도 벽 둘레 · 라이다 막힘 둘레 · 바닥이 보인 칸의 깊이 표시를 걷어내고 계획 (nav_wall_ring_m · nav_occ_ring_m · nav_floor_tol)
       env_->mask_cam_wall();
+      env_->mask_cam_near_occ((float)nav_occ_ring_m_, 3.0f);
       clear_floor_cells();
     }
     env_->low_prepare();
     if (nav_gh_) {
       env_->mask_cam_wall();
+      env_->mask_cam_near_occ((float)nav_occ_ring_m_, 3.0f);
       clear_floor_cells();
     }
     add_sonar();
@@ -1686,6 +1691,7 @@ class ExplorerNode : public rclcpp::Node {
   tsk::Goto nav_;
   bool nav_pending_ = false, nav_face_ = true, nav_prime_ = true;
   std::string nav_dump_dir_;
+  double nav_occ_ring_m_ = 0.15;
   double nav_wall_ring_m_ = 0.15, nav_np_backup_s_ = 1.0, nav_floor_tol_ = 0.02, nav_floor_range_ = 2.5;
   std::vector<float> floor_xy_;
   int nav_backup_max_ = 3, nav_backups_ = 0, nav_np_from_ = -1;

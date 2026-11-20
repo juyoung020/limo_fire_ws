@@ -43,6 +43,7 @@ ros2 action send_goal /explore/navigate_to_pose nav2_msgs/action/NavigateToPose 
   경로 없음 · 충돌 검사 막힘 · 회전 막힘이 1 s 이어지면 물러나기(목표 하나에 3 번, `nav_nopath_backup_s` · `nav_backups` — 가구 모서리·문틀에 붙어 끼임),
   깊이 층 걷어내기: 저장 지도 벽 둘레 0.15 m 안(`nav_wall_ring_m` — 자세 흔들림으로 벽 깊이 표시가 문틈으로 번져 0.70 m 문이 약 0.45 m 로 보였음),
   바닥이 보인 칸(`nav_floor_tol` 0.02 m · `nav_floor_range` 2.5 m — 깊이 층은 띠 안 점으로만 지워서 지나간 사람 자취가 열린 바닥에 남아 길을 막았음).
+  라이다 지도 막힘 칸 둘레 0.15 m 안(`nav_occ_ring_m`, 4 차 — 라이다가 아는 물체 둘레 깊이 번짐이 문과 문 앞 상자 사이 0.60 m 틈을 지도에서 닫았음).
   못 간 자리 둘레 지도 그림: `nav_dump_dir`. 계획 반경은 env.yaml `plan_margin` 0 (0.293 → 0.222 m, 탐사와 같은 값).
 - 닿음 뒤 재출발 (3 차, 2026-11-21): 주행 목표 중 닿음 감지면 목표를 버리지 않고 멈춤 → 닿음 신호가 1 s 없으면(사람이 비킴 등, 5 s 지나면 그냥) 물러나기 → 다시 계획
   (Nav2 기본 BT 복구 차례 Clear → Spin → Wait 5 s → BackUp 0.30 m 의 기다림·물러나기와 같은 뜻). 목표 하나에 3 번(`nav_contacts` · `nav_contact_clear_s` · `nav_contact_wait_s`),

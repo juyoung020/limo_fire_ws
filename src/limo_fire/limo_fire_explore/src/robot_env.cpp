@@ -309,6 +309,29 @@ int RobotEnv::mask_cam_wall() {
   return n;
 }
 
+int RobotEnv::mask_cam_near_occ(float r, float win) {
+  if (cvox_.empty() || r <= 0.f) return 0;
+  const sim::EnvCfg& c = b_.cfg;
+  const int k = (int)std::ceil(r / c.res), W = (int)std::ceil(win / c.res);
+  int rcx = (int)std::floor((e_.x - m_.ox) / c.res), rcy = (int)std::floor((e_.y - m_.oy) / c.res);
+  int n = 0;
+  for (int cy = std::max(0, rcy - W); cy <= std::min(m_.gh - 1, rcy + W); ++cy)
+    for (int cx = std::max(0, rcx - W); cx <= std::min(m_.gw - 1, rcx + W); ++cx) {
+      uint8_t& v = cvox_[(size_t)cy * c.size + cx];
+      if (!v) continue;
+      bool near = false;
+      for (int dy = -k; dy <= k && !near; ++dy)
+        for (int dx = -k; dx <= k && !near; ++dx) {
+          const int u = cx + dx, w = cy + dy;
+          if (u < 0 || w < 0 || u >= m_.gw || w >= m_.gh || (float)(dx * dx + dy * dy) * c.res * c.res > r * r) continue;
+          near = mdp::cell_class(lmap_[(size_t)w * c.size + u]) == mdp::kOcc;
+        }
+      if (near) { v = 0; ++n; }
+    }
+  if (n > 0) keep_.valid = false;
+  return n;
+}
+
 int RobotEnv::clear_cam_cells(const float* xy, int n) {
   if (cvox_.empty()) return 0;
   const sim::EnvCfg& c = b_.cfg;
