@@ -2,6 +2,7 @@
 <!-- 탁구공 발사대 v5 (주영 설계: juyoung020/limo_fire_ws hardware/modeling/탁구공발사대/v5, origin/main a22cf08).
      TF: <parent> → launcher_pivot (상하 회전축, 차체에 고정) → launcher_pitch_joint → launcher_link → launcher_muzzle
      - launcher_pivot: 회전축 중심. 조준 노드(approach_aim)가 이 프레임으로 장착 위치·방향을 읽는다. 장착 값은 limo_fire.urdf.xacro 한 곳에서 준다.
+     - 2026-11-20: 각도 서보를 떼고 발사대 각을 기구로 15° 에 고정했다. 관절은 모델 호환을 위해 남기고 description.launch.xml 이 15° 로 그린다.
      - launcher_pitch_joint: 각도 θ 가 클수록 총구가 들린다(CAD build_cradle.py: p → Ry(-θ)(p - AX) + 축). 그래서 축은 -y.
        범위 5~30° = CAD ANG·펌웨어 범위. 힘·속도 = 각도 서보 MG996R 9.4 kg·cm, 60°/0.17 s (CAD sim_full.py SERVOS).
      - launcher_muzzle: 총구(총신 축 위 앞 끝). 발사대 자기 좌표(params.json)에서 축 AX = (x -40, z -45) mm, 총구 X_MUZ = 25.7 mm, 총신 축 z = 0

@@ -3,6 +3,7 @@
 // ROS 의존 없음(테스트용).
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -130,6 +131,68 @@ inline std::optional<Radar> as_radar(const Line& l) {
     r.targets.push_back({static_cast<double>(*x), static_cast<double>(*y), static_cast<double>(*v)});
   }
   return r;
+}
+
+// 발사대 응답 줄: $LA,<몸통>  — 펌웨어 include/launcher.h 머리 주석과 같다
+//   boot · on · off · cocked · fired · home · lever,<각> · state,<각>,<on|off>,<busy 0|1> · blocked,<까닭> · error,<까닭>
+// 각은 레버 서보 명령 각(도, 0~180). 서보가 실제로 간 각을 잰 값이 아니다.
+struct LauncherReply {
+  enum Kind { kBoot, kOn, kOff, kCocked, kFired, kHome, kLever, kState, kBlocked, kError };
+  explicit LauncherReply(Kind k = kBoot) : kind(k) {}
+  Kind kind;
+  double lever_deg = 0.0;
+  bool on = false, busy = false;
+  std::string detail;   // blocked·error 까닭 (off · busy · bad · attach)
+};
+
+inline std::optional<double> parse_double(const std::string& f) {
+  try {
+    size_t p = 0;
+    const double v = std::stod(f, &p);
+    if (p != f.size() || !std::isfinite(v)) return std::nullopt;
+    return v;
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+inline std::optional<LauncherReply> as_launcher(const Line& l) {
+  if (l.type != "LA" || l.fields.empty()) return std::nullopt;
+  const auto& f = l.fields;
+  const std::string& k = f[0];
+  LauncherReply r{LauncherReply::kBoot};
+  if (f.size() == 1) {
+    if (k == "boot") r.kind = LauncherReply::kBoot;
+    else if (k == "on") r.kind = LauncherReply::kOn;
+    else if (k == "off") r.kind = LauncherReply::kOff;
+    else if (k == "cocked") r.kind = LauncherReply::kCocked;
+    else if (k == "fired") r.kind = LauncherReply::kFired;
+    else if (k == "home") r.kind = LauncherReply::kHome;
+    else return std::nullopt;
+    return r;
+  }
+  if ((k == "blocked" || k == "error") && f.size() == 2 && !f[1].empty()) {
+    r.kind = k == "blocked" ? LauncherReply::kBlocked : LauncherReply::kError;
+    r.detail = f[1];
+    return r;
+  }
+  if (k == "lever" && f.size() == 2) {
+    const auto d = parse_double(f[1]);
+    if (!d || *d < 0.0 || *d > 180.0) return std::nullopt;
+    r.kind = LauncherReply::kLever;
+    r.lever_deg = *d;
+    return r;
+  }
+  if (k == "state" && f.size() == 4) {
+    const auto d = parse_double(f[1]);
+    if (!d || *d < 0.0 || *d > 180.0 || (f[2] != "on" && f[2] != "off") || (f[3] != "0" && f[3] != "1")) return std::nullopt;
+    r.kind = LauncherReply::kState;
+    r.lever_deg = *d;
+    r.on = f[2] == "on";
+    r.busy = f[3] == "1";
+    return r;
+  }
+  return std::nullopt;
 }
 
 }  // namespace limo_fire_esp32_bridge

@@ -1,7 +1,8 @@
 # limo_fire_esp32 — ESP32 펌웨어
 
-LIMO 에 더하는 모듈을 ESP32 하나로 다루는 펌웨어(Arduino 프레임워크, PlatformIO). **지금은 초음파 HC-SR04 × 2 만** 있다 (ESP32-S3 개발 보드, 핀은 [docs/wiring.md](../../docs/wiring.md))
-(연기 모드 위치 추정·장애물, [docs/smoke_mode_plan.md](../../docs/smoke_mode_plan.md) 5 단계). 열화상(UART1)·레이더(UART2)도 읽는다(ESP32-S3 만 — C3 는 UART 가 모자라 초음파만). 서보·펌프는 같은 시리얼 형식에 줄 종류를 더한다.
+LIMO 에 더하는 모듈을 ESP32 하나로 다루는 **하나뿐인** 펌웨어(Arduino 프레임워크, PlatformIO): 초음파 HC-SR04 × 2 · 열화상 · 레이더 · 탁구공 발사대 레버 서보 (ESP32-S3 개발 보드, 핀은 [docs/wiring.md](../../docs/wiring.md)).
+예전 발사대 시험 펌웨어(`launcher_test`)는 여기로 합쳤다 — 센서 줄을 내보내는 채로 발사대 명령을 받는다
+(연기 모드 위치 추정·장애물, [docs/smoke_mode_plan.md](../../docs/smoke_mode_plan.md) 5 단계). 열화상(UART1)·레이더(UART2)도 읽는다(ESP32-S3 만 — C3 는 UART 가 모자라 초음파만). 발사대 응답은 같은 시리얼 형식의 줄 종류 `LA` 다.
 ROS 쪽은 [limo_fire_esp32_bridge](../../src/limo_fire/limo_fire_esp32_bridge/README.md).
 
 ```bash
@@ -10,7 +11,7 @@ cd firmware/limo_fire_esp32
 pio run                           # 빌드
 pio run -t upload                 # USB 로 올리기
 pio device monitor                # 921600, 줄이 나오는지 보기
-test/run.sh                       # 열화상·레이더 프레임 조립 호스트 시험(보드 없이)
+test/run.sh                       # 호스트 시험(보드 없이): 열화상·레이더 프레임, 발사대 명령 + 발사 다리 시험용 /tmp/launcher_host_sim 빌드
 pio run -e esp32s3_nosonar -t upload   # 초음파 끔(열화상·레이더만), 시리얼은 S3 USB 직결 포트로
 ```
 
@@ -41,7 +42,30 @@ $US,<번호>,<mm>,<ms>                 초음파 번호(0 부터) 거리 mm(0 = 
 $TH,<ms>,<ta>,<t1>…<t768>             열화상: 모듈 온도 ta, 768 점(32×24, 행 먼저), 모두 0.1 °C 정수, 약 4 Hz
 $RD,<ms>,x1,y1,v1,x2,y2,v2,x3,y3,v3   레이더 표적 3 개(없으면 0,0,0): x 오른쪽 +·y 앞 mm, v cm/s(LD2450 원본 부호), 약 10 Hz
 $HB,<ms>                             살아 있음 (1 s 마다)
+$LA,<몸통>                           발사대 응답 (아래 "발사대")
 ```
+
+## 발사대 (`include/launcher.h`, 값은 `config.h`)
+
+**레버 서보(GPIO 4) 하나만** 움직인다. 각도 서보는 뗐고 발사대 각은 기구로 15° 고정(2026-11-20) — GPIO 5 는 부팅부터 끝까지 LOW, 각도 명령은 없다.
+호스트 → ESP32 는 글자 한 줄씩(같은 포트·같은 921600, 사람이 시리얼 모니터에서 쳐도 됨). 응답은 센서 줄과 같은 `$…*체크섬` 틀의 `$LA,…` 줄이다.
+ROS 쪽은 [limo_fire_esp32_bridge](../../src/limo_fire/limo_fire_esp32_bridge/README.md) 가 이 포트를 혼자 열고 액션 `/launcher/launch`·서비스 `/launcher/enable` 로 낸다.
+
+| 명령 | 하는 일 | 응답 (`$LA,…`) |
+|---|---|---|
+| `e` | 레버 PWM 켜기 — 기록된 자리(처음엔 쉼 100°)로 | `on` (실패 `error,attach`) |
+| `x` | 끄기(핀 LOW). **움직이는 중에도 바로** 듣고 쌓인 명령을 버림 | `off` |
+| `c` · `f` · `s` | 장전 · 발사 · 장전+발사 (끝났을 때 응답) | `cocked` · `fired` · `cocked` 다음 `fired` |
+| `h` · `l<0..180>` | 쉼 자리로 · 레버 서보 각(각 찾을 때, 60°/s) | `home` · `lever,<각>` |
+| `?` | 상태 | `state,<레버 각>,<on\|off>,<busy 0\|1>` |
+| (부팅) | 칩이 켜짐 — 레버 꺼짐 | `boot` |
+| (거절) | 꺼진 채 움직임 명령 · 쌓을 자리(4 개) 넘침 · 모르는 명령·범위 밖 | `blocked,off` · `error,busy` · `error,bad` |
+
+- 레버 각(`config.h`, 2026-11-16 실물에서 맞춤): 쉼 100° · 장전 30° · 발사 125°. 장전은 300°/s 로 가서 1.0 s 버티고 150°/s 로 돌아와 0.3 s 쉼(≈ 2.0 s), 발사 ≈ 0.45 s, 장전+발사 ≈ 2.4 s (`test/run.sh` 의 호스트 시험이 잼).
+- 서보는 20 ms 마다 한 걸음씩 움직여 **센서 읽기를 막지 않는다**. 움직이는 동안 온 명령은 4 개까지 쌓았다가 차례로.
+- 응답은 펌웨어가 명령을 끝냈다는 뜻이다. 레버·공의 실제 움직임을 잰 것이 아니다.
+- **포트를 열 때 칩이 다시 켜진다**(COM 포트의 DTR/RTS 자동 리셋) → `$LA,boot`, 레버 꺼짐. 그 순간 핀이 잠깐 떠 서보가 튈 수 있다 — 서보 6 V 를 켜기 전에 포트를 열거나, 신호선–GND 에 10 kΩ 풀다운을 단다.
+- ESP32-C3 판은 GPIO 4 가 초음파 Echo 라 발사대를 넣지 않는다(`LF_LAUNCHER 0`).
 
 열화상 줄이 3 KB 쯤이라 115200 으로는 모자라서 USB 속도를 921600 으로 했다(`config.h kBaud`, 다리 `esp32_bridge.yaml baud` 와 같게). 모듈 프레임(열화상 1544 B·레이더 30 B) 해석은 `include/sensor_frames.h`.
 

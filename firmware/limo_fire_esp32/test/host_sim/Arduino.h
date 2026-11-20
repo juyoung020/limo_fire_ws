@@ -1,4 +1,5 @@
-// 호스트(리눅스) 시험용 최소 Arduino 대체 헤더 — 펌웨어 src/main.cpp 를 고치지 않고 PC 에서 돌리기 위함.
+// 호스트(리눅스) 시험용 최소 Arduino 대체 헤더 — 펌웨어 src/main.cpp(센서 + 발사대)를 고치지 않고 PC 에서 돌리기 위함.
+// 센서 UART 는 비어 있고(열화상·레이더 줄 없음) 초음파는 늘 메아리 없음(0) — 발사대 명령·응답·PWM 과 줄 섞임만 본다.
 // 실물 보드·서보 동작을 증명하지 않는다. 시리얼 프로토콜·타이밍·PWM 명령값만 확인한다.
 #pragma once
 #include <cctype>
@@ -11,6 +12,8 @@
 
 #define ESP_ARDUINO_VERSION_MAJOR 3
 #define OUTPUT 1
+#define INPUT 0
+#define SERIAL_8N1 0
 #define LOW 0
 #define HIGH 1
 #define constrain(x, lo, hi) ((x) < (lo) ? (lo) : ((x) > (hi) ? (hi) : (x)))
@@ -48,6 +51,7 @@ class Stream {
   virtual int read() = 0;
   virtual void write_raw(const char* data, size_t n) = 0;
   void begin(unsigned long) {}
+  size_t write(const uint8_t* d, size_t n) { write_raw(reinterpret_cast<const char*>(d), n); return n; }
   void print(const char* s) { write_raw(s, std::strlen(s)); }
   void println(const char* s) { print(s); write_raw("\r\n", 2); }
   void println(const String& s) { println(s.c_str()); }
@@ -62,10 +66,23 @@ class Stream {
   }
 };
 
+// 센서 UART(열화상·레이더): 아무것도 안 들어온다
+class HardwareSerial : public Stream {
+ public:
+  int available() override { return 0; }
+  int read() override { return -1; }
+  void write_raw(const char*, size_t) override {}
+  void setRxBufferSize(size_t) {}
+  void begin(unsigned long, int, int, int) {}
+};
+
 // host_main.cpp 가 정의한다.
 extern Stream& Serial;
-extern Stream& Serial0;
+extern HardwareSerial Serial1, Serial2;
+uint32_t millis();
 void delay(unsigned long ms);
+inline void delayMicroseconds(unsigned) {}
+inline unsigned long pulseIn(int, int, unsigned long) { return 0; }
 void pinMode(int pin, int mode);
 void digitalWrite(int pin, int value);
 bool ledcAttach(int pin, int freq, int resolution);

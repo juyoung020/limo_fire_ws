@@ -3,7 +3,7 @@
 <package format="3">
   <name>limo_fire_esp32_bridge</name>
   <version>0.1.0</version>
-  <description>ESP32 USB 시리얼 ↔ ROS (초음파 HC-SR04 × 2 → sensor_msgs/Range, 열화상 → Image, 레이더 → PoseArray). 펌웨어는 firmware/limo_fire_esp32</description>
+  <description>ESP32 USB 시리얼 ↔ ROS: 초음파 HC-SR04 × 2 → sensor_msgs/Range, 열화상 → Image·Temperature, 레이더 → PoseArray, 탁구공 발사대 레버 → 액션 Launch·서비스 SetBool·상태, 건강 → /diagnostics. 펌웨어는 firmware/limo_fire_esp32</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">juyoung020</maintainer>
   <license>MIT</license>
 
@@ -12,6 +12,11 @@
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>rclcpp_action</depend>
+  <depend>diagnostic_updater</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>limo_fire_msgs</depend>
   <test_depend>ament_cmake_gtest</test_depend>
 
   <export>

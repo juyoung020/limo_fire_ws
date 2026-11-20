@@ -1,0 +1,13 @@
+# 탁구공 발사대 레버 한 동작 — limo_fire_esp32_bridge 가 /launcher/launch 로 받는다 (펌웨어 firmware/limo_fire_esp32/include/launcher.h).
+# 레버가 꺼져 있으면 다리가 먼저 켠다. 취소하면 다리가 펌웨어에 x(레버 끔, 움직이던 것도 바로 멈춤)를 보낸다.
+# 끝남은 펌웨어가 명령을 마쳤다는 응답이다 — 레버·공의 실제 움직임을 잰 것이 아니다.
+uint8 COCK=1    # 장전 (이미 장전됐으면 거절)
+uint8 FIRE=2    # 발사 (장전 응답을 받은 적이 없으면 거절)
+uint8 SHOT=3    # 장전 + 발사 (이미 장전됐으면 거절)
+uint8 mode
+---
+bool success
+string message  # 사람이 읽는 한글 한 줄 (거절·고장 까닭 포함)
+bool cocked     # 끝난 뒤 다리가 장전돼 있다고 보는지 (펌웨어 응답 기준)
+---
+string phase    # enabling · cocking · firing

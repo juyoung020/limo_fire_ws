@@ -1,6 +1,6 @@
-// 발사기 펌웨어(src/main.cpp)를 수정 없이 리눅스에서 실행해 가상 시리얼(pty)에 연결한다.
-// ROS pitch_serial_bridge 와 실제 펌웨어 명령 처리·서보 속도 제한 타이밍을 맞춰 보는 시험용이다.
-// 빌드: g++ -std=c++17 -O1 -I. host_main.cpp -o launcher_host_sim -lutil
+// ESP32 펌웨어(src/main.cpp, 센서 + 발사대)를 수정 없이 리눅스에서 실행해 가상 시리얼(pty)에 연결한다.
+// ROS 발사 다리와 실제 펌웨어 명령 처리·서보 속도 제한 타이밍을 맞춰 보는 시험용이다. 초음파 줄($US·$HB)도 실물처럼 섞여 나온다.
+// 빌드: g++ -std=c++17 -O1 -I. -I../../include host_main.cpp -o launcher_host_sim -lutil   (test/run.sh 가 함께 빌드)
 // 실행: ./launcher_host_sim <pty 경로를 적을 파일>   (PWM 명령은 표준 출력에 한 줄씩)
 #include "Arduino.h"
 
@@ -48,21 +48,13 @@ class PtyStream : public Stream {
   bool has_ = false;
 };
 
-class NullStream : public Stream {
- public:
-  int available() override { return 0; }
-  int read() override { return -1; }
-  void write_raw(const char*, size_t) override {}
-};
-
 int g_master = -1;
 volatile std::sig_atomic_t g_stop = 0;
-NullStream g_null;
 }  // namespace
 
 Stream& serial_ref();
 Stream& Serial = serial_ref();
-Stream& Serial0 = g_null;
+HardwareSerial Serial1, Serial2;
 Stream& serial_ref() {
   static PtyStream* s = nullptr;
   if (!s) {
@@ -82,6 +74,7 @@ Stream& serial_ref() {
   return *s;
 }
 
+uint32_t millis() { return static_cast<uint32_t>(now_s() * 1000.0); }
 void delay(unsigned long ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 void pinMode(int, int) {}
 void digitalWrite(int pin, int value) { std::printf("%.3f gpio %d %s\n", now_s(), pin, value ? "HIGH" : "LOW"); std::fflush(stdout); }
@@ -111,7 +104,7 @@ int main(int argc, char** argv) {
   }
   std::printf("pty %s\n", name);
   std::fflush(stdout);
-  // 실제 보드처럼 부팅 배너는 포트가 열리기 전에 나갈 수 있다. 브리지는 ? 로 식별해야 한다.
+  // 실제 보드처럼 부팅 배너는 포트가 열리기 전에 나갈 수 있다. 다리는 ? 로 식별해야 한다.
   setup();
   while (!g_stop) {
     loop();

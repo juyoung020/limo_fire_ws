@@ -151,7 +151,7 @@ LIMO 지붕 나사 구멍에 고정하는 3D 출력(PLA) 발사대. 서보 두 �
 
 펌웨어 값: 장전 +67.3°, 장전 뒤 1.0 s 대기, 발사 -24°. 설계·검증 문서는 [`hardware/modeling/탁구공발사대/v5/설계_v5.md`](hardware/modeling/탁구공발사대/v5/설계_v5.md).
 
-ESP32-S3 GPIO4 레버·GPIO5 상하 모터를 쓰는 실물 시험용 ROS 경로는 [탐지·접근·조준 패키지](src/limo_fire/limo_fire_hardware/README.md)와 [조준 뒤 장전·발사 및 별도 터미널 실행법](src/limo_fire/limo_fire_hardware/REAL_FIRE_TEST.md)에 있다. 자동 발사는 기본으로 꺼져 있다. 가상 Nav2·시리얼 시험은 통과했지만 이 연속 경로에서 실물 공 발사·명중은 아직 검증하지 않았다. 기존 물 노즐 행동 트리와는 별도 시험 경로다.
+발사대는 ESP32-S3 GPIO4 레버 서보 하나만 움직인다(각도 서보는 떼고 발사대 각을 기구로 15° 고정, 2026-11-20). 센서와 같은 펌웨어·같은 USB 포트이고, ROS 쪽은 [ESP32 다리](src/limo_fire/limo_fire_esp32_bridge/README.md)가 장전·발사 액션 `/launcher/launch`·레버 켜기 `/launcher/enable`·상태 `/launcher/state` 를 낸다. 탐지·접근·좌우 조준과 터미널은 [limo_fire_hardware](src/limo_fire/limo_fire_hardware/README.md), 실행 순서는 [REAL_FIRE_TEST.md](src/limo_fire/limo_fire_hardware/REAL_FIRE_TEST.md). 자동 발사는 기본으로 꺼져 있다. 펌웨어 원본을 PC 가상 시리얼로 돌린 시험은 통과했지만 실물 공 발사·명중은 아직 검증하지 않았다. 기존 물 노즐 행동 트리와는 별도 시험 경로다.
 
 ## 폴더
 

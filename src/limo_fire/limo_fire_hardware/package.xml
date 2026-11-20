@@ -1,27 +1,32 @@
 <?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>limo_fire_hardware</name>
-  <version>0.1.0</version>
-  <description>Real LIMO standoff approach, body yaw alignment and single-axis launcher pitch.</description>
+  <version>0.2.0</version>
+  <description>실물 LIMO 탁구공 발사대: 불 관측 전달, 정지 거리 접근·차체 좌우 정렬·(선택) 한 발, 사람이 쓰는 발사대 터미널. 발사대 각은 기구로 15° 고정. 시리얼은 limo_fire_esp32_bridge 가 연다</description>
   <maintainer email="151780134+juyoung020@users.noreply.github.com">Robot programming team</maintainer>
   <license>Apache-2.0</license>
-  <buildtool_depend>ament_python</buildtool_depend>
-  <exec_depend>rclpy</exec_depend>
-  <exec_depend>action_msgs</exec_depend>
-  <exec_depend>rcl_interfaces</exec_depend>
-  <exec_depend>limo_fire_msgs</exec_depend>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>limo_fire_msgs</depend>
+  <depend>limo_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <exec_depend>limo_fire_esp32_bridge</exec_depend>
   <exec_depend>limo_fire_perception</exec_depend>
-  <exec_depend>limo_msgs</exec_depend>
-  <exec_depend>nav2_msgs</exec_depend>
-  <exec_depend>nav_msgs</exec_depend>
-  <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>vision_msgs</exec_depend>
-  <exec_depend>std_msgs</exec_depend>
-  <exec_depend>std_srvs</exec_depend>
-  <exec_depend>tf2_ros</exec_depend>
-  <exec_depend>launch_ros</exec_depend>
-  <exec_depend>ament_index_python</exec_depend>
-  <exec_depend>python3-serial</exec_depend>
-  <export><build_type>ament_python</build_type></export>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>limo_fire_esp32_bridge</test_depend>
+  <test_depend>ament_index_cpp</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
 </package>

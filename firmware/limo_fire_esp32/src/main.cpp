@@ -1,8 +1,11 @@
-// LIMO 화재 대응 ESP32 펌웨어 — 초음파 HC-SR04 × 2 (연기 모드 위치 추정·장애물) · 열화상 GY-MCU90640 · 레이더 HLK-LD2450 (docs/wiring.md).
+// LIMO 화재 대응 ESP32 펌웨어 — 초음파 HC-SR04 × 2 (연기 모드 위치 추정·장애물) · 열화상 GY-MCU90640 · 레이더 HLK-LD2450 · 탁구공 발사대 레버 서보 (docs/wiring.md, include/launcher.h).
 // 하나씩 차례로 트리거(10 µs 이상 HIGH, 데이터시트) → Echo HIGH 길이 = 왕복 시간 → 거리. 결과를 USB 시리얼 한 줄씩 (include/protocol.h).
 #include <Arduino.h>
 
 #include "config.h"
+#if LF_LAUNCHER
+#include "launcher.h"
+#endif
 #include "protocol.h"
 #include "sensor_frames.h"
 
@@ -59,6 +62,58 @@ uint32_t measure(uint8_t i) {
   return (mm < kMinMm || mm > kMaxMm) ? 0 : mm;
 }
 
+#if LF_LAUNCHER
+// 레버 서보 PWM: 50 Hz(20 ms), 14 비트 (Arduino-ESP32 2.x 는 채널 0 을 직접 고른다)
+constexpr int kPwmFreq = 50, kPwmRes = 14;
+bool pwm_attach(int pin) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  return ledcAttach(pin, kPwmFreq, kPwmRes);
+#else
+  ledcSetup(0, kPwmFreq, kPwmRes);
+  ledcAttachPin(pin, 0);
+  return true;
+#endif
+}
+void pwm_detach_low(int pin) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcDetach(pin);
+#else
+  ledcDetachPin(pin);
+#endif
+  pinMode(pin, OUTPUT);
+  digitalWrite(pin, LOW);
+}
+void pwm_write_us(int pin, int us) {
+  const uint32_t duty = static_cast<uint32_t>(static_cast<uint64_t>(us) * ((1u << kPwmRes) - 1) / 20000u);
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(pin, duty);
+#else
+  (void)pin;
+  ledcWrite(0, duty);
+#endif
+}
+launcher::Launcher launch({pwm_attach, pwm_detach_low, pwm_write_us, send});
+char cmd_buf[32];
+size_t cmd_len = 0;
+bool cmd_overflow = false;
+
+// 호스트 → ESP32 명령 줄 (발사대). 너무 긴 줄은 통째로 버린다
+void read_commands() {
+  while (Serial.available()) {
+    const char ch = static_cast<char>(Serial.read());
+    if (ch == '\n' || ch == '\r') {
+      if (cmd_len && !cmd_overflow) { cmd_buf[cmd_len] = '\0'; launch.line(cmd_buf); }
+      cmd_len = 0;
+      cmd_overflow = false;
+    } else if (cmd_len + 1 < sizeof cmd_buf) {
+      cmd_buf[cmd_len++] = ch;
+    } else {
+      cmd_overflow = true;
+    }
+  }
+}
+#endif
+
 }  // namespace
 
 void setup() {
@@ -86,10 +141,17 @@ void setup() {
   Serial2.begin(kRadarBaud, SERIAL_8N1, kRadarRxPin, kRadarTxPin);
 #endif
   next_slot_ms = next_hb_ms = millis();
+#if LF_LAUNCHER
+  launch.boot();   // $LA,boot — 다리가 칩이 다시 켜진 것(레버 꺼짐)을 안다
+#endif
 }
 
 void loop() {
   const uint32_t now = millis();
+#if LF_LAUNCHER
+  read_commands();
+  launch.update(now);
+#endif
 #if LF_THERMAL
   while (Serial1.available()) if (thermal.push(Serial1.read())) send_thermal(now);
 #endif

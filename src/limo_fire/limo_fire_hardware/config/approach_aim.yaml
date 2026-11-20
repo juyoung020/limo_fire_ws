@@ -1,26 +1,42 @@
-launcher_approach_aim:
+# 접근·좌우 조준 (limo_fire_hardware approach_aim). 실물 시험은 이 파일을 복사해 고친 판을 config:= 로 준다.
+# 저장소 기본값은 안전 쪽: 움직임·자동 발사 꺼짐, 장착값 미확정.
+/launcher/approach_aim:
   ros__parameters:
     motion_enabled: false
-    auto_fire_enabled: false
-    # If false, automatic fire needs a fresh measured joint-state pitch feedback.
-    # If true, firmware pitch command acknowledgement is enough; no angle is measured.
-    fire_on_pitch_ack: false
-    # Set true in the robot's run config once the launcher mount in limo_fire_description
-    # limo_fire.urdf.xacro (launcher_xyz, yaw) is accepted. 2026-11-20 decision: pivot height measured,
-    # x, y and yaw taken from CAD instead of tape measurement. Repository default stays false.
+    auto_fire_enabled: false        # true 면 조준 뒤 /launcher/launch SHOT 한 번 (motion_enabled 필요, 다리 launcher.firing_enabled 도 켜야 함)
+    # 장착값: TF base_link → launcher_pivot (limo_fire_description limo_fire.urdf.xacro launcher_xyz·yaw). 2026-11-20 결정:
+    # 회전축 높이 실측(바닥 21.0 cm), x·y·yaw 는 CAD 값. 실물 설정 파일에서 true 로, 저장소 기본은 false
     mount_calibrated: false
-    # Pitch-pivot position and yaw come from TF base_link -> launcher_frame (robot URDF), not from here.
     launcher_frame: launcher_pivot
     max_launcher_tilt_deg: 1.0
-    # Example positioning distance. Calibrate against the actual launcher before use.
+    # 발사대 각: 각도 서보를 뗐고 기구로 15° 고정(2026-11-20). 계산에는 안 쓰고 상태 글에만 보인다 — 거리로 맞춘다
+    launcher_pitch_deg: 15.0
+    # 정지 거리 = 회전축에서 표적까지 수평 거리. 15° 고정이라 이 거리로 탄착이 정해진다 — 잠정(예시값), 실물 사거리 표로 정할 것
+    # 참고(계산만, 잠정): 공기저항 없는 탄도로 3.9 m/s·15°·같은 높이면 v²·sin(2θ)/g ≈ 0.78 m. 실제 공은 공기저항·높이 차로 다르다
     desired_distance_m: 1.2
     distance_tolerance_m: 0.15
-    pitch_min_deg: 5.0
-    pitch_max_deg: 30.0
+    candidate_offsets_deg: [0.0, 15.0, -15.0, 30.0, -30.0, 60.0, -60.0]
+    robot_radius_m: 0.22
+    footprint_margin_m: 0.03
+    blocked_cost: 65
+    sight_target_margin_m: 0.15
+    target_freshness_s: 1.0
+    target_shift_limit_m: 0.25
+    min_confidence: 0.5
+    sensor_freshness_s: 0.5
+    costmap_freshness_s: 3.0
+    tf_freshness_s: 0.5
+    max_base_tilt_deg: 5.0
+    plan_timeout_s: 5.0
+    navigation_timeout_s: 60.0
+    reacquire_timeout_s: 8.0
+    stop_dwell_s: 0.5
+    stop_linear_mps: 0.01
+    stop_angular_rps: 0.02
     yaw_tolerance_deg: 3.0
-    # nav2: send a second orientation goal. yaw_rate: rotate in place using /cmd_vel.
+    # nav2: 두 번째 자세 목표로 정렬. yaw_rate: /cmd_vel angular.z 로 제자리 회전
     yaw_alignment_mode: nav2
-    # Set true only after /limo_status.motion_mode confirms diff (0) or mecanum (2).
+    # /limo_status.motion_mode 가 차동(0)·메카넘(2) 인지 확인한 뒤에만 true
     yaw_rate_drive_mode_verified: false
     yaw_velocity_topic: /cmd_vel
     yaw_rate_gain: 1.2
@@ -28,31 +44,23 @@ launcher_approach_aim:
     yaw_rate_max_rps: 0.25
     yaw_rate_timeout_s: 8.0
     yaw_rate_max_error_deg: 45.0
-    # User-confirmed physical launch speed, 2026-11-18 (approximately 14.04 km/h).
-    # Slight sideways curvature was reported; its correction is not yet measured.
-    aiming_model: ballistic
-    measured_launch_speed_mps: 3.9
-    candidate_offsets_deg: [0.0, 15.0, -15.0, 30.0, -30.0, 60.0, -60.0]
+    shot_timeout_s: 12.0            # 발사대 액션 결과까지 (다리 자체 기한 8 s 보다 길게)
+    fire_topic: /fire/observations
     odom_topic: /odometry/filtered
     costmap_topic: /global_costmap/costmap
-    fire_topic: /fire/observations
-    robot_radius_m: 0.22
-    footprint_margin_m: 0.03
-    # ESP32/Uno firmware echoes commands. Actual encoder feedback is optional.
-    require_pitch_feedback: false
-    pitch_feedback_topic: /launcher/joint_states
-    pitch_joint: launcher_pitch_joint
+    limo_status_topic: /limo_status
+    launch_action: /launcher/launch
+    launcher_state_topic: /launcher/state
+    navigate_action: /navigate_to_pose
+    planner_action: /compute_path_to_pose
+    planner_id: GridBased
 
-pitch_serial_bridge:
+# 물체 지도 → /fire/observations
+fire_observation_bridge:
   ros__parameters:
-    enabled: false
-    firing_enabled: false
-    shot_timeout_s: 8.0
-    # Use the verified /dev/serial/by-id/... device, not a guessed ttyUSB number.
-    serial_port: ''
-    baud_rate: 115200
-    min_pitch_deg: 5.0
-    max_pitch_deg: 30.0
-    ack_timeout_s: 3.0
-    startup_delay_s: 2.0
-    startup_timeout_s: 8.0
+    objects_topic: /perception/objects
+    fire_topic: /fire/observations
+    target_id: ""                     # 불이 여럿이면 fire-1 처럼 하나
+    min_confidence: 0.5
+    max_seen_age_s: 0.5               # 이 안에 카메라로 다시 본 것만
+    max_message_delay_s: 0.2

@@ -15,7 +15,8 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 │       ├── limo_fire_bringup/       launch(실물·시뮬), config/*.yaml 파라미터
 │       ├── limo_fire_base/          섀시(구동·IMU·리모컨·모터 상태) 시리얼 드라이버 — WeGo limo_base 그대로 + 확장(C++)
 │       ├── limo_fire_msgs/          우리 메시지·서비스·액션
-│       ├── limo_fire_esp32_bridge/  ESP32 ↔ ROS
+│       ├── limo_fire_esp32_bridge/  ESP32 ↔ ROS (센서 + 발사대 레버, 시리얼을 혼자 엶)
+│       ├── limo_fire_hardware/      탁구공 발사대: 불 관측 전달·접근·좌우 조준·발사 터미널(C++)
 │       ├── limo_fire_perception/    불 탐지·크기 추정·소방 시설 인식
 │       ├── limo_fire_people/        레이더 추적·구역 인원
 │       ├── limo_fire_navigation/    Nav2 파라미터·지도·연기 모드
@@ -41,7 +42,7 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 ```
 
 - 패키지는 역할마다 하나, 이름은 `limo_fire_<역할>`. 새 패키지는 위 목록에 맞춰 만들고, 목록에 없는 역할이면 이 목록부터 고친다.
-- 지금 있는 패키지는 description·bringup·base·navigation·perception·sim·esp32_bridge·bt·explore·rviz 다 (explore 는 2026-11-18 rl 에서 이름을 바꿈 — 강화학습을 그만둬서). 나머지는 만들 때 위 이름을 쓴다.
+- 지금 있는 패키지는 description·bringup·base·navigation·perception·sim·esp32_bridge·hardware·bt·explore·rviz 다 (explore 는 2026-11-18 rl 에서 이름을 바꿈 — 강화학습을 그만둬서). 나머지는 만들 때 위 이름을 쓴다.
 - 패키지 안: `include/<패키지명>/`, `src/`, `launch/`, `config/`, `test/` (ROS 2 기본 배치).
 - 실행 파일·파라미터를 바꾸고 싶은 외부 패키지는 고치지 말고 `limo_fire_bringup` 에 우리 판을 만든다. 코드(플러그인)가 필요한 Webots 쪽 우리 판은 `limo_fire_sim`.
 
@@ -65,6 +66,8 @@ limo_fire_ws/                  워크스페이스 루트 (여기서 colcon build
 | 탐사 (`limo_fire_explore`) | `/explore/frontier_explorer` | `/explore/frontier_explorer/{state,status,done,frontiers}`, 서비스 `…/enable` | `frontier_explorer.launch.xml` |
 | 주행 (`limo_fire_navigation`) | `/explore/object_goto` (저장 지도만) | `/explore/goal` `/explore/goal_status` | `navigation.launch.xml` |
 | 인식 (`limo_fire_perception`) | `/perception/object_detector` | `/perception/detections` `/perception/mask` `/perception/detection_image` | `app.launch.xml perception:=true` · `perception.launch.xml`(시뮬) |
+| ESP32 (`limo_fire_esp32_bridge`) | `/esp32_bridge` | `/ultrasonic/*` `/thermal/image` `/thermal/max` `/radar/*` `/diagnostics`, 발사대: 액션 `/launcher/launch`, 서비스 `/launcher/enable`, `/launcher/state` `/launcher/status` `/launcher/joint_states` | `robot.launch.xml esp32:=true` |
+| 발사대 조준 (`limo_fire_hardware`) | `/launcher/approach_aim` · `/fire_observation_bridge` | `/launcher/approach_aim/{state,status}`, 서비스 `…/start` `…/cancel`, `/fire/observations` | `approach_aim.launch.xml` · `real_camera_aim.launch.xml` |
 | 인식 (`limo_fire_perception`) | `/perception/object_map` | `/perception/objects` `/perception/markers` `/perception/summary`, 서비스 `/perception/{clear,save,load}_objects`, 토픽 `/perception/save_objects_to` | `app.launch.xml perception:=true` · `perception.launch.xml`(시뮬) |
 
 옛 이름 → 새 이름 표 (2026-11-18 바꿈):

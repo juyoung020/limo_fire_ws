@@ -1,0 +1,37 @@
+<!-- 카메라 인식·물체 지도 → 불 관측 전달 → 접근·조준. 로봇(robot.launch.xml)·Nav2 는 따로 먼저 켠다. 가짜 표적은 내지 않는다.
+     ros2 launch limo_fire_hardware real_camera_aim.launch.xml [config:=<실측 yaml>] [motion_enabled:=true] [auto_fire_enabled:=true] [target_id:=fire-1] -->
+<launch>
+  <arg name="config" default="$(find-pkg-share limo_fire_hardware)/config/approach_aim.yaml"/>
+  <arg name="motion_enabled" default="false"/>
+  <arg name="auto_fire_enabled" default="false"/>
+  <arg name="yaw_alignment_mode" default="nav2"/>
+  <arg name="yaw_rate_drive_mode_verified" default="false"/>
+  <arg name="target_id" default="" description="불이 여럿이면 하나 (예: fire-1)"/>
+  <arg name="use_sim_time" default="false"/>
+
+  <!-- 인식 launch 의 config(YOLO 설정 이름)가 이 launch 의 config(조준 yaml)를 덮지 않게 범위를 막는다 -->
+  <group scoped="true">
+    <include file="$(find-pkg-share limo_fire_perception)/launch/perception.launch.xml">
+      <arg name="config" value="yolo_fire.yaml"/>
+      <arg name="mapper" value="true"/>
+      <arg name="rviz" value="false"/>
+      <arg name="objects_file" value=""/>
+      <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    </include>
+  </group>
+
+  <node pkg="limo_fire_hardware" exec="fire_observation_bridge" name="fire_observation_bridge" output="screen">
+    <param from="$(var config)"/>
+    <param name="target_id" value="$(var target_id)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+
+  <include file="$(find-pkg-share limo_fire_hardware)/launch/approach_aim.launch.xml">
+    <arg name="config" value="$(var config)"/>
+    <arg name="motion_enabled" value="$(var motion_enabled)"/>
+    <arg name="auto_fire_enabled" value="$(var auto_fire_enabled)"/>
+    <arg name="yaw_alignment_mode" value="$(var yaw_alignment_mode)"/>
+    <arg name="yaw_rate_drive_mode_verified" value="$(var yaw_rate_drive_mode_verified)"/>
+    <arg name="use_sim_time" value="$(var use_sim_time)"/>
+  </include>
+</launch>

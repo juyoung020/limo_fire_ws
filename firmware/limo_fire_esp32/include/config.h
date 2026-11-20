@@ -41,16 +41,26 @@ constexpr uint32_t kThermalBaud = 115200;
 constexpr int kRadarRxPin = 17, kRadarTxPin = 18;
 constexpr uint32_t kRadarBaud = 256000;
 
-// 발사대 서보 신호 핀 (docs/wiring.md: 레버 DS3218 GPIO 4 · 각도 MG996R GPIO 5). 이 펌웨어는 아직 서보를 움직이지 않는다 —
-// 핀을 그냥 두면 떠 있어 잡음이 서보 펄스로 읽혀 서보가 제멋대로 돈다(2026-11-20 실물). 부팅하자마자 LOW 로 잡아 펄스 없음(서보 힘 뺌).
-// 발사대 시험 펌웨어(launcher_test)의 꺼짐 상태(disableAxis)와 같다. C3 는 GPIO 4 가 초음파 Echo 라 안 건드린다.
+// 발사대 (include/launcher.h): 레버 서보(GPIO 4)만 움직인다. 각도 서보(GPIO 5)는 쓰지 않는다 — 발사대 각은 기구로 15° 고정(2026-11-20).
+// 두 핀 모두 부팅하자마자 LOW 로 잡는다: 떠 있으면 잡음이 서보 펄스로 읽혀 서보가 제멋대로 돈다(2026-11-20 실물). GPIO 5 는 끝까지 LOW.
+// C3 는 GPIO 4 가 초음파 Echo 라 발사대를 끈다.
 #if defined(CONFIG_IDF_TARGET_ESP32C3)
+#define LF_LAUNCHER 0
 constexpr uint8_t kNumServoHold = 0;
 constexpr uint8_t kServoHoldPin[1] = {0};
 #else
+#define LF_LAUNCHER 1
 constexpr uint8_t kNumServoHold = 2;
 constexpr uint8_t kServoHoldPin[kNumServoHold] = {4, 5};
 #endif
+constexpr int kLeverPin = 4;
+// 레버 서보 각(도, 500~2500 us = 0~180°). 2026-11-16 실물에서 맞춤: 쉼 = 레버가 핀 앞에서 비킨 자리, 장전 = 쉼에서 70° (핀이 걸쇠 뒤로),
+// 발사 = 반대로 25° (손가락이 걸쇠 꼬리를 누름). 설계값 장전 +67° · 발사 −24° (hardware/modeling/탁구공발사대/v5/설계_v5.md)
+constexpr float kLeverRest = 100.0f, kLeverCock = 30.0f, kLeverFire = 125.0f, kLeverTravelDeg = 180.0f;
+// 속도: 장전 쪽은 서보 최대에 가깝게, 복귀는 200°/s 이하(빠르면 공이 차여 굴러 나감 — 설계_v5.md 시뮬)
+constexpr float kLeverCockDegPerS = 300.0f, kLeverReturnDegPerS = 150.0f, kLeverManualDegPerS = 60.0f;
+// 장전 끝에서 버팀 1.0 s(설계_v5.md) · 복귀 뒤 공이 자리 잡는 0.3 s · 발사 끝에서 0.2 s
+constexpr uint32_t kCockHoldMs = 1000, kCockSettleMs = 300, kFireHoldMs = 200;
 
 // USB 시리얼 속도. 열화상 줄(약 3 KB × 4 Hz)이 있어 115200 으로는 모자라다(약 11 KB/s) — 브리지 esp32_bridge.yaml baud 와 같아야 한다
 constexpr uint32_t kBaud = 921600;

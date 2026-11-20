@@ -1,0 +1,19 @@
+<!-- 접근·좌우 조준·(선택) 한 발 노드 하나 (/launcher/approach_aim). 로봇(robot.launch.xml esp32:=true)·Nav2·표적은 따로 켠다.
+     ros2 launch limo_fire_hardware approach_aim.launch.xml [config:=<실측 yaml>] [motion_enabled:=true] [auto_fire_enabled:=true]
+     발사대 시리얼은 ESP32 다리가 연다 — 발사를 허용하려면 robot.launch.xml launcher_firing:=true 도 줘야 한다 -->
+<launch>
+  <arg name="config" default="$(find-pkg-share limo_fire_hardware)/config/approach_aim.yaml"/>
+  <arg name="motion_enabled" default="false" description="true: Nav2 로 실제 이동·회전"/>
+  <arg name="auto_fire_enabled" default="false" description="true: 조준 뒤 /launcher/launch SHOT 한 번 (motion_enabled 필요)"/>
+  <arg name="yaw_alignment_mode" default="nav2" description="nav2 | yaw_rate (제자리 /cmd_vel)"/>
+  <arg name="yaw_rate_drive_mode_verified" default="false" description="/limo_status.motion_mode 0·2 를 확인했을 때만 true"/>
+  <arg name="use_sim_time" default="false"/>
+  <node pkg="limo_fire_hardware" exec="approach_aim" name="approach_aim" namespace="launcher" output="screen">
+    <param from="$(var config)"/>
+    <param name="motion_enabled" value="$(var motion_enabled)"/>
+    <param name="auto_fire_enabled" value="$(var auto_fire_enabled)"/>
+    <param name="yaw_alignment_mode" value="$(var yaw_alignment_mode)"/>
+    <param name="yaw_rate_drive_mode_verified" value="$(var yaw_rate_drive_mode_verified)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+</launch>

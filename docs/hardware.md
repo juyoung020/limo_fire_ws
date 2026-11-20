@@ -18,7 +18,7 @@
 | 초음파 | HC-SR04 × 2 (앞 범퍼 아래 좌우 ±20°·위 5°, [mounts](../hardware/mounts/README.md)) | ESP32 GPIO | `/ultrasonic/front_left·front_right` (`sensor_msgs/Range`) | 키트 보유 · 펌웨어·다리 준비(실물 시험 전), 시뮬엔 있음 |
 | 노즐 팬·틸트 | MG996R(팬) + DS3218 PRO 20kg(틸트) | ESP32 PWM | 예정 `/joint_states` | 부품 대기 |
 | 펌프 | DP-521 12V 다이어프램 + D4184 MOSFET | ESP32 GPIO | 예정 `std_srvs/SetBool` | 부품 대기 |
-| 제어 보드 | ESP32-S3-N16R8 개발 보드 · ESP32-C3 SuperMini | USB 시리얼 115200 (`/dev/esp32`) | `limo_fire_esp32_bridge` (펌웨어 `firmware/limo_fire_esp32`) | 보유(11-11). 펌웨어 초음파 핀은 원래 ESP32 기준이라 이 보드들에 맞춰야 함 |
+| 제어 보드 | ESP32-S3-N16R8 개발 보드 · ESP32-C3 SuperMini | USB 시리얼 921600 (`/dev/esp32`, 센서·발사대 한 포트) | `limo_fire_esp32_bridge` (펌웨어 `firmware/limo_fire_esp32`) | 보유(11-11). 펌웨어 초음파 핀은 원래 ESP32 기준이라 이 보드들에 맞춰야 함 |
 
 ## LIMO Pro 기본 모듈 (실측)
 
