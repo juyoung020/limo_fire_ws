@@ -521,6 +521,61 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /perception/detection_image
       Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/Range
+          Color: 255; 170; 0
+          Enabled: true
+          Name: 초음파 왼쪽
+          Queue Size: 10
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /ultrasonic/front_left
+          Value: true
+        - Class: rviz_default_plugins/Range
+          Color: 255; 170; 0
+          Enabled: true
+          Name: 초음파 오른쪽
+          Queue Size: 10
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /ultrasonic/front_right
+          Value: true
+        - Class: rviz_default_plugins/PoseArray
+          Arrow Length: 0.3
+          Color: 0; 200; 255
+          Enabled: true
+          Name: 레이더 표적
+          Shape: Arrow (3D)
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /radar/targets
+          Value: true
+        - Class: rviz_default_plugins/Image
+          Enabled: true
+          Max Value: 40
+          Median window: 5
+          Min Value: 15
+          Name: 열화상 (15~40 °C)
+          Normalize Range: false
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /thermal/image
+          Value: true
+      Enabled: true
+      Name: 센서 (ESP32)
   Enabled: true
   Global Options:
     Background Color: 24; 26; 31

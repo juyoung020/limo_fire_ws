@@ -128,6 +128,16 @@ class SmokeModeNode : public rclcpp::Node {
     obs_max_range_ = declare_parameter<double>("sonar_obstacles.max_range", 1.5);
     obs_depth_ = declare_parameter<double>("sonar_obstacles.depth", 0.3);
     obs_min_hits_ = declare_parameter<int>("sonar_obstacles.min_hits", 2);
+    // 빈 곳 지우기: 메아리 거리 r 이면 원뿔 안 r − carve_margin 까지는 비어 있다 → 그 칸의 찍힌 수를 줄이고, min_hits 밑이면 장애물에서 뺀다.
+    // 없으면 원뿔 폭 때문에 옆으로 밀려 찍힌 가짜 장애물이 연기 모드 끝까지 남아 통로를 막았다(2026-11-20, 0.7 m/s 상자 시험 "no valid path")
+    obs_carve_margin_ = declare_parameter<double>("sonar_obstacles.carve_margin", 0.1);
+    // 이보다 가까운 메아리는 지도에 있는 벽이어도 찍는다: 연기 속 위치가 틀어지면(실물 바퀴 + IMU) 지도 벽이 실제와 어긋나
+    // 가상 스캔만 믿고 실제 벽에 닿았다(2026-11-20 실물). 가까이 잰 것은 위치 오차와 상관없이 로봇에 대해 맞다
+    obs_always_within_ = declare_parameter<double>("sonar_obstacles.always_within", 0.5);
+    // 메아리 시각의 TF 가 아직 없을 때 가장 최근 TF 를 쓸 수 있는 시각 차 (실물: 다리가 받은 시각이 EKF TF 보다 앞섬)
+    echo_tf_tolerance_ = declare_parameter<double>("echo_tf_tolerance", 0.3);
+    if (obs_carve_margin_ < 0.0 || echo_tf_tolerance_ < 0.0)
+      throw std::invalid_argument("smoke_mode: sonar_obstacles.carve_margin·echo_tf_tolerance 는 0 이상");
     if (obs_min_gap_ <= 0.0 || obs_max_range_ <= 0.0 || obs_depth_ < 0.0 || obs_min_hits_ < 1 || obs_min_hits_ > 255)
       throw std::invalid_argument("smoke_mode: sonar_obstacles.* 파라미터 확인");
     localization_ = declare_parameter<std::string>("smoke_localization", "hold");
@@ -348,10 +358,22 @@ class SmokeModeNode : public rclcpp::Node {
     geometry_msgs::msg::TransformStamped ts;
     try {
       ts = tf_buffer_->lookupTransform(odom_frame_, m->header.frame_id, t, rclcpp::Duration::from_seconds(0.05));
-    } catch (const tf2::TransformException& e) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파: 그 시각 odom → %s TF 없음, 버림: %s",
-                           m->header.frame_id.c_str(), e.what());
-      return;
+    } catch (const tf2::TransformException&) {
+      // 실물: ESP32 다리가 받은 시각으로 찍어 TF(EKF)보다 조금 앞설 수 있다 → 그 시각 TF 가 아직 없으면 가장 최근 TF 를,
+      // 둘의 차가 echo_tf_tolerance 안일 때만 쓴다 (2026-11-20 실물에서 메아리를 전부 버려 벽을 못 봤다)
+      try {
+        ts = tf_buffer_->lookupTransform(odom_frame_, m->header.frame_id, tf2::TimePointZero);
+        const double lag = std::fabs((t - rclcpp::Time(ts.header.stamp, get_clock()->get_clock_type())).seconds());
+        if (lag > echo_tf_tolerance_) {
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파: odom → %s TF 가 메아리와 %.2f s 차, 버림",
+                               m->header.frame_id.c_str(), lag);
+          return;
+        }
+      } catch (const tf2::TransformException& e) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파: odom → %s TF 없음, 버림: %s",
+                             m->header.frame_id.c_str(), e.what());
+        return;
+      }
     }
     tf2::Transform os;
     tf2::fromMsg(ts.transform, os);
@@ -370,7 +392,7 @@ class SmokeModeNode : public rclcpp::Node {
       const double th = syaw + (wp_.rays == 1 ? 0.0 : -0.5 * fov + fov * k / (wp_.rays - 1));
       r_exp = std::min(r_exp, cast(*grid_, sx, sy, th, 0.0, r + obs_min_gap_ + 0.1, std::numeric_limits<double>::infinity()));
     }
-    if (r_exp - r <= obs_min_gap_) return;
+    if (r_exp - r <= obs_min_gap_ && r > obs_always_within_) return;
     const double ux = std::cos(syaw), uy = std::sin(syaw), step = 0.5 * grid_->resolution;
     long last = -1;
     for (double d = 0.0; d <= obs_depth_ + 1e-9; d += step) {
@@ -652,6 +674,8 @@ class SmokeModeNode : public rclcpp::Node {
   double obs_min_gap_ = 0.25, obs_max_range_ = 1.5, obs_depth_ = 0.3;
   int obs_min_hits_ = 2;
   double obs_carve_margin_ = 0.1;
+  double echo_tf_tolerance_ = 0.3;
+  double obs_always_within_ = 0.5;
   tf2::Transform last_odom_base_;
   double dist_m_ = 0.0, turn_rad_ = 0.0;
   std::optional<rclcpp::Time> last_bump_;
