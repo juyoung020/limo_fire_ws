@@ -182,8 +182,12 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     if (const char* g = std::getenv("SIM_PATH_FALLBACK")) c.path_fallback = std::atoi(g);
     {
       // 계획 반경 = 충돌 검사 발자국(footprint + 패딩) 외접 반경 + 칸 대각(칸 가운데끼리 거리로 재는 반경 → 발자국 점이 든 칸까지 · 로봇이 칸 안 어디든 — 칸 반 대각 × 2)
+      // 여유 plan_margin (env.yaml action.path.plan_margin, 없으면 칸 대각 — 옛 값). SIM_PLAN_MARGIN 으로 덮음 (앞뒤 비교)
       const float hl = c.half_len + c.path_fp_pad, hw = c.half_wid + c.path_fp_pad;
-      c.path_r_plan = std::sqrt(hl * hl + hw * hw) + c.res * std::sqrt(2.f);
+      float pm = ap["plan_margin"] ? ap["plan_margin"].as<float>() : c.res * std::sqrt(2.f);
+      if (const char* g = std::getenv("SIM_PLAN_MARGIN")) pm = std::stof(g);
+      if (pm < 0.f || pm > 0.2f) throw std::runtime_error(path + ": action.path.plan_margin 은 0 ~ 0.2 m");
+      c.path_r_plan = std::sqrt(hl * hl + hw * hw) + pm;
       c.path_goal_tol = need(need(nav["planner_server"]["ros__parameters"], "GridBased", nav_path), "tolerance", nav_path).as<float>();   // Smac tolerance
       c.path_goal_far = ap["goal_far_tolerance"] ? ap["goal_far_tolerance"].as<float>() : c.path_goal_tol;
       if (c.path_goal_far < c.path_goal_tol || c.path_goal_far > 1.5f) throw std::runtime_error(path + ": goal_far_tolerance 는 tolerance ~ 1.5 m");

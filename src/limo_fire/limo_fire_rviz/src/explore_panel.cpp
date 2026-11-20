@@ -89,7 +89,7 @@ void ExplorePanel::refresh() {
   if (!ready) st = "노드 없음";
   else if (!state_.empty()) st = state_;
   else st = done_ ? "done" : (enabled_ ? "running" : "idle");
-  const char* ko = st == "running" ? "탐사 중" : st == "done" ? "끝 (다시 누르면 처음부터)" : st == "idle" ? "멈춤" : st == "paused" ? "멈춤 (리모컨·닿음 — 상세 보기)" : "서비스를 기다림";
+  const char* ko = st == "running" ? "탐사 중" : st == "done" ? "끝 (다시 누르면 처음부터)" : st == "idle" ? "멈춤" : st == "paused" ? "멈춤 (리모컨·닿음 — 상세 보기)" : st == "navigating" ? "주행 목표로 가는 중 (순찰 — 누르면 목표를 끝내고 탐사)" : "서비스를 기다림";
   state_label_->setText(QString::fromStdString("상태: " + st + " — ") + QString::fromUtf8(ko));
   button_->blockSignals(true);
   button_->setChecked(on);

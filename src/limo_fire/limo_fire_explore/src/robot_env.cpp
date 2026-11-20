@@ -281,6 +281,48 @@ int RobotEnv::prime_map(const int8_t* occ, int w, int h, float res, float ox, fl
   return n;
 }
 
+void RobotEnv::set_wall_ring(const int8_t* occ, int w, int h, float res, float ox, float oy, int occ_thresh, float r) {
+  const sim::EnvCfg& c = b_.cfg;
+  if (r <= 0.f) { wall_ring_.clear(); return; }
+  wall_ring_.assign((size_t)c.size * c.size, 0);
+  const int k = (int)std::ceil(r / c.res);
+  for (int cy = 0; cy < m_.gh; ++cy)
+    for (int cx = 0; cx < m_.gw; ++cx) {
+      const float x = m_.ox + ((float)cx + 0.5f) * c.res, y = m_.oy + ((float)cy + 0.5f) * c.res;
+      const int mx = (int)std::floor((x - ox) / res), my = (int)std::floor((y - oy) / res);
+      if (mx < 0 || my < 0 || mx >= w || my >= h || occ[(size_t)my * w + mx] < occ_thresh) continue;
+      for (int dy = -k; dy <= k; ++dy)
+        for (int dx = -k; dx <= k; ++dx) {
+          const int u = cx + dx, v = cy + dy;
+          if (u < 0 || v < 0 || u >= m_.gw || v >= m_.gh || (float)(dx * dx + dy * dy) * c.res * c.res > r * r) continue;
+          wall_ring_[(size_t)v * c.size + u] = 1;
+        }
+    }
+}
+
+int RobotEnv::mask_cam_wall() {
+  if (cvox_.empty() || wall_ring_.empty()) return 0;
+  int n = 0;
+  for (size_t i = 0; i < cvox_.size(); ++i)
+    if (wall_ring_[i] && cvox_[i]) { cvox_[i] = 0; ++n; }
+  if (n > 0) keep_.valid = false;
+  return n;
+}
+
+int RobotEnv::clear_cam_cells(const float* xy, int n) {
+  if (cvox_.empty()) return 0;
+  const sim::EnvCfg& c = b_.cfg;
+  int k = 0;
+  for (int i = 0; i < n; ++i) {
+    const int cx = (int)std::floor((xy[2 * i] - m_.ox) / c.res), cy = (int)std::floor((xy[2 * i + 1] - m_.oy) / c.res);
+    if (cx < 0 || cy < 0 || cx >= m_.gw || cy >= m_.gh) continue;
+    uint8_t& v = cvox_[(size_t)cy * c.size + cx];
+    if (v) { v = 0; ++k; }
+  }
+  if (k > 0) keep_.valid = false;
+  return k;
+}
+
 void RobotEnv::clear_gaveup() {
   for (int i = 0; i < sim::kRecBl; ++i) {
     e_.p_bl_cell[i] = -1;

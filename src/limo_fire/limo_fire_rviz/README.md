@@ -12,6 +12,7 @@
 | 아래 회색 줄 | `…/status` 한 줄 (목표·프론티어 수·지도 넓이, 끝나면 걸린 시간) |
 
 - 상태는 `/explore/state`(transient local)에서 온다. 옛 고르기(Nav2 프론티어 탐사 · 탐사 RL)는 지웠다 — 탐사는 하나다.
+- 상태 `navigating` (2026-11-20): 탐사 노드가 순찰 주행 목표(`/explore/navigate_to_pose`)로 가는 중 — "주행 목표로 가는 중" 으로 보이고, 버튼을 누르면 목표를 끝내고 탐사를 켠다.
 - 노드는 패널이 띄우지 않는다. `app.launch.xml`(limo_fire_explore)이 띄운다 — 실물 `real.launch.xml`, 시뮬 `sim.launch.xml slam:=true`.
 - 패널이 안 보이면: 메뉴 Panels → Add New Panel → `limo_fire_rviz/ExplorePanel`. 목록에도 없으면 이 패키지를 빌드하고 `source install/setup.bash` 한 터미널에서 RViz 를 띄웠는지 본다.
 

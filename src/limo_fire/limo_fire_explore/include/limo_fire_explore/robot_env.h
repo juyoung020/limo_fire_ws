@@ -99,11 +99,25 @@ class RobotEnv {
   // 저장 지도(/map, nav_msgs/OccupancyGrid 값 −1 · 0~100)를 로봇 지도의 아직 모르는 칸에만 채움: 막힘(≥ occ_thresh) → 막힘 로그 오즈 l_occ,
   // 빔(≤ free_thresh) → 빈 칸 l_free. 라이다가 본 칸은 그대로 (본 것이 지도보다 먼저). 칸 가운데가 들어가는 /map 칸 값으로. 채운 칸 수를 돌려줌
   int prime_map(const int8_t* occ, int w, int h, float res, float ox, float oy, int occ_thresh, int free_thresh, int16_t l_occ, int16_t l_free);
+  // 저장 지도 벽(값 ≥ occ_thresh) 둘레 r m 안 칸 표 (wall_ring) — mask_cam_wall 이 씀. r ≤ 0 이면 표를 지움
+  void set_wall_ring(const int8_t* occ, int w, int h, float res, float ox, float oy, int occ_thresh, float r);
+  // 깊이 카메라 층에서 wall_ring 칸의 표시를 지움 (그 벽은 라이다·저장 지도가 이미 앎 — 자세 흔들림으로 문틈으로 번진 깊이 표시를 걷어냄). 지운 칸 수
+  int mask_cam_wall();
+  // 지도 점(x, y 차례로 n 개)이 든 칸의 깊이 카메라 층 표시를 지움 (바닥이 보인 칸 — 주행 목표 모드). 지운 칸 수
+  int clear_cam_cells(const float* xy, int n);
   // 이번 걸음 아래층 명령(low_act) 앞에 깊이 열 점(cpts — 지역 계획기 거리 장 · 충돌 감시가 같이 씀) 뒤에 덧붙일 점 (지도 좌표 x, y 차례로 n 개).
   // 초음파 메아리 자리를 넣음. low_prepare 뒤 · low_act 앞에 부름. 깊이 층이 꺼져 있으면(cpts 없음) 아무것도 안 함 — 넣은 점 수를 돌려줌
   int add_points(const float* xy, int n);
   // 아래층 복구(hier_path.h path_recovery)가 포기해 피하는 목표 칸 목록을 비움 — 주행 목표가 새로 오면 (옛 목표 둘레를 계속 피하지 않게)
   void clear_gaveup();
+  // 다음 low_prepare 에서 같은 목표로 경로를 다시 짜게 함 (복구 판정 path_recovery 도 돎 — 쉼 표시를 지움). 목표는 그대로
+  void force_replan() { lowrl_[0].tgt_seen = -2; }
+  // 복구 물러나기 시작 (env.h path_step — Nav2 BT BackUp 과 같은 걸음, 뒤가 막히면 그만). 막힘 판정 셈은 처음부터
+  void start_backup() {
+    e_.p_rec = b_.cfg.rec_backup_steps;
+    e_.p_blk = 0;
+    e_.p_blk_now = 0;
+  }
 
   // 걸음마다 계층형 후보 8 칸(cand() · cand_cur())을 셀지 — 시뮬 기준선 위층 fuel · slot0 만 씀 (low_explore_check · low_explore_replay — 노드는 끔). 끄면 빈 칸(−1).
   // 기본 켬 (시뮬과 같은 후보 — low_explore_check 가 비트 비교)
@@ -130,7 +144,7 @@ class RobotEnv {
   std::vector<uint8_t> grid_;
   std::vector<int16_t> lmap_;
   std::vector<uint32_t> marks_, trail_;
-  std::vector<uint8_t> depth_, cvox_, cldep_;
+  std::vector<uint8_t> depth_, cvox_, cldep_, wall_ring_;
   std::vector<float> ring_, cpts_;
   std::vector<int32_t> done_buf_, cand_, cand_cur_;
   std::vector<sim::EpInfo> ep_;

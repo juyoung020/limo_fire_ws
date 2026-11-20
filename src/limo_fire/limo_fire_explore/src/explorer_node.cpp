@@ -288,7 +288,15 @@ class ExplorerNode : public rclcpp::Node {
       np.nopath_s = (float)declare_parameter<double>("nav_nopath_s", 5.0);           // 경로 없음이 이만큼 이어지면 못 감
       nav_ = tsk::Goto(np);
       nav_face_ = declare_parameter<bool>("nav_face_goal", true);
+      nav_dump_dir_ = declare_parameter<std::string>("nav_dump_dir", "");   // 진단: 못 간 목표마다 둘레 로봇 지도 PGM (비면 안 씀)
       nav_prime_ = declare_parameter<bool>("nav_prime_map", true);
+      // 저장 지도 벽 둘레 이 거리(m) 안의 깊이 카메라 층 표시는 지움 — 벽은 라이다·저장 지도가 알고, 깊이 표시는 자세 흔들림(AMCL 수 cm)만큼 문틈으로 번져
+      // 0.70 m 문이 지도에서 약 0.45 m 로 좁아졌다 (2026-11-20 시뮬 limo_fire_obstacles, nav_dump_dir 그림). 벽에 붙은 낮은 물체는 못 봄 — 0 = 끔
+      nav_wall_ring_m_ = declare_parameter<double>("nav_wall_ring_m", 0.15);
+      nav_np_backup_s_ = declare_parameter<double>("nav_nopath_backup_s", 1.0);
+      nav_floor_tol_ = declare_parameter<double>("nav_floor_tol", 0.02);      // 바닥 위 이 높이(m) 안 깊이 점 = 바닥 → 그 칸 깊이 표시 지움 (0 = 끔)
+      nav_floor_range_ = declare_parameter<double>("nav_floor_range", 2.5);   // 그 점까지 깊이 (m)   // 경로 없음이 이만큼 이어지면 물러나기
+      nav_backup_max_ = (int)declare_parameter<int>("nav_backups", 3);            // 목표 하나에 노드가 시키는 물러나기 수
       const std::string map_topic = declare_parameter<std::string>("map_topic", "/map");
       const std::string nav_name = declare_parameter<std::string>("nav_action", "navigate_to_pose");   // 이름공간 explore 아래 → /explore/navigate_to_pose. 비면 서버 안 띄움
       if (nav_prime_) {
@@ -396,6 +404,8 @@ class ExplorerNode : public rclcpp::Node {
       const int n = env_->prime_map(map_->data.data(), (int)mi.width, (int)mi.height, (float)mi.resolution, (float)mi.origin.position.x,
                                     (float)mi.origin.position.y, 65, 25, (int16_t)(mdp::kOccL + env_->cfg().l_hit), (int16_t)(2 * env_->cfg().l_miss));
       if (n > 0) RCLCPP_INFO(get_logger(), "저장 지도(/map)로 모르는 칸 %d 개를 채움", n);
+      env_->set_wall_ring(map_->data.data(), (int)mi.width, (int)mi.height, (float)mi.resolution, (float)mi.origin.position.x, (float)mi.origin.position.y, 65,
+                          (float)nav_wall_ring_m_);
     } else if (nav_prime_) {
       RCLCPP_WARN(get_logger(), "/map 이 아직 없음 — 본 곳만으로 경로를 짬 (안 본 곳 목표는 못 갈 수 있음)");
     }
@@ -411,7 +421,9 @@ class ExplorerNode : public rclcpp::Node {
     nav_at_ = now().seconds();
     env_->clear_gaveup();
     nav_gave0_ = env_->state().p_gaveup;
-    nav_kick_ = 0;
+    nav_backups_ = 0;
+    nav_np_from_ = -1;
+    nav_kick_ = -1000000;
     apply_nav_cmd();
   }
   void apply_nav_cmd() {
@@ -442,7 +454,77 @@ class ExplorerNode : public rclcpp::Node {
     nav_.cancel();
     env_->set_cmd(sim::LowCmd{-1, 0});
   }
+  // 주행 목표를 못 갔을 때 그 자리 둘레 로봇 지도를 PGM 으로 (nav_dump_dir 가 비어 있지 않을 때만 — 진단용):
+  // 254 빈 칸 · 0 막힘(지도) · 60 약한 막힘(path_lethal — 3 m 안 맞음 > 지나감) · 100 깊이 층 · 205 모름 · 30 로봇 · 160 목표 · 220 경로 점
+  void nav_dump(const std::string& why) {
+    if (nav_dump_dir_.empty()) return;
+    const sim::EnvBatch& b = env_->batch();
+    const sim::EnvState& e = env_->state();
+    const sim::EnvCfg& c = b.cfg;
+    const sim::MapDev& m = env_->map();
+    const int R = (int)std::lround(3.0 / c.res);
+    int rcx, rcy;
+    sim::cell_of(c, m, e.x + e.ex, e.y + e.ey, &rcx, &rcy);
+    std::vector<uint8_t> img((size_t)(2 * R) * (2 * R), 205);
+    for (int j = 0; j < 2 * R; ++j)
+      for (int i = 0; i < 2 * R; ++i) {
+        const int x = rcx - R + i, y = rcy - R + j;
+        if (x < 0 || y < 0 || x >= m.gw || y >= m.gh) continue;
+        const int16_t l = b.lmap[(size_t)y * c.size + x];
+        uint8_t v = mdp::cell_class(l) == mdp::kUnk ? 205 : mdp::cell_class(l) == mdp::kOcc ? 0 : 254;
+        if (v == 254 && sim::path_lethal(b, e, 0, x, y, rcx, rcy)) v = 60;
+        if (sim::cam_lethal(b, 0, x, y)) v = 100;
+        img[(size_t)(2 * R - 1 - j) * (2 * R) + i] = v;
+      }
+    auto put = [&](int x, int y, uint8_t v) {
+      const int i = x - rcx + R, j = y - rcy + R;
+      if (i >= 0 && j >= 0 && i < 2 * R && j < 2 * R) img[(size_t)(2 * R - 1 - j) * (2 * R) + i] = v;
+    };
+    for (int k = 0; k < e.p_n; ++k) put(e.wp[2 * k], e.wp[2 * k + 1], 220);
+    int gx, gy;
+    sim::cell_of(c, m, nav_.gx(), nav_.gy(), &gx, &gy);
+    put(gx, gy, 160);
+    put(rcx, rcy, 30);
+    char fn[300];
+    std::snprintf(fn, sizeof fn, "%s/nav_fail_%d_%.2f_%.2f.pgm", nav_dump_dir_.c_str(), e.step, nav_.gx(), nav_.gy());
+    if (FILE* f = std::fopen(fn, "wb")) {
+      std::fprintf(f, "P5\n# %s robot (%.2f, %.2f) res %.2f\n%d %d\n255\n", why.c_str(), e.x, e.y, c.res, 2 * R, 2 * R);
+      std::fwrite(img.data(), 1, img.size(), f);
+      std::fclose(f);
+      RCLCPP_INFO(get_logger(), "주행 목표 못 감 — 둘레 지도 %s", fn);
+    }
+  }
+  // 주행 목표 모드: 깊이 영상에서 바닥이 보인 칸은 비었다고 보고 깊이 층 표시를 지움 (그 칸에 선 물체가 있으면 바닥이 안 보임).
+  // 깊이 층은 띠 안 점으로만 지워서(Nav2 VoxelLayer 와 같음) 지나간 사람 자취·자세 흔들림 번짐이 열린 바닥에 남아 길을 막았다 (2026-11-20 시뮬, nav_dump 그림)
+  void clear_floor_cells() {
+    if (nav_floor_tol_ <= 0.0 || !depth_ || !info_) return;
+    int step = 0;
+    const uint16_t* mm = depth_mm(&step);
+    if (!mm) return;
+    const sim::EnvCfg& c = env_->cfg();
+    const sim::EnvState& e = env_->state();
+    const float fx = (float)info_->k[0], fy = (float)info_->k[4], cx = (float)info_->k[2], cy = (float)info_->k[5];
+    const float cp = c.cam_cp, sp = c.cam_sp, ct = std::cos(e.th), st = std::sin(e.th);
+    floor_xy_.clear();
+    const int w = (int)depth_->width, h = (int)depth_->height, S = 4;
+    for (int v = S / 2; v < h; v += S)
+      for (int u = S / 2; u < w; u += S) {
+        const uint16_t z = mm[(size_t)v * step + u];
+        if (z == 0) continue;
+        const float Z = z * 0.001f, X = (u - cx) * Z / fx, Y = (v - cy) * Z / fy;
+        if (Z > nav_floor_range_) continue;
+        const float xb = Z, yb = -X, zb = -Y;              // 카메라 몸 틀 (x 앞, y 왼쪽, z 위)
+        const float xr = xb * cp + zb * sp, zr = -xb * sp + zb * cp;   // 숙임 (아래로 +)
+        const float hgt = c.cam_z + zr;                    // 바닥 위 높이
+        if (std::fabs(hgt) > nav_floor_tol_) continue;
+        const float bx = c.cam_x + xr, by = c.cam_y + yb;
+        floor_xy_.push_back(e.x + ct * bx - st * by);
+        floor_xy_.push_back(e.y + st * bx + ct * by);
+      }
+    env_->clear_cam_cells(floor_xy_.data(), (int)(floor_xy_.size() / 2));
+  }
   void nav_end(bool ok, const std::string& why) {
+    if (!ok) nav_dump(why);
     nav_result(ok, why);
     stop("idle", std::string("주행 목표 끝: ") + why, true);
   }
@@ -777,7 +859,15 @@ class ExplorerNode : public rclcpp::Node {
     const auto t2 = clk::now();
     // 규칙 추종기: 경로 계획 후보 (combine_run 의 act[0] — 다음 결정까지 그대로). 따라가기 · 물체로 가기는 목표 칸을 노드가 줌 — 행동 칸 0 (low_follow 의 그 칸)
     env_->set_slot(follower_.active() || goto_.active() || nav_gh_ ? 0 : ctl_->slot());   // 주행 목표도 노드가 목표 칸을 쥠
+    if (nav_gh_) {   // 주행 목표: 저장 지도 벽 둘레 · 바닥이 보인 칸의 깊이 표시를 걷어내고 계획 (nav_wall_ring_m · nav_floor_tol)
+      env_->mask_cam_wall();
+      clear_floor_cells();
+    }
     env_->low_prepare();
+    if (nav_gh_) {
+      env_->mask_cam_wall();
+      clear_floor_cells();
+    }
     add_sonar();
     const double obs_ms = ms_since(t2);
     float v = 0.f, w = 0.f;
@@ -854,14 +944,40 @@ class ExplorerNode : public rclcpp::Node {
       const double tn = now().seconds();
       if (std::hypot(e.x - nav_ax_, e.y - nav_ay_) > nav_prog_m_) { nav_ax_ = e.x; nav_ay_ = e.y; nav_at_ = tn; }
       if (ev == tsk::kArrived) nav_end(true, "도착");
-      else if (e.p_gaveup > nav_gave0_) nav_end(false, "아래층이 막힘 복구(다시 계획 · 물러나기)를 다 쓰고 포기");
+      else if (e.p_gaveup > nav_gave0_ && nav_backups_ >= nav_backup_max_) nav_end(false, "아래층이 막힘 복구(다시 계획 · 물러나기)를 다 쓰고 포기");
+      else if (e.p_gaveup > nav_gave0_) {   // 아래층은 포기했지만 노드 물러나기가 남음 — 포기 목록을 비우고 물러나 다시
+        env_->clear_gaveup();
+        nav_gave0_ = e.p_gaveup;
+        env_->start_backup();
+        ++nav_backups_;
+        RCLCPP_INFO(get_logger(), "주행 목표: 아래층 포기 — 물러나 다시 (%d/%d)", nav_backups_, nav_backup_max_);
+      }
       else if (tn - nav_at_ > nav_prog_s_) nav_end(false, "진척 없음 (움직인 거리)");
       else if (nav_timeout_s_ > 0.0 && tn - nav_t0_.seconds() > nav_timeout_s_) nav_end(false, "시간 한도");
       else if (ev == tsk::kFailed) nav_end(false, nav_.why());
     }
     if (nav_on) {
       // 아래층 결정이 끝나 쉬는데(경로 끝 · 막힘 신호) 목표에 못 닿았으면 다시 결정하게 함 — 탐사에서는 위층이 새 목표로 이 일을 함
-      if (nav_.active() && running() && nav_kick_ == 0 && (env_->low_ep().hold != 0 || env_->low_rl().stall)) nav_kick_ = 1;
+      // 경로 없음 · 충돌 검사 막힘 · 회전 막힘이 nav_nopath_backup_s 이어지면 (문틀·가구 모서리에 붙음 — 출발 칸이 계획 반경 안이거나 돌 자리가 없음) 물러나기 한 번 뒤 다시 계획.
+      // 목표 하나에 nav_backups 번까지 — 탐사에서는 위층이 다른 목표를 골라 빠져나오는 자리
+      const int lk = env_->low_ep().kind;   // 경로 없음 · 충돌 검사에 막힘 · 제자리 회전이 뒤로 막힘 — 벽·가구 모서리에 붙어 끼임
+      if (lk == sim::kLowNoPath || lk == sim::kLowImm || lk == sim::kLowRotBlocked) {
+        if (nav_np_from_ < 0) nav_np_from_ = e.step;
+        if (e.step - nav_np_from_ >= (int)std::lround(nav_np_backup_s_ / dt()) && nav_backups_ < nav_backup_max_ && e.p_rec <= 0) {
+          env_->start_backup();
+          ++nav_backups_;
+          nav_np_from_ = -1;
+          nav_at_ = now().seconds();   // 물러나는 동안은 진척 시계를 새로
+          RCLCPP_INFO(get_logger(), "주행 목표: 끼임(아래층 분류 %d) %.1f s — 물러나기 (%d/%d)", lk, nav_np_backup_s_, nav_backups_, nav_backup_max_);
+        }
+      } else {
+        nav_np_from_ = -1;
+      }
+      // 1 s 에 한 번까지 (다시 짜도 못 가면 path_recovery 의 막힘 판정이 쌓여 물러나기 → 포기 → 못 감)
+      if (nav_.active() && running() && (env_->low_ep().hold != 0 || env_->low_rl().stall) && e.step - nav_kick_ >= lp_.decide_steps) {
+        env_->force_replan();
+        nav_kick_ = e.step;
+      }
       ctl_->after_step(e, env_->low_rl(), env_->low_ep());
       return true;
     }
@@ -933,13 +1049,7 @@ class ExplorerNode : public rclcpp::Node {
       return -1.0;
     }
     if (nav_gh_) {   // 주행 목표 중: 위층 쉼, 목표 칸만 (task_sup Goto — 닿으면 바라보기)
-      if (nav_kick_ == 1) {   // 한 걸음 목표를 비워 다음 걸음에 같은 목표로 새 결정(경로 계획 · 막힘 판정)
-        env_->set_cmd(sim::LowCmd{-1, 1});
-        nav_kick_ = 2;
-      } else if (nav_.active()) {
-        apply_nav_cmd();
-        nav_kick_ = 0;
-      }
+      if (nav_.active()) apply_nav_cmd();
       return 0.0;
     }
     const auto t1 = clk::now();
@@ -1526,7 +1636,11 @@ class ExplorerNode : public rclcpp::Node {
   std::shared_ptr<NavGH> nav_gh_;
   tsk::Goto nav_;
   bool nav_pending_ = false, nav_face_ = true, nav_prime_ = true;
-  int nav_gave0_ = 0, nav_kick_ = 0;
+  std::string nav_dump_dir_;
+  double nav_wall_ring_m_ = 0.15, nav_np_backup_s_ = 1.0, nav_floor_tol_ = 0.02, nav_floor_range_ = 2.5;
+  std::vector<float> floor_xy_;
+  int nav_backup_max_ = 3, nav_backups_ = 0, nav_np_from_ = -1;
+  int nav_gave0_ = 0, nav_kick_ = -1000000;   // 마지막으로 다시 짜게 한 걸음
   double nav_prog_m_ = 0.5, nav_prog_s_ = 15.0, nav_timeout_s_ = 0.0, nav_ax_ = 0, nav_ay_ = 0, nav_at_ = 0;
   rclcpp::Time nav_t0_{0, 0, RCL_ROS_TIME};
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr sub_map_;
