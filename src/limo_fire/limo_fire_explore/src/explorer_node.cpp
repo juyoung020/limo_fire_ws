@@ -300,6 +300,8 @@ class ExplorerNode : public rclcpp::Node {
       nav_floor_tol_ = declare_parameter<double>("nav_floor_tol", 0.02);      // 바닥 위 이 높이(m) 안 깊이 점 = 바닥 → 그 칸 깊이 표시 지움 (0 = 끔)
       nav_floor_range_ = declare_parameter<double>("nav_floor_range", 2.5);   // 그 점까지 깊이 (m)   // 경로 없음이 이만큼 이어지면 물러나기
       nav_backup_max_ = (int)declare_parameter<int>("nav_backups", 3);            // 목표 하나에 노드가 시키는 물러나기 수
+      // 끼여 못 간 자리에서 다음 목표가 오면 계획 전에 먼저 물러나기 (이 거리 m 안이면 같은 자리, 0 = 끔) — 같은 끼임으로 다음 목표들이 줄줄이 실패하던 것
+      nav_same_spot_m_ = declare_parameter<double>("nav_same_spot_m", 0.15);
       // 주행 목표 동안 경로 무게 경계 (m, 0 = env.yaml weight_mid_dist 그대로 0.3). 0.25: 문(0.70 m) 앞 상자 사이 0.60 m 틈의 가운데 띠가 무게 2 가 되어
       // 경로가 틈 앞에서 지그재그로 꺾이지 않음 (2026-11-21 시뮬). 탐사에 같은 값을 쓰면 표준 묶음 AUC180 −0.05 라 주행 목표에만
       nav_weight_mid_ = declare_parameter<double>("nav_weight_mid_dist", 0.25);
@@ -442,6 +444,13 @@ class ExplorerNode : public rclcpp::Node {
     nav_cphase_ = 0;
     nav_kick_ = -1000000;
     apply_nav_cmd();
+    // 앞 목표가 이 자리에서 끼여 못 감: 같은 끼임에서 다시 시작하지 않게 먼저 물러남 (Nav2 복구 사다리 — 끼임에 맞는 것은 BackUp, 이 목표의 물러나기 하나로 셈)
+    if (nav_fail_stuck_ && nav_same_spot_m_ > 0.0 && std::hypot(env_->state().x - nav_fail_x_, env_->state().y - nav_fail_y_) < nav_same_spot_m_) {
+      env_->start_backup();
+      ++nav_backups_;
+      RCLCPP_INFO(get_logger(), "주행 목표: 앞 목표가 이 자리에서 끼여 못 감 — 먼저 물러나기 (%d/%d)", nav_backups_, nav_backup_max_);
+    }
+    nav_fail_stuck_ = false;
   }
   void apply_nav_cmd() {
     const sim::LowCmd c = nav_.cmd([this](float x, float y) { return xy_cell(x, y); });
@@ -544,6 +553,9 @@ class ExplorerNode : public rclcpp::Node {
   }
   void nav_end(bool ok, const std::string& why) {
     if (!ok) nav_dump(why);
+    nav_fail_stuck_ = !ok && nav_backups_ > 0;   // 끼임 복구를 쓰고도 못 감 — 다음 목표가 같은 자리에서 오면 먼저 물러남
+    nav_fail_x_ = env_->state().x;
+    nav_fail_y_ = env_->state().y;
     nav_result(ok, why);
     stop("idle", std::string("주행 목표 끝: ") + why, true);
   }
@@ -896,8 +908,29 @@ class ExplorerNode : public rclcpp::Node {
     else env_->hold();   // 멈춤: 명령 0 (주행 목표 닿음 뒤 기다림도)
     if (nav_log_) {   // 진단: 주행 목표 걸음마다 한 줄
       const sim::EnvState& e = env_->state();
-      std::fprintf(nav_log_, "%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", e.step, e.x, e.y, e.th, v, w, (int)env_->low_ep().kind, e.p_n, e.goal_cell,
-                   e.p_blk, e.p_rec, nav_cphase_, nav_gh_ ? 1 : 0);
+      const sim::EnvBatch& b = env_->batch();
+      // 끼임 원인 칸: 지금 패딩 발자국이 걸림 · 물러나기 검사 통과 · 제자리 회전 두 쪽 막힘 · 앞 틈 · 닿음 신호(s_kind)
+      const int now_hit = sim::path_now_hits(b, e, 0) ? 1 : 0, bk_ok = sim::path_backup_ok(b, e, 0, 0.1f) ? 1 : 0;
+      const int rp = sim::path_imminent(b, e, 0, 0.f, b.cfg.rot_w, 1e9f) ? 1 : 0, rn = sim::path_imminent(b, e, 0, 0.f, -b.cfg.rot_w, 1e9f) ? 1 : 0;
+      // 지역 계획기 거리 장으로 지금 자세의 앞·뒤 원 · 가운데 틈 (local_planner.h lp_follow 와 같은 창)
+      float lf = -1.f, lr = -1.f, lc = -1.f;
+      if (b.cfg.lp.on) {
+        const sim::MapDev& m = env_->map();
+        const sim::EnvCfg& c = b.cfg;
+        const float px = e.x + e.ex, py = e.y + e.ey, pth = e.th + e.eth, co = std::cos(pth), si = std::sin(pth), a = 0.5f * c.half_len;
+        sim::LpWin lw;
+        lw.gx0 = dm::floor_div(px + c.lp.fwd_off * co - m.ox, c.res, c.inv_res) - sim::kLpW / 2;
+        lw.gy0 = dm::floor_div(py + c.lp.fwd_off * si - m.oy, c.res, c.inv_res) - sim::kLpW / 2;
+        std::vector<uint8_t> D(sim::kLpW * sim::kLpW);
+        sim::lp_field(b, e, 0, lw, D.data());
+        bool o = false;
+        lf = sim::lp_dist(c, m, lw, D.data(), px + a * co, py + a * si, &o);
+        lr = sim::lp_dist(c, m, lw, D.data(), px - a * co, py - a * si, &o);
+        lc = sim::lp_dist(c, m, lw, D.data(), px, py, &o);
+      }
+      std::fprintf(nav_log_, "%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d%d\t%.3f\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n", e.step, e.x, e.y, e.th, v, w,
+                   (int)env_->low_ep().kind, e.p_n, e.goal_cell, e.p_blk, e.p_rec, nav_cphase_, nav_gh_ ? 1 : 0, now_hit, bk_ok, rp, rn,
+                   sim::front_gap(b, e, 0), e.contact, e.s_kind, e.ex, e.ey, lf, lr, lc);
     }
     publish_cmd(m->header.stamp, v, w);
     if (nav_gh_ && nav_.active() && env_->steps() % 2 == 0) {
@@ -1695,6 +1728,8 @@ class ExplorerNode : public rclcpp::Node {
   double nav_wall_ring_m_ = 0.15, nav_np_backup_s_ = 1.0, nav_floor_tol_ = 0.02, nav_floor_range_ = 2.5;
   std::vector<float> floor_xy_;
   int nav_backup_max_ = 3, nav_backups_ = 0, nav_np_from_ = -1;
+  bool nav_fail_stuck_ = false;
+  double nav_same_spot_m_ = 0.15, nav_fail_x_ = 0, nav_fail_y_ = 0;
   int nav_contact_max_ = 3, nav_contacts_ = 0, nav_cphase_ = 0, nav_cwait_from_ = 0, nav_cclear_ = 0;   // 닿음 뒤 재출발: 단계 0 없음 · 1 멈춰 기다림 · 2 물러남
   double nav_contact_clear_s_ = 1.0, nav_contact_wait_s_ = 5.0, nav_weight_mid_ = 0.25;
   FILE* nav_log_ = nullptr;

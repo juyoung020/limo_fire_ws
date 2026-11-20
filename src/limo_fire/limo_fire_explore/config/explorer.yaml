@@ -85,3 +85,6 @@
     con_stall: 2
     con_acc: 15.0
     record: ""                # 비우지 않으면 입력·명령 녹화 (꼴은 train/explore/sim/tools/low_node_rec.h — low_explore_replay · node_stats 로 다시 돌림)
+    # 주행 목표 서버 (/explore/navigate_to_pose): 끼여 못 간 자리(이 거리 m 안)에서 다음 목표가 오면 계획 전에 먼저 물러남 (0 = 끔).
+    # 같은 끼임으로 다음 목표들이 8 s 만에 줄줄이 못 가던 것 (reports/obstacle_nav.md 14 절)
+    nav_same_spot_m: 0.15

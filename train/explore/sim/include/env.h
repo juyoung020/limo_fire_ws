@@ -657,9 +657,11 @@ DEV void path_step_b(const EnvBatch& b, EnvState& e, int env, bool imm, const Pa
   e.p_blk_win += 1;   // 막힘 판정 창 (hier_path.h path_recovery)
   // RPP 충돌 검사 (hier_path.h path_imminent): 걸리면 Nav2 BT 복구의 BackUp 처럼 물러남 (뒤도 막히면 섬)
   if (e.p_rec > 0) {   // 복구 물러나기 (hier_path.h "복구" — Nav2 BT BackUp): 추종기 대신. 뒤가 막히면 그만
+    // 물러나기를 시킨 쪽이 있으면 recovery.backup(rec_nobk)과 상관없이 물러남: rec_nobk 이면 path_recovery 는 p_rec 를 안 켜므로 탐사에서는 이 가지가 안 돎 —
+    // 켜는 것은 실물 노드 주행 목표의 끼임 복구(RobotEnv::start_backup)뿐. 예전에는 여기서도 rec_nobk 를 봐서 그 물러나기가 한 걸음도 안 움직였다 (reports/obstacle_nav.md 14 절)
     e.p_rec -= 1;
     s.bkind = 1;
-    vc = !c.rec_nobk && path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;
+    vc = path_backup_ok(b, e, env, 0.1f) ? -c.path_backup_v : 0.f;
     wc = 0.f;
     if (vc == 0.f) e.p_rec = 0;
   } else if (imm || s.lp_block) {

@@ -190,14 +190,20 @@ DEV bool lp_follow(const EnvBatch& b, EnvState& e, int env, float* vc_o, float* 
   const float r0 = sqrtf(a * a + c.half_wid * c.half_wid);
   float r_h = r0 + L.margin;
   float r_c = L.center_min;   // 가운데 점 틈 하한 — 위층 후보·계획이 쓰는 "설 수 있는 칸"(반경 0.2 m) 밖으로 안 나가게 (벽에 붙으면 후보 찾기·회전이 막힘)
-  {   // 지금 자세가 이미 단단한 반지름 안이면 (붙어 있음) 지금보다 더 가까워지는 것만 충돌로 — 빠져나오게
+  {   // 지금 자세가 단단한 반지름에 붙어 있으면 (안 · 또는 거리 장 한 눈금 q 안 밖) 지금보다 더 가까워지는 것만 충돌로 — 빠져나오게.
+    // 거리 장은 칸 가운데끼리 chamfer 값(눈금 q = 칸 / 3)이라, 막힘을 곁에 두고 나란히 지나가면 실제로는 멀어져도 다음 칸 값이 한 눈금 작아질 수 있다.
+    // 반지름 바로 밖(q 안)에 서 있으면 그 한 눈금 때문에 모든 궤적이 막혀 섰다 (주행 목표 끼임 — reports/obstacle_nav.md 14 절). 그래서 붙어 있을 때는 한 눈금 더
+    // 내려가는 것까지 허용하되, 몸 원은 F = 반지름 − q − 0.005 에서 멈춤 (원 둘 발자국 반지름 r0 위 — 걸음마다 한 눈금씩 파고들지 않게). F 아래에 이미 있으면 옛 규칙 그대로.
+    // 가운데 틈(설 수 있는 칸 하한 — 충돌 아님, 몸은 위 원 둘이 지킴)은 붙어 있으면 늘 지금보다 한 눈금 아래까지 (뜬 판 곁을 나란히 지나갈 때 그 한 눈금에 막혀 섰다)
     float s, co;
     dm::sincosf_d(pth, &s, &co);
     bool o1 = false, o2 = false;
+    const float q = c.res * (1.f / 3.f);
     const float d0 = dm::minf(lp_dist(c, m, w, D, px + a * co, py + a * s, &o1), lp_dist(c, m, w, D, px - a * co, py - a * s, &o2));
-    if (d0 < r_h) r_h = dm::maxf(0.f, d0 - 0.005f);
+    if (d0 < r_h + q) r_h = dm::maxf(dm::minf(r_h - q - 0.005f, d0 - 0.005f), dm::minf(r_h, d0 - q - 0.005f));
+    r_h = dm::maxf(0.f, r_h);
     const float dc = lp_dist(c, m, w, D, px, py, &o1);
-    if (dc < r_c) r_c = dm::maxf(0.f, dc - 0.005f);
+    if (dc < r_c + q) r_c = dm::maxf(0.f, dm::minf(r_c, dc) - q - 0.005f);
   }
   // 움직이는 점 (사람): 지금 장에서 로봇 지도가 막힘으로 굳히지 않은 칸(사람이 지나는 바닥 — 한 장 맞아 로그 오즈가 0 을 조금 넘어도)에 맞은 점 ↔
   // 링의 가장 오래된 장(0.4 s 전)의 같은 꼴 점, 최근접 짝으로 속도. 벽 점과 짝 짓지 않게 옛 점도 같은 거름
