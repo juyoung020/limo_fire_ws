@@ -29,12 +29,11 @@ ros2 pkg prefix limo_fire_hardware   # 기대: /home/wego/launcher_auto_fire_202
    sha256sum $F   # 기대: accec093a16b8806322f877c77dc0ba34fb1285bed00dcc25df7e092d053862e
    /home/wego/.venvs/launcher-pio/bin/python3 -m esptool --chip esp32s3 --port $ESP write-flash 0x0 $F   # esptool 5.6.0 확인됨
    ```
-4. **장착 실측 YAML.** 네 값은 줄자·각도기로 잰 값만 넣는다(정의는 [REAL_AIM_TEST.md](REAL_AIM_TEST.md) 1절).
+4. **장착값은 URDF에서.** 회전축 위치·방향은 `limo_fire_description/urdf/limo_fire.urdf.xacro`의 `launcher_xyz`·`yaw` 한 곳에 있다(정의와 지금 근거는 [REAL_AIM_TEST.md](REAL_AIM_TEST.md) 1·3절). 오버레이에 `limo_fire_description`도 빌드하고, 로봇 실행 터미널도 오버레이를 source한다. 장착값은 높이 실측 + x·y·yaw CAD로 확정했으니 조준 YAML에서 `mount_calibrated: true`로 둔다.
    ```bash
-   python3 /home/wego/launcher_auto_fire_20261120/src/limo_fire/limo_fire_hardware/tools/write_mount_config.py \
-     --x-cm <앞+> --y-cm <왼쪽+> --pivot-height-cm <바닥→회전축> --mount-yaw-deg <왼쪽+> \
-     --measurements-confirmed --output /home/wego/launcher_aim_measured.yaml
-   grep -E "mount_xyz_m|mount_yaw_deg|mount_calibrated" /home/wego/launcher_aim_measured.yaml
+   ros2 run tf2_ros tf2_echo base_link launcher_pivot   # 로봇을 켠 뒤. 기대: URDF 값(지금 -0.0399 0 0.065), 회전 0
+   sed -i -E "s/mount_calibrated: *(true|false)/mount_calibrated: true/" /home/wego/launcher_aim_measured.yaml
+   grep -E "mount_calibrated" /home/wego/launcher_aim_measured.yaml   # 기대: mount_calibrated: true
    ```
 
 ### 1. 로봇·지도·Nav2 켜기 (차체 움직임 없음)

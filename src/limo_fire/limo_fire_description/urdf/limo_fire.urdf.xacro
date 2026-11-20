@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!-- 화재 대응 LIMO Pro 조립. 모듈마다 xacro 하나, 장착 위치는 여기 한 곳에만 둔다.
-     열화상·레이더·노즐(팬·틸트)은 배치가 정해지면 모듈 xacro 를 더하고 여기서 부른다.
+     열화상·레이더는 배치가 정해지면 모듈 xacro 를 더하고 여기서 부른다. 발사대는 launcher_v5.xacro.
      xacro limo_fire.urdf.xacro platform:=real camera_pitch:=0.0 camera_driver_tf:=false -->
 <robot name="limo_fire" xmlns:xacro="http://ros.org/wiki/xacro">
   <!-- real: 실물 LIMO, webots: 교수님 Webots 모델(webots_ros2_limo LimoFourDiff.proto). 둘이 다른 장착 위치만 여기서 고른다 -->
@@ -23,6 +23,16 @@
   <xacro:property name="camera_xyz" value="${dict(real='0.15 -0.005 0.0431', webots='0.096 0.015 0.03')['$(arg platform)']}"/>
   <xacro:orbbec_dabai parent="base_link" name="camera" xyz="${camera_xyz}"
                       pitch="$(arg camera_pitch)" driver_tf="$(arg camera_driver_tf)"/>
+
+  <!-- base_link → launcher_pivot (발사대 상하 회전축). 조준 노드가 이 값을 TF 로 읽는다 — 장착 값은 여기 한 곳.
+       z 0.065 = 실측 회전축 높이 0.210 m (2026-11-20 줄자) − base_link 0.145 m. CAD 로는 0.0575 (지붕 0.1405 + 축 0.062 − 0.145, sim_full.py ROOF_Z·build_cradle.py H_AX) 로 7.5 mm 차이, 원인 미확인.
+       x·y·yaw 는 줄자로 재지 않고 CAD 값을 장착값으로 쓴다(2026-11-20 결정). 받침대가 지붕 나사 구멍에 고정돼 조립 위치가 CAD 로 정해지기 때문.
+       x −0.0399 = CAD: 축 지붕 좌표 X_AX −25 mm, base_link 는 지붕 원점보다 14.9 mm 앞 (build_cradle.py·sim_full.py BASE_LINK_X).
+       y 0, yaw 0 = CAD: 받침대가 지붕 구멍 가운데 대칭. 실물에서 좌우로 빗나가면 y·yaw 를, 거리가 틀리면 x 를 먼저 의심한다.
+       webots: Webots 모델에는 아직 발사대가 없어 실물과 같은 값 -->
+  <xacro:include filename="$(find limo_fire_description)/urdf/launcher_v5.xacro"/>
+  <xacro:property name="launcher_xyz" value="${dict(real='-0.0399 0 0.065', webots='-0.0399 0 0.065')['$(arg platform)']}"/>
+  <xacro:launcher_v5 parent="base_link" xyz="${launcher_xyz}" yaw="0.0"/>
 
   <!-- 초음파 HC-SR04 × 2 (연기 모드, docs/smoke_mode_plan.md 2 단계). 앞 범퍼 아래 받침 하나에 좌우 ±20°·위 5° (hardware/mounts print_sonar, docs/wiring.md).
        자리는 잠정 — 받침 조립 그림(hardware/mounts/limo_mounts.png)에서 읽은 값이고 실측 아님: 범퍼 앞 0.18 m, 가운데서 ±0.025 m(보드 폭 45 mm 둘),

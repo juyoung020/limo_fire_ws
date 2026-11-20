@@ -5,11 +5,13 @@ launcher_approach_aim:
     # If false, automatic fire needs a fresh measured joint-state pitch feedback.
     # If true, firmware pitch command acknowledgement is enough; no angle is measured.
     fire_on_pitch_ack: false
+    # Set true in the robot's run config once the launcher mount in limo_fire_description
+    # limo_fire.urdf.xacro (launcher_xyz, yaw) is accepted. 2026-11-20 decision: pivot height measured,
+    # x, y and yaw taken from CAD instead of tape measurement. Repository default stays false.
     mount_calibrated: false
-    # Measured pitch-pivot position in base_link, metres. Zeroes are placeholders.
-    mount_xyz_m: [0.0, 0.0, 0.0]
-    # Fixed horizontal offset of launcher forward direction from base_link +x.
-    mount_yaw_deg: 0.0
+    # Pitch-pivot position and yaw come from TF base_link -> launcher_frame (robot URDF), not from here.
+    launcher_frame: launcher_pivot
+    max_launcher_tilt_deg: 1.0
     # Example positioning distance. Calibrate against the actual launcher before use.
     desired_distance_m: 1.2
     distance_tolerance_m: 0.15

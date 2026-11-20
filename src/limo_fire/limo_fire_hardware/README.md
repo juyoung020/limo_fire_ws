@@ -41,13 +41,11 @@ ROS 의존성은 `package.xml`에 있다. `import serial`이 실패하면 Ubuntu
 
 ## 준비할 실측값
 
-`config/approach_aim.yaml`을 사용자 설정 파일로 복사해 다음 값을 채운다.
+발사대 장착 위치·방향은 로봇 URDF 한 곳(`limo_fire_description/urdf/limo_fire.urdf.xacro`의 `launcher_xyz`와 `yaw`)에 둔다. 조준 노드는 TF `base_link → launcher_pivot`(상하 회전축)으로 읽으므로 `robot_state_publisher`가 이 URDF로 떠 있어야 한다. 없으면 실행을 거부한다. 2026-11-20 결정: 회전축 높이는 실측(바닥 21.0cm), x·y·yaw는 줄자로 재지 않고 CAD 값을 쓴다. 나머지는 `config/approach_aim.yaml`을 사용자 설정 파일로 복사해 채운다.
 
-- `mount_xyz_m`은 `base_link` 기준 상하 회전축 중심의 위치다. 단위는 m다.
-- `mount_yaw_deg`는 차체 전방에서 발사기 전방이 수평으로 돌아간 각도다.
 - 실제 장착 방향, 서보 영점과 회전 부호는 발사대 펌웨어의 `kTiltServoAt15`, `kTiltSign`에 맞춘다.
 - `desired_distance_m`은 상하 회전축에서 표적까지의 수평 거리다. 기본 1.2m는 위치 제어 예시다. 실물 사거리 표를 측정해 설정한다.
-- `mount_calibrated`는 실측 설정을 채운 후 `true`로 둔다.
+- `mount_calibrated`는 URDF의 장착 값을 시험에 쓰기로 확정했을 때 실물 설정 파일에서 `true`로 둔다. 지금 값(높이 실측 + CAD)으로 확정했다.
 - `robot_radius_m + footprint_margin_m`은 실제 차체 외곽을 포함해야 한다.
 
 기하 계산은 평면 주행을 가정한다. TF의 차체 roll/pitch가 `max_base_tilt_deg`를 넘으면 중단한다. 초기 구동·마찰·가감속 설정은 기존 실물 Nav2 설정을 사용한다.

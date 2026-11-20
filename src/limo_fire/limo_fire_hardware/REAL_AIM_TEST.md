@@ -4,15 +4,15 @@
 
 ## 1. 기록할 실측값
 
-`base_link`는 현재 LIMO 모델에서 바닥 위 14.5cm이며 앞·뒤 바퀴 축의 중간, 좌우 중심선에 있다. 실제 로봇/TF와 다르면 모델을 먼저 바로잡거나 아래 `--base-link-height-cm`를 실측값으로 지정한다. 회전축은 상하 서보가 발사기를 돌리는 **물리적 축 중심**이다.
+`base_link`는 현재 LIMO 모델에서 바닥 위 14.5cm이며 앞·뒤 바퀴 축의 중간, 좌우 중심선에 있다. 회전축은 상하 서보가 발사기를 돌리는 **물리적 축 중심**이다. 값은 URDF `limo_fire_description/urdf/limo_fire.urdf.xacro`의 `launcher_xyz`(m, `base_link` 기준)와 `yaw`에 넣는다. 조준 노드는 이 값을 TF `base_link → launcher_pivot`으로 읽는다.
 
-| 값 | 측정 위치·부호 | 실측 기록 |
+| 값 | 측정 위치·부호 | 지금 URDF 값 |
 |---|---|---|
-| `x_cm` | 바퀴 앞뒤 축 중간 → 회전축, 전방 + | 미측정 |
-| `y_cm` | 차체 좌우 중심선 → 회전축, 로봇 왼쪽 + | 미측정 |
-| `pivot_height_cm` | 바닥 → 회전축 중심 | 미측정 |
-| `mount_yaw_deg` | 차체 전방(+x) → 발사기 수평 방향, 왼쪽 회전 + | 미측정 |
-| 총구 출구 중심 높이·회전축과의 거리 | 탄도 오차 기록용; 현재 계산에는 미반영 | 미측정 |
+| x | 바퀴 앞뒤 축 중간 → 회전축, 전방 + | −3.99cm, CAD 값 사용(측정 안 함) |
+| y | 차체 좌우 중심선 → 회전축, 로봇 왼쪽 + | 0, CAD 값 사용(측정 안 함) |
+| 회전축 높이 | 바닥 → 회전축 중심. URDF z = 높이 − 14.5cm | 21.0cm 실측(2026-11-20) → z 0.065m. CAD는 20.25cm |
+| yaw | 차체 전방(+x) → 발사기 수평 방향, 왼쪽 회전 + | 0°, CAD 값 사용(측정 안 함) |
+| 총구 위치 | 회전축 기준 | URDF `launcher_muzzle`(CAD: 앞 6.57cm, 위 4.5cm, 0°에서). 탄도 계산에는 아직 미반영 |
 
 발사 직후 속도는 파란 공 약 3.9m/s, 노란 공 약 4.2m/s의 사용자 제공 근삿값이다. 현재 기본 각도 계산은 파란 공 3.9m/s를 사용한다. 옆으로 휘는 양과 실제 발사 위치 차이는 아직 보정되지 않았다.
 
@@ -42,19 +42,18 @@ ros2 action list -t
 
 제자리 요레이트 조준은 `/limo_status.motion_mode`가 차동 `0` 또는 메카넘 `2`일 때만 사용한다. Ackermann `1`이면 `yaw_alignment_mode:=nav2`를 사용한다. 리모컨은 로봇이 `/cmd_vel`을 받는 오토 모드여야 한다.
 
-## 3. 측정값으로 설정 파일 만들기
+## 3. 장착값을 URDF에 넣고 TF로 확인하기
 
-다음 네 숫자를 실제 측정값으로 바꾼다. 이 명령은 새 파일만 만들고 로봇을 움직이지 않는다. 출력은 `motion_enabled: false`로 시작한다.
+실측한 값으로 `limo_fire.urdf.xacro`의 `launcher_xyz`(`real` 항목)와 `yaw`를 고친다. 1절 표처럼 근거(실측/CAD)를 주석에 남긴다. 그다음 시험 오버레이에서 URDF와 조준 패키지를 함께 빌드한다. **로봇 실행(`robot.launch.xml`)도 이 오버레이를 source한 터미널에서 켜야** URDF에 발사대가 들어간다. 기존 작업공간의 URDF에는 발사대가 없어서 조준 노드가 실행을 거부한다.
 
 ```bash
-cd /home/wego/launcher_aim_friday_20261120
-python3 src/limo_fire/limo_fire_hardware/tools/write_mount_config.py \
-  --x-cm <앞쪽_플러스_cm> --y-cm <왼쪽_플러스_cm> \
-  --pivot-height-cm <바닥에서_회전축_cm> --mount-yaw-deg <왼쪽_플러스_deg> \
-  --measurements-confirmed --output /home/wego/launcher_aim_measured.yaml
+source /home/wego/limo_fire_ws/env.sh
+cd <시험 오버레이> && colcon build --packages-select limo_fire_msgs limo_fire_description limo_fire_hardware --symlink-install
+source install/setup.bash
+ros2 run tf2_ros tf2_echo base_link launcher_pivot    # 로봇을 켠 뒤. 기대: URDF 에 넣은 x y z, 회전 0
 ```
 
-위 꺾쇠 자리는 실제 숫자로 교체한다. 도구는 `z = (pivot_height_cm - 14.5) / 100`을 계산하고 `mount_xyz_m`, `mount_yaw_deg`, `mount_calibrated`를 채운다. 출력 파일을 열어 부호와 단위를 재확인한다. 시험 오버레이의 `limo_fire_msgs`와 `limo_fire_hardware`는 11월 19일 빌드했다. Wego를 바꾸거나 코드를 새로 받았다면 기존 작업공간을 source한 뒤 시험 오버레이에서 `colcon build --packages-select limo_fire_msgs limo_fire_hardware --symlink-install`로 다시 빌드한다.
+조준 설정은 `config/approach_aim.yaml`을 `/home/wego/launcher_aim_measured.yaml`로 복사해 쓴다. 2026-11-20 결정: x·y·yaw는 줄자로 재지 않고 CAD 값을 장착값으로 쓰고, 높이는 실측값을 쓴다. 이 URDF 값으로 실물 시험을 하므로 실물 설정 파일에서 `mount_calibrated: true`로 둔다(저장소 기본값은 안전을 위해 `false`). 좌우로 빗나가면 y·yaw를, 거리가 틀리면 x를 먼저 의심한다. 예전 `mount_xyz_m`·`mount_yaw_deg` 줄은 더 이상 읽지 않으므로 지운다.
 
 ## 4. 카메라 탐지·거리 계산과 경로 미리보기
 

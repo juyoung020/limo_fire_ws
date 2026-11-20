@@ -12,7 +12,10 @@
            value="$(command 'xacro $(find-pkg-share limo_fire_description)/urdf/limo_fire.urdf.xacro platform:=$(var platform) camera_pitch:=$(var camera_pitch) camera_driver_tf:=$(var camera_driver_tf)')"/>
     <param name="use_sim_time" value="$(var use_sim_time)"/>
   </node>
+  <!-- 발사대 상하 관절(launcher_pitch_joint)은 실측 각도(/launcher/joint_states, 각도 센서가 있을 때만)를 받아 TF 에 반영한다.
+       센서가 없으면 범위(5~30°) 가운데 17.5° 로 그린다 — 명령값이 아니다. 조준은 움직이지 않는 launcher_pivot 만 쓴다 -->
   <node pkg="joint_state_publisher" exec="joint_state_publisher" if="$(var joint_states)">
+    <param name="source_list" value="/launcher/joint_states" value-sep=","/>
     <param name="use_sim_time" value="$(var use_sim_time)"/>
   </node>
 </launch>

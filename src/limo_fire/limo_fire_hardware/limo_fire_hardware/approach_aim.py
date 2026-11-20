@@ -35,7 +35,8 @@ class ApproachAim(Node):
         defaults = {
             'motion_enabled': False, 'mount_calibrated': False,
             'map_frame': 'map', 'base_frame': 'base_link',
-            'mount_xyz_m': [0.0, 0.0, 0.0], 'mount_yaw_deg': 0.0,
+            # Launcher pitch-axis frame from the robot URDF (limo_fire_description launcher_v5.xacro).
+            'launcher_frame': 'launcher_pivot', 'max_launcher_tilt_deg': 1.0,
             'desired_distance_m': 1.2, 'distance_tolerance_m': 0.15,
             'pitch_min_deg': 5.0, 'pitch_max_deg': 30.0,
             'aiming_model': 'line_of_sight', 'measured_launch_speed_mps': 0.0,
@@ -117,6 +118,8 @@ class ApproachAim(Node):
         self.shot_expected_sequence = 0
         self.joint = None
         self.joint_at = 0.0
+        self.mount_xyz = None
+        self.mount_yaw = 0.0
         self.phase_at = time.monotonic()
         self.stop_since = None
         self.yaw_owned = False
@@ -129,8 +132,10 @@ class ApproachAim(Node):
         for key, value in self.cfg.items():
             if isinstance(value, float) and not math.isfinite(value):
                 raise ValueError(f'{key} must be finite')
-        if len(self.cfg['mount_xyz_m']) != 3 or not all(map(math.isfinite, self.cfg['mount_xyz_m'])):
-            raise ValueError('mount_xyz_m must contain three finite measured values')
+        if not self.cfg['launcher_frame'] or self.cfg['launcher_frame'] == self.cfg['base_frame']:
+            raise ValueError('launcher_frame must be a nonempty frame distinct from base_frame')
+        if self.cfg['max_launcher_tilt_deg'] <= 0:
+            raise ValueError('max_launcher_tilt_deg must be positive')
         for key in ('desired_distance_m', 'distance_tolerance_m', 'robot_radius_m',
                     'target_freshness_s', 'sensor_freshness_s', 'costmap_freshness_s',
                     'tf_freshness_s', 'plan_timeout_s', 'navigation_timeout_s',
@@ -277,6 +282,28 @@ class ApproachAim(Node):
             raise ValueError('Robot pose is nonfinite')
         return result
 
+    def _mount(self):
+        """Read the launcher pitch-axis position and yaw in base_frame from the URDF TF."""
+        base, frame = self.cfg['base_frame'], self.cfg['launcher_frame']
+        try:
+            transform = self.tf.lookup_transform(base, frame, Time())
+        except TransformException as exc:
+            raise ValueError(f'Launcher TF {base} -> {frame} is unavailable; start robot_state_publisher '
+                             f'with the launcher URDF ({exc})') from exc
+        p, q = transform.transform.translation, transform.transform.rotation
+        norm = sum(value * value for value in (q.x, q.y, q.z, q.w))
+        if not math.isfinite(norm) or abs(norm - 1.0) > 0.01:
+            raise ValueError('Launcher mount quaternion is invalid')
+        roll = math.atan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x * q.x + q.y * q.y))
+        pitch = math.asin(max(-1.0, min(1.0, 2 * (q.w * q.y - q.z * q.x))))
+        if max(abs(roll), abs(pitch)) > math.radians(self.cfg['max_launcher_tilt_deg']):
+            raise ValueError(f'{frame} must be level in {base}; planar aiming assumes a vertical yaw axis')
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        xyz = (p.x, p.y, p.z)
+        if not all(map(math.isfinite, (*xyz, yaw))):
+            raise ValueError('Launcher mount transform is nonfinite')
+        return xyz, yaw
+
     def _stopped(self):
         if not self.odom or time.monotonic() - self.odom_at > self.cfg['sensor_freshness_s']:
             return False
@@ -313,6 +340,7 @@ class ApproachAim(Node):
             if not self._grid_fresh():
                 raise ValueError('A fresh global costmap is required')
             pose = self._pose()
+            self.mount_xyz, self.mount_yaw = self._mount()
             if not self._stopped():
                 raise ValueError('Fresh stationary odometry is required before starting')
             if not self.planner.server_is_ready():
@@ -335,7 +363,7 @@ class ApproachAim(Node):
             self.initial_target_xyz = self._xyz(self.target)
             candidates = approach_candidates(
                 self._xyz(self.target), pose, self.cfg['desired_distance_m'],
-                self.cfg['mount_xyz_m'], math.radians(self.cfg['mount_yaw_deg']),
+                self.mount_xyz, self.mount_yaw,
                 tuple(map(math.radians, self.cfg['candidate_offsets_deg'])),
                 math.radians(self.cfg['pitch_min_deg']), math.radians(self.cfg['pitch_max_deg']),
                 self.cfg['measured_launch_speed_mps'] if self.cfg['aiming_model'] == 'ballistic' else None,
@@ -460,7 +488,9 @@ class ApproachAim(Node):
                         base_x=self.candidate.base_x, base_y=self.candidate.base_y,
                         base_yaw_deg=math.degrees(self.candidate.base_yaw),
                         pitch_deg=math.degrees(self.candidate.pitch_rad),
-                        mount_calibrated=self.cfg['mount_calibrated'])
+                        mount_calibrated=self.cfg['mount_calibrated'],
+                        launcher_pivot_xyz_m=[round(value, 4) for value in self.mount_xyz],
+                        launcher_yaw_deg=round(math.degrees(self.mount_yaw), 3))
             return
         if not self._stamp_fresh(self.target.header.stamp, self.cfg['target_freshness_s']):
             self._fail('Target expired while planning')
@@ -499,15 +529,15 @@ class ApproachAim(Node):
     def _geometry(self):
         pose = self._pose()
         target = self._xyz(self.target)
-        mount = self.cfg['mount_xyz_m']
+        mount = self.mount_xyz
         c, s = math.cos(pose[3]), math.sin(pose[3])
         px, py = pose[0] + c * mount[0] - s * mount[1], pose[1] + s * mount[0] + c * mount[1]
         distance = math.hypot(target[0] - px, target[1] - py)
-        pitch = math.degrees(pitch_for_target(target, pose, mount, math.radians(self.cfg['mount_yaw_deg'])))
+        pitch = math.degrees(pitch_for_target(target, pose, mount, self.mount_yaw))
         if self.cfg['aiming_model'] == 'ballistic':
             pitch = math.degrees(ballistic_pitch(distance, target[2] - pose[2] - mount[2],
                                                   self.cfg['measured_launch_speed_mps'], self.cfg['gravity_mps2']))
-        error = heading_error(target, pose, mount, math.radians(self.cfg['mount_yaw_deg']))
+        error = heading_error(target, pose, mount, self.mount_yaw)
         if abs(distance - self.cfg['desired_distance_m']) > self.cfg['distance_tolerance_m']:
             raise ValueError(f'Measured pivot-to-target range {distance:.3f}m is outside tolerance')
         if not self.cfg['pitch_min_deg'] <= pitch <= self.cfg['pitch_max_deg']:
@@ -515,7 +545,7 @@ class ApproachAim(Node):
         return pose, pitch, error
 
     def _clear_at_pose(self, pose):
-        mount = self.cfg['mount_xyz_m']
+        mount = self.mount_xyz
         c, s = math.cos(pose[3]), math.sin(pose[3])
         actual = replace(self.candidate, base_x=pose[0], base_y=pose[1], base_yaw=pose[3],
                          pivot_x=pose[0] + c * mount[0] - s * mount[1],
@@ -565,8 +595,8 @@ class ApproachAim(Node):
                     pose, pitch, error = self._geometry()
                     if not self.after_alignment:
                         if self.cfg['yaw_alignment_mode'] == 'nav2':
-                            yaw = body_yaw_for_target(self._xyz(self.target), pose, self.cfg['mount_xyz_m'],
-                                                      math.radians(self.cfg['mount_yaw_deg']))
+                            yaw = body_yaw_for_target(self._xyz(self.target), pose, self.mount_xyz,
+                                                      self.mount_yaw)
                             self._navigate(self._goal_pose(pose[0], pose[1], yaw), 'ALIGNING')
                         else:
                             if not self._stopped() or self.handles or self.pending_requests:

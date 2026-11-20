@@ -29,7 +29,7 @@ from rclpy.time import Time
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64, String
 from std_srvs.srv import SetBool, Trigger
-from tf2_ros import TransformBroadcaster
+from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from limo_fire_hardware.approach_aim import ApproachAim
 
@@ -60,8 +60,19 @@ def stop_process_group(process):
 
 
 class FakeRobot(Node):
-    def __init__(self, delay_navigation=False, nav_yaw_bias_deg=0.0, external_bridge=False):
+    def __init__(self, delay_navigation=False, nav_yaw_bias_deg=0.0, external_bridge=False,
+                 launcher_xyz=(0.0, 0.0, 0.0)):
         super().__init__('fake_approach_aim_robot')
+        # Stands in for robot_state_publisher's fixed base_link -> launcher_pivot from the URDF.
+        self.static_tf = StaticTransformBroadcaster(self)
+        if launcher_xyz is not None:
+            mount = TransformStamped()
+            mount.header.stamp = self.get_clock().now().to_msg()
+            mount.header.frame_id = 'base_link'
+            mount.child_frame_id = 'launcher_pivot'
+            mount.transform.translation.x, mount.transform.translation.y, mount.transform.translation.z = launcher_xyz
+            mount.transform.rotation.w = 1.0
+            self.static_tf.sendTransform(mount)
         # True: a real pitch_serial_bridge owns /launcher/pitch_status and /launcher/shot.
         self.external_bridge = external_bridge
         self.group = ReentrantCallbackGroup()
@@ -264,6 +275,7 @@ class RosFixture(unittest.TestCase):
     yaw_rate_drive_mode_verified = False
     nav_yaw_bias_deg = 0.0
     external_bridge = False
+    launcher_xyz = (0.0, 0.0, 0.0)
 
     def setUp(self):
         args = ['--ros-args', '-p', f'motion_enabled:={str(self.motion_enabled).lower()}',
@@ -278,7 +290,8 @@ class RosFixture(unittest.TestCase):
                 '-p', 'reacquire_timeout_s:=3.0', '-p', 'pitch_timeout_s:=2.0']
         rclpy.init(args=args)
         self.controller = ApproachAim()
-        self.robot = FakeRobot(self.delay_navigation, self.nav_yaw_bias_deg, self.external_bridge)
+        self.robot = FakeRobot(self.delay_navigation, self.nav_yaw_bias_deg, self.external_bridge,
+                               self.launcher_xyz)
         self.executor = MultiThreadedExecutor(num_threads=4)
         self.executor.add_node(self.controller)
         self.executor.add_node(self.robot)
@@ -296,7 +309,9 @@ class RosFixture(unittest.TestCase):
                       and self.controller.latest_fire is not None
                       and self.controller.grid is not None
                       and self.controller.nav.server_is_ready()
-                      and self.controller.planner.server_is_ready(), 6)
+                      and self.controller.planner.server_is_ready()
+                      and (self.launcher_xyz is None
+                           or self.controller.tf.can_transform('base_link', 'launcher_pivot', Time())), 6)
         # Allow the independent TF listener callback to receive a fresh transform.
         time.sleep(0.15)
 
@@ -366,6 +381,30 @@ class PreviewRosTest(RosFixture):
     def test_preview_has_no_actuator_commands(self):
         self.assertTrue(self.call(self.robot.start_client).success)
         self.wait_for(lambda: self.controller.phase == 'PREVIEW_READY')
+        self.assertEqual(self.robot.navigation_goals, [])
+        self.assertEqual(self.robot.pitch_commands, [])
+
+
+class LauncherTfPreviewRosTest(RosFixture):
+    motion_enabled = False
+    launcher_xyz = (-0.0399, 0.0, 0.065)
+
+    def test_preview_uses_urdf_launcher_mount(self):
+        self.assertTrue(self.call(self.robot.start_client).success)
+        self.wait_for(lambda: self.controller.phase == 'PREVIEW_READY')
+        status = json.loads(self.controller.last_status.data)
+        self.assertEqual(status['launcher_pivot_xyz_m'], [-0.0399, 0.0, 0.065])
+        self.assertEqual(status['launcher_yaw_deg'], 0.0)
+
+
+class MissingLauncherTfRosTest(RosFixture):
+    motion_enabled = False
+    launcher_xyz = None
+
+    def test_start_requires_launcher_tf(self):
+        response = self.call(self.robot.start_client)
+        self.assertFalse(response.success)
+        self.assertIn('launcher tf', response.message.lower())
         self.assertEqual(self.robot.navigation_goals, [])
         self.assertEqual(self.robot.pitch_commands, [])
 
