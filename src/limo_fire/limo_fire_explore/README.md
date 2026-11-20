@@ -44,6 +44,12 @@ ros2 action send_goal /explore/navigate_to_pose nav2_msgs/action/NavigateToPose 
   깊이 층 걷어내기: 저장 지도 벽 둘레 0.15 m 안(`nav_wall_ring_m` — 자세 흔들림으로 벽 깊이 표시가 문틈으로 번져 0.70 m 문이 약 0.45 m 로 보였음),
   바닥이 보인 칸(`nav_floor_tol` 0.02 m · `nav_floor_range` 2.5 m — 깊이 층은 띠 안 점으로만 지워서 지나간 사람 자취가 열린 바닥에 남아 길을 막았음).
   못 간 자리 둘레 지도 그림: `nav_dump_dir`. 계획 반경은 env.yaml `plan_margin` 0 (0.293 → 0.222 m, 탐사와 같은 값).
+- 닿음 뒤 재출발 (3 차, 2026-11-21): 주행 목표 중 닿음 감지면 목표를 버리지 않고 멈춤 → 닿음 신호가 1 s 없으면(사람이 비킴 등, 5 s 지나면 그냥) 물러나기 → 다시 계획
+  (Nav2 기본 BT 복구 차례 Clear → Spin → Wait 5 s → BackUp 0.30 m 의 기다림·물러나기와 같은 뜻). 목표 하나에 3 번(`nav_contacts` · `nav_contact_clear_s` · `nav_contact_wait_s`),
+  넘으면 예전처럼 닿음으로 멈추고 못 감. 진단 걸음 기록: `nav_log` (파일 경로).
+- 좁은 틈 (3 차): 주행 목표 동안만 경로 무게 경계 0.3 → 0.25 m (`nav_weight_mid_dist`) — 0.60 m 틈의 가운데 띠가 무게 2 가 되어 틈 앞에서 경로가 지그재그로
+  꺾이며 들어갔다 물러나기를 되풀이하던 것이 줄어듦. 탐사에 같은 값을 쓰면 표준 묶음 AUC180 −0.05 라 탐사는 env.yaml 0.3 그대로.
+  (해 보고 뺀 것: 물러나기로도 못 빠질 때 라이다로 빈 쪽 곧게 가기 — 깊이로만 보이는 사람·낮은 물체 쪽으로 가 시뮬 사람 닿음이 늘었음)
 - 시뮬(Webots) 덮어쓰기 `config/explorer_sim.yaml`: 깊이 카메라 자리(Webots 모델은 실물보다 낮고 수평 — 실측 TF), 깊이 32FC1 도 받음.
 - 시뮬 확인 (2026-11-20, `limo_fire_obstacles` — 문 0.70 m + 문 앞 상자 · 낮은 상자 · 막다른 칸 · 구석 · 뜬 판 · 걷는 사람, 3 판씩, 보고서 `limo_upper_keep/reports/obstacle_nav.md`):
   | | 도착 | 형상 닿음 | 사람 닿음 | 10 s 갇힘 (그중 구석) | 맴돎 | 문 앞 상자 머뭇거림 |

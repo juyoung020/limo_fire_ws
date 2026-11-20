@@ -112,6 +112,8 @@ class RobotEnv {
   void clear_gaveup();
   // 다음 low_prepare 에서 같은 목표로 경로를 다시 짜게 함 (복구 판정 path_recovery 도 돎 — 쉼 표시를 지움). 목표는 그대로
   void force_replan() { lowrl_[0].tgt_seen = -2; }
+  // 경로 무게 경계(EnvCfg::path_r_mid — 막힘까지 이 거리 안 칸 무게 3, 그 밖 팽창 반경까지 2)를 바꿈. 주행 목표 동안만 (탐사는 env.yaml 값)
+  void set_weight_mid(float r) { b_.cfg.path_r_mid = r; }
   // 복구 물러나기 시작 (env.h path_step — Nav2 BT BackUp 과 같은 걸음, 뒤가 막히면 그만). 막힘 판정 셈은 처음부터
   void start_backup() {
     e_.p_rec = b_.cfg.rec_backup_steps;

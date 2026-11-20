@@ -297,6 +297,16 @@ class ExplorerNode : public rclcpp::Node {
       nav_floor_tol_ = declare_parameter<double>("nav_floor_tol", 0.02);      // 바닥 위 이 높이(m) 안 깊이 점 = 바닥 → 그 칸 깊이 표시 지움 (0 = 끔)
       nav_floor_range_ = declare_parameter<double>("nav_floor_range", 2.5);   // 그 점까지 깊이 (m)   // 경로 없음이 이만큼 이어지면 물러나기
       nav_backup_max_ = (int)declare_parameter<int>("nav_backups", 3);            // 목표 하나에 노드가 시키는 물러나기 수
+      // 주행 목표 동안 경로 무게 경계 (m, 0 = env.yaml weight_mid_dist 그대로 0.3). 0.25: 문(0.70 m) 앞 상자 사이 0.60 m 틈의 가운데 띠가 무게 2 가 되어
+      // 경로가 틈 앞에서 지그재그로 꺾이지 않음 (2026-11-21 시뮬). 탐사에 같은 값을 쓰면 표준 묶음 AUC180 −0.05 라 주행 목표에만
+      nav_weight_mid_ = declare_parameter<double>("nav_weight_mid_dist", 0.25);
+      nav_contact_max_ = (int)declare_parameter<int>("nav_contacts", 3);          // 목표 하나에 닿음 뒤 재출발 수 (넘으면 닿음으로 멈추고 못 감)
+      nav_contact_clear_s_ = declare_parameter<double>("nav_contact_clear_s", 1.0);   // 닿음 신호가 이만큼 없으면 원인이 사라졌다고 봄
+      nav_contact_wait_s_ = declare_parameter<double>("nav_contact_wait_s", 5.0);     // 그래도 이만큼 기다린 뒤엔 물러나기 (Nav2 Wait 5 s)
+      {
+        const std::string lp = declare_parameter<std::string>("nav_log", "");      // 진단: 주행 목표 걸음 기록 파일 (비면 안 씀)
+        if (!lp.empty()) nav_log_ = std::fopen(lp.c_str(), "w");
+      }
       const std::string map_topic = declare_parameter<std::string>("map_topic", "/map");
       const std::string nav_name = declare_parameter<std::string>("nav_action", "navigate_to_pose");   // 이름공간 explore 아래 → /explore/navigate_to_pose. 비면 서버 안 띄움
       if (nav_prime_) {
@@ -385,6 +395,8 @@ class ExplorerNode : public rclcpp::Node {
     end_goto();
     instr_.stop();
     nav_gh_ = gh;
+    nav_contacts_ = 0;
+    nav_cphase_ = 0;
     nav_pending_ = true;   // 다음 장에서 (판이 없으면 그 장으로 판을 시작한 뒤) 지도 채우기 · 목표 칸
     nav_t0_ = now();
     finished_ = false;     // 탐사 판이 끝났어도 지도는 그대로 두고 감
@@ -420,9 +432,11 @@ class ExplorerNode : public rclcpp::Node {
     nav_ay_ = env_->state().y;
     nav_at_ = now().seconds();
     env_->clear_gaveup();
+    if (nav_weight_mid_ > 0.0) env_->set_weight_mid((float)nav_weight_mid_);
     nav_gave0_ = env_->state().p_gaveup;
     nav_backups_ = 0;
     nav_np_from_ = -1;
+    nav_cphase_ = 0;
     nav_kick_ = -1000000;
     apply_nav_cmd();
   }
@@ -437,6 +451,8 @@ class ExplorerNode : public rclcpp::Node {
   // 목표 핸들만 끝냄 (취소 중이면 canceled)
   void nav_result(bool ok, const std::string& why) {
     if (!nav_gh_) return;
+    nav_cphase_ = 0;
+    env_->set_weight_mid(hc_.cfg.path_r_mid);   // 탐사 값으로 되돌림
     auto res = std::make_shared<Nav::Result>();
     const char* how = "못 감";
     if (nav_gh_->is_canceling()) {
@@ -871,8 +887,13 @@ class ExplorerNode : public rclcpp::Node {
     add_sonar();
     const double obs_ms = ms_since(t2);
     float v = 0.f, w = 0.f;
-    if (running()) env_->low_act(&v, &w);
-    else env_->hold();   // 멈춤: 명령 0
+    if (running() && !(nav_gh_ && nav_cphase_ == 1)) env_->low_act(&v, &w);
+    else env_->hold();   // 멈춤: 명령 0 (주행 목표 닿음 뒤 기다림도)
+    if (nav_log_) {   // 진단: 주행 목표 걸음마다 한 줄
+      const sim::EnvState& e = env_->state();
+      std::fprintf(nav_log_, "%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", e.step, e.x, e.y, e.th, v, w, (int)env_->low_ep().kind, e.p_n, e.goal_cell,
+                   e.p_blk, e.p_rec, nav_cphase_, nav_gh_ ? 1 : 0);
+    }
     publish_cmd(m->header.stamp, v, w);
     if (nav_gh_ && nav_.active() && env_->steps() % 2 == 0) {
       auto fb = std::make_shared<Nav::Feedback>();
@@ -924,7 +945,17 @@ class ExplorerNode : public rclcpp::Node {
     const sim::EnvState& e = env_->state();
     const bool nav_on = nav_gh_ != nullptr;   // 주행 목표 중: 탐사 판 끝(닫힘 · 진척 없음 · 대충 다 앎)은 안 봄
     // 닿음 (시뮬 contact.h sense_step — e.contact = 닿음 신호 & con_mask): 멈추고 끔
-    if (e.contact && running()) {
+    if (e.contact && running() && nav_gh_ && nav_contacts_ < nav_contact_max_) {   // 목표를 받은 첫 걸음(아직 nav_begin 전)도
+      // 주행 목표: 닿으면 목표를 버리지 않고 멈춤 → 닿음 신호가 nav_contact_clear_s 동안 없으면(사람이 비킴 등) 물러나기 → 다시 계획
+      // (Nav2 기본 BT 복구 차례 ClearCostmap → Spin → Wait 5 s → BackUp 0.30 m 중 기다림 · 물러나기 · 다시 계획과 같은 뜻). 목표 하나에 nav_contacts 번까지
+      if (nav_cphase_ != 1) {
+        ++nav_contacts_;
+        nav_cphase_ = 1;
+        nav_cwait_from_ = e.step;
+        RCLCPP_WARN(get_logger(), "주행 목표: 닿음 (신호 %d) — 멈추고 기다림 (%d/%d)", e.s_kind, nav_contacts_, nav_contact_max_);
+      }
+      nav_cclear_ = 0;
+    } else if (e.contact && running()) {
       contact_t_ = now().seconds();
       char b[200];
       std::snprintf(b, sizeof b, "닿음 (신호 %d: 라이다 1 · 깊이 2 · 멈춤 4 · 지도 8 · 사람 16 · 바퀴·자이로 32 · 가속 64, 가속 %.1f m/s²) — %s", e.s_kind, e.a_h,
@@ -937,6 +968,24 @@ class ExplorerNode : public rclcpp::Node {
                                     tsk::path_end(e, world_.ox, world_.oy, env_->cfg().res, env_->cfg().goal_tol));
       if (ev == tsk::kArrived) finish_goto();
       else if (ev == tsk::kFailed) fail_goto();
+    }
+    if (nav_.active() && running() && nav_cphase_ != 0) {   // 닿음 뒤 재출발 단계
+      const double tn = now().seconds();
+      nav_at_ = tn;   // 기다리는 · 물러나는 동안은 진척 시계를 새로
+      if (nav_cphase_ == 1) {
+        if (!e.contact) ++nav_cclear_;
+        const bool clear = nav_cclear_ >= (int)std::lround(nav_contact_clear_s_ / dt());
+        const bool timeout = e.step - nav_cwait_from_ >= (int)std::lround(nav_contact_wait_s_ / dt());
+        if (clear || timeout) {
+          env_->start_backup();   // Nav2 BackUp 꼴 (뒤가 막히면 아래층이 그만)
+          nav_cphase_ = 2;
+          RCLCPP_INFO(get_logger(), "주행 목표: 닿음 %s — 물러나기", clear ? "원인이 사라짐" : "기다림 시간 끝");
+        }
+      } else if (nav_cphase_ == 2 && e.p_rec <= 0) {
+        env_->force_replan();
+        nav_cphase_ = 0;
+        RCLCPP_INFO(get_logger(), "주행 목표: 물러나기 끝 — 다시 계획");
+      }
     }
     if (nav_.active() && running()) {   // 주행 목표: 닿으면 목표 방향으로 돈 뒤 끝, 못 가면(막힘 · 경로 없음) 못 감
       const tsk::Ev ev = nav_.step(now().seconds(), e.x + e.ex, e.y + e.ey, e.th + e.eth, e.goal_cell >= 0 && e.p_n <= 0,
@@ -1640,6 +1689,9 @@ class ExplorerNode : public rclcpp::Node {
   double nav_wall_ring_m_ = 0.15, nav_np_backup_s_ = 1.0, nav_floor_tol_ = 0.02, nav_floor_range_ = 2.5;
   std::vector<float> floor_xy_;
   int nav_backup_max_ = 3, nav_backups_ = 0, nav_np_from_ = -1;
+  int nav_contact_max_ = 3, nav_contacts_ = 0, nav_cphase_ = 0, nav_cwait_from_ = 0, nav_cclear_ = 0;   // 닿음 뒤 재출발: 단계 0 없음 · 1 멈춰 기다림 · 2 물러남
+  double nav_contact_clear_s_ = 1.0, nav_contact_wait_s_ = 5.0, nav_weight_mid_ = 0.25;
+  FILE* nav_log_ = nullptr;
   int nav_gave0_ = 0, nav_kick_ = -1000000;   // 마지막으로 다시 짜게 한 걸음
   double nav_prog_m_ = 0.5, nav_prog_s_ = 15.0, nav_timeout_s_ = 0.0, nav_ax_ = 0, nav_ay_ = 0, nav_at_ = 0;
   rclcpp::Time nav_t0_{0, 0, RCL_ROS_TIME};

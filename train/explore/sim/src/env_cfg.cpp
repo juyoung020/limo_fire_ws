@@ -134,6 +134,7 @@ EnvHostCfg load_env_cfg(const std::string& path) {
     c.path_cs_dist = ap["cost_scaling_dist"].as<float>();
     c.path_cs_gain = ap["cost_scaling_gain"].as<float>();
     c.path_r_mid = ap["weight_mid_dist"].as<float>();
+    if (const char* g = std::getenv("SIM_WEIGHT_MID")) c.path_r_mid = std::stof(g);   // 앞뒤 비교
     c.path_backup_v = ap["backup_speed"].as<float>();
     c.path_fp_pad += ap["extra_padding"].as<float>();   // nav2 footprint_padding 위에 더 (잠정)
     // 사람·움직이는 장애물 피하기 (hier_path.h "지금 스캔"): 지금 스캔 막힘 · collision_monitor approach. SIM_HIER_AVOID=0 이면 둘 다 끔 (앞뒤 비교)
