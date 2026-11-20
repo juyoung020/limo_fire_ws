@@ -42,7 +42,7 @@
   <BehaviorTree ID="MainTree">
     <Sequence name="Boot">
       <Script name="InitBlackboard"
-              code="incident_id:=0; active_mode:='BASIC'; failed_mode:='NONE'; fail_reason:=''; fail_history:=''; reported_119:=false; water_failed:=false; smoke_failed:=false; frontier_failed:=false; depth_aligned:=false; map_closed:=false"/>
+              code="incident_id:=0; active_mode:='BASIC'; failed_mode:='NONE'; fail_reason:=''; fail_history:=''; reported_119:=false; water_failed:=false; smoke_failed:=false; frontier_failed:=false; depth_aligned:=false; map_closed:=false; location_measured:=true"/>
       <!-- 순찰점 파일은 mission 노드 설정 patrol_file (블랙보드 patrol_file) -->
       <LoadPatrolRoute file="{patrol_file}" route="{patrol_route}"/>
       <SubTree ID="CheckDepthAlignment" _autoremap="true"/>
@@ -185,13 +185,13 @@
       <Fallback name="IsHazardDetected">
         <IsFireDetected detections_topic="/perception/detections" min_score="0.5" min_hits="5"
                         objects_topic="/perception/objects" use_depth="{depth_aligned}"
-                        location="{fire_location}" size="{fire_size}"/>
+                        location="{fire_location}" measured="{location_measured}" size="{fire_size}"/>
         <IsSmokeDetected detections_topic="/perception/detections" min_score="0.5" min_hits="5"
                          objects_topic="/perception/objects" use_depth="{depth_aligned}"
-                         location="{fire_location}"/>
+                         location="{fire_location}" measured="{location_measured}"/>
       </Fallback>
       <Inverter>
-        <IsKnownHazard incident="{incident_id}" location="{fire_location}" radius_m="3.0" recheck_s="300"/>
+        <IsKnownHazard location="{fire_location}" measured="{location_measured}" radius_m="3.0" approx_radius_m="4.0" recheck_s="300"/>
       </Inverter>
     </Sequence>
   </BehaviorTree>
@@ -204,7 +204,7 @@
     <Sequence>
       <Script name="ResetCycleResult" code="failed_mode:='NONE'; fail_reason:=''"/>
       <Fallback name="SameOrNewIncident">
-        <IsSameIncident incident="{incident_id}" location="{fire_location}" radius_m="3.0"/>
+        <IsSameIncident incident="{incident_id}" location="{fire_location}" measured="{location_measured}" radius_m="3.0" approx_radius_m="4.0"/>
         <Sequence name="NewIncident">
           <CreateIncident incident="{incident_id}" location="{fire_location}"/>
           <Script name="ResetIncidentFlags"
@@ -267,7 +267,7 @@
       <Sequence name="SmokeEntry">
         <IsSmokeDetected detections_topic="/perception/detections" min_score="0.5" min_hits="5"
                          objects_topic="/perception/objects" use_depth="{depth_aligned}"
-                         location="{fire_location}"/>
+                         location="{fire_location}" measured="{location_measured}"/>
         <ScriptCondition code="smoke_failed == false"/>
         <IsTopicAlive topic="/ultrasonic/front_left" min_hz="5" window_s="1.0"/>
         <Script code="active_mode:='SMOKE'"/>
@@ -276,7 +276,7 @@
       <Sequence name="WaterEntry">
         <IsFireDetected detections_topic="/perception/detections" min_score="0.5" min_hits="5"
                         objects_topic="/perception/objects" use_depth="{depth_aligned}"
-                        location="{fire_location}" size="{fire_size}"/>
+                        location="{fire_location}" measured="{location_measured}" size="{fire_size}"/>
         <IsSmallFire size="{fire_size}" max_size="0.3"/>
         <!-- 깊이가 정렬돼야 불 위치(조준점)를 믿을 수 있다 -->
         <ScriptCondition code="depth_aligned == true"/>
@@ -477,6 +477,7 @@
       <input_port name="depth_topic" type="std::string" default="/camera/depth/image_raw"/>
     </Action>
     <Condition ID="IsFireDetected">
+      <output_port name="measured" type="bool">위치를 물체 지도·깊이로 쟀는가 (false = 카메라 앞 approx_distance_m 로 대략)</output_port>
       <input_port name="use_depth" type="bool" default="false">false 면 로봇 위치 + 방향으로 대략 위치</input_port>
       <output_port name="size" type="double">불 폭 (m)</output_port>
       <output_port name="location" type="limo_fire_bt::MapPoint"/>
@@ -497,9 +498,10 @@
     </Condition>
     <Condition ID="IsKnownHazard">
       <input_port name="recheck_s" type="double">처리 뒤 이 시간이 지나면 같은 자리 불도 다시 멈춰 감시</input_port>
+      <input_port name="measured" type="bool" default="true"/>
+      <input_port name="approx_radius_m" type="double">measured=false 일 때 반경</input_port>
       <input_port name="radius_m" type="double"/>
       <input_port name="location" type="limo_fire_bt::MapPoint"/>
-      <input_port name="incident" type="int"/>
     </Condition>
     <Condition ID="IsLocalizationStable">
       <input_port name="max_tf_age_s" type="double" default="1.000000">pose_topic 을 내는 노드가 없을 때: map → robot TF 가 이보다 새로워야 함</input_port>
@@ -508,9 +510,11 @@
       <input_port name="pose_topic" type="std::string" default="/amcl_pose">geometry_msgs/PoseWithCovarianceStamped</input_port>
     </Condition>
     <Condition ID="IsSameIncident">
+      <input_port name="measured" type="bool" default="true"/>
+      <input_port name="approx_radius_m" type="double">measured=false 일 때 반경</input_port>
       <input_port name="radius_m" type="double"/>
       <input_port name="location" type="limo_fire_bt::MapPoint"/>
-      <input_port name="incident" type="int"/>
+      <inout_port name="incident" type="int">같으면 그 사건 번호로 바꿈</inout_port>
     </Condition>
     <Condition ID="IsServiceAvailable">
       <input_port name="service" type="std::string"/>
@@ -520,6 +524,7 @@
       <input_port name="max_size" type="double"/>
     </Condition>
     <Condition ID="IsSmokeDetected">
+      <output_port name="measured" type="bool">위치를 물체 지도·깊이로 쟀는가 (false = 카메라 앞 approx_distance_m 로 대략)</output_port>
       <input_port name="use_depth" type="bool" default="false">false 면 로봇 위치 + 방향으로 대략 위치</input_port>
       <output_port name="location" type="limo_fire_bt::MapPoint"/>
       <input_port name="min_hits" type="int" default="5"/>

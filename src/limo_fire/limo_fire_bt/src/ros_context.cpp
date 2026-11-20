@@ -294,6 +294,17 @@ int RosContext::create_incident(const MapPoint & where)
   return id;
 }
 
+std::optional<int> RosContext::nearest_incident(const MapPoint & where, double radius_m) const
+{
+  std::optional<int> best;
+  double best_d = radius_m;
+  for (const auto & [id, p] : incidents_) {
+    const double d = std::hypot(p.x - where.x, p.y - where.y);
+    if (d <= best_d) {best_d = d; best = id;}
+  }
+  return best;
+}
+
 std::optional<MapPoint> RosContext::incident_location(int id) const
 {
   const auto it = incidents_.find(id);

@@ -105,6 +105,8 @@ public:
   // ---- 임무 상태 ----
   int create_incident(const MapPoint & where);
   std::optional<MapPoint> incident_location(int id) const;
+  // 지금까지 생긴 모든 사건 중 where 에서 radius_m 안의 가장 가까운 것 (최근 사건 하나만 보면 불 A → B → A 를 오갈 때 A 가 새 사건이 된다)
+  std::optional<int> nearest_incident(const MapPoint & where, double radius_m) const;
   // 사건을 처리했다고 적는다 (IncidentManager). 순찰 중 같은 자리 불을 recheck_s 동안 다시 멈추지 않는 데 쓴다
   void mark_incident_handled(int id);
   // 마지막 처리 뒤 지난 시간 (s). 처리한 적 없으면 nullopt

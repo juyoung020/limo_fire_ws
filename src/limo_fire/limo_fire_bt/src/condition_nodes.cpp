@@ -99,7 +99,8 @@ public:
       InputPort<std::string>("objects_topic", "/perception/objects", "vision_msgs/Detection3DArray, 지도 위 물체"),
       InputPort<double>("min_score", 0.5, ""), InputPort<int>("min_hits", 5, ""),
       InputPort<bool>("use_depth", false, "false 면 로봇 위치 + 방향으로 대략 위치"),
-      OutputPort<MapPoint>("location")};
+      OutputPort<MapPoint>("location"),
+      OutputPort<bool>("measured", "위치를 물체 지도·깊이로 쟀는가 (false = 카메라 앞 approx_distance_m 로 대략)")};
     if (with_size) {p.insert(OutputPort<double>("size", "불 폭 (m)"));}
     return p;
   }
@@ -113,6 +114,7 @@ public:
     if (hits < need<int>(*this, "min_hits")) {return NodeStatus::FAILURE;}
 
     std::optional<MapPoint> where;
+    bool measured = true;
     double size = 0;
     if (need<bool>(*this, "use_depth")) {
       const auto robot = ctx_->robot_pose();
@@ -141,9 +143,11 @@ public:
           "%s 거리를 깊이로 못 잼 — 카메라 앞 %.1f m 로 대략", cls_.c_str(), ctx_->param<double>("approx_distance_m"));
       }
       where = fix->p;
+      measured = fix->measured;
       if (size <= 0) {size = fix->width_m;}
     }
     setOutput("location", *where);
+    setOutput("measured", measured);
     if (config().output_ports.count("size")) {setOutput("size", size);}
     return NodeStatus::SUCCESS;
   }
@@ -240,26 +244,29 @@ private:
   std::optional<bool> last_amcl_;
 };
 
-// 지금 사건(incident)의 위치에서 radius_m 안인가
+// 지금까지의 사건 중 하나와 같은 자리인가 (가장 가까운 것을 incident 로 냄). 위치를 대략 잡았으면(measured=false)
+// approx_radius_m 로 넓게 본다 — 깊이를 못 잰 같은 불이 보는 각도마다 2 m 앞으로 찍혀 새 사건으로 갈리지 않게
 class IsSameIncident : public RosCondition
 {
 public:
   using RosCondition::RosCondition;
   static PortsList providedPorts()
   {
-    return {InputPort<int>("incident"), InputPort<MapPoint>("location"), InputPort<double>("radius_m")};
+    return {BT::BidirectionalPort<int>("incident", "같으면 그 사건 번호로 바꿈"), InputPort<MapPoint>("location"),
+      InputPort<double>("radius_m"), InputPort<double>("approx_radius_m", "measured=false 일 때 반경"),
+      InputPort<bool>("measured", true, "")};
   }
   NodeStatus tick() override
   {
-    const auto at = ctx_->incident_location(need<int>(*this, "incident"));
-    if (!at) {return NodeStatus::FAILURE;}
-    const auto p = need<MapPoint>(*this, "location");
-    return std::hypot(p.x - at->x, p.y - at->y) <= need<double>(*this, "radius_m") ?
-           NodeStatus::SUCCESS : NodeStatus::FAILURE;
+    const double r = need<bool>(*this, "measured") ? need<double>(*this, "radius_m") : need<double>(*this, "approx_radius_m");
+    const auto id = ctx_->nearest_incident(need<MapPoint>(*this, "location"), r);
+    if (!id) {return NodeStatus::FAILURE;}
+    setOutput("incident", *id);
+    return NodeStatus::SUCCESS;
   }
 };
 
-// 이미 처리한 사건 자리의 불인가: incident 위치에서 radius_m 안이고, 마지막 처리 뒤 recheck_s 가 안 지났으면 SUCCESS.
+// 이미 처리한 사건 자리의 불인가: 모든 사건 중 가장 가까운 것이 radius_m(대략 위치면 approx_radius_m) 안이고, 그 사건 처리 뒤 recheck_s 가 안 지났으면 SUCCESS.
 // 순찰 중 같은 불을 볼 때마다 순찰을 멈추고 감시로 돌아가는 고리를 막는다 (recheck_s 가 지나면 다시 멈춰 감시)
 class IsKnownHazard : public RosCondition
 {
@@ -267,21 +274,21 @@ public:
   using RosCondition::RosCondition;
   static PortsList providedPorts()
   {
-    return {InputPort<int>("incident"), InputPort<MapPoint>("location"), InputPort<double>("radius_m"),
+    return {InputPort<MapPoint>("location"), InputPort<double>("radius_m"),
+      InputPort<double>("approx_radius_m", "measured=false 일 때 반경"), InputPort<bool>("measured", true, ""),
       InputPort<double>("recheck_s", "처리 뒤 이 시간이 지나면 같은 자리 불도 다시 멈춰 감시")};
   }
   NodeStatus tick() override
   {
-    const int id = need<int>(*this, "incident");
-    const auto at = ctx_->incident_location(id);
-    const auto since = ctx_->since_incident_handled(id);
-    if (!at || !since) {return NodeStatus::FAILURE;}
-    const auto p = need<MapPoint>(*this, "location");
-    if (std::hypot(p.x - at->x, p.y - at->y) > need<double>(*this, "radius_m")) {return NodeStatus::FAILURE;}
+    const double r = need<bool>(*this, "measured") ? need<double>(*this, "radius_m") : need<double>(*this, "approx_radius_m");
+    const auto id = ctx_->nearest_incident(need<MapPoint>(*this, "location"), r);
+    if (!id) {return NodeStatus::FAILURE;}
+    const auto since = ctx_->since_incident_handled(*id);
+    if (!since) {return NodeStatus::FAILURE;}
     const double left = need<double>(*this, "recheck_s") - *since;
     if (left <= 0) {return NodeStatus::FAILURE;}
     RCLCPP_INFO_THROTTLE(ctx_->logger(), *ctx_->node()->get_clock(), 10000,
-      "사건 %d 자리 불 (이미 처리함) — 순찰 계속, %.0f s 뒤 다시 감시", id, left);
+      "사건 %d 자리 불 (이미 처리함) — 순찰 계속, %.0f s 뒤 다시 감시", *id, left);
     return NodeStatus::SUCCESS;
   }
 };
