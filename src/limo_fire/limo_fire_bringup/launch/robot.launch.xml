@@ -65,6 +65,10 @@
     <param from="$(find-pkg-share limo_fire_bringup)/config/ekf.yaml"/>
   </node>
 
-  <node pkg="rviz2" exec="rviz2" name="rviz2" output="screen" if="$(var viz)"
-        args="-d $(find-pkg-share limo_fire_description)/rviz/sensors.rviz"/>
+  <!-- 센서 점검 화면도 운용 화면 하나(viewer.launch.xml), 지도 없이 base_link 기준 -->
+  <group if="$(var viz)">   <!-- group 으로 가둠: Humble 에서 include 인자가 밖으로 샘 (docs/exam Q27) -->
+    <include file="$(find-pkg-share limo_fire_description)/launch/viewer.launch.xml">
+      <arg name="fixed_frame" value="base_link"/>
+    </include>
+  </group>
 </launch>

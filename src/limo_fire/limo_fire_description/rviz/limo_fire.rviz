@@ -576,6 +576,37 @@ Visualization Manager:
           Value: true
       Enabled: true
       Name: 센서 (ESP32)
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Class: rviz_default_plugins/PointCloud2
+          Color Transformer: RGB8
+          Decay Time: 0
+          Enabled: true
+          Name: 뎁스 점구름
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Flat Squares
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /camera/depth_registered/points
+          Use Fixed Frame: true
+          Value: true
+        - Class: rviz_default_plugins/TF
+          Enabled: true
+          Marker Scale: 0.3
+          Name: TF
+          Show Arrows: false
+          Show Axes: true
+          Show Names: false
+          Value: true
+      Enabled: false
+      Name: 센서 점검 (뎁스 점구름 · TF)
   Enabled: true
   Global Options:
     Background Color: 24; 26; 31
