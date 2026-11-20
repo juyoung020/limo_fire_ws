@@ -24,6 +24,11 @@
        description="인식 설정 덮어쓰기 (예: 이 기기에 있는 엔진 경로만 바꾼 yaml)"/>
   <arg name="rviz" default="true"/>
 
+  <!-- 통신 설정 확인: 이 워크스페이스의 env.sh 를 불러온 셸이어야 Fast DDS 공유 메모리 칸이 4 MB 다 (기본 512 KB 는 영상 한 장보다 작아
+       카메라가 30 Hz 로 내도 YOLO·물체 지도·BT 가 장을 놓친다 — 2026-11-20 실물에서 컬러 30 Hz 를 내는데 YOLO 18.8 장/초).
+       변수가 없으면 여기서 멈춘다: 'source ~/<이 워크스페이스>/env.sh' 후 다시 -->
+  <let name="dds_profile" value="$(env FASTRTPS_DEFAULT_PROFILES_FILE)"/>
+
   <!-- include 에 준 인자는 Humble 에서 바깥으로 새어 나와 다음 include 의 값을 바꾸므로 하나씩 group 으로 가둔다 -->
   <group if="$(var robot)">
     <include file="$(find-pkg-share limo_fire_bringup)/launch/robot.launch.xml"/>
