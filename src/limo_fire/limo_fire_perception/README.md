@@ -74,6 +74,8 @@ PY
   --saveEngine=$HOME/limo_fire_ws/src/limo_fire/limo_fire_perception/models/yolo26s_seg_fire_u8_480.engine
 ```
 
+대회 불꽃 과녁·소화기 소품을 더 학습한 판(같은 7 클래스·같은 입출력)으로 바꾸려면 위 2 의 `--onnx` 만 그 파일로 — [train/detect/README.md](../../../train/detect/README.md#로봇에-넣기-설정launch-그대로--엔진-파일만-바꿈).
+
 `--builderOptimizationLevel=5`(기본 3)는 전술을 더 찾아 9.8 → 9.5 ms (정밀도는 같음). 빌드는 Webots 를 `kill -STOP` 으로 멈춰도 약 27 분 걸린다.
 이전 엔진(640×640 float: `yolo26s_seg_fire.engine`, 상자만 내는 `yolo26s_fire.engine`)도 노드가 그대로 돌린다 (덧대기·/255 는 GPU 커널이 한다).
 

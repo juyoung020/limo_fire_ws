@@ -103,14 +103,15 @@ struct BwdF {
 };
 // 채널 계수: k0 = γ·istd, sg = Σg/M, sgx = Σg·x̂/M  → coef [3C]
 __global__ void bn_param_grad_k(const double* acc, int64_t M, int C, const float* gamma, const float* istd, float* dg,
-                                float* db, float* coef) {
+                                float* db, float* coef, bool frozen) {
   int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (c >= C) return;
   db[c] += (float)acc[c];
   dg[c] += (float)acc[C + c];
   coef[c] = gamma[c] * istd[c];
-  coef[C + c] = (float)(acc[c] / (double)M);
-  coef[2 * C + c] = (float)(acc[C + c] / (double)M);
+  // 통계 고정(frozen)이면 평균·분산이 상수라 dz = γ·istd·dy (배치 평균 항 없음)
+  coef[C + c] = frozen ? 0.f : (float)(acc[c] / (double)M);
+  coef[2 * C + c] = frozen ? 0.f : (float)(acc[C + c] / (double)M);
 }
 // 행 하나 = 블록 y, 채널 = 스레드(32 비트 첨자)
 __global__ void bn_dz_k(const act_t* z, const act_t* dy, int lddy, int M, int C, const float* mean, const float* istd,
@@ -164,14 +165,14 @@ void bn_apply(const act_t* z, int64_t M, int C, const float* mean, const float* 
 }
 void bn_backward(const act_t* z, const act_t* dy, int lddy, int64_t M, int C, const float* mean, const float* istd,
                  const float* gamma, const float* beta, int act, double* acc, act_t* dz, float* dgamma, float* dbeta,
-                 cudaStream_t s) {
+                 cudaStream_t s, bool frozen) {
   bool v = vec_ok(C) && vec_ok(lddy);
   if (v)
     bn_reduce_vec(true, z, dy, lddy, M, C, mean, istd, gamma, beta, act, acc, s);
   else
     chan_reduce2(M, C, BwdF{z, dy, mean, istd, gamma, beta, C, act, lddy}, acc, s);
   float* coef = reinterpret_cast<float*>(acc + 2 * C);  // acc 뒤쪽 공간(3C float)
-  bn_param_grad_k<<<cdiv(C, 128), 128, 0, s>>>(acc, M, C, gamma, istd, dgamma, dbeta, coef);
+  bn_param_grad_k<<<cdiv(C, 128), 128, 0, s>>>(acc, M, C, gamma, istd, dgamma, dbeta, coef, frozen);
   if (v) return bn_dz_vec(z, dy, lddy, M, C, mean, istd, gamma, beta, act, coef, dz, s);
   int tx = std::min(C, 128);
   bn_dz_k<<<rows_grid(M, C, tx), tx, 0, s>>>(z, dy, lddy, (int)M, C, mean, istd, gamma, beta, act, coef, dz);

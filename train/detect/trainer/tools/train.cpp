@@ -3,7 +3,7 @@
 //
 // 사용: train --train <train.ycache> --val <val.ycache> --weights <yolo26s.safetensors> --out <폴더>
 //             [--seg] [--epochs 100] [--batch 32] [--imgsz 640] [--workers 16] [--close-mosaic 10] [--seed 0]
-//             [--max-iters N(속도 재기)] [--resume]
+//             [--max-iters N(속도 재기)] [--resume] [--lr0 0.01] [--lrf 0.01] [--warmup-epochs 3] [--freeze-bn]
 //       train --eval --val <split.ycache> --weights <best.safetensors> [--seg]   (평가만: 클래스별 AP·정답 수)
 //             [--draw <폴더> [--draw-n 24] [--draw-conf 0.4]]  처음 N 장의 예측(상자·마스크)을 PPM 그림으로
 // 결과: <out>/last.safetensors·best.safetensors(EMA 가중치, PyTorch 이름), <out>/state.bin(이어 하기), <out>/log.tsv
@@ -31,8 +31,9 @@ static const int kCocoPerson = 0, kOurPerson = 4;
 struct Args {
   std::string train, val, weights, out = "runs/train";
   int epochs = 100, batch = 32, imgsz = 640, workers = 16, close_mosaic = 10, max_iters = -1, val_every = 1, stop_epochs = -1;
+  float lr0 = 0.01f, lrf = 0.01f, warmup_epochs = 3.f;  // 미세 조정(fine-tune)은 lr0 를 낮춘다 — README "미세 조정"
   uint64_t seed = 0;
-  bool resume = false, eval = false, seg = false;
+  bool resume = false, eval = false, seg = false, freeze_bn = false;
   std::string draw;
   int draw_n = 24;
   float draw_conf = 0.4f;
@@ -61,6 +62,10 @@ static Args parse(int argc, char** argv) {
     else if (k == "--draw-n") a.draw_n = std::stoi(v());
     else if (k == "--draw-conf") a.draw_conf = std::stof(v());
     else if (k == "--stop-epochs") a.stop_epochs = std::stoi(v());
+    else if (k == "--lr0") a.lr0 = std::stof(v());
+    else if (k == "--lrf") a.lrf = std::stof(v());
+    else if (k == "--warmup-epochs") a.warmup_epochs = std::stof(v());
+    else if (k == "--freeze-bn") a.freeze_bn = true;
     else {
       std::fprintf(stderr, "모르는 인자 %s\n", k.c_str());
       std::exit(1);
@@ -381,6 +386,7 @@ int main(int argc, char** argv) {
   ncf.seg = a.seg;
   net.build(ncf, dnn, blas, s);
   init_params(net, a.weights, nc, a.seed);
+  net.train_bn = !a.freeze_bn;  // --freeze-bn: BN 평균·분산을 불러온 값으로 고정(γ·β 는 학습)
   net.params.sync_w16(s);
 
   AugCfg ac;
@@ -413,6 +419,9 @@ int main(int argc, char** argv) {
   oc.epochs = a.epochs;
   oc.batch = a.batch;
   oc.nb = nb;
+  oc.lr0 = a.lr0;
+  oc.lrf = a.lrf;
+  oc.warmup_epochs = a.warmup_epochs;
   Optimizer opt;
   opt.init(oc, &net, blas, s);
   std::printf("장치 메모리 %.2f GB, epoch 당 %lld 반복, 누적 %d\n", dev_total() / 1e9, (long long)nb, opt.accumulate(nb * 10));

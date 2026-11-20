@@ -107,7 +107,7 @@ class Net {
   int strides[3] = {8, 16, 32};
   void* ws = nullptr;
   size_t ws_bytes = 0;
-  bool train_bn = true;
+  bool train_bn = true;  // false: 학습 중에도 BN 은 running 통계(고정, 갱신 안 함)로 — 작은 배치 미세 조정(train --freeze-bn)
   void print_time() const;
   std::vector<std::unique_ptr<Op>>& ops() { return ops_; }
   // 이름 붙은 활성값(정합성 시험용)

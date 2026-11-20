@@ -19,9 +19,10 @@ void bn_eval_stats(int C, const float* run_mean, const float* run_var, float eps
 void bn_apply(const act_t* z, int64_t M, int C, const float* mean, const float* istd, const float* gamma,
               const float* beta, int act, act_t* y, int ldy, cudaStream_t s);
 // 역방향: dy → dz(덮어쓰기), dγ·dβ(+=, float). acc: double [4C] (뒤쪽은 채널 계수 자리)
+// frozen: 정방향이 running 통계를 썼을 때(BN 통계 고정 미세 조정) — 평균·분산이 상수라 dz 에 배치 평균 항이 없다
 void bn_backward(const act_t* z, const act_t* dy, int lddy, int64_t M, int C, const float* mean, const float* istd,
                  const float* gamma, const float* beta, int act, double* acc, act_t* dz, float* dgamma, float* dbeta,
-                 cudaStream_t s);
+                 cudaStream_t s, bool frozen = false);
 
 // ---- 모양 ----
 // dst[:, d0:d0+n] (=|+=) src[:, s0:s0+n]

@@ -155,7 +155,7 @@ class OpConvBN : public Op {
     auto s = net->s_;
     act_t* dz = net->dz_;
     kern::bn_backward(z, out->g, out->ld, out->M(), out->C, mean, istd, V(pg), V(pb), act, net->acc_, dz, G(pg), G(pb),
-                      s);
+                      s, !net->train_bn);
     if (dw) {
       if (!detach && in->g) kern::dw3_dgrad(dz, net->params.w16 + P(pw).woff, in->g, in->N, in->H, in->W, in->C, s);
       kern::dw3_wgrad(in->x, dz, net->params.dw16 + P(pw).woff, net->dwtmp_, in->N, in->H, in->W, in->C, s);
