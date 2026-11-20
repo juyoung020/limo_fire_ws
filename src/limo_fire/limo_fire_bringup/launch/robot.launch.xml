@@ -43,6 +43,13 @@
   <!-- 라이다 YDLIDAR T-mini Plus -->
   <node pkg="ydlidar_ros2_driver" exec="ydlidar_ros2_driver_node" name="ydlidar_ros2_driver_node" namespace="/" output="screen" emulate_tty="true">
     <param from="$(find-pkg-share limo_fire_bringup)/config/ydlidar.yaml"/>
+    <remap from="scan" to="scan_raw"/>
+  </node>
+  <!-- 라이다 자기 몸 점 지우기: /scan_raw → /scan (몸체 발자국 안 점 = 라이다 선 등, config/scan_self_filter.yaml). /scan 을 쓰는 노드는 그대로 -->
+  <node pkg="laser_filters" exec="scan_to_scan_filter_chain" name="scan_self_filter" output="screen">
+    <param from="$(find-pkg-share limo_fire_bringup)/config/scan_self_filter.yaml"/>
+    <remap from="scan" to="scan_raw"/>
+    <remap from="scan_filtered" to="scan"/>
   </node>
 
   <!-- ESP32: 초음파 → /ultrasonic/*, 열화상 → /thermal/*, 레이더 → /radar/*, 발사대 레버 → /launcher/* (액션 launch·서비스 enable), /diagnostics.

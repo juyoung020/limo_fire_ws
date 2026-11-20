@@ -158,7 +158,7 @@
                     <IsGoalInKnownMap goal="{patrol_goal}" map_topic="/map"/>
                   </Inverter>
                   <Timeout msec="300000">
-                    <ExploreFrontiers explorer="/explore/frontier_explorer" objects_topic="/perception/objects"/>
+                    <ExploreFrontiers explorer="/explore" objects_topic="/perception/objects"/>
                   </Timeout>
                   <Script code="map_closed:=true"/>
                   <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
@@ -389,7 +389,7 @@
           <IsTopicAlive topic="/scan" min_hz="7" window_s="2.0" _onFailure="fail_reason:='LIDAR_TOPIC_LOST'"/>
           <IsWithinTimeLimit start_time="{frontier_start}" limit_sec="300"
                              _onFailure="fail_reason:='EXPLORATION_TIMEOUT'"/>
-          <ExploreFrontiers explorer="/explore/frontier_explorer"
+          <ExploreFrontiers explorer="/explore"
                             objects_topic="/perception/objects"
                             survivors="{survivors}" _onFailure="fail_reason:='EXPLORATION_FAILED'"/>
         </ReactiveSequence>
@@ -451,7 +451,7 @@
     <Action ID="ExploreFrontiers">
       <output_port name="survivors" type="int"/>
       <input_port name="objects_topic" type="std::string" default="/perception/objects"/>
-      <input_port name="explorer" type="std::string" default="/explore/frontier_explorer">탐사 노드 이름 (~/enable, ~/state)</input_port>
+      <input_port name="explorer" type="std::string" default="/explore">탐사 노드 이름 (~/enable, ~/state)</input_port>
     </Action>
     <Action ID="GetNextWaypoint">
       <output_port name="goal" type="limo_fire_bt::Pose2"/>

@@ -392,7 +392,7 @@ private:
   bool smoke_on_ = false;
 };
 
-// 프론티어 탐사 노드(limo_fire_explore frontier_explorer)를 켜고 state 가 done 이 될 때까지. 멈추면 끈다.
+// 탐사 노드(limo_fire_explore 합친 탐사 /explore — ~/enable · ~/state)를 켜고 state 가 done 이 될 때까지. 멈추면 끈다.
 // survivors = 탐사하며 지도에 올라간 사람 수
 class ExploreFrontiers : public RosAction
 {
@@ -400,7 +400,7 @@ public:
   using RosAction::RosAction;
   static PortsList providedPorts()
   {
-    return {InputPort<std::string>("explorer", "/explore/frontier_explorer", "탐사 노드 이름 (~/enable, ~/state)"),
+    return {InputPort<std::string>("explorer", "/explore", "탐사 노드 이름 (~/enable, ~/state)"),
       InputPort<std::string>("objects_topic", "/perception/objects", ""),
       OutputPort<int>("survivors")};
   }

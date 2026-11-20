@@ -1,0 +1,32 @@
+# 라이다 자기 몸 점 지우기 (laser_filters LaserScanBoxFilter — ROS 표준 라이다 필터, 지운 빔은 NaN = 빠짐).
+# 로봇 몸체(발자국) 안에 찍힌 점은 장애물일 수 없다 — 라이다 자기 선·센서 받침 등이 빔을 가림(2026-11-20 실물: 오른쪽 앞 −64°~−46°,
+# 라이다에서 6 cm 에 점 20 개 → 탐사가 켜자마자 '닿음'으로 멈춤). 시뮬 라이다는 몸 안에 점을 내지 않으므로 시뮬 = 실물을 지킨다.
+# 상자 = 발자국 0.32 × 0.22 m (train/explore/sim/config/env.yaml body.footprint · nav2 footprint 와 같음), base_link 중심
+scan_self_filter:
+  ros__parameters:
+    filter1:
+      name: robot_body
+      type: laser_filters/LaserScanBoxFilter
+      params:
+        box_frame: base_link
+        min_x: -0.16
+        max_x: 0.16
+        min_y: -0.11
+        max_y: 0.11
+        min_z: -0.5
+        max_z: 0.5
+        invert: false   # false = 상자 안 점을 지움
+    # 회로선 (2026-11-20 실물): 몸체 앞 경계 밖으로 조금 나와(라이다에서 −49°~−18°, 8.6~9.3 cm) 장애물·닿음으로 잡힘.
+    # 그 자리 좁은 상자만 지운다 (앞 오른쪽 x 0.16~0.21, y −0.10~−0.01). 선을 몸체 안으로 정리하면 이 상자는 지운다 — TODO(제거): 선 정리 뒤
+    filter2:
+      name: lidar_cable
+      type: laser_filters/LaserScanBoxFilter
+      params:
+        box_frame: base_link
+        min_x: 0.16
+        max_x: 0.21
+        min_y: -0.10
+        max_y: -0.01
+        min_z: -0.5
+        max_z: 0.5
+        invert: false

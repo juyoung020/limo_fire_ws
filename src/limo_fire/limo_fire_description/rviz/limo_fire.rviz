@@ -8,7 +8,7 @@ Panels:
     Tree Height: 70
   - Class: limo_fire_rviz/ExplorePanel
     Name: Explore
-    mode: frontier
+    mode: explorer
   - Class: limo_fire_rviz/SmokePanel
     Name: Smoke
 Visualization Manager:
