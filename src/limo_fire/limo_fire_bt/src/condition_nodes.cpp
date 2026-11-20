@@ -320,6 +320,27 @@ public:
 };
 
 // 관리자가 요구조자 수색을 요청했는가 (~/request_survivor_search)
+// 로봇이 goal 에서 radius_m 안인가 — 순찰점에 물건이 있어 Nav2 가 끝까지 못 가도 근처까지 왔으면 들른 것으로 친다
+class IsNearGoal : public RosCondition
+{
+public:
+  using RosCondition::RosCondition;
+  static PortsList providedPorts()
+  {
+    return {InputPort<Pose2>("goal"), InputPort<double>("radius_m", 1.0, "이 안이면 들른 것으로 침")};
+  }
+  NodeStatus tick() override
+  {
+    const auto g = need<Pose2>(*this, "goal");
+    const auto r = ctx_->robot_pose();
+    if (!r) {return NodeStatus::FAILURE;}
+    const double d = std::hypot(g.x - r->x, g.y - r->y);
+    if (d > need<double>(*this, "radius_m")) {return NodeStatus::FAILURE;}
+    RCLCPP_INFO(ctx_->logger(), "순찰점 (%s) 근처 %.2f m 까지 감 — 막혀 있어 들른 것으로 치고 다음 점", to_text(g).c_str(), d);
+    return NodeStatus::SUCCESS;
+  }
+};
+
 // 순찰이 켜져 있는가 (운용 화면 순찰 패널 → /mission/set_patrol). 꺼져 있으면 현황판에 알린다
 class IsPatrolEnabled : public RosCondition
 {
@@ -509,6 +530,7 @@ void register_condition_nodes(BT::BehaviorTreeFactory & f, const std::shared_ptr
   f.registerNodeType<IsKnownHazard>("IsKnownHazard", ctx);
   f.registerNodeType<IsServiceAvailable>("IsServiceAvailable", ctx);
   f.registerNodeType<IsSmallFire>("IsSmallFire");
+  f.registerNodeType<IsNearGoal>("IsNearGoal", ctx);
   f.registerNodeType<IsPatrolEnabled>("IsPatrolEnabled", ctx);
   f.registerNodeType<IsSurvivorSearchRequested>("IsSurvivorSearchRequested", ctx);
   f.registerNodeType<IsTemperatureDropped>("IsTemperatureDropped", ctx);

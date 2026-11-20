@@ -153,6 +153,8 @@
                 <GetNextWaypoint route="{patrol_route}" route_topic="/patrol/route" goal="{patrol_goal}"/>
                 <Fallback name="NavigateOrSkip">
                   <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
+                  <!-- 순찰점에 물건이 있어(막힘) 끝까지 못 갔어도 1 m 안까지 왔으면 들른 것으로 치고 바로 다음 점 (기다림·알림 없이) -->
+                  <IsNearGoal goal="{patrol_goal}" radius_m="1.0"/>
                   <!-- 지도 만들기 중 순찰점이 아직 안 그린 곳(지도 밖)이면 Nav2 가 바로 거절한다 → 프론티어 탐사로 지도를 넓힌 뒤 다시 간다.
                        탐사가 닫힘으로 끝나면(map_closed) 다시 하지 않는다. 탐사 중에도 위 DetectHazard 가 돌아 불을 보면 탐사를 끄고 멈춘다.
                        저장 지도에서는 순찰점이 늘 지도 안이라 이 갈래로 오지 않는다 -->
@@ -517,6 +519,10 @@
       <input_port name="max_yaw_std_rad" type="double" default="0.200000"/>
       <input_port name="max_xy_std_m" type="double" default="0.300000"/>
       <input_port name="pose_topic" type="std::string" default="/amcl_pose">geometry_msgs/PoseWithCovarianceStamped</input_port>
+    </Condition>
+    <Condition ID="IsNearGoal">
+      <input_port name="radius_m" type="double" default="1.000000">이 안이면 들른 것으로 침</input_port>
+      <input_port name="goal" type="limo_fire_bt::Pose2"/>
     </Condition>
     <Condition ID="IsPatrolEnabled"/>
     <Condition ID="IsSameIncident">
