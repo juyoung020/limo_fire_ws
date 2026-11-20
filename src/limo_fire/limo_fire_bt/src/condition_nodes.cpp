@@ -418,13 +418,22 @@ public:
 class IsGoalInKnownMap : public RosCondition
 {
 public:
-  using RosCondition::RosCondition;
+  IsGoalInKnownMap(const std::string & name, const BT::NodeConfig & cfg, std::shared_ptr<RosContext> ctx)
+  : RosCondition(name, cfg, std::move(ctx))
+  {
+    // 트리를 만들 때 미리 구독한다 — 처음 판정 때 구독을 시작하면 지도가 아직 없어 "모르는 곳"으로 잘못 본다 (2026-11-20 실물)
+    if (const auto t = getInput<std::string>("map_topic")) {map_topic_ = t.value();}
+    latest_map();
+  }
   static PortsList providedPorts() {return {InputPort<Pose2>("goal"), InputPort<std::string>("map_topic", "/map", "")};}
   NodeStatus tick() override
   {
-    const auto map = ctx_->latest<nav_msgs::msg::OccupancyGrid>(need<std::string>(*this, "map_topic"),
-        rclcpp::QoS(1).reliable().transient_local());
-    if (!map || map->info.resolution <= 0) {return NodeStatus::FAILURE;}
+    const auto map = latest_map();
+    // 지도를 아직 못 받았으면 판정할 수 없다 — 모르는 곳으로 보면 저장 지도에서도 탐사로 빠지므로 아는 곳으로 친다
+    if (!map || map->info.resolution <= 0) {
+      RCLCPP_WARN_THROTTLE(ctx_->logger(), *ctx_->node()->get_clock(), 10000, "지도(%s) 없음 — 순찰점을 아는 곳으로 침", map_topic_.c_str());
+      return NodeStatus::SUCCESS;
+    }
     const auto g = need<Pose2>(*this, "goal");
     const auto & info = map->info;
     const int x = static_cast<int>(std::floor((g.x - info.origin.position.x) / info.resolution));
@@ -434,6 +443,13 @@ public:
     }
     return map->data[static_cast<size_t>(y) * info.width + x] >= 0 ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
   }
+
+private:
+  nav_msgs::msg::OccupancyGrid::ConstSharedPtr latest_map()
+  {
+    return ctx_->latest<nav_msgs::msg::OccupancyGrid>(map_topic_, rclcpp::QoS(1).reliable().transient_local());
+  }
+  std::string map_topic_ = "/map";
 };
 
 class HasUnexploredFrontier : public RosCondition
