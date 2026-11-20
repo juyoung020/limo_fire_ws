@@ -75,7 +75,10 @@ ros2 topic echo /explore/frontier_explorer/state
 | 섀시 배터리 `/limo_status` | 10.7 V |
 | Jetson 부하 평균 | 7.6 (Cartographer + 인식 + Nav2), `planner_server` 1 Hz 를 못 맞춘 적 2 번(0.69 · 0.81 Hz) |
 
-- 가장 의심: 배터리(충전기를 뺀 뒤 꽤 돌린 뒤). 이 로봇 배터리의 정상 전압은 아직 확인 안 함 — 충전 직후 같은 시험으로 `/cmd_vel` 와 `/odom` 을 견줘 가린다.
+- 가장 의심: 배터리(충전기를 뺀 뒤 꽤 돌린 뒤). 2026-11-20 다시 켠 직후(움직이기 전) `/limo_status` 10.2 V — 11-18 탐사 때(10.7 V)보다 낮다.
+  LIMO Pro 배터리는 12 V · 10 Ah 로 나와 있다(판매처·문서 사이트 기준, AgileX 공식 데이터시트는 못 찾음 —
+  [Weston Robot](https://westonrobot.github.io/docs-legacy/robot_user_guide/agilex/limo_pro.html)) → 거의 바닥.
+  완전히 충전한 직후 같은 시험으로 `/cmd_vel` 와 `/odom` 을 견줘 가린다(아직 안 함).
 - 그 밖에 늦어지는 것: 최고 속도 0.26 m/s 자체가 WeGo 기본값, RPP 가 곡선(반경 0.9 m 아래)·목표 0.6 m 안에서 줄임(최저 0.1 · 0.05 m/s),
   탐사가 3 초마다 목표를 다시 골라 방향이 바뀜.
 
