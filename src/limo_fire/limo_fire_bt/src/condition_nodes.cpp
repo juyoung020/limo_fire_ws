@@ -186,7 +186,23 @@ public:
   }
 };
 
-// AMCL 공분산이 문턱 안인가
+// 지도 위 로봇 위치(map → robot TF)가 있고 max_age_s 안에 갱신됐는가.
+// 저장 지도(AMCL)는 2D Pose Estimate 뒤에, 지도 만들기(Cartographer)는 켜자마자 참이 된다
+class HasRobotPose : public RosCondition
+{
+public:
+  using RosCondition::RosCondition;
+  static PortsList providedPorts() {return {InputPort<double>("max_age_s", 1.0, "TF 가 이보다 오래되면 없다고 봄")};}
+  NodeStatus tick() override
+  {
+    const auto age = ctx_->robot_pose_age();
+    return age && *age <= need<double>(*this, "max_age_s") ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
+  }
+};
+
+// 위치 추정이 믿을 만한가. 위치 추정 출처는 그래프에서 고른다:
+//   pose_topic 을 내는 노드가 있으면(저장 지도 AMCL) 그 공분산이 문턱 안인가,
+//   없으면(지도 만들기 Cartographer — 공분산을 내지 않음) map → robot TF 가 max_tf_age_s 안에 갱신되는가
 class IsLocalizationStable : public RosCondition
 {
 public:
@@ -194,10 +210,21 @@ public:
   static PortsList providedPorts()
   {
     return {InputPort<std::string>("pose_topic", "/amcl_pose", "geometry_msgs/PoseWithCovarianceStamped"),
-      InputPort<double>("max_xy_std_m", 0.3, ""), InputPort<double>("max_yaw_std_rad", 0.2, "")};
+      InputPort<double>("max_xy_std_m", 0.3, ""), InputPort<double>("max_yaw_std_rad", 0.2, ""),
+      InputPort<double>("max_tf_age_s", 1.0, "pose_topic 을 내는 노드가 없을 때: map → robot TF 가 이보다 새로워야 함")};
   }
   NodeStatus tick() override
   {
+    const auto topic = need<std::string>(*this, "pose_topic");
+    const bool amcl = ctx_->node()->count_publishers(ctx_->resolve(topic)) > 0;
+    if (amcl != last_amcl_) {
+      RCLCPP_INFO(ctx_->logger(), "위치 안정 판정: %s", amcl ? (topic + " 공분산").c_str() : "map → robot TF 갱신 (AMCL 없음)");
+      last_amcl_ = amcl;
+    }
+    if (!amcl) {
+      const auto age = ctx_->robot_pose_age();
+      return age && *age <= need<double>(*this, "max_tf_age_s") ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
+    }
     // AMCL 은 움직일 때만 내고 마지막 값을 transient local 로 둔다
     const auto p = ctx_->latest<geometry_msgs::msg::PoseWithCovarianceStamped>(
       need<std::string>(*this, "pose_topic"), rclcpp::QoS(1).reliable().transient_local());
@@ -208,6 +235,9 @@ public:
     return xy <= need<double>(*this, "max_xy_std_m") && yaw <= need<double>(*this, "max_yaw_std_rad") ?
            NodeStatus::SUCCESS : NodeStatus::FAILURE;
   }
+
+private:
+  std::optional<bool> last_amcl_;
 };
 
 // 지금 사건(incident)의 위치에서 radius_m 안인가
@@ -429,6 +459,7 @@ void register_condition_nodes(BT::BehaviorTreeFactory & f, const std::shared_ptr
   f.registerNodeType<IsFireDetected>("IsFireDetected", ctx);
   f.registerNodeType<IsSmokeDetected>("IsSmokeDetected", ctx);
   f.registerNodeType<IsFireGone>("IsFireGone", ctx);
+  f.registerNodeType<HasRobotPose>("HasRobotPose", ctx);
   f.registerNodeType<IsLocalizationStable>("IsLocalizationStable", ctx);
   f.registerNodeType<IsSameIncident>("IsSameIncident", ctx);
   f.registerNodeType<IsKnownHazard>("IsKnownHazard", ctx);

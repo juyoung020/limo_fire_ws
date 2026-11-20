@@ -48,9 +48,19 @@
       <SubTree ID="CheckDepthAlignment" _autoremap="true"/>
       <!-- 센서 주기를 잴 시간: IsTopicAlive 의 가장 긴 window_s(2 s)를 채운 뒤 첫 점검 (안 기다리면 시작마다 LIDAR_TOPIC_LOST 한 번) -->
       <Sleep msec="3000"/>
-      <!-- Nav2(위치 추정·주행)가 다 켜진 뒤 순찰을 시작한다. 같이 띄우면 첫 순찰 목표가 거절당했다 -->
-      <WaitForLifecycleActive service="/lifecycle_manager_localization/is_active"/>
+      <!-- Nav2 주행이 다 켜진 뒤 순찰을 시작한다. 같이 띄우면 첫 순찰 목표가 거절당했다 -->
       <WaitForLifecycleActive service="/lifecycle_manager_navigation/is_active"/>
+      <!-- 지도 위 로봇 위치가 생길 때까지 기다린다: 저장 지도(AMCL)는 2D Pose Estimate 뒤, 지도 만들기(Cartographer)는 켜자마자.
+           AMCL lifecycle 만 기다리면 지도 만들기에선 영영 안 켜지고, 위치 없이 순찰 목표를 보내면 Nav2 가 실패한다 -->
+      <RetryUntilSuccessful name="WaitForRobotPose" num_attempts="-1">
+        <Fallback>
+          <HasRobotPose max_age_s="1.0"/>
+          <Sequence>
+            <Sleep msec="1000"/>
+            <AlwaysFailure/>
+          </Sequence>
+        </Fallback>
+      </RetryUntilSuccessful>
       <Repeat num_cycles="-1">
         <!-- 한 사이클이 어떻게 끝나든 다음 순찰로 돌아간다 (트리 자체는 절대 종료되지 않음) -->
         <ForceSuccess>
@@ -433,6 +443,9 @@
       <output_port name="goal" type="limo_fire_bt::Pose2"/>
       <input_port name="route" type="std::vector&lt;limo_fire_bt::Pose2, std::allocator&lt;limo_fire_bt::Pose2&gt; &gt;"/>
     </Action>
+    <Condition ID="HasRobotPose">
+      <input_port name="max_age_s" type="double" default="1.000000">TF 가 이보다 오래되면 없다고 봄</input_port>
+    </Condition>
     <Condition ID="HasUnexploredFrontier">
       <input_port name="min_cells" type="int" default="10"/>
       <input_port name="radius_m" type="double" default="5.000000"/>
@@ -471,6 +484,7 @@
       <input_port name="incident" type="int"/>
     </Condition>
     <Condition ID="IsLocalizationStable">
+      <input_port name="max_tf_age_s" type="double" default="1.000000">pose_topic 을 내는 노드가 없을 때: map → robot TF 가 이보다 새로워야 함</input_port>
       <input_port name="max_yaw_std_rad" type="double" default="0.200000"/>
       <input_port name="max_xy_std_m" type="double" default="0.300000"/>
       <input_port name="pose_topic" type="std::string" default="/amcl_pose">geometry_msgs/PoseWithCovarianceStamped</input_port>

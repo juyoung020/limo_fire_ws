@@ -95,6 +95,9 @@ public:
 
   // ---- 위치 ----
   std::optional<Pose2> robot_pose();
+  // 지도 위 로봇 위치(map → robot TF)의 가장 최근 값이 몇 초 전인가. 없으면 nullopt
+  // (AMCL 은 2D Pose Estimate 뒤에, Cartographer 는 켜자마자 map → odom 을 낸다)
+  std::optional<double> robot_pose_age();
   // 탐지 상자 하나를 지도 좌표로: 정렬된 깊이 영상에서 상자 가운데 부분의 거리를 재고(depth.*),
   // 깊이가 없거나 정렬이 안 됐으면 approx_distance_m 앞으로 대신한다 (measured=false)
   std::optional<BoxFix> locate_box(const vision_msgs::msg::BoundingBox2D & box);

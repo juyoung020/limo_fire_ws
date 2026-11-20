@@ -220,6 +220,16 @@ std::optional<Pose2> RosContext::robot_pose()
   }
 }
 
+std::optional<double> RosContext::robot_pose_age()
+{
+  try {
+    const auto tf = tf_buffer_->lookupTransform(map_frame_, robot_frame_, tf2::TimePointZero);
+    return (node_->now() - rclcpp::Time(tf.header.stamp, node_->get_clock()->get_clock_type())).seconds();
+  } catch (const tf2::TransformException &) {
+    return std::nullopt;
+  }
+}
+
 std::optional<double> RosContext::box_depth(const vision_msgs::msg::BoundingBox2D & box,
   const sensor_msgs::msg::CameraInfo & info)
 {
