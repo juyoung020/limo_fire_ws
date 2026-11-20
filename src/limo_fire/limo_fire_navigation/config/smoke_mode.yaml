@@ -9,7 +9,8 @@ smoke_mode:
     #   (include/limo_fire_navigation/sonar_wall.hpp). 값은 모두 잠정 — 시뮬 HC-SR04 모델 기준, 실물 메아리 잡음은 아직 안 쟀다
     wall:
       range_topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
-      window: 4.0          # s. 0.20 m/s 면 약 0.8 m — 그동안 바퀴 + IMU 가 거의 맞다고 본다
+      window: 2.5          # s. 0.20 m/s 면 약 0.5 m — 그동안 바퀴 + IMU 가 거의 맞다고 본다. 4.0 → 2.5 (2026-11-20): 속도를 0.13 → 0.20 으로
+                           # 올리자 4 s(0.8 m) 창에서 maze 추정 오차가 0.09 → 0.14 m 로 나빠졌고, 2.5 s(0.13 × 4 s 와 같은 약 0.5 m)로 되돌아옴 (benchmarks 결과 8)
       rate: 2.0            # Hz, 맞추기 주기
       min_hits: 8          # 지도와 맞는 메아리가 이보다 적으면 안 고침
       max_hits: 80         # 이보다 많으면 창 전체에서 고르게 솎음
