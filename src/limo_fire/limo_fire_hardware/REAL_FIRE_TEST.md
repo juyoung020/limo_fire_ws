@@ -38,8 +38,8 @@ ros2 pkg prefix limo_fire_hardware     # 기대: /home/wego/limo_fire_ws/install
 ```bash
 # 터미널 1 — 로봇 + ESP32 다리(발사 허용은 아직 끔)
 ros2 launch limo_fire_bringup robot.launch.xml base:=true viz:=false max_clocks:=false esp32:=true esp32_port:=$ESP
-# 터미널 2 — Cartographer + Nav2 + 꺼진 프론티어 탐사
-ros2 launch limo_fire_explore frontier_explorer.launch.xml stack:=true rviz:=true
+# 터미널 2 — Cartographer + Nav2 + 꺼진 탐사(/explore/explorer) + 운용 화면 (로봇은 터미널 1, 인식은 터미널 3 이 띄움)
+ros2 launch limo_fire_bringup real.launch.xml robot:=false slam:=true perception:=false
 ```
 
 확인(터미널 4):
@@ -48,7 +48,7 @@ ros2 topic echo /limo_status --once                     # motion_mode 기록 (0 
 ros2 topic hz /odometry/filtered                        # 수십 Hz
 ros2 run tf2_ros tf2_echo map base_link                 # Translation 이 나옴
 ros2 run tf2_ros tf2_echo base_link launcher_pivot      # URDF 값(지금 -0.0399 0 0.065), 회전 0
-ros2 topic echo /explore/frontier_explorer/state --once # idle
+ros2 topic echo /explore/state --once                   # idle
 ros2 topic echo /launcher/state --once                  # off (펌웨어를 알아봄). disconnected 면 포트·펌웨어 확인
 ros2 topic echo /diagnostics --once                     # esp32_bridge: link 가 OK, rate_US_hz·rate_HB_hz 가 0 이 아님
 ```
@@ -109,7 +109,7 @@ ros2 run limo_fire_hardware launcher_terminal --log /home/wego/launcher-commands
 - **포트는 하나**: 다리가 포트를 연 채로 `pio device monitor`·다른 시리얼 터미널을 같이 열지 않는다. 포트를 열 때 칩이 다시 켜진다(DTR/RTS) — 다리는 `$LA,boot` 로 알고 레버를 꺼진 것으로 본다. 레버가 켜져 있거나 동작 중에 재시작되면 `fault`.
 - 발사 동작은 중간 취소(`x`)가 된다 — 펌웨어가 움직이던 것을 바로 멈추고 쌓인 명령을 버린다. 장전이 어디까지 됐는지 모르므로 다리는 `fault` 로 두고, 확인한 뒤 `x` 로 풀어야 다음 명령을 받는다.
 - 터미널 `a` 는 launch 의 `auto_fire_enabled:=true` 를 켜는 스위치가 아니라, 켜진 자동 임무를 한 번 시작하는 명령이다. `/launcher/approach_aim/start` 를 직접 부르면 탐색 단계는 거치지 않는다.
-- 상태: `/explore/frontier_explorer/state`, `/launcher/approach_aim/state`·`status`, `/launcher/state`·`status`, `/diagnostics`.
+- 상태: `/explore/state`, `/launcher/approach_aim/state`·`status`, `/launcher/state`·`status`, `/diagnostics`.
 
 ## 예전 기록 (Python 판, 2026-11-19~20)
 

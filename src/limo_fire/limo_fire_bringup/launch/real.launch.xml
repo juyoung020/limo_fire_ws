@@ -4,16 +4,16 @@
                         → RViz 2D Pose Estimate → Publish Point 로 점 찍기 → ros2 service call /click_patrol/start std_srvs/srv/Trigger
      연기 모드 (저장 지도): 2D Pose Estimate 로 위치를 잡은 뒤 RViz Smoke 패널 버튼 → 라이다·카메라 없이 바퀴 + IMU 로만 주행 → Nav2 Goal
      임무 BT 까지:      ros2 launch limo_fire_bringup real.launch.xml bt:=true
-     프론티어 탐사:     ros2 launch limo_fire_bringup real.launch.xml slam:=true
+     탐사 (새 곳):      ros2 launch limo_fire_bringup real.launch.xml slam:=true
                         → 리모컨 SWB 위 → RViz 탐사 패널 "Auto explore" 버튼 → 다 돌면 save_map.launch.xml name:=<이름>
-     Nav2 목표를 내는 것(임무 BT · click_patrol · 프론티어 탐사)은 하나만 쓴다 — 둘이 같이 내면 서로 목표를 끊는다.
-     프론티어 탐사 노드와 찍어서 순찰(click_patrol)은 인자 없이 늘 멈춘 채 떠 있다 — 탐사는 탐사 패널 버튼, click_patrol 은
+     주행을 내는 것(임무 BT · click_patrol · 탐사)은 하나만 쓴다 — 둘이 같이 내면 서로 끊는다 (탐사는 Nav2 없이 /cmd_vel 을 바로 냄).
+     탐사 노드와 찍어서 순찰(click_patrol)은 인자 없이 늘 멈춘 채 떠 있다 — 탐사는 탐사 패널 버튼, click_patrol 은
      RViz Publish Point 로 찍고(지도에 번호·선) ~/start 로 출발. 임무 BT(bt:=true)는 기본 순찰점이 없고 이 찍은 점(/patrol/route)으로만 순찰한다 —
      찍기 전에는 기다리고, 찍거나 지우면 다음 순찰점부터 바뀐다. 셋 중 하나만 출발시킨다 (임무 BT 가 순찰 중이면 click_patrol ~/start·탐사 버튼은 쓰지 않는다). 저장 지도(slam:=false)는 이미 닫혀 있어 탐사가 곧 끝난다, 새 곳은 slam:=true
      대시보드 limo_base 나 robot.launch.xml 을 따로 켜 두었으면 robot:=false (섀시 포트는 드라이버 하나만) -->
 <launch>
   <arg name="robot" default="true" description="센서·섀시·EKF (robot.launch.xml). 따로 켜 두었으면 false"/>
-  <arg name="slam" default="false" description="true: 저장 지도·AMCL 대신 Cartographer 로 지도를 만들며 주행 (프론티어 탐사)"/>
+  <arg name="slam" default="false" description="true: 저장 지도·AMCL 대신 Cartographer 로 지도를 만들며 주행 (새 곳 탐사)"/>
   <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/lab_1116b.yaml" description="slam:=false 일 때 쓰는 지도"/>
   <arg name="explore" default="true" description="합친 탐사(시뮬과 같은 코드)를 멈춘 채 늘 띄운다 — RViz 탐사 패널 버튼으로 언제든 켜고 끔"/>
   <arg name="bt" default="false" description="임무 BT (순찰·불 대응). 켜면 리모컨 오토가 되자마자 순찰한다 — 그동안 click_patrol·탐사는 출발시키지 않는다"/>

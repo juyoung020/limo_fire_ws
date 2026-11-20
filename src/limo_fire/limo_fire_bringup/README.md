@@ -15,10 +15,11 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=<맵>        # 시뮬: 1(sim
 
 ## 실물에서 운용 화면(RViz) 켜기
 
-<img src="../../../docs/assets/auto_explore.gif" width="720" alt="Webots 덕트호스 미로: 운용 화면 탐사 패널 버튼을 눌러 프론티어 자동 탐사를 켜고, 중간에 끄면 로봇이 서고, 다시 켜면 지도가 닫힐 때까지 탐사">
+<img src="../../../docs/assets/auto_explore.gif" width="720" alt="Webots 덕트호스 미로: 운용 화면 탐사 패널 버튼을 눌러 자동 탐사를 켜고, 중간에 끄면 로봇이 서고, 다시 켜면 지도가 닫힐 때까지 탐사">
 
 시뮬(덕트호스 미로, `sim.launch.xml slam:=true`)에서 탐사 패널 버튼을 마우스로 눌러 켬 → 끔(로봇 섬) → 다시 켬 → 지도가 닫혀 끝.
 실제 걸린 시간은 시뮬 시간 약 300 초이고 GIF 는 구간마다 2 ~ 14 배로 빠르게 돌렸다(화면 위 sim time). 실물은 아래 차례로 같은 화면을 띄운다.
+(옛 구성: 이 GIF 는 지금은 지운 Nav2 프론티어 탐사 노드로 찍었다. 패널 버튼·상태 흐름은 지금 탐사 `/explore/explorer` 와 같다.)
 
 운용 화면은 `limo_fire_description/rviz/limo_fire.rviz` 하나다(지도·라이다·Nav2 경로·물체, 왼쪽 아래 **탐사 패널** "Auto explore ON/OFF" —
 [limo_fire_rviz](../limo_fire_rviz/README.md)). 두 가지로 띄운다: (가) 노트북·PC 에서 네트워크로, (나) 젯슨에 모니터를 꽂고 젯슨에서.
@@ -28,14 +29,14 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=<맵>        # 시뮬: 1(sim
 | # | 어디서 | 명령 (모두 `source ~/limo_fire_ws/env.sh` 뒤) | 무엇 |
 |---|---|---|---|
 | 1 | 로봇 | `ros2 launch limo_fire_bringup robot.launch.xml` | 센서·섀시·EKF (항상 먼저) |
-| 2 | 로봇 | `ros2 launch limo_fire_explore frontier_explorer.launch.xml stack:=true` | Cartographer + Nav2(지도 없이) + 프론티어 탐사 노드(멈춘 채) |
+| 2 | 로봇 | `ros2 launch limo_fire_explore app.launch.xml stack:=true dry_run:=false decider:=false` | Cartographer + 탐사 `/explore/explorer`(멈춘 채, Nav2 안 씀). 판단 모델 서버를 띄웠으면 `decider:=false` 를 뺀다 |
 | 3 | PC 또는 로봇 | `ros2 launch limo_fire_description viewer.launch.xml` | 운용 화면 + 탐사 패널 |
-| 4 | — | 패널 버튼 **Auto explore OFF (누르면 시작)** | 탐사 시작. 다시 누르면 Nav2 목표를 취소해 멈춤 |
+| 4 | — | 패널 버튼 **Auto explore OFF (누르면 시작)** | 탐사 시작. 다시 누르면 멈춤 |
 
-- 2 를 따로 띄워도 된다: `mapping.launch.xml rviz:=false` + `navigation.launch.xml localization:=false rviz:=false` + `ros2 launch limo_fire_explore frontier_explorer.launch.xml`.
-  (나) 젯슨에서 RViz 까지 한 번에면 2 를 `stack:=true rviz:=true` 로 하고 3 은 건너뛴다.
+- 1·2 와 Nav2·인식·순찰까지 한 번에면 `ros2 launch limo_fire_bringup real.launch.xml slam:=true` (같은 탐사 노드가 멈춘 채 뜸).
+  (나) 젯슨에서 RViz 까지 한 번에면 2 에 `rviz:=true` 를 붙이고 3 은 건너뛴다.
 - 주행 전 확인은 위 [CLAUDE.md "실물 로봇"](../../../CLAUDE.md) 그대로: 충전기 뺌, 주변 비움, 사람 곁에, 리모컨 오토 모드(SWB 위). 멈춤은 패널 버튼 또는
-  `ros2 service call /explore/frontier_explorer/enable std_srvs/srv/SetBool "{data: false}"`.
+  `ros2 service call /explore/enable std_srvs/srv/SetBool "{data: false}"`. 리모컨을 오토에서 내리면 탐사가 `paused` 로 멈춘다.
 - 지도를 남기려면 끝난 뒤 `ros2 launch limo_fire_bringup save_map.launch.xml name:=<이름>`.
 
 ### (가) PC 에서 네트워크로
@@ -79,17 +80,17 @@ YOLO·탐사를 같이 돌릴 때는 (가) 를 권한다. 로봇의 `install/` �
 | `/scan` | 약 10 Hz (`ros2 topic hz /scan`) |
 | `/map` | 1 초마다 (Cartographer, `ros2 topic hz /map`) |
 | TF `map → odom → base_link` | `ros2 run tf2_ros tf2_echo map base_link` 가 값을 냄 |
-| `/explore/frontier_explorer/state` | `idle` → 버튼 → `running` → 끝나면 `done` |
-| `/explore/frontier_explorer/status` | 목표·프론티어 수·지도 넓이 한 줄 |
-| `/cmd_vel` | 탐사 중 Nav2 가 냄, 끄면 0 |
+| `/explore/state` | `idle` → 버튼 → `running` → 끝나면 `done` (리모컨·닿음으로 멈추면 `paused`) |
+| `/explore/status` | 목표·후보·지도 넓이 한 줄 |
+| `/cmd_vel` | 탐사 중 `/explore/explorer` 가 냄, 끄면 0 |
 
 ### 안 될 때
 
 - **패널이 안 보임**: Panels → Add New Panel 에 `limo_fire_rviz/ExplorePanel` 이 없으면 그 터미널이 `install/setup.bash` 를 안 읽었거나 `limo_fire_rviz` 를 안 빌드한 것. 있으면 추가하고 File → Save Config.
 - **`/map` 이 없음 · 지도가 안 그려짐**: PC 에서 `ros2 topic list` 에 `/map` 이 없으면 네트워크 문제(위 1~4: 로봇 DDS 범위(`fastdds_localhost.xml`)·`ROS_DOMAIN_ID`·방화벽·같은 Wi-Fi). 로봇에서도 없으면 2 번 터미널(Cartographer) 로그를 본다.
 - **TF 없음 (Global Status: Error, Fixed Frame map 없음)**: 1 번(EKF `odom → base_link`)과 2 번(Cartographer `map → odom`)이 떠 있는지. `/scan` 이 와야 Cartographer 가 `map` 을 낸다.
-- **버튼이 꺼져 있음 · "노드 없음"**: `ros2 service list | grep enable` 에 `/explore/frontier_explorer/enable` 이 있어야 한다. 없으면 2 번에 탐사 노드가 안 떴거나 네트워크 문제.
-  있는데 눌러도 안 움직이면 `ros2 topic echo /explore/frontier_explorer/status` 를 본다("Nav2 navigate_to_pose 서버 없음" → Nav2 가 안 떴음, "TF 없음" → 위 TF).
+- **버튼이 꺼져 있음 · "노드 없음"**: `ros2 service list | grep enable` 에 `/explore/enable` 이 있어야 한다. 없으면 2 번에 탐사 노드가 안 떴거나 네트워크 문제.
+  있는데 눌러도 안 움직이면 `ros2 topic echo /explore/status` 를 본다(리모컨 오토 아님 → SWB 위로. "입력 끊김"·TF 경고는 노드 로그에 → 위 TF).
 - **로봇이 안 움직임 (상태는 running, `/cmd_vel` 은 나옴)**: 리모컨 오토 모드(SWB 위)인지.
 
 ## 키보드로 조종 (teleop)

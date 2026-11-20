@@ -1,93 +1,21 @@
-# limo_fire_explore — 탐사 노드 (합친 탐사 · 프론티어)
+# limo_fire_explore — 탐사 노드 (합친 탐사)
 
-노드가 둘 있다. `frontier_explorer` 는 Nav2 `NavigateToPose` 로 목표를 보내고, `explorer` 는 위층이 고른 목표까지 아래층 A* 경로 추종이 바로 `/cmd_vel` 을 낸다.
-`/explore/frontier_explorer/enable` · `/explore/enable`(std_srvs/SetBool)로 켜고 끄며, 운용 화면 RViz 의 **탐사 패널**
+탐사 노드는 하나다: `explorer`(`/explore/explorer`, `app.launch.xml`). 위층이 고른 목표까지 아래층 A* 경로 추종이 바로 `/cmd_vel` 을 낸다 — Nav2 는 쓰지 않는다.
+`/explore/enable`(std_srvs/SetBool)로 켜고 끄며, 운용 화면 RViz 의 **탐사 패널**
 ("Auto explore ON/OFF" 버튼, [limo_fire_rviz](../limo_fire_rviz/README.md))이 이 서비스를 부른다. 실물에서 RViz 를 켜는 법은
 [limo_fire_bringup README "실물에서 운용 화면(RViz) 켜기"](../limo_fire_bringup/README.md#실물에서-운용-화면rviz-켜기).
 
 | 노드 | 무엇 | 켜기 |
 |---|---|---|
-| `frontier_explorer` | 프론티어 탐사 (아래 "프론티어 탐사") — 탐사 기준선과 같은 찾기·고르기 | 멈춘 채 뜸 → 버튼 |
-| `explorer` | 위층 판단 모델 + 아래층 A* 경로 추종 (아래 "합친 탐사") — Nav2 없음 | 멈춘 채 뜸 → 버튼 (리모컨 오토일 때만) |
+| `explorer` | 위층 판단 모델 + 아래층 A* 경로 추종 (아래 "합친 탐사") — 시뮬과 같은 코드 | 멈춘 채 뜸 → 버튼 (리모컨 오토일 때만) |
 
 탐사 강화학습(RL 정책 노드 `explore_rl`, 아래층 RL 정책 `lower:=rl`)은 2026-11-16 에 그만두고 [archive/rl](../../../archive/rl/README.md) 로 옮겼다
 (실물에서 시뮬과의 격차가 컸고, A* 경로 추종 아래층이 훨씬 빠르고 잘 됐다). 그때의 이 README 는 `archive/rl/src/limo_fire/limo_fire_explore/README.md`.
 패키지·노드 이름(`limo_fire_explore`, `explorer`)은 launch·녹화·RViz 설정이 쓰고 있어 그대로 둔다.
 
-## 프론티어 탐사 (`frontier_explorer`)
-
-Cartographer `/map` 에서 프론티어(아는 빈 칸과 모르는 칸의 경계) 덩어리를 찾아 하나를 Nav2 목표로 보내고, 지도가 닫히면 멈춘다. 알고리즘은 새로 쓰지 않았다:
-
-| 차례 | 코드 (탐사 기준선과 같은 것) |
-|---|---|
-| 찾기·닫힘 | `train/explore/mdp/frontier.h` `frontier_search` · `closed` — 설 수 있는 칸(로봇 반경 = `nav2_params.yaml` `robot_radius`)으로 번진 곳 안의 덩어리. 막힘 = `/map` 값 > 65 (p > 0.65) |
-| 고르기 | `train/explore/baselines/frontier/include/explore_lite.h` — explore_lite 비용(거리·크기) 오름차순, 블랙리스트 아닌 첫 덩어리의 중심. 기준선 `Explorer::make_plan` 도 이 함수를 쓴다 |
-| 값 | 기준선 설정 `baselines/frontier/config/frontier.yaml` 그대로 (3 초마다 다시 고름, 같은 목표 30 초 진척 없음 → 블랙리스트, 0.75 m 미만 덩어리는 다른 게 없을 때만) |
-| 가기 | Nav2 (기준선의 A*·RPP 흉내 대신 진짜 Nav2). 도착·포기 때 바로 다시 고름, 포기(ABORTED)한 목표는 블랙리스트 |
-| 시작 | 프론티어가 안 보이면 Nav2 `spin` (30 초 안에 안 보이면 끝) |
-| 끝 | 닫힘 · 남은 덩어리가 다 블랙리스트 → 목표 취소, `~/done` true, `~/state` done |
-
-- **끄기**: `~/enable false` → 보낸 Nav2 목표·회전을 취소한다(로봇이 선다). **켜기**: 블랙리스트를 비우고 지금 지도에서 다시 고른다(끝난 뒤 다시 켜도 처음부터).
-- 토픽: `~/state`(idle · running · done, transient local) · `~/done`(Bool) · `~/status`(한 줄) · `~/frontiers`(MarkerArray: 파랑 후보, 빨강 목표, 회색 블랙리스트 — 운용 화면 "Frontiers").
-- 설정: `config/frontier_explorer.yaml` (ROS 쪽만). 저장 지도·AMCL 위에서도 돌지만 지도가 이미 닫혀 있으면 바로 끝난다 — Cartographer(지도 만들기)와 같이 쓴다.
-
-```bash
-# 시뮬: slam:=true 면 노드가 멈춘 채 같이 뜬다 (explore:=false 로 끔). RViz 탐사 패널에서 "Auto explore OFF (누르면 시작)"
-ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze slam:=true
-# 실물: robot.launch.xml 을 켠 뒤 (Cartographer + Nav2 + RViz 까지 한 번에)
-ros2 launch limo_fire_explore frontier_explorer.launch.xml stack:=true rviz:=true
-# 버튼 대신 명령으로 (버튼이 부르는 것과 같음)
-ros2 service call /explore/frontier_explorer/enable std_srvs/srv/SetBool "{data: true}"    # false 면 멈춤
-ros2 topic echo /explore/frontier_explorer/state
-```
-
-### 확인 (2026-11-11, 이 PC Webots R2025a 화면 없이 · 덕트호스 미로 `slam:=true`)
-
-| 확인 | 결과 |
-|---|---|
-| 끄기 (버튼과 같은 `~/enable false`, 0.26 m/s 로 가는 중) | 0.08 s 뒤 `/cmd_vel` 0, Nav2 목표 취소(CANCELED), 끈 뒤 미끄러짐 2 cm · 그 뒤 10 s 동안 0 |
-| 다시 켜기 | 블랙리스트를 비우고 이어서 탐사 |
-| 끝까지 | 켬 60 s → 끔 10 s → 켬 65.3 s 에 닫힘으로 끝(`~/state` done). 탐사한 시간 125 s(시뮬 시간), 지도 49.5 m², 보낸 목표 18 · 포기 0 |
-| 운용 화면 패널 | `rviz2 -d limo_fire.rviz` 가 패널을 불러옴. 상태 idle → running → done, 버튼 색·글자가 바뀜 |
-
-- 프론티어 중심이 지도가 자랄 때마다 조금씩 옮겨 가서 목표를 자주 다시 보낸다(3 초마다, explore_lite 와 같음) — Nav2 로그에 앞 목표 취소가 많이 찍힌다.
-- 처음엔 전역 costmap 이 Cartographer 벽을 안 넣어(막힘 문턱 100, 아래 문서) 라이다 3 m 밖 덕트를 뚫는 경로로 7 분 넘게 맴돌았다 —
-  `nav2_params.yaml` `lethal_cost_threshold: 65` 로 고친 뒤 위 결과. [docs/simulation.md "Nav2 설정"](../../../docs/simulation.md).
-- 시뮬은 화면 없는 X 의 소프트웨어 렌더링이라 실시간의 약 0.55 배.
-
-### 실물 확인 (2026-11-18, 로봇 Jetson · 실험실 · `real.launch.xml slam:=true`)
-
-띄운 것: `ros2 launch limo_fire_bringup real.launch.xml slam:=true` — Cartographer + Nav2(지도 없이 주행) + 인식(화재 모델) + 운용 화면,
-프론티어 탐사 노드는 멈춘 채(idle) 늘 떠 있어 탐사 패널 버튼으로 언제든 켜고 끈다(임무 BT 와 따로).
-
-| 확인 | 결과 |
-|---|---|
-| 켜기·끄기 (버튼과 같은 `~/enable`, 리모컨 SWB 내림) | `idle` → `running`(프론티어 1 개, 목표를 바로 고름) → `idle`, 끌 때 Nav2 목표 취소 |
-| 탐사 주행 | 지도 약 102 m² 까지 넓힘, 블랙리스트 1 |
-
-**속도가 느리다** — Nav2 는 최고 속도로 명령하는데 바퀴가 못 따라간다.
-
-| 잰 것 | 값 |
-|---|---|
-| Nav2 명령 `/cmd_vel` | 0.26 m/s (설정 최고 속도 `desired_linear_vel`·`velocity_smoother max_velocity` 그대로) |
-| 실제 바퀴 `/odom` | 0.118 m/s — 명령의 절반쯤 |
-| 연기 모드 속도 한도 `/speed_limit` | 0 (걸리지 않음) |
-| 섀시 배터리 `/limo_status` | 10.7 V |
-| Jetson 부하 평균 | 7.6 (Cartographer + 인식 + Nav2), `planner_server` 1 Hz 를 못 맞춘 적 2 번(0.69 · 0.81 Hz) |
-
-- 가장 의심: 배터리(충전기를 뺀 뒤 꽤 돌린 뒤). 2026-11-20 다시 켠 직후(움직이기 전) `/limo_status` 10.2 V — 11-18 탐사 때(10.7 V)보다 낮다.
-  LIMO Pro 배터리는 12 V · 10 Ah 로 나와 있다(판매처·문서 사이트 기준, AgileX 공식 데이터시트는 못 찾음 —
-  [Weston Robot](https://westonrobot.github.io/docs-legacy/robot_user_guide/agilex/limo_pro.html)) → 거의 바닥.
-  완전히 충전한 직후 같은 시험으로 `/cmd_vel` 와 `/odom` 을 견줘 가린다(아직 안 함).
-- 그 밖에 늦어지는 것: 최고 속도 0.26 m/s 자체가 WeGo 기본값, RPP 가 곡선(반경 0.9 m 아래)·목표 0.6 m 안에서 줄임(최저 0.1 · 0.05 m/s),
-  탐사가 3 초마다 목표를 다시 골라 방향이 바뀜.
-
-**라이다가 의자를 못 거른다** — 라이다 한계. 장애물 입력은 정상(`/scan_obstacles` 10 Hz).
-
-- 라이다는 바닥에서 약 7 cm 높이 한 평면만 본다 → 의자는 가는 다리 넷만 보이고 좌판은 안 보인다. 다리 사이를 지날 수 있다고 보고 의자 밑으로 들어가거나 좌판에 닿을 수 있다.
-- 라이다는 앞쪽 ±110° 만 쓴다(`limo_fire_bringup/config/ydlidar.yaml`) — 옆·뒤는 못 본다.
-- 고치려면 깊이 카메라를 Nav2 costmap 에 넣어야 한다(좌판·책상 높이까지 봄). 이 패키지 explorer 의 "깊이 카메라 장애물 층"은 있지만
-  Nav2 costmap(`limo_fire_navigation/config/nav2_params.yaml`, 지금 `/scan_obstacles` 하나)에는 아직 없다. 그때까지는 의자를 치우거나 둘레를 막는다.
+옛 구성: Nav2 `NavigateToPose` 로 프론티어 목표를 보내던 노드(`/explore/frontier_explorer`)는 2026-11-20 에 지웠다 — 탐사가 두 벌이 되지 않게.
+그 코드·확인 기록(시뮬 2026-11-11, 실물 2026-11-18: Nav2 명령 0.26 m/s 에 바퀴 0.118 m/s, 라이다 한 평면이라 의자 좌판을 못 봄)은 커밋 `ae62588` 의 이 README.
+시뮬 견줌 기준선(프론티어)은 `train/explore/baselines/frontier` 에 그대로 있다 — 로봇에서는 안 쓴다.
 
 ## 합친 탐사 (`explorer` — 위층 판단 모델 + 아래층 A*, 2026-11-16)
 
@@ -186,7 +114,7 @@ ros2 topic echo /explore/done            # true 면 끝 (지도 닫힘)
 - [ ] 사람이 로봇 곁에서 리모컨을 들고 있다 (SWB 를 바로 내릴 수 있게)
 - [ ] 리모컨이 켜졌고 오토 모드 (SWB 위) — `ros2 topic echo /rc_state --field buttons` 의 둘째 값이 2
 - [ ] dry run 에서 `/explore/status` 가 running, 목표·`/explore/cmd_debug` 가 말이 되고, SWB 내림 → paused 를 봤다
-- [ ] 다른 주행 노드(Nav2·`frontier_explorer`·teleop)가 `/cmd_vel` 을 안 낸다 — `ros2 topic info /cmd_vel` 의 발행자가 없거나 explorer 뿐
+- [ ] 다른 주행 노드(Nav2 목표·click_patrol·임무 BT·teleop)가 `/cmd_vel` 을 안 낸다 — `ros2 topic info /cmd_vel` 의 발행자가 없거나 explorer 뿐
 - [ ] 젯슨 시간: `/explore/status` 의 평균 걸음 + 관측 + 위층이 100 ms 안 (넘으면 멈추고 알림)
 
 ### 탐사 중 "○○ 로 가" (물체 지도 · `perception:=true`)

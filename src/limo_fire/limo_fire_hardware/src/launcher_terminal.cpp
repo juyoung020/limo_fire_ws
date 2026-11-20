@@ -1,5 +1,5 @@
 // 발사대 조작 터미널 — 사람이 따로 연 창에서 글자 하나씩 친다. 시리얼은 ESP32 다리(esp32_bridge)가 혼자 열고, 여기는 ROS 로만 말한다.
-//   a  표적 찾기(없으면 프론티어 탐사를 켜고, 찾으면 끄고 정지 확인) → 접근·조준·장전+발사 임무 한 번 (approach_aim auto_fire_enabled 일 때만)
+//   a  표적 찾기(없으면 탐사 /explore/explorer 를 켜고, 찾으면 끄고 정지 확인) → 접근·조준·장전+발사 임무 한 번 (approach_aim auto_fire_enabled 일 때만)
 //   r  공 다시 넣음 확인 — 자동 임무가 발사를 요청했을 수 있으면 r 전에는 다음 a 를 받지 않는다(미리 친 a 도)
 //   c · f · s  장전 · 발사 · 장전+발사 (액션 /launcher/launch)     x  레버 끔(고장 풀기도 이것)
 //   ?  상태     q  끝
@@ -94,7 +94,7 @@ class Terminal {
           launcher_status_ = m->data;
         }));
     subs_.push_back(node_->create_subscription<std_msgs::msg::String>(
-        "/explore/frontier_explorer/state", latched, [this](std_msgs::msg::String::SharedPtr m) {
+        "/explore/state", latched, [this](std_msgs::msg::String::SharedPtr m) {
           std::lock_guard<std::mutex> l(mu_);
           explorer_.emplace_back(m->data, mono());
           if (explorer_.size() > 20) explorer_.pop_front();
@@ -113,7 +113,7 @@ class Terminal {
     lever_ = node_->create_client<SetBool>("/launcher/enable");
     start_ = node_->create_client<Trigger>("/launcher/approach_aim/start");
     cancel_ = node_->create_client<Trigger>("/launcher/approach_aim/cancel");
-    explore_ = node_->create_client<SetBool>("/explore/frontier_explorer/enable");
+    explore_ = node_->create_client<SetBool>("/explore/enable");
     params_ = std::make_shared<rclcpp::AsyncParametersClient>(node_, "/launcher/approach_aim");
     exec_.add_node(node_);
     spin_ = std::thread([this] { exec_.spin(); });
@@ -235,7 +235,7 @@ class Terminal {
     req->data = on;
     const auto r = call<SetBool>(explore_, req, 2.0, 3.0);
     if (!r || !r->success)
-      throw std::runtime_error(std::string("프론티어 탐사 ") + (on ? "시작" : "정지") + " 응답을 확인하지 못함");
+      throw std::runtime_error(std::string("탐사 ") + (on ? "시작" : "정지") + " 응답을 확인하지 못함");
     record(on ? "exploration_enabled" : "exploration_disabled", {{"response", r->message}});
   }
 
@@ -249,16 +249,17 @@ class Terminal {
       if (mono() - t0 >= 1.0 && (no_search_ || explorer_latest())) break;
     }
     const auto ex = explorer_latest();
-    if (ex && ex->first == "running") throw std::runtime_error("이미 다른 프론티어 탐사가 진행 중 — 탐사를 멈춘 뒤 다시");
+    if (ex && ex->first == "running") throw std::runtime_error("이미 다른 탐사가 진행 중 — 탐사를 멈춘 뒤 다시");
     if (target_visible()) return;
     if (no_search_) throw std::runtime_error("최근 1 초 안의 지도 좌표 표적이 없음");
-    if (!ex || (ex->first != "idle" && ex->first != "done")) throw std::runtime_error("프론티어 탐사 상태를 확인하지 못함");
+    // paused = 리모컨·닿음으로 멈춤 (idle 처럼 다시 켤 수 있음)
+    if (!ex || (ex->first != "idle" && ex->first != "done" && ex->first != "paused")) throw std::runtime_error("탐사 상태를 확인하지 못함");
     bool exploring = false;
     try {
       const double enable_at = mono();
       set_exploration(true);
       exploring = true;
-      say("표적을 찾을 때까지 프론티어 탐사를 합니다.");
+      say("표적을 찾을 때까지 탐사를 합니다.");
       const double deadline = mono() + search_timeout_, running_deadline = mono() + 3.0;
       bool seen_running = false, found = false;
       // 서비스 응답과 상태 토픽은 따로 온다 — 이번 실행의 running 을 본 뒤에만 idle/done 을 끝으로 본다
@@ -268,9 +269,9 @@ class Terminal {
         if (!seen_running) seen_running = explorer_seen("running", enable_at);
         if (target_visible()) { found = true; break; }
         const auto l = explorer_latest();
-        if (seen_running && l && l->second >= enable_at && (l->first == "done" || l->first == "idle"))
-          throw std::runtime_error("탐사가 끝났지만 쓸 만한 표적을 찾지 못함");
-        if (!seen_running && mono() > running_deadline) throw std::runtime_error("프론티어 탐사 running 상태를 확인하지 못함");
+        if (seen_running && l && l->second >= enable_at && (l->first == "done" || l->first == "idle" || l->first == "paused"))
+          throw std::runtime_error("탐사가 끝났거나 멈췄지만(" + l->first + ") 쓸 만한 표적을 찾지 못함");
+        if (!seen_running && mono() > running_deadline) throw std::runtime_error("탐사 running 상태를 확인하지 못함");
       }
       if (!found) throw std::runtime_error("찾기 제한 시간이 지났거나 ROS 가 끝남");
       const double stop_at = mono();

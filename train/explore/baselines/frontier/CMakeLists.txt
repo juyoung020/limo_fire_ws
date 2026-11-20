@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 # 프론티어 탐사 기준선(explore_lite + Nav2 식)을 시뮬로 모는 라이브러리 — 시뮬 라이브러리(limo_sim)와 공용 헤더 mdp/frontier.h 를 쓴다.
-# 정답 상한 oracle_run 은 2026-11-17 에 archive/rl 로 (커리큘럼 문턱 측정). 실물 노드 limo_fire_explore frontier_explorer 는 explore_lite.h 만 씀.
+# 정답 상한 oracle_run 은 2026-11-17 에 archive/rl 로 (커리큘럼 문턱 측정). 시뮬 견줌 기준선 — 로봇에서 안 씀 (같은 explore_lite.h 를 쓰던 실물 Nav2 노드는 2026-11-20 지움).
 #   export PATH=/usr/local/cuda-13.0/bin:$PATH
 #   cmake -S train/explore/baselines/frontier -B <빌드> -DCMAKE_CUDA_ARCHITECTURES=86 && cmake --build <빌드> -j
 project(limo_fire_frontier LANGUAGES CXX CUDA)

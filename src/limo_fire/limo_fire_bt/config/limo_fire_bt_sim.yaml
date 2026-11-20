@@ -10,6 +10,5 @@ mission:
       - "/perception/detections:=10"
     rc:
       required: false                               # 시뮬에는 리모컨이 없다
-    explorer: /explore/frontier_explorer            # sim.launch.xml 은 Nav2 프론티어 탐사를 띄운다 (실물은 합친 탐사 /explore)
     patrol:
       enabled_at_start: true                        # 시뮬은 켜진 채 (시나리오 시험이 바로 순찰)

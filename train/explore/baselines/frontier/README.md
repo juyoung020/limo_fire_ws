@@ -1,5 +1,7 @@
 # baselines/frontier — 프론티어 탐사 기준선
 
+**시뮬 견줌 기준선 — 로봇에서 안 씀.** 로봇 탐사는 `limo_fire_explore` 의 합친 탐사(`/explore/explorer`) 하나다.
+지금 쓰는 곳: `scripts/combine_run`(합친 탐사 측정 — 판 길이 상한을 이 설정 `fast` 판에서 읽음, 이 라이브러리를 링크) · `scripts/frontier_run`(이 기준선을 돌려 뷰어 `trainview` 실행 폴더로) · `tools/frontier_check`(mdp/frontier.h CPU == GPU).
 탐사 비교 기준선 (원래 탐사 RL 정책이 이겨야 할 대상 — 강화학습은 2026-11-16 에 그만둠, [archive/rl](../../../../archive/rl/README.md)).
 GPU 시뮬(`sim/`)을 **`env_api.h` 로만** 쓰고(시뮬 코드는 안 고침), 정책처럼 **지도(`get_map`)와 지도 자세(참값 + 오차)만** 본다.
 
@@ -7,11 +9,11 @@ GPU 시뮬(`sim/`)을 **`env_api.h` 로만** 쓰고(시뮬 코드는 안 고침)
 baselines/frontier/
 ├── config/frontier.yaml          explore_lite 값 · Nav2 BT 복구 값 · 두 속도 판(nav2 / fast) · 안전 시간
 ├── include/frontier_explorer.h   Explorer: 지도 + 지도 자세 → (v, ω), 끝 선언
-├── include/explore_lite.h        explore_lite 고르기(비용 줄 세우기·블랙리스트) — ROS 노드 limo_fire_explore frontier_explorer 와 같이 씀
+├── include/explore_lite.h        explore_lite 고르기(비용 줄 세우기·블랙리스트) (같이 쓰던 실물 Nav2 노드는 2026-11-20 지움)
 ├── src/frontier_explorer.cpp
 ├── tools/frontier_check.cu       mdp/frontier.h CPU == GPU 비트 비교
 └── CMakeLists.txt                sim/ 을 add_subdirectory 로 가져와 frontier_run·frontier_check 빌드
-../../mdp/frontier.h              칸 종류·닫힘·프론티어 찾기 (호스트·장치 공용, 실물 노드·합친 탐사도 같은 함수)
+../../mdp/frontier.h              칸 종류·닫힘·프론티어 찾기 (호스트·장치 공용, 합친 탐사도 같은 함수)
 ../../scripts/frontier_run.cpp    장면 × 판을 돌려 뷰어(trainview) 실행 폴더로
 ```
 

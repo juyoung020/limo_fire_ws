@@ -1,6 +1,5 @@
 #include "limo_fire_rviz/explore_panel.hpp"
 
-#include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <pluginlib/class_list_macros.hpp>
 #include <rviz_common/display_context.hpp>
@@ -8,16 +7,11 @@
 namespace limo_fire_rviz {
 
 namespace {
-// 콤보 차례 = 입출력 앞머리 (README 표와 같게): 프론티어 노드는 자기 이름 아래, 합친 탐사 노드는 이름공간 /explore 바로 아래 (docs/conventions.md "이름")
-const char* const kNodes[] = {"/explore/frontier_explorer", "/explore"};
-const char* const kModeNames[] = {"frontier", "explorer"};
-constexpr int kNModes = 2;
+// 합친 탐사 노드 /explore/explorer 의 입출력 앞머리 — 주 노드라 이름공간 /explore 바로 아래 (docs/conventions.md "이름")
+const char* const kNs = "/explore";
 }  // namespace
 
 ExplorePanel::ExplorePanel(QWidget* parent) : rviz_common::Panel(parent) {
-  mode_ = new QComboBox;
-  mode_->addItem("프론티어 (/explore/frontier_explorer)");
-  mode_->addItem("합친 탐사 (/explore/explorer)");
   button_ = new QPushButton("Auto explore OFF");
   button_->setCheckable(true);
   button_->setMinimumHeight(36);
@@ -25,18 +19,14 @@ ExplorePanel::ExplorePanel(QWidget* parent) : rviz_common::Panel(parent) {
   detail_label_ = new QLabel;
   detail_label_->setWordWrap(true);
   detail_label_->setStyleSheet("color: gray;");
-  auto* top = new QHBoxLayout;
-  top->addWidget(new QLabel("탐사"));
-  top->addWidget(mode_, 1);
   auto* lay = new QVBoxLayout;
-  lay->addLayout(top);
+  lay->addWidget(new QLabel("탐사 (/explore/explorer)"));
   lay->addWidget(button_);
   lay->addWidget(state_label_);
   lay->addWidget(detail_label_);
   lay->addStretch(1);
   setLayout(lay);
   connect(button_, &QPushButton::clicked, this, &ExplorePanel::onToggle);
-  connect(mode_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ExplorePanel::onMode);
   timer_ = new QTimer(this);
   connect(timer_, &QTimer::timeout, this, &ExplorePanel::refresh);
 }
@@ -47,15 +37,13 @@ void ExplorePanel::onInitialize() {
   timer_->start(500);
 }
 
-std::string ExplorePanel::ns() const { return kNodes[std::max(0, std::min(kNModes - 1, mode_->currentIndex()))]; }
-
 void ExplorePanel::connectNode() {
   if (!node_) return;
   state_.clear();
   status_.clear();
   error_.clear();
   done_ = enabled_ = pending_ = false;
-  const std::string n = ns();
+  const std::string n = kNs;
   client_ = node_->create_client<std_srvs::srv::SetBool>(n + "/enable");
   const auto latched = rclcpp::QoS(1).transient_local();
   // 콜백은 RViz 가 노드를 돌리는 스레드에서 오므로 값만 바꾸고 화면은 refresh(Qt 타이머)가 그린다
@@ -70,14 +58,9 @@ bool ExplorePanel::running() const {
   return enabled_ && !done_;
 }
 
-void ExplorePanel::onMode(int) {
-  connectNode();
-  Q_EMIT configChanged();
-}
-
 void ExplorePanel::onToggle() {
   if (!client_ || !client_->service_is_ready()) {
-    error_ = ns() + "/enable 서비스 없음 — 탐사 노드를 띄웠나? (README)";
+    error_ = std::string(kNs) + "/enable 서비스 없음 — 탐사 노드를 띄웠나? (README)";
     refresh();
     return;
   }
@@ -116,19 +99,6 @@ void ExplorePanel::refresh() {
   button_->setEnabled(ready && !pending_);
   const std::string d = !error_.empty() ? error_ : status_;
   detail_label_->setText(QString::fromStdString(d));
-}
-
-void ExplorePanel::load(const rviz_common::Config& config) {
-  rviz_common::Panel::load(config);
-  QString m;
-  if (config.mapGetString("mode", &m))
-    for (int k = 0; k < kNModes; ++k)
-      if (m == kModeNames[k] || (k == 1 && m == "low")) mode_->setCurrentIndex(k);   // "low" = 2026-11-18 전 저장 이름
-}
-
-void ExplorePanel::save(rviz_common::Config config) const {
-  rviz_common::Panel::save(config);
-  config.mapSetValue("mode", kModeNames[std::max(0, std::min(kNModes - 1, mode_->currentIndex()))]);
 }
 
 }  // namespace limo_fire_rviz

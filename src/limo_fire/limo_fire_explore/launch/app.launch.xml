@@ -14,6 +14,7 @@
   <arg name="rviz" default="false" description="true: 운용 화면 RViz (limo_fire_description viewer.launch.xml · limo_fire.rviz 하나 — 탐사 패널·후보 포함, 판단 모델 입력 지도는 Displays 에서 켬)"/>
   <arg name="debug" default="$(var rviz)" description="true: RViz 표시 토픽(/explore/candidates …)도 냄 — 기본은 rviz 와 같음"/>
   <arg name="decider" default="true" description="true: 위층 판단 모델(llama-server)을 씀 · false: 규칙만 — 서버를 안 띄울 때 (판단 모델 요청·입력 지도·지시 없음)"/>
+  <arg name="require_rc" default="true" description="true: 리모컨 오토(/rc_state)일 때만 주행 · false: 리모컨이 없는 시뮬(sim.launch.xml)만"/>
   <arg name="record" default="" description="입력·명령 녹화 파일 (비우면 안 씀 — low_explore_replay 로 다시 돌림)"/>
   <arg name="perception_config" default="yolo_coco.yaml" description="인식 설정 (limo_fire_perception/config): yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
   <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음)"/>
@@ -34,26 +35,23 @@
       <param name="dry_run" value="$(var dry_run)"/>
       <param name="debug" value="$(var debug)"/>
       <param name="decider" value="$(var decider)"/>
+      <param name="require_rc" value="$(var require_rc)"/>
       <param name="record" value="$(var record)"/>
       <param name="class_files" value="[$(var perception_config)]"/>
       <extra_arg name="use_intra_process_comms" value="true"/>
     </composable_node>
   </node_container>
 
-  <!-- load_composable_node 는 if 를 무시하므로 group 으로 조건을 건다 -->
+  <!-- 인식 두 노드의 정의는 perception.launch.xml 한 곳 — 여기서는 그 파일로 /app 에 올린다 (group: 조건 + Humble 인자 샘 막기) -->
   <group if="$(var perception)">
-    <load_composable_node target="/app">
-      <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectDetectorNode" name="object_detector" namespace="perception">
-        <param from="$(find-pkg-share limo_fire_perception)/config/$(var perception_config)"/>
-        <param name="gpu_thread" value="$(var gpu_thread)"/>
-        <extra_arg name="use_intra_process_comms" value="true"/>
-      </composable_node>
-      <composable_node pkg="limo_fire_perception" plugin="limo_fire_perception::ObjectMapNode" name="object_map" namespace="perception">
-        <param from="$(find-pkg-share limo_fire_perception)/config/$(var perception_config)"/>
-        <param name="objects_file" value="$(var objects_file)"/>
-        <extra_arg name="use_intra_process_comms" value="true"/>
-      </composable_node>
-    </load_composable_node>
+    <include file="$(find-pkg-share limo_fire_perception)/launch/perception.launch.xml">
+      <arg name="new_container" value="false"/>
+      <arg name="container" value="/app"/>
+      <arg name="config" value="$(var perception_config)"/>
+      <arg name="objects_file" value="$(var objects_file)"/>
+      <arg name="gpu_thread" value="$(var gpu_thread)"/>
+      <arg name="rviz" value="false"/>
+    </include>
   </group>
 
   <!-- 카메라를 /app 안에 (camera_in_app:=true, robot.launch.xml camera:=false 와 짝). 이 노드만 프로세스 안 전달을 끔: 드라이버가 transient_local 발행자

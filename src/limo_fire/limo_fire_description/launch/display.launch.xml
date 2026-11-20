@@ -1,16 +1,22 @@
-<!-- 로봇 모델만 RViz 에 띄워 확인: ros2 launch limo_fire_description display.launch.xml [gui:=false] -->
+<!-- 로봇 모델만 RViz 에 띄워 확인: ros2 launch limo_fire_description display.launch.xml [gui:=false] [platform:=webots]
+     모델 → TF 는 실물·시뮬과 같은 description.launch.xml 하나를 쓴다 (robot_state_publisher 를 따로 띄우지 않음) -->
 <launch>
-  <arg name="model" default="$(find-pkg-share limo_fire_description)/urdf/limo_fire.urdf.xacro"/>
-  <arg name="gui" default="true"/>
+  <arg name="platform" default="real" description="real: 실물 LIMO, webots: Webots 모델"/>
+  <arg name="gui" default="true" description="true: 관절 슬라이더(joint_state_publisher_gui) · false: description.launch.xml 의 joint_state_publisher"/>
   <arg name="rviz" default="true"/>
 
-  <node pkg="robot_state_publisher" exec="robot_state_publisher">
-    <param name="robot_description" value="$(command 'xacro $(var model)')" type="str"/>
+  <group>   <!-- group 으로 가둠: Humble 에서 include 인자가 밖으로 샘 (docs/exam Q27) -->
+    <include file="$(find-pkg-share limo_fire_description)/launch/description.launch.xml">
+      <arg name="platform" value="$(var platform)"/>
+      <arg name="joint_states" value="$(not $(var gui))"/>
+    </include>
+  </group>
+  <!-- 슬라이더는 description.launch.xml 의 joint_state_publisher 대신 (같은 고정 각: 발사대 15°) -->
+  <node pkg="joint_state_publisher_gui" exec="joint_state_publisher_gui" if="$(var gui)">
+    <param name="zeros.launcher_pitch_joint" value="0.2618"/>
   </node>
-  <node pkg="joint_state_publisher_gui" exec="joint_state_publisher_gui" if="$(var gui)"/>
-  <node pkg="joint_state_publisher" exec="joint_state_publisher" unless="$(var gui)"/>
   <!-- 화면은 운용 화면 하나(viewer.launch.xml), 지도 없이 base_link 기준 -->
-  <group if="$(var rviz)">   <!-- group 으로 가둠: Humble 에서 include 인자가 밖으로 샘 (docs/exam Q27) -->
+  <group if="$(var rviz)">
     <include file="$(find-pkg-share limo_fire_description)/launch/viewer.launch.xml">
       <arg name="fixed_frame" value="base_link"/>
     </include>

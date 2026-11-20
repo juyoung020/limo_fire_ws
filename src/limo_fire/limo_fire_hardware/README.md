@@ -85,7 +85,7 @@ bash tools/hardware_check/open_ros_launcher_terminal.sh   # GUI 새 창
 | `x` | 레버 끔(`/launcher/enable false`). 발사대 고장 상태도 이것으로 푼다 |
 | `?` · `q` | 상태 · 끝 |
 
-- `a` 를 눌렀을 때 1 s 안에 같은 표적(같은 ID, 0.25 m 안)을 서로 다른 영상 시각으로 세 번 봤으면 바로 시작한다. 아니면 `/explore/frontier_explorer/enable` 로 탐사를 켜고(상태가 `idle`·`done` 일 때만, 이미 `running` 이면 거절), 표적을 찾으면 끄고 `idle` + 차체 정지 0.5 s 를 확인한 뒤 시작한다. `--search-timeout-s`(기본 180 s) 안에 못 찾거나 탐사가 끝나면 발사하지 않는다. `--no-search` 는 탐사 없이 지금 보이는 표적만.
+- `a` 를 눌렀을 때 1 s 안에 같은 표적(같은 ID, 0.25 m 안)을 서로 다른 영상 시각으로 세 번 봤으면 바로 시작한다. 아니면 `/explore/enable` 로 탐사(`/explore/explorer`)를 켜고(상태가 `idle`·`done`·`paused` 일 때만, 이미 `running` 이면 거절), 표적을 찾으면 끄고 `idle` + 차체 정지 0.5 s 를 확인한 뒤 시작한다. `--search-timeout-s`(기본 180 s) 안에 못 찾거나 탐사가 끝나거나 멈추면(리모컨·닿음 `paused`) 발사하지 않는다. `--no-search` 는 탐사 없이 지금 보이는 표적만.
 - Ctrl+C: 탐사 중이면 탐사를 끄고, 임무 중이면 `/launcher/approach_aim/cancel` 을, 수동 동작 중이면 동작 취소(다리가 `x`)를 보낸 뒤 끝난다. 응답을 못 받을 수 있으니 로봇 정지는 현장에서 확인한다.
 
 ## 소프트웨어 시험

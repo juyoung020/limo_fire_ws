@@ -1,4 +1,4 @@
-// explore_lite 프론티어 고르기의 공용 부분 — 기준선(Explorer::make_plan)과 실물·Webots ROS 노드(limo_fire_explore frontier_explorer)가 같이 쓴다.
+// explore_lite 프론티어 고르기 — 기준선 Explorer::make_plan 이 쓴다 (2026-11-20 까지 같이 쓰던 실물 Nav2 노드는 지움).
 // mdp::frontier_search 가 낸 덩어리를 explore_lite 비용으로 줄 세우고, 블랙리스트를 explore_lite 규칙으로 본다. 나머지(목표 보내기·진척 시간)는 쓰는 쪽에서.
 // 출처: m-explore(hrnr/m-explore) 712bdd41027b645c9c876a4c0071478f090825ea
 //   explore/src/frontier_search.cpp:191-196  비용 = potential_scale × min_distance(m) × 해상도 − gain_scale × 크기(칸) × 해상도

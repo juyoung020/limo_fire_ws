@@ -23,9 +23,8 @@
 | 탐사 | `/explore/explorer` (컨테이너 `/app`) | `/scan` `/odom` `/imu` `/camera/depth/*` `/rc_state` TF, `/explore/goal` `/perception/objects` | `/cmd_vel`(dry_run:=false) `/explore/status` `/explore/state` `/explore/done` `/explore/goal_status`, debug 면 `/explore/cmd_debug` `/explore/candidates` `/explore/candidates_text` `/explore/decider_image` `/explore/goal_marker` | `limo_fire_explore app.launch.xml` | `ros2 service call /explore/enable std_srvs/srv/SetBool "{data: true}"` · `ros2 topic echo /explore/status` |
 | 물체로 가기 | (탐사 안) `/explore/explorer` | `/explore/goal` (글, 빈 글 = 지움) | `/explore/goal_status` | `app.launch.xml perception:=true` | `ros2 topic pub -1 /explore/goal std_msgs/msg/String "{data: '의자'}"` · `ros2 topic echo /explore/goal_status` |
 | 인식 | `/perception/object_detector` · `/perception/object_map` (컨테이너 `/app`) | `/camera/color/image_raw` `/camera/depth/*` TF | `/perception/detections` `/perception/mask` `/perception/detection_image` `/perception/objects` `/perception/markers` `/perception/summary`, 서비스 `/perception/{clear,save,load}_objects` | `app.launch.xml perception:=true` | `ros2 topic echo /perception/objects --once` · `ros2 service call /perception/clear_objects std_srvs/srv/Trigger` |
-| 탐사 (프론티어, Nav2) | `/explore/frontier_explorer` | `/map` TF | `/explore/frontier_explorer/{state,status,done,frontiers}`, Nav2 액션 `/navigate_to_pose` | `limo_fire_explore frontier_explorer.launch.xml` | `ros2 service call /explore/frontier_explorer/enable std_srvs/srv/SetBool "{data: true}"` |
 | 주행 (Nav2, 저장 지도) | Nav2 노드들 · `/explore/object_goto` | `/map` `/scan` TF, `/goal_pose`, `/explore/goal` | `/cmd_vel`, `/plan`, `/explore/goal_status` | `limo_fire_bringup navigation.launch.xml` | `ros2 action list` |
-| 화면 | `rviz2` + 탐사 패널 | 위 표시 토픽 | `/explore/enable` · `/explore/frontier_explorer/enable` 부름 | `app.launch.xml rviz:=true` | |
+| 화면 | `rviz2` + 탐사 패널 | 위 표시 토픽 | `/explore/enable` 부름 | `app.launch.xml rviz:=true` | |
 
 로봇에서 띄우는 것은 둘뿐이다:
 
@@ -477,26 +476,9 @@ ros2 launch limo_fire_explore app.launch.xml perception:=true camera_in_app:=tru
 | 냄 | `/explore/goal_status` | `String` | R / TL / 1 | `대기 — …` · `'<글>' — 판단 모델에 클래스를 묻는 중` · `'<글>' → <id> … Nav2 주행` · `'<글>' → 클래스 <c> — 지도에 없음 …` · `'<글>' — 클래스 없음 …` · `도착: <id>` · `지시 지움` |
 | 액션 | `/navigate_to_pose` | `nav2_msgs/NavigateToPose` | | 설 자리 (물체를 바라봄) |
 
-### 탐사 — `/explore/frontier_explorer` 프론티어 탐사 노드 (`limo_fire_explore/src/frontier_explorer_node.cpp`, 설정 `config/frontier_explorer.yaml`)
-
-Nav2 `NavigateToPose` 로 프론티어를 차례로 가는 탐사 (시뮬 `sim.launch.xml explore:=true`, 임무 BT `ExploreFrontiers`). 꺼진 채 뜬다.
-
-<!-- io:/explore/frontier_explorer -->
-| 방향 | 이름 | 타입 |
-|---|---|---|
-| 받음 | `/map` | `nav_msgs/msg/OccupancyGrid` |
-| 냄 | `/explore/frontier_explorer/done` | `std_msgs/msg/Bool` |
-| 냄 | `/explore/frontier_explorer/frontiers` | `visualization_msgs/msg/MarkerArray` |
-| 냄 | `/explore/frontier_explorer/state` | `std_msgs/msg/String` |
-| 냄 | `/explore/frontier_explorer/status` | `std_msgs/msg/String` |
-| 서비스 | `/explore/frontier_explorer/enable` | `std_srvs/srv/SetBool` |
-| 액션 부름 | `/navigate_to_pose` | `nav2_msgs/action/NavigateToPose` |
-| 액션 부름 | `/spin` | `nav2_msgs/action/Spin` |
-<!-- /io -->
-
 ### RViz 탐사 패널 (`limo_fire_rviz/src/explore_panel.cpp`)
 
-"합친 탐사 (/explore/explorer)" 를 고르면: `/explore/state`(R / TL / 1), `/explore/done`(R / TL / 1), `/explore/status`(10) 구독, `/explore/enable` 부름. `/explore/state == "running"` 이면 켜짐으로 그린다.
+탐사 `/explore/explorer` 하나만 본다 (고르기 없음): `/explore/state`(R / TL / 1), `/explore/done`(R / TL / 1), `/explore/status`(10) 구독, `/explore/enable` 부름. `/explore/state == "running"` 이면 켜짐으로 그린다.
 운용 화면(`limo_fire_description/rviz/limo_fire.rviz`, 순찰·주행과 같은 창)이 그리는 탐사 토픽: `/map` `/scan` `/perception/markers` `/perception/summary` `/explore/candidates` `/explore/candidates_text` `/explore/decider_image` `/explore/goal_marker` `/perception/detection_image` `/robot_description` (`/explore/*` 표시 토픽은 `debug` 일 때만 — `rviz:=true` 면 켜짐).
 
 ## I/O 표 맞추기 (`tools/io_table`)
@@ -508,7 +490,6 @@ Nav2 `NavigateToPose` 로 프론티어를 차례로 가는 탐사 (시뮬 `sim.l
 cargo build --release --manifest-path tools/io_table/Cargo.toml        # 한 번
 source env.sh
 ros2 launch limo_fire_explore app.launch.xml perception:=true debug:=true &   # 센서 없이도 입출력은 다 만들어짐 (dry run). object_detector 는 로봇(TensorRT)에서만
-ros2 launch limo_fire_explore frontier_explorer.launch.xml &
 ros2 run limo_fire_navigation object_goto --ros-args -r __ns:=/explore --params-file install/limo_fire_explore/share/limo_fire_explore/config/explorer.yaml &
 tools/io_table/target/release/io_table check     # 다르면 끝 코드 1 과 + / − 줄. 안 떠 있는 노드는 건너뜀 (--all 이면 실패)
 tools/io_table/target/release/io_table write     # 떠 있는 노드 칸을 지금 입출력으로 새로 씀

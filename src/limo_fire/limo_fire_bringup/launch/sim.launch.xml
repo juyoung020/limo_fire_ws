@@ -6,7 +6,7 @@
      주행:        ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze
      임무 BT 까지: ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze bt:=true   (순찰·불 대응, 운용 화면 왼쪽 아래 임무 현황판)
      지도 만들기: ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze slam:=true
-                  (프론티어 탐사 노드가 멈춘 채 같이 뜬다 — RViz 탐사 패널 "Auto explore" 버튼으로 켜고 끔. explore:=false 면 안 띄움)
+                  (합친 탐사 /explore/explorer 가 멈춘 채 같이 뜬다 — RViz 탐사 패널 "Auto explore" 버튼으로 켜고 끔. explore:=false 면 안 띄움)
                   → 다 돌았으면 ros2 launch limo_fire_bringup save_map.launch.xml name:=sim/limo_fire_maze
      Nav2 는 TF·/clock·지도가 준비될 때까지 스스로 기다리므로 시간 지연을 두지 않는다 -->
 <launch>
@@ -15,7 +15,8 @@
   <arg name="slam" default="false" description="true: 저장 지도·AMCL 대신 Cartographer 로 지도를 만들며 주행"/>
   <arg name="nav" default="true" description="Nav2 를 띄운다"/>
   <arg name="map" default="$(find-pkg-share limo_fire_navigation)/maps/sim/$(var world).yaml" description="slam:=false 일 때 쓰는 지도"/>
-  <arg name="explore" default="$(var slam)" description="프론티어 탐사 노드를 멈춘 채(idle) 띄운다 — RViz 탐사 패널 버튼·/explore/frontier_explorer/enable 로 켬. 기본은 slam 과 같음"/>
+  <arg name="explore" default="$(var slam)" description="합친 탐사(limo_fire_explore app.launch.xml, 실물과 같은 코드)를 멈춘 채(idle) 띄운다 — RViz 탐사 패널 버튼·/explore/enable 로 켬. 기본은 slam 과 같음"/>
+  <arg name="decider" default="false" description="true: 탐사 위층 판단 모델(llama-server 를 먼저 띄움 — limo_fire_explore README) · false: 규칙으로 후보 고름"/>
   <arg name="perception" default="false" description="YOLO 탐지 + 물체 지도 (limo_fire_perception perception.launch.xml)"/>
   <arg name="bt" default="false" description="임무 BT(limo_fire_bt bt.launch.xml sim:=true)를 같이 띄운다. 순찰점은 월드 데이터 파일 world_dir/world.yaml"/>
   <arg name="rviz" default="true"/>
@@ -51,9 +52,17 @@
     </include>
   </group>
 
+  <!-- 실물 real.launch.xml 과 같은 합친 탐사. 시뮬 차이: 시뮬 시계(set_parameter — 이 group 안 노드·컴포넌트에만), 리모컨(/rc_state) 없음 -->
   <group if="$(var explore)">
-    <include file="$(find-pkg-share limo_fire_explore)/launch/frontier_explorer.launch.xml">
-      <arg name="use_sim_time" value="true"/>
+    <set_parameter name="use_sim_time" value="true"/>
+    <include file="$(find-pkg-share limo_fire_explore)/launch/app.launch.xml">
+      <arg name="stack" value="false"/>
+      <arg name="rviz" value="false"/>
+      <arg name="debug" value="true"/>
+      <arg name="perception" value="false"/>
+      <arg name="dry_run" value="false"/>
+      <arg name="decider" value="$(var decider)"/>
+      <arg name="require_rc" value="false"/>
     </include>
   </group>
 

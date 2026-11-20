@@ -8,7 +8,6 @@ Panels:
     Tree Height: 70
   - Class: limo_fire_rviz/ExplorePanel
     Name: Explore
-    mode: explorer
   - Class: limo_fire_rviz/SmokePanel
     Name: Smoke
   - Class: limo_fire_rviz/PatrolPanel
@@ -361,18 +360,6 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /perception/markers
-      Value: true
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
-      Name: Frontiers
-      Namespaces:
-        frontier: true
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /explore/frontier_explorer/frontiers
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
