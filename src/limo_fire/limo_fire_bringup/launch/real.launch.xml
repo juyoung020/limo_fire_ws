@@ -10,6 +10,7 @@
      탐사 노드와 찍어서 순찰(click_patrol)은 인자 없이 늘 멈춘 채 떠 있다 — 탐사는 탐사 패널 버튼, click_patrol 은
      RViz Publish Point 로 찍고(지도에 번호·선) ~/start 로 출발. 임무 BT(bt:=true)는 기본 순찰점이 없고 이 찍은 점(/patrol/route)으로만 순찰한다 —
      찍기 전에는 기다리고, 찍거나 지우면 다음 순찰점부터 바뀐다. 셋 중 하나만 출발시킨다 (임무 BT 가 순찰 중이면 click_patrol ~/start·탐사 버튼은 쓰지 않는다). 저장 지도(slam:=false)는 이미 닫혀 있어 탐사가 곧 끝난다, 새 곳은 slam:=true
+     순찰을 탐사 스택(우리 회피)으로: nav_action:=/explore/navigate_to_pose (탐사 노드는 늘 떠 있음 — explore:=false 면 못 씀). 기본은 Nav2
      대시보드 limo_base 나 robot.launch.xml 을 따로 켜 두었으면 robot:=false (섀시 포트는 드라이버 하나만) -->
 <launch>
   <arg name="robot" default="true" description="센서·섀시·EKF (robot.launch.xml). 따로 켜 두었으면 false"/>
@@ -23,6 +24,8 @@
   <arg name="perception_override" default="$(find-pkg-share limo_fire_perception)/config/yolo_fire.yaml"
        description="인식 설정 덮어쓰기 (예: 이 기기에 있는 엔진 경로만 바꾼 yaml)"/>
   <arg name="rviz" default="true"/>
+  <arg name="nav_action" default="/navigate_to_pose"
+       description="순찰(임무 BT 순찰 · click_patrol) 주행 액션: /navigate_to_pose = Nav2 (기본) · /explore/navigate_to_pose = 탐사 스택 (A* + 지역 계획기 + 깊이 층 + 초음파 — limo_fire_explore README 주행 목표 서버). 불 대응·연기 구역 훑기는 늘 Nav2"/>
 
   <!-- 통신 설정 확인: 이 워크스페이스의 env.sh 를 불러온 셸이어야 Fast DDS 공유 메모리 칸이 4 MB 다 (기본 512 KB 는 영상 한 장보다 작아
        카메라가 30 Hz 로 내도 YOLO·물체 지도·BT 가 장을 놓친다 — 2026-11-20 실물에서 컬러 30 Hz 를 내는데 YOLO 18.8 장/초).
@@ -63,7 +66,9 @@
 
   <!-- 찍어서 순찰: 늘 띄운다 (점 찍기·지도 표시용, ~/start 전까지 움직이지 않음) -->
   <group>
-    <include file="$(find-pkg-share limo_fire_bt)/launch/click_patrol.launch.xml"/>
+    <include file="$(find-pkg-share limo_fire_bt)/launch/click_patrol.launch.xml">
+      <arg name="nav_action" value="$(var nav_action)"/>
+    </include>
   </group>
 
   <group if="$(var perception)">
@@ -82,6 +87,7 @@
   <group if="$(var bt)">
     <include file="$(find-pkg-share limo_fire_bt)/launch/bt.launch.xml">
       <arg name="patrol_file" value="$(var patrol_file)"/>
+      <arg name="nav_action" value="$(var nav_action)"/>
     </include>
   </group>
 </launch>

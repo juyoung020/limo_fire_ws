@@ -8,6 +8,7 @@
      지도 만들기: ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze slam:=true
                   (합친 탐사 /explore/explorer 가 멈춘 채 같이 뜬다 — RViz 탐사 패널 "Auto explore" 버튼으로 켜고 끔. explore:=false 면 안 띄움)
                   → 다 돌았으면 ros2 launch limo_fire_bringup save_map.launch.xml name:=sim/limo_fire_maze
+     순찰을 탐사 스택(우리 회피)으로: ... bt:=true explore:=true nav_action:=/explore/navigate_to_pose (주행 목표 서버 = 탐사 노드 /explore/explorer)
      Nav2 는 TF·/clock·지도가 준비될 때까지 스스로 기다리므로 시간 지연을 두지 않는다 -->
 <launch>
   <arg name="world" default="limo_fire_world" description="sim/webots/worlds/ 안 월드 이름 (확장자 없이)"/>
@@ -20,6 +21,8 @@
   <arg name="perception" default="false" description="YOLO 탐지 + 물체 지도 (limo_fire_perception perception.launch.xml)"/>
   <arg name="bt" default="false" description="임무 BT(limo_fire_bt bt.launch.xml sim:=true)를 같이 띄운다. 순찰점은 월드 데이터 파일 world_dir/world.yaml"/>
   <arg name="rviz" default="true"/>
+  <arg name="nav_action" default="/navigate_to_pose"
+       description="순찰(임무 BT 순찰 · click_patrol) 주행 액션: /navigate_to_pose = Nav2 (기본) · /explore/navigate_to_pose = 탐사 스택 (A* + 지역 계획기 + 깊이 층 + 초음파 — limo_fire_explore README 주행 목표 서버). 불 대응·연기 구역 훑기는 늘 Nav2"/>
   <arg name="mode" default="realtime" description="Webots 실행 모드: realtime · fast · pause"/>
   <arg name="port" default="1234" description="Webots 포트 — 한 컴퓨터에서 시뮬을 둘 띄울 때 다르게"/>
   <arg name="webots_args" default="" description="Webots 에 더 줄 인자 (낱말 하나, 예: --minimize)"/>
@@ -63,6 +66,7 @@
       <arg name="dry_run" value="false"/>
       <arg name="decider" value="$(var decider)"/>
       <arg name="require_rc" value="false"/>
+      <arg name="params_override" value="$(find-pkg-share limo_fire_explore)/config/explorer_sim.yaml"/>
     </include>
   </group>
 
@@ -84,6 +88,7 @@
     <include file="$(find-pkg-share limo_fire_bt)/launch/bt.launch.xml">
       <arg name="sim" value="true"/>
       <arg name="patrol_file" value="$(var world_dir)/$(var world).yaml"/>
+      <arg name="nav_action" value="$(var nav_action)"/>
     </include>
   </group>
 </launch>

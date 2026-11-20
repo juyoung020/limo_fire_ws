@@ -6,6 +6,7 @@
   <arg name="patrol_file" default="" description="순찰점 yaml (patrol: [[x, y], ...]; robot_start 가 있으면 세계 좌표)"/>
   <arg name="tree_file" default="$(find-pkg-share limo_fire_bt)/behavior_trees/limo_fire_bt.xml"/>
   <arg name="btlog_dir" default="" description="비어 있지 않으면 판마다 .btlog"/>
+  <arg name="nav_action" default="/navigate_to_pose" description="순찰 주행 액션: /navigate_to_pose (Nav2) · /explore/navigate_to_pose (탐사 스택 — limo_fire_explore README 주행 목표 서버)"/>
   <!-- 시뮬이면 limo_fire_bt_sim.yaml 을 덮는다. 실물이면 같은 파일을 한 번 더 읽어 덮을 것이 없다 -->
   <let name="override" value="$(find-pkg-share limo_fire_bt)/config/limo_fire_bt_sim.yaml" if="$(var sim)"/>
   <let name="override" value="$(find-pkg-share limo_fire_bt)/config/limo_fire_bt.yaml" unless="$(var sim)"/>
@@ -16,6 +17,7 @@
     <param name="tree_file" value="$(var tree_file)"/>
     <param name="patrol_file" value="$(var patrol_file)"/>
     <param name="btlog_dir" value="$(var btlog_dir)"/>
+    <param name="patrol_nav_action" value="$(var nav_action)"/>
     <param name="use_sim_time" value="$(var sim)"/>
   </node>
 </launch>

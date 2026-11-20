@@ -17,6 +17,38 @@
 그 코드·확인 기록(시뮬 2026-11-11, 실물 2026-11-18: Nav2 명령 0.26 m/s 에 바퀴 0.118 m/s, 라이다 한 평면이라 의자 좌판을 못 봄)은 커밋 `ae62588` 의 이 README.
 시뮬 견줌 기준선(프론티어)은 `train/explore/baselines/frontier` 에 그대로 있다 — 로봇에서는 안 쓴다.
 
+## 주행 목표 서버 (`/explore/navigate_to_pose`, 2026-11-20)
+
+탐사 노드가 Nav2 와 같은 **`nav2_msgs/NavigateToPose` 액션**을 낸다. 목표 하나를 받으면 위층(탐사)은 쉬고 아래층
+(A* + 지역 계획기 + 깊이 카메라 층 + 닿음 감지 + 막힘 복구 — 탐사와 같은 코드)이 그 자리까지 간다. 순찰을 이것으로 몰면 회피·경로 계획이 탐사와 한 벌이 된다.
+
+```bash
+# 실물: 탐사 노드는 늘 떠 있음 — 순찰(임무 BT 순찰 · click_patrol)만 이 서버로
+ros2 launch limo_fire_bringup real.launch.xml bt:=true nav_action:=/explore/navigate_to_pose
+# 시뮬
+ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_obstacles bt:=true explore:=true nav_action:=/explore/navigate_to_pose
+# 손으로 한 점
+ros2 action send_goal /explore/navigate_to_pose nav2_msgs/action/NavigateToPose "{pose: {header: {frame_id: map}, pose: {position: {x: 1.0, y: 0.5}, orientation: {w: 1.0}}}}"
+```
+
+- **기본은 Nav2 그대로** (`nav_action:=/navigate_to_pose`). 불 대응·연기 구역 훑기는 늘 Nav2 — 연기 모드가 Nav2 장애물 지도·속도 한도에 기댄다.
+- 받는 것: 목표 틀은 `map` 만 (아니면 거절). dry run · 리모컨 오토 아님(require_rc) 이면 거절. 다른 목표가 오면 앞 목표는 못 감(abort)으로 끝내고 새 목표.
+- 상태 `/explore/state` 가 `navigating` (끝나면 `idle`) — 임무 BT 는 `running` 만 "밖에서 탐사를 켬" 으로 보므로 순찰이 꺼지지 않는다.
+- 끝: 목표 0.25 m 안 + 목표 방향 0.25 rad (`nav_arrive_m` · `nav_yaw_tol`) → 성공. 못 감 → 15 s 동안 0.5 m 못 움직임(`nav_progress_*`, Nav2 진척 검사 꼴) ·
+  경로 없음 5 s · 아래층 막힘 복구(다시 계획 → 물러나기)를 다 쓰고 포기 · 닿음 · 리모컨 · 끔. 탐사 버튼을 누르면 목표는 못 감으로 끝나고 탐사가 켜짐.
+- 저장 지도: `/map`(map_server 또는 Cartographer)을 로봇 지도의 **아직 모르는 칸에만** 채운 뒤 계획 — 본 칸은 라이다 값이 먼저. 지도 창(25.6 m, 판 시작 자리 가운데) 밖 목표는 거절.
+- 초음파(`/ultrasonic/front_left|front_right`): 1.0 m 안 메아리를 깊이 열 점(지역 계획기 거리 장·충돌 감시가 같이 쓰는 점)에 덧붙임. 원뿔(15°)이 넓어
+  메아리 자리를 축에 찍으면 옆 틈(문)을 가짜로 막으므로 **라이다가 원뿔 안 그 거리 앞에서 이미 본 메아리는 뺀다**(`sonar_skip_lidar_seen`) — 라이다 높이 아래 물체·유리만 초음파 점이 됨.
+- 시뮬(Webots) 덮어쓰기 `config/explorer_sim.yaml`: 깊이 카메라 자리(Webots 모델은 실물보다 낮고 수평 — 실측 TF), 깊이 32FC1 도 받음.
+- 시뮬 확인 (2026-11-20, `limo_fire_obstacles` — 문 0.70 m + 문 앞 상자 · 낮은 상자 · 막다른 칸 · 구석 · 뜬 판 · 걷는 사람, 3 판씩, 보고서 `limo_upper_keep/reports/obstacle_nav.md`):
+  | | 도착 | 형상 닿음 | 사람 닿음 | 10 s 갇힘 (그중 구석) | 맴돎 | 문 앞 상자 머뭇거림 |
+  |---|---|---|---|---|---|---|
+  | Nav2 (기본, RPP) | 22/27 | 1 (낮은 상자) | 4 | 7 (4) | 0 | 34.6 · 204.8 · 5.0 s |
+  | 이 서버 | 11/27 | 0 | 0 | 2 (0) | 2 | 38.3 · 26.9 · 47.1 s |
+
+  이 서버는 닿음이 없지만 **문(0.70 m) 바로 앞 상자 사이 대각 틈 0.60 m 를 3 판 모두 못 지나** 그 너머 순찰점 4 개를 매번 못 갔다(계획 반경 0.293 m —
+  몸통을 원으로 보는 탐사 아래층 값, `reports/narrow_gap.md`). 그래서 **기본값은 Nav2 그대로** 두었다. 좁은 곳 통과가 풀리기 전에는 넓은 곳 순찰에만 권한다.
+
 ## 합친 탐사 (`explorer` — 위층 판단 모델 + 아래층 A*, 2026-11-16)
 
 > **확정 구성 (2026-11-16 실물 시험):** 위층 판단 모델 + 아래층 A* 경로 추종(규칙 추종기 — 유일한 아래층). 노드에는 이 위층 하나만 있다 —

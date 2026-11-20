@@ -1,0 +1,16 @@
+# limo_fire_obstacles.wbt 의 정답 데이터 (Webots 세계 좌표, m). 형식은 ../README.md "월드 데이터 파일"
+# 장애물 회피 시험: 순찰점 9 개가 가구 사이 틈 · 문 앞 상자 · 낮은 상자 · 막다른 칸 · 구석 · 뜬 판 · 걷는 사람을 지나게 놓임 (docs/simulation.md "장애물 회피 시험")
+robot_start: {x: 0.0, y: 0.0, yaw: 0.0}
+patrol: [[3.3, 0.45], [5.0, 1.9], [6.05, -0.2], [7.6, 0.3], [8.05, 4.05], [5.0, 3.6], [2.0, 2.4], [0.3, 3.4], [0.0, 0.0]]
+# 구석·막다른 곳 순찰점 (patrol 번호, 1 부터) — 보고서의 "구석 갇힘" 은 이 목표들의 갇힘
+corner_goals: [3, 4, 5]
+# nav_benchmark 닿음 판정용 (세계 좌표 [x, y, 가로, 세로], 축 정렬) — 벽·칸막이·가구·지도에 없는 것 전부
+contact_boxes: [[3.9, -0.7, 9.4, 0.2], [3.9, 4.5, 9.4, 0.2], [-0.7, 1.9, 0.2, 5.0], [8.5, 1.9, 0.2, 5.0], [4.0, 0.475, 0.1, 2.15], [4.0, 3.325, 0.1, 2.15],
+                [2.2, -0.3, 0.6, 0.6], [2.2, 1.2, 1.2, 0.6], [0.6, 4.2, 1.2, 0.4], [1.6, 3.0, 0.8, 0.6], [7.6, 2.0, 1.2, 0.8],
+                [5.6, -0.05, 0.1, 1.1], [6.5, -0.05, 0.1, 1.1], [3.35, 1.6, 0.4, 0.4], [5.45, 1.0, 0.4, 0.4], [6.3, 3.65, 0.7, 0.6]]
+contact_names: [wall_south, wall_north, wall_west, wall_east, divider_south, divider_north, cabinet, sofa, shelf, table_a, bed, alcove_west, alcove_east, obst_box, obst_low, obst_bench]
+# 걷는 사람 (Webots pedestrian 컨트롤러: 시뮬 시각 t 에 길 위 t × speed 자리, 끝점에서 처음으로 돌아오는 고리) — 닿음 판정은 반지름 radius 원
+movers:
+  - {name: person_walk, path: [[5.7, 0.9], [5.7, 3.9]], speed: 0.4, radius: 0.25}
+objects:
+  - {name: person_walk, cls: 4, center: [5.7, 0.9, 0.90], size: [0.35, 0.55, 1.80], yaw: 1.5708, approx: true, note: "걷는 중 — 자리는 movers"}

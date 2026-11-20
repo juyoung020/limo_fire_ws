@@ -1,0 +1,192 @@
+#VRML_SIM R2025a utf8
+# limo_fire_obstacles: 장애물 회피 시험 장면 (2026-11-20, docs/simulation.md "장애물 회피 시험"). 정답·순찰점은 limo_fire_obstacles.yaml
+# 방 안쪽 x -0.6~8.4, y -0.6~4.4 (9 × 5 m) 를 칸막이(x 3.95~4.05)로 나눔 — 문 y 1.55~2.25 (0.70 m). 소파·장 사이 틈 y 0~0.9 (0.90 m).
+# 저장 지도(limo_fire_navigation/maps/sim/limo_fire_obstacles)에 있는 것: 벽·칸막이·가구. 지도에 없는 것 (obst_* · 사람):
+#   obst_box   (3.35, 1.6) 0.4 × 0.4 × 0.5 — 문 앞을 막는 상자
+#   obst_low   (5.45, 1.0) 0.4 × 0.4 × 0.07 — 라이다(0.111 m) 밑, 깊이 카메라·초음파만 봄
+#   obst_bench (6.3, 3.65) 0.7 × 0.6, 판 0.15~0.19 m + 다리 0.03 — 라이다는 다리만, 몸통(높이 0.251 m)은 판에 걸림
+#   person_walk x 5.7 에서 y 0.9 ↔ 3.9 를 0.4 m/s 로 왕복 (Webots pedestrian 컨트롤러, 시뮬 시각 0 부터)
+# 구석·막다른 곳 (지도에 있음): 남쪽 벽에 붙은 막다른 칸 alcove (벽 x 5.6 · 6.5, y −0.6 ~ 0.5 — 안쪽 폭 0.80 m, 깊이 1.1 m),
+#   순찰점이 그 안 (6.05, −0.2) 과 북동 구석 (8.05, 4.05 — 두 벽에서 0.35 m)
+
+EXTERNPROTO "webots://projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "../protos/LimoFire.proto"
+EXTERNPROTO "webots://projects/objects/floors/protos/Floor.proto"
+EXTERNPROTO "webots://projects/appearances/protos/CementTiles.proto"
+EXTERNPROTO "webots://projects/humans/pedestrian/protos/Pedestrian.proto"
+
+WorldInfo {
+  info [
+    "limo_fire: 장애물 회피 시험 (limo_fire_obstacles.yaml)"
+  ]
+  title "limo_fire obstacles"
+  basicTimeStep 10
+  contactProperties [
+    ContactProperties {
+      material1 "wheel"
+      material2 "default"
+      coulombFriction 1.0
+      forceDependentSlip 0.01
+      bounce 0
+    }
+  ]
+}
+Viewpoint {
+  orientation 0.25 0.25 -0.93 1.64
+  position 3.9 8 9
+}
+TexturedBackground {
+  texture "empty_office"
+  skybox FALSE
+}
+LimoFire {
+  translation 0 0 0.145
+  name "LIMO"
+  controller "<extern>"
+  supervisor TRUE
+  ultrasonic TRUE
+}
+Floor {
+  translation 3.9 1.9 0
+  size 9.4 5.4
+  tileSize 2 2
+  appearance CementTiles {
+    textureTransform TextureTransform {
+      scale 0.6 0.6
+    }
+  }
+}
+
+# ---------------- 벽·칸막이 (높이 1 m) ----------------
+DEF WALL_S Solid {
+  translation 3.9 -0.7 0.5
+  name "wall_south"
+  children [ Shape { appearance DEF WALL_APP PBRAppearance { baseColor 0.8 0.8 0.78 roughness 1 metalness 0 } geometry Box { size 9.4 0.2 1.0 } } ]
+  boundingObject Box { size 9.4 0.2 1.0 }
+}
+Solid {
+  translation 3.9 4.5 0.5
+  name "wall_north"
+  children [ Shape { appearance USE WALL_APP geometry Box { size 9.4 0.2 1.0 } } ]
+  boundingObject Box { size 9.4 0.2 1.0 }
+}
+Solid {
+  translation -0.7 1.9 0.5
+  name "wall_west"
+  children [ Shape { appearance USE WALL_APP geometry Box { size 0.2 5.0 1.0 } } ]
+  boundingObject Box { size 0.2 5.0 1.0 }
+}
+Solid {
+  translation 8.5 1.9 0.5
+  name "wall_east"
+  children [ Shape { appearance USE WALL_APP geometry Box { size 0.2 5.0 1.0 } } ]
+  boundingObject Box { size 0.2 5.0 1.0 }
+}
+Solid {
+  translation 4.0 0.475 0.5
+  name "divider_south"
+  children [ Shape { appearance USE WALL_APP geometry Box { size 0.1 2.15 1.0 } } ]
+  boundingObject Box { size 0.1 2.15 1.0 }
+}
+Solid {
+  translation 4.0 3.325 0.5
+  name "divider_north"
+  children [ Shape { appearance USE WALL_APP geometry Box { size 0.1 2.15 1.0 } } ]
+  boundingObject Box { size 0.1 2.15 1.0 }
+}
+
+# ---------------- 막다른 칸 (지도에 있음) ----------------
+Solid {
+  translation 5.6 -0.05 0.5
+  name "alcove_west"
+  children [ Shape { appearance USE WALL_APP geometry Box { size 0.1 1.1 1.0 } } ]
+  boundingObject Box { size 0.1 1.1 1.0 }
+}
+Solid {
+  translation 6.5 -0.05 0.5
+  name "alcove_east"
+  children [ Shape { appearance USE WALL_APP geometry Box { size 0.1 1.1 1.0 } } ]
+  boundingObject Box { size 0.1 1.1 1.0 }
+}
+
+# ---------------- 가구 (지도에 있음) ----------------
+Solid {
+  translation 2.2 -0.3 0.4
+  name "cabinet"
+  children [ Shape { appearance DEF WOOD PBRAppearance { baseColor 0.45 0.32 0.2 roughness 1 metalness 0 } geometry Box { size 0.6 0.6 0.8 } } ]
+  boundingObject Box { size 0.6 0.6 0.8 }
+}
+Solid {
+  translation 2.2 1.2 0.225
+  name "sofa"
+  children [ Shape { appearance PBRAppearance { baseColor 0.3 0.3 0.5 roughness 1 metalness 0 } geometry Box { size 1.2 0.6 0.45 } } ]
+  boundingObject Box { size 1.2 0.6 0.45 }
+}
+Solid {
+  translation 0.6 4.2 0.5
+  name "shelf"
+  children [ Shape { appearance USE WOOD geometry Box { size 1.2 0.4 1.0 } } ]
+  boundingObject Box { size 1.2 0.4 1.0 }
+}
+Solid {
+  translation 1.6 3.0 0.225
+  name "table_a"
+  children [ Shape { appearance USE WOOD geometry Box { size 0.8 0.6 0.45 } } ]
+  boundingObject Box { size 0.8 0.6 0.45 }
+}
+Solid {
+  translation 7.6 2.0 0.25
+  name "bed"
+  children [ Shape { appearance PBRAppearance { baseColor 0.7 0.7 0.75 roughness 1 metalness 0 } geometry Box { size 1.2 0.8 0.5 } } ]
+  boundingObject Box { size 1.2 0.8 0.5 }
+}
+
+# ---------------- 지도에 없는 것 ----------------
+Solid {
+  translation 3.35 1.6 0.25
+  name "obst_box"
+  children [ Shape { appearance PBRAppearance { baseColor 0.75 0.55 0.3 roughness 1 metalness 0 } geometry Box { size 0.4 0.4 0.5 } } ]
+  boundingObject Box { size 0.4 0.4 0.5 }
+}
+Solid {
+  translation 5.45 1.0 0.035
+  name "obst_low"
+  children [ Shape { appearance PBRAppearance { baseColor 0.8 0.2 0.2 roughness 1 metalness 0 } geometry Box { size 0.4 0.4 0.07 } } ]
+  boundingObject Box { size 0.4 0.4 0.07 }
+}
+Solid {
+  translation 6.3 3.65 0
+  name "obst_bench"
+  children [
+    Pose { translation 0 0 0.17 children [ Shape { appearance DEF BENCH_APP PBRAppearance { baseColor 0.5 0.35 0.2 roughness 1 metalness 0 } geometry DEF BENCH_TOP Box { size 0.7 0.6 0.04 } } ] }
+    Pose { translation 0.335 0.285 0.075 children [ Shape { appearance USE BENCH_APP geometry DEF BENCH_LEG Box { size 0.03 0.03 0.15 } } ] }
+    Pose { translation -0.335 0.285 0.075 children [ Shape { appearance USE BENCH_APP geometry USE BENCH_LEG } ] }
+    Pose { translation 0.335 -0.285 0.075 children [ Shape { appearance USE BENCH_APP geometry USE BENCH_LEG } ] }
+    Pose { translation -0.335 -0.285 0.075 children [ Shape { appearance USE BENCH_APP geometry USE BENCH_LEG } ] }
+  ]
+  boundingObject Group {
+    children [
+      Pose { translation 0 0 0.17 children [ USE BENCH_TOP ] }
+      Pose { translation 0.335 0.285 0.075 children [ USE BENCH_LEG ] }
+      Pose { translation -0.335 0.285 0.075 children [ USE BENCH_LEG ] }
+      Pose { translation 0.335 -0.285 0.075 children [ USE BENCH_LEG ] }
+      Pose { translation -0.335 -0.285 0.075 children [ USE BENCH_LEG ] }
+    ]
+  }
+}
+Pedestrian {
+  translation 5.7 0.9 1.27
+  name "person_walk"
+  controller "pedestrian"
+  controllerArgs [
+    "--trajectory=5.7 0.9, 5.7 3.9"
+    "--speed=0.4"
+  ]
+}
+
+# /clock 을 내는 ROS 2 supervisor. sim_robot.launch.xml 의 ros2_supervisor.py 가 붙는다
+Robot {
+  name "Ros2Supervisor"
+  controller "<extern>"
+  supervisor TRUE
+}

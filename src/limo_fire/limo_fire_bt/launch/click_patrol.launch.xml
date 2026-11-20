@@ -8,9 +8,11 @@
 <launch>
   <arg name="file" default="" description="시작할 때 읽을 순찰점 yaml (비면 빈 순찰)"/>
   <arg name="sim" default="false" description="true: 시뮬 시계"/>
+  <arg name="nav_action" default="/navigate_to_pose" description="주행 액션: /navigate_to_pose (Nav2) · /explore/navigate_to_pose (탐사 스택)"/>
   <node pkg="limo_fire_bt" exec="click_patrol" name="click_patrol" output="screen">
     <param from="$(find-pkg-share limo_fire_bt)/config/click_patrol.yaml"/>
     <param name="file" value="$(var file)"/>
+    <param name="action_name" value="$(var nav_action)"/>
     <param name="use_sim_time" value="$(var sim)"/>
   </node>
 </launch>

@@ -19,6 +19,7 @@ ros2 launch limo_fire_bringup sim.launch.xml world:=limo_fire_maze perception:=t
 | `limo_fire_office` | 12 × 8 m | 복도 + 방 셋(문 열림) + 계단실, 동쪽 끝 비상구 |
 | `limo_fire_warehouse` | 10 × 10 m | 팔레트 두 줄 사이 통로, 드럼통·상자, 닫힌 문 둘 |
 | `limo_fire_world` | 5 × 10 m | 교수님 `limo_world.wbt`(아파트 방) 복사본 |
+| `limo_fire_obstacles` | 9 × 5 m | 장애물 회피 시험 (2026-11-20): 방 둘 · 문 0.70 m + 문 앞 상자 · 가구 사이 0.90 m · 라이다 밑 낮은 상자 · 뜬 판 · 막다른 칸 · 구석 · 걷는 사람. 정답 물체는 사람만. 저장 지도는 형상에서 바로 그림(지도에 없는 것 뺌) |
 
 맵마다 YOLO 7 클래스(불·연기·소화기·유도등·사람·문·계단)를 모두 놓았다.
 

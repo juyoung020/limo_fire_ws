@@ -19,6 +19,7 @@
   <arg name="perception_config" default="yolo_coco.yaml" description="인식 설정 (limo_fire_perception/config): yolo_coco.yaml (COCO 80 종) · yolo_fire.yaml (화재 7 종)"/>
   <arg name="objects_file" default="" description="물체 지도 파일 (있으면 켤 때 읽음)"/>
   <arg name="camera_in_app" default="false" description="true: 카메라 드라이버(Orbbec)를 /app 안에 — 카메라 → 우리 노드가 공유 메모리·UDP 없이 프로세스 안. robot.launch.xml camera:=false 와 같이"/>
+  <arg name="params_override" default="$(find-pkg-share limo_fire_explore)/config/explorer.yaml" description="explorer.yaml 위에 덮을 설정 (시뮬: explorer_sim.yaml)"/>
   <arg name="gpu_thread" default="false" description="true: YOLO 를 옛 작업 스레드 판으로 (로봇에서 실행기 판 확인 전 대비) — TODO(제거)"/>
 
   <group if="$(var stack)">
@@ -32,6 +33,7 @@
   <node_container pkg="rclcpp_components" exec="component_container" name="app" namespace="" output="screen">
     <composable_node pkg="limo_fire_explore" plugin="limo_fire_explore::ExplorerNode" name="explorer" namespace="explore">
       <param from="$(find-pkg-share limo_fire_explore)/config/explorer.yaml"/>
+      <param from="$(var params_override)"/>
       <param name="dry_run" value="$(var dry_run)"/>
       <param name="debug" value="$(var debug)"/>
       <param name="decider" value="$(var decider)"/>

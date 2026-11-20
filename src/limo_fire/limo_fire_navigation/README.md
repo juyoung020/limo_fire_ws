@@ -104,6 +104,8 @@ ros2 run limo_fire_navigation nav_benchmark --ros-args -p use_sim_time:=true \
 
 - `smoke:=true` 면 처음 위치를 라이다(AMCL)로 잡은 상태에서 연기 모드를 켜고 출발한다.
 - 목표마다: 결과(성공·중단·시간 초과), 걸린 시간(시뮬), 도착 오차 |정답 − 목표|, 추정 오차 |Nav2 자세 − 정답|, 정답으로 잰 이동 거리.
+- 장애물 회피 시험 (월드 데이터 파일에 `contact_boxes` · `movers` · `corner_goals` 가 있으면, 2026-11-20): 목표마다 몸통 사각형과 형상·걷는 사람 사이 가장 좁은 간격, 닿음 횟수(1 cm 미만),
+  가장 오래 갇힌 시간(`stuck_m` 0.15 m 안, `stuck_s` 10 s 넘으면 갇힘), 구석 목표 갇힘. 자취는 `<표>_trace.csv`. `-p action_name:=/explore/navigate_to_pose` 면 탐사 스택 주행 목표 서버로 같은 시험.
 
 ### 실물 모드 (`real:=true`)
 

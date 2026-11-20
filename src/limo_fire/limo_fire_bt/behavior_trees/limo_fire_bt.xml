@@ -133,7 +133,7 @@
   </BehaviorTree>
 
   <!-- ================================================================ -->
-  <!-- [베이직] 저장된 지도로 순찰 (Nav2 navigate_to_pose). 불/연기가 감지되면 순찰을 멈추고 SUCCESS -->
+  <!-- [베이직] 저장된 지도로 순찰 (주행 액션 {patrol_nav} — 기본 Nav2 /navigate_to_pose, patrol_nav_action 으로 탐사 스택 /explore/navigate_to_pose). 불/연기가 감지되면 순찰을 멈추고 SUCCESS -->
   <!-- 순찰 중에도 라이다·EKF 가 끊기면 즉시 멈춘다 -->
   <!-- ================================================================ -->
   <BehaviorTree ID="BasicPatrol">
@@ -152,7 +152,7 @@
               <Sequence name="PatrolStep">
                 <GetNextWaypoint route="{patrol_route}" route_topic="/patrol/route" goal="{patrol_goal}"/>
                 <Fallback name="NavigateOrSkip">
-                  <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
+                  <NavigateToWaypoint goal="{patrol_goal}" action_name="{patrol_nav}"/>
                   <!-- 순찰점에 물건이 있어(막힘) 끝까지 못 갔어도 1 m 안까지 왔으면 들른 것으로 치고 바로 다음 점 (기다림·알림 없이) -->
                   <IsNearGoal goal="{patrol_goal}" radius_m="1.0"/>
                   <!-- 지도 만들기 중 순찰점이 아직 안 그린 곳(지도 밖)이면 Nav2 가 바로 거절한다 → 프론티어 탐사로 지도를 넓힌 뒤 다시 간다.
@@ -167,7 +167,7 @@
                       <ExploreFrontiers explorer="{explorer_ns}" objects_topic="/perception/objects"/>
                     </Timeout>
                     <Script code="map_closed:=true"/>
-                    <NavigateToWaypoint goal="{patrol_goal}" action_name="/navigate_to_pose"/>
+                    <NavigateToWaypoint goal="{patrol_goal}" action_name="{patrol_nav}"/>
                   </Sequence>
                   <!-- 못 가면 알리고 잠깐 쉰 뒤 다음 순찰점 (Nav2 가 바로 실패하면 순찰점을 몇 초 만에 다 넘기지 않게) -->
                   <Sequence name="SkipPoint">
@@ -183,7 +183,7 @@
           </WhileDoElse>
         </ReactiveSequence>
       </ReactiveFallback>
-      <StopRobot cmd_vel_topic="/cmd_vel"/>
+      <StopRobot cmd_vel_topic="/cmd_vel" action_name="{patrol_nav}"/>
     </Sequence>
   </BehaviorTree>
 

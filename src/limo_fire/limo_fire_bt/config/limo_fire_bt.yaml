@@ -6,7 +6,10 @@ mission:
     groot_port: 1667            # Groot2 Monitor 가 붙는 포트 (다른 사람 시뮬과 겹치면 바꿈)
     btlog_dir: ""               # 비어 있지 않으면 판마다 .btlog (Groot2 로 다시 보기)
     patrol_file: ""             # 순찰점 yaml (patrol: [[x, y], ...], 지도 좌표). 비면 RViz 에서 찍은 순찰점(click_patrol → /patrol/route)만 쓴다 — 실물 기본
-    explorer: /explore          # 탐사 노드 이름 (~/enable SetBool, ~/state idle·running·paused·done). 실물은 합친 탐사(app.launch.xml)
+    explorer: /explore          # 탐사 노드 이름 (~/enable SetBool, ~/state idle·running·paused·done·navigating). 실물은 합친 탐사(app.launch.xml)
+    # 순찰(BasicPatrol) 주행 액션 (nav2_msgs/NavigateToPose): /navigate_to_pose = Nav2 (기본) · /explore/navigate_to_pose = 탐사 스택(A* + 지역 계획기 + 깊이 층 + 초음파,
+    # limo_fire_explore README "주행 목표 서버"). 불 대응·연기 구역 훑기는 늘 Nav2 (연기 모드가 Nav2 에 기댐). launch 인자 nav_action 이 덮음
+    patrol_nav_action: /navigate_to_pose
     patrol:
       enabled_at_start: false   # 실물: 운용 화면 순찰 패널(/mission/set_patrol)로 켤 때까지 순찰하지 않음 (리모컨 오토로 바로 움직이지 않게)
     record_dir: /tmp/limo_fire_incidents   # 사건 위치·사진

@@ -8,10 +8,13 @@
 //   지도 좌표 = 세계 좌표를 robot_start 로 옮기고 돌린 것 (시뮬 지도 원점 = robot_start, sim/webots/README.md "월드 데이터 파일").
 // 추정: TF map → base_link (Nav2 가 쓰는 자세 그대로).
 // 잰 것: 목표마다 결과(성공·중단·시간 초과)·걸린 시간(시뮬)·도착 오차 |정답 − 목표|·추정 오차 |추정 − 정답|·정답으로 잰 이동 거리.
+// 장애물 회피 시험(월드 데이터 파일에 contact_boxes · movers 가 있으면): 목표마다 몸통 사각형과 형상·걷는 사람 사이 가장 좁은 간격, 닿음 횟수,
+//   갇힘(목표가 살아 있는 동안 stuck_s 넘게 stuck_m 안에 머문 가장 긴 시간) — docs/simulation.md "장애물 회피 시험".
 // 정답은 평가에만 쓴다 — 주행·위치 추정에 들어가지 않는다.
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -51,6 +54,36 @@ struct Row {
   double gx, gy;
   std::string result;
   double t, tx, ty, ex, ey, arrive, est_err, dist, dist_total, clear;
+  double static_gap = NAN, mover_gap = NAN, stuck_max = 0.0;   // 형상 · 걷는 사람과 가장 좁은 간격, 가장 오래 갇힌 시간 (s)
+  int contacts = 0, mover_contacts = 0;                        // 간격이 collide_gap 아래로 들어간 횟수
+  std::string static_near;                                     // 가장 가까웠던 형상 이름
+};
+
+struct Box {   // 세계 좌표 축 정렬 상자 (가운데 · 가로 · 세로)
+  double x, y, sx, sy;
+  std::string name;
+};
+
+struct Mover {   // Webots pedestrian 컨트롤러: 시뮬 시각 t 에 고리 길 위 t × speed 자리
+  std::vector<std::pair<double, double>> path;
+  double speed = 0, radius = 0;
+  std::string name;
+  std::pair<double, double> at(double t) const {
+    std::vector<double> cum{0.0};
+    for (size_t i = 0; i < path.size(); ++i) {
+      const auto& a = path[i];
+      const auto& b = path[(i + 1) % path.size()];
+      cum.push_back(cum.back() + std::hypot(b.first - a.first, b.second - a.second));
+    }
+    if (cum.back() <= 0) return path.front();
+    const double d = std::fmod(t * speed, cum.back());
+    size_t i = 0;
+    while (i + 1 < cum.size() - 1 && cum[i + 1] <= d) ++i;
+    const auto& a = path[i];
+    const auto& b = path[(i + 1) % path.size()];
+    const double r = (d - cum[i]) / std::max(1e-9, cum[i + 1] - cum[i]);
+    return {a.first + r * (b.first - a.first), a.second + r * (b.second - a.second)};
+  }
 };
 
 class Bench : public rclcpp::Node {
@@ -79,11 +112,14 @@ class Bench : public rclcpp::Node {
     foot_l_ = declare_parameter<double>("footprint_length", 0.32);   // nav2_params.yaml local_costmap footprint 와 같게
     foot_w_ = declare_parameter<double>("footprint_width", 0.22);
     if (!obstacle_.empty() && obstacle_.size() != 4) throw std::invalid_argument("nav_benchmark: obstacle_box 는 [x, y, 가로, 세로]");
+    stuck_s_ = declare_parameter<double>("stuck_s", 10.0);   // 이보다 오래 stuck_m 안에 머물면 갇힘
+    stuck_m_ = declare_parameter<double>("stuck_m", 0.15);
     if (world_file_.empty()) throw std::invalid_argument("nav_benchmark: world_file 파라미터가 비었음");
 
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
-    nav_ = rclcpp_action::create_client<Nav>(this, "navigate_to_pose");
+    // 주행 액션: Nav2 (navigate_to_pose) 또는 우리 탐사 스택 서버 (/explore/navigate_to_pose — limo_fire_explore README "주행 목표 서버")
+    nav_ = rclcpp_action::create_client<Nav>(this, declare_parameter<std::string>("action_name", "navigate_to_pose"));
     smoke_cli_ = create_client<std_srvs::srv::SetBool>("smoke_mode/set");
     truth_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
         truth_topic_, 10, [this](geometry_msgs::msg::PoseStamped::ConstSharedPtr m) {
@@ -94,7 +130,8 @@ class Bench : public rclcpp::Node {
           ++truth_seq_;
           if (truth_) dist_ += std::hypot(p.x - truth_->x, p.y - truth_->y);
           truth_ = p;
-          if (obstacle_.size() == 4) clear_ = std::min(clear_, footprint_gap(w));   // 세계 좌표에서
+          if (obstacle_.size() == 4) clear_ = std::min(clear_, footprint_gap(w, Box{obstacle_[0], obstacle_[1], obstacle_[2], obstacle_[3], ""}));   // 세계 좌표에서
+          track(w, now().seconds());   // 시뮬 시각 (use_sim_time) — 걷는 사람 자리도 이 시각으로
         });
   }
 
@@ -127,15 +164,31 @@ class Bench : public rclcpp::Node {
     if (s) start_ = {s["x"].as<double>(), s["y"].as<double>(), s["yaw"].as<double>()};
     for (const auto& p : y["patrol"]) goals_.push_back(to_map({p[0].as<double>(), p[1].as<double>(), 0.0}));
     if (goals_.empty()) throw std::runtime_error(world_file_ + ": patrol 이 비었음");
+    if (const auto cb = y["contact_boxes"]) {
+      const auto nm = y["contact_names"];
+      for (size_t i = 0; i < cb.size(); ++i)
+        boxes_.push_back({cb[i][0].as<double>(), cb[i][1].as<double>(), cb[i][2].as<double>(), cb[i][3].as<double>(),
+                          nm && i < nm.size() ? nm[i].as<std::string>() : "box" + std::to_string(i)});
+    }
+    for (const auto& g : y["corner_goals"]) corner_.push_back(g.as<int>());
+    for (const auto& m : y["movers"]) {
+      Mover mv;
+      mv.name = m["name"].as<std::string>("mover");
+      mv.speed = m["speed"].as<double>();
+      mv.radius = m["radius"].as<double>(0.25);
+      for (const auto& p : m["path"]) mv.path.emplace_back(p[0].as<double>(), p[1].as<double>());
+      if (mv.path.size() < 2) throw std::runtime_error(world_file_ + ": movers 길은 점 2 개 이상");
+      movers_.push_back(mv);
+    }
     std::lock_guard<std::mutex> l(mu_);
     loaded_ = true;
   }
 
   // 몸통 사각형(가운데 w, 방향 w.yaw)과 축 정렬 상자 사이 가장 좁은 간격 (겹치면 0). 두 볼록 사각형: 겹침이 아니면 꼭짓점-변 거리의 최솟값
-  double footprint_gap(const Pose2& w) const {
+  double footprint_gap(const Pose2& w, const Box& b) const {
     const double c = std::cos(w.yaw), s = std::sin(w.yaw), hl = 0.5 * foot_l_, hw = 0.5 * foot_w_;
-    const double bx0 = obstacle_[0] - 0.5 * obstacle_[2], bx1 = obstacle_[0] + 0.5 * obstacle_[2];
-    const double by0 = obstacle_[1] - 0.5 * obstacle_[3], by1 = obstacle_[1] + 0.5 * obstacle_[3];
+    const double bx0 = b.x - 0.5 * b.sx, bx1 = b.x + 0.5 * b.sx;
+    const double by0 = b.y - 0.5 * b.sy, by1 = b.y + 0.5 * b.sy;
     double fx[4], fy[4];
     const double lx[4] = {hl, hl, -hl, -hl}, ly[4] = {hw, -hw, -hw, hw};
     for (int i = 0; i < 4; ++i) {
@@ -162,6 +215,47 @@ class Bench : public rclcpp::Node {
       for (int k = 0; k < 4; ++k) g = std::min(g, seg(bxs[k], bys[k], fx[i], fy[i], fx[j], fy[j]));   // 상자 꼭짓점 → 몸통 변
     }
     return g;
+  }
+
+  // 몸통 사각형과 원(가운데 (cx, cy), 반지름 r) 사이 간격 (겹치면 0)
+  double footprint_circle_gap(const Pose2& w, double cx, double cy, double r) const {
+    const double c = std::cos(w.yaw), s = std::sin(w.yaw), dx = cx - w.x, dy = cy - w.y;
+    const double lx = c * dx + s * dy, ly = -s * dx + c * dy;   // 몸통 틀
+    const double ex = std::max(std::fabs(lx) - 0.5 * foot_l_, 0.0), ey = std::max(std::fabs(ly) - 0.5 * foot_w_, 0.0);
+    return std::max(0.0, std::hypot(ex, ey) - r);
+  }
+
+  // 정답 자세 한 장마다 (mu_ 잡은 채): 목표가 살아 있을 때만 간격 · 닿음 · 갇힘
+  void track(const Pose2& w, double t) {
+    if (!active_) return;
+    trace_.push_back({t, w.x, w.y, w.yaw, (double)rows_.size() + 1});   // 자취 (세계 좌표) — <표>_trace.csv
+    for (const auto& b : boxes_) {
+      const double g = footprint_gap(w, b);
+      if (!(g >= cur_.static_gap)) { cur_.static_gap = g; cur_.static_near = b.name; }
+    }
+    if (!boxes_.empty()) {
+      double g = INFINITY;
+      for (const auto& b : boxes_) g = std::min(g, footprint_gap(w, b));
+      const bool in = g < collide_clear_;
+      if (in && !in_contact_) ++cur_.contacts;
+      in_contact_ = in;
+    }
+    if (!movers_.empty()) {
+      double g = INFINITY;
+      for (const auto& mv : movers_) {
+        const auto p = mv.at(t);
+        g = std::min(g, footprint_circle_gap(w, p.first, p.second, mv.radius));
+      }
+      if (!(g >= cur_.mover_gap)) cur_.mover_gap = g;
+      const bool in = g < collide_clear_;
+      if (in && !in_mover_) ++cur_.mover_contacts;
+      in_mover_ = in;
+    }
+    if (!anchor_ || std::hypot(w.x - anchor_->x, w.y - anchor_->y) > stuck_m_) {
+      anchor_ = w;
+      anchor_t_ = t;
+    }
+    cur_.stuck_max = std::max(cur_.stuck_max, t - anchor_t_);
   }
 
   // 세계 → 지도: 지도 원점 = robot_start
@@ -256,6 +350,10 @@ class Bench : public rclcpp::Node {
     {
       std::lock_guard<std::mutex> l(mu_);
       clear_ = std::numeric_limits<double>::infinity();
+      cur_ = Row{};
+      in_contact_ = in_mover_ = false;
+      anchor_.reset();
+      active_ = true;
     }
     const rclcpp::Time t0 = now();
     auto gh_f = nav_->async_send_goal(goal);
@@ -282,6 +380,16 @@ class Bench : public rclcpp::Node {
       }
     }
     r.t = (now() - t0).seconds();
+    {
+      std::lock_guard<std::mutex> l(mu_);
+      active_ = false;
+      r.static_gap = cur_.static_gap;
+      r.static_near = cur_.static_near;
+      r.mover_gap = cur_.mover_gap;
+      r.contacts = cur_.contacts;
+      r.mover_contacts = cur_.mover_contacts;
+      r.stuck_max = cur_.stuck_max;
+    }
     wait_measure(i, g);
     const auto tr = truth();
     const auto es = estimate();
@@ -349,11 +457,18 @@ class Bench : public rclcpp::Node {
       if (r.result == "succeeded") sum_arr += r.arrive;
       if (std::isfinite(r.est_err)) max_est = std::max(max_est, r.est_err);
     }
+    {
+      std::ofstream tr(base + "_trace.csv");
+      tr << "t_s,world_x,world_y,world_yaw,goal\n";
+      for (const auto& q : trace_) tr << q[0] << ',' << q[1] << ',' << q[2] << ',' << q[3] << ',' << (int)q[4] << '\n';
+    }
     std::ofstream csv(base + ".csv");
-    csv << "goal,goal_x,goal_y,result,time_s,truth_x,truth_y,est_x,est_y,arrive_err_m,est_err_m,dist_m,dist_total_m,obstacle_clear_m\n";
+    csv << "goal,goal_x,goal_y,result,time_s,truth_x,truth_y,est_x,est_y,arrive_err_m,est_err_m,dist_m,dist_total_m,obstacle_clear_m,"
+           "static_gap_m,static_near,contacts,mover_gap_m,mover_contacts,stuck_max_s\n";
     for (const auto& r : rows_)
       csv << r.i << ',' << r.gx << ',' << r.gy << ',' << r.result << ',' << r.t << ',' << r.tx << ',' << r.ty << ',' << r.ex
-          << ',' << r.ey << ',' << r.arrive << ',' << r.est_err << ',' << r.dist << ',' << r.dist_total << ',' << r.clear << '\n';
+          << ',' << r.ey << ',' << r.arrive << ',' << r.est_err << ',' << r.dist << ',' << r.dist_total << ',' << r.clear << ','
+          << r.static_gap << ',' << r.static_near << ',' << r.contacts << ',' << r.mover_gap << ',' << r.mover_contacts << ',' << r.stuck_max << '\n';
     std::ofstream md(base + ".md");
     md << "# 주행 벤치마크 — " << world_ << " · " << label_
        << (smoke_ ? " (연기 모드: 라이다·카메라 끊음, 위치 " + smoke_loc_ + ")" : std::string()) << "\n\n";
@@ -370,6 +485,28 @@ class Bench : public rclcpp::Node {
     std::snprintf(line, sizeof line, "\n**요약**: 성공 %d / %zu, 성공한 목표의 평균 도착 오차 %.2f m, 가장 큰 추정 오차 %.2f m\n", ok,
                   rows_.size(), ok ? sum_arr / ok : NAN, max_est);
     md << line;
+    if (!boxes_.empty() || !movers_.empty()) {
+      md << "\n| 목표 | 형상 간격 m (가장 가까운 것) | 닿음 | 사람 간격 m | 사람 닿음 | 가장 오래 갇힘 s |\n|---|---|---|---|---|---|\n";
+      int nc = 0, nm = 0, ns = 0, nsc = 0;
+      for (const auto& r : rows_) {
+        std::snprintf(line, sizeof line, "| %d | %.3f (%s) | %d | %.3f | %d | %.1f |\n", r.i, r.static_gap, r.static_near.c_str(), r.contacts, r.mover_gap,
+                      r.mover_contacts, r.stuck_max);
+        md << line;
+        nc += r.contacts;
+        nm += r.mover_contacts;
+        ns += r.stuck_max > stuck_s_;
+        if (std::find(corner_.begin(), corner_.end(), r.i) != corner_.end()) nsc += r.stuck_max > stuck_s_;
+      }
+      std::snprintf(line, sizeof line, "\n**회피**: 형상 닿음 %d 번 · 사람 닿음 %d 번 · %.0f s 넘게 갇힌 목표 %d 개 (닿음 = 간격 %.2f m 미만, 갇힘 = %.2f m 안)\n", nc, nm,
+                    stuck_s_, ns, collide_clear_, stuck_m_);
+      md << line;
+      RCLCPP_INFO(get_logger(), "%s", line);
+      if (!corner_.empty()) {
+        std::snprintf(line, sizeof line, "**구석**: 구석·막다른 곳 목표 %zu 개 중 %.0f s 넘게 갇힘 %d 개\n", corner_.size(), stuck_s_, nsc);
+        md << line;
+        RCLCPP_INFO(get_logger(), "%s", line);
+      }
+    }
     if (obstacle_.size() == 4) {
       double mc = std::numeric_limits<double>::infinity();
       for (const auto& r : rows_) mc = std::min(mc, r.clear);
@@ -400,6 +537,14 @@ class Bench : public rclcpp::Node {
   double collide_clear_ = 0.01, foot_l_ = 0.32, foot_w_ = 0.22, clear_ = std::numeric_limits<double>::infinity();
   bool loaded_ = false;
   double dist_ = 0.0;
+  std::vector<Box> boxes_;
+  std::vector<Mover> movers_;
+  std::vector<int> corner_;   // 구석·막다른 곳 목표 번호 (월드 데이터 파일 corner_goals)
+  double stuck_s_ = 10.0, stuck_m_ = 0.15, anchor_t_ = 0.0;
+  bool active_ = false, in_contact_ = false, in_mover_ = false;
+  std::optional<Pose2> anchor_;
+  Row cur_{};
+  std::vector<std::array<double, 5>> trace_;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp_action::Client<Nav>::SharedPtr nav_;

@@ -1,7 +1,7 @@
 # limo_fire_bt — 임무 행동 트리
 
 순찰 → 불·연기 발견 → 신고 → 고급 모드(연기·물·탐사) → 실패하면 베이직 복귀. 트리는 `behavior_trees/limo_fire_bt.xml`(BehaviorTree.CPP 4.x),
-노드는 이 패키지의 C++ 이고 실행 파일 `mission` 이 트리를 돌린다. 주행은 Nav2 `navigate_to_pose` 액션을 부른다(Nav2 bt_navigator 와 따로).
+노드는 이 패키지의 C++ 이고 실행 파일 `mission` 이 트리를 돌린다. 주행은 Nav2 `navigate_to_pose` 액션을 부른다(Nav2 bt_navigator 와 따로). 순찰만은 설정 `patrol_nav_action`(launch 인자 `nav_action`)으로 탐사 스택의 `/explore/navigate_to_pose`(같은 NavigateToPose — limo_fire_explore README "주행 목표 서버")를 쓸 수 있다. 불 대응·연기 구역 훑기는 늘 Nav2.
 시뮬 확인 순서는 [docs/bt_sim_plan.md](../../../docs/bt_sim_plan.md).
 
 ```bash

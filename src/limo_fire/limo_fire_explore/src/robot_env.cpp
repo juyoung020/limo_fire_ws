@@ -2,6 +2,7 @@
 #include "limo_fire_explore/robot_env.h"
 
 #include <cmath>
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
@@ -240,6 +241,7 @@ void RobotEnv::hold() {
 
 void RobotEnv::low_prepare() {
   // 시뮬 env_ref.cpp low_prepare_env 와 같은 차례: 계획 차례면 깊이 카메라 층 · 경로 계획(행동 칸 = set_slot — 위층이 고른 후보 번호, fuel 이면 0, −1 목표 없음)
+  cam_ran_ = sim::lowrl_cam_due(b_, e_, 0) || sim::lowrl_due(b_, e_, 0);
   if (sim::lowrl_cam_due(b_, e_, 0) || sim::lowrl_due(b_, e_, 0)) keep_.valid = false;   // 깊이 층이 바뀜 → 이 걸음 찾기 결과는 더 안 맞음
   if (sim::lowrl_cam_due(b_, e_, 0) && !sim::lowrl_due(b_, e_, 0)) sim::camlayer_ref(b_, e_, 0);   // cam_every: 계획 차례가 아닌 걸음에도 층만 (시뮬 low_prepare_env 와 같음)
   if (sim::lowrl_due(b_, e_, 0)) {
@@ -247,6 +249,66 @@ void RobotEnv::low_prepare() {
     sim::plan_ref(b_, e_, 0, sim::slot_of(b_, slot_));
     sim::lowrl_planned(b_, e_, 0);
   }
+}
+
+int RobotEnv::prime_map(const int8_t* occ, int w, int h, float res, float ox, float oy, int occ_thresh, int free_thresh, int16_t l_occ, int16_t l_free) {
+  const sim::EnvCfg& c = b_.cfg;
+  int n = 0;
+  for (int cy = 0; cy < m_.gh; ++cy) {
+    const float y = m_.oy + ((float)cy + 0.5f) * c.res;
+    const int my = (int)std::floor((y - oy) / res);
+    if (my < 0 || my >= h) continue;
+    for (int cx = 0; cx < m_.gw; ++cx) {
+      int16_t& L = lmap_[(size_t)cy * c.size + cx];
+      if (L != sim::kUnknown) continue;
+      const float x = m_.ox + ((float)cx + 0.5f) * c.res;
+      const int mx = (int)std::floor((x - ox) / res);
+      if (mx < 0 || mx >= w) continue;
+      const int v = occ[(size_t)my * w + mx];
+      if (v < 0) continue;
+      if (v >= occ_thresh) L = l_occ;
+      else if (v <= free_thresh) L = l_free;
+      else continue;
+      ++n;
+    }
+  }
+  if (n > 0) {   // 칸 판정 기억(프론티어)은 바뀐 칸을 모르므로 처음부터 다시 (값은 같음 — 다시 셀 뿐)
+    keep_.valid = false;
+    const int every = keep_.cache.check_every;
+    keep_.cache = mdp::FrontierCache{};
+    keep_.cache.check_every = every;
+  }
+  return n;
+}
+
+void RobotEnv::clear_gaveup() {
+  for (int i = 0; i < sim::kRecBl; ++i) {
+    e_.p_bl_cell[i] = -1;
+    e_.p_bl_until[i] = 0;
+  }
+  e_.p_blk = 0;
+  e_.p_blk_now = 0;
+}
+
+int RobotEnv::add_points(const float* xy, int n) {
+  if (cpts_.empty()) return 0;
+  const int cap = (int)(cpts_.size() / 2);
+  int k = 0;
+  if (cam_ran_ || extra_at_ < 0) {   // 깊이 층이 새로 셈 → 그 점 끝(첫 빈 칸)부터
+    while (k < cap && cpts_[2 * k] != sim::kCamNone) ++k;
+  } else {   // 이번 걸음 깊이 층은 그대로 → 지난번 넣은 자리를 고쳐 씀
+    k = extra_at_;
+  }
+  for (int i = k; i < std::min(cap, k + extra_n_) && !cam_ran_; ++i) cpts_[2 * i] = cpts_[2 * i + 1] = sim::kCamNone;
+  int m = 0;
+  for (; m < n && k + m < cap; ++m) {
+    cpts_[2 * (k + m)] = xy[2 * m];
+    cpts_[2 * (k + m) + 1] = xy[2 * m + 1];
+  }
+  extra_at_ = k;
+  extra_n_ = m;
+  cam_ran_ = false;
+  return m;
 }
 
 }  // namespace limo_fire_explore

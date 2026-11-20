@@ -1,0 +1,8 @@
+# 탐사 노드 시뮬(Webots) 덮어쓰기 — sim.launch.xml 이 explorer.yaml 다음에 읽음 (app.launch.xml params_override). 실물은 이 파일을 안 읽는다
+/explore/explorer:
+  ros__parameters:
+    # 깊이 카메라 자리: Webots LIMO(교수님 모델)는 실물과 달리 base_link (0.096, 0.015, 0.030) · 수평 — TF base_link → camera_color_optical_frame 실측
+    # (2026-11-20, sim.launch.xml world:=limo_fire_obstacles). 높이 = base_link 바닥 위 0.145 + 0.030. 실물 값은 env.yaml body.camera_mount · camera_pitch.
+    # 이 값으로 띄우면 탐사 노드의 숙임 점검이 "0.0° 맞음" (바닥 점 4110 · 잔차 1.7 mm)
+    camera_mount: [0.096, 0.015, 0.175]
+    camera_pitch: 0.0

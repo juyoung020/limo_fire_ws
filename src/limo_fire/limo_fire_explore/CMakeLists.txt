@@ -12,6 +12,8 @@ add_compile_options(-ffp-contract=off)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)   # 주행 목표 서버 (NavigateToPose — README "주행 목표 서버")
+find_package(nav2_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -48,7 +50,7 @@ add_library(explorer_component SHARED src/explorer_node.cpp ${EXPLORE_DIR}/scrip
 target_link_libraries(explorer_component ZLIB::ZLIB PNG::PNG limo_fire_explore_core limo_fire_perception::limo_fire_shared_image)
 target_include_directories(explorer_component PRIVATE ${EXPLORE_DIR}/sim/tools ${EXPLORE_DIR}/scripts)   # low_node_rec.h (녹화 꼴) · low_explore_ctl.h (위층 — combine_run 과 같은 코드)
 target_compile_definitions(explorer_component PRIVATE LIMO_FIRE_EXPLORE_ENV_YAML="${EXPLORE_DIR}/sim/config/env.yaml")
-ament_target_dependencies(explorer_component rclcpp rclcpp_components geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs vision_msgs ament_index_cpp)
+ament_target_dependencies(explorer_component rclcpp rclcpp_components rclcpp_action nav2_msgs geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros visualization_msgs rviz_2d_overlay_msgs vision_msgs ament_index_cpp)
 rclcpp_components_register_nodes(explorer_component "limo_fire_explore::ExplorerNode")
 
 install(TARGETS explorer_component ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)

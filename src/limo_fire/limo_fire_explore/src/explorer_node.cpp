@@ -13,6 +13,9 @@
 // 컴포넌트: app.launch.xml 이 인식(object_detector · object_map)과 한 프로세스 · 한 스레드 실행기에 올린다 (docs/runtime_io.md).
 //   늦게 뜬 쪽도 받아야 하는 토픽(transient_local)만 프로세스 안 전달을 끔.
 // 지시 "○○ 로 가": /explore/goal 글 하나 (빈 글 = 지움) — 판단 모델에 탐지기 클래스를 물어(class_ask.h) 힌트로, 진행은 /explore/goal_status.
+// 주행 목표 서버 (NavigateToPose, 기본 /explore/navigate_to_pose — README "주행 목표 서버"): 임무 BT 순찰·click_patrol 이 Nav2 대신 이 아래층
+//   (A* + 지역 계획기 + 깊이 층 + 닿음 감지 + 막힘 처리)으로 목표까지 가게 함. 목표가 오면 위층(탐사)은 쉬고 상태는 navigating, 끝나면 idle.
+//   저장 지도(/map)를 로봇 지도의 모르는 칸에 채워(RobotEnv::prime_map) 아직 안 본 곳까지 경로를 짬. 초음파 메아리는 깊이 열 점에 덧붙여 비켜 가기·멈춤에 씀.
 // debug:=false 면 RViz 용 표시 토픽(candidates · candidates_text · decider_image · goal_marker)과 cmd_debug(dry run 이 아닐 때)를 안 만든다.
 // 위층: 로봇 안 llama-server 판단 모델 (scripts/low_decider.h — 사건 때 비동기 요청, 기다리는 동안 지금 목표로 몰고, 답이 오면 바꿈). 후보는 scripts/cand_view.h,
 //   답이 없거나 잇따라 틀리면 규칙(Ctl::cand_pick — 후보 0 번, 지금 목표 붙듦)이 대신. candidates 에 후보 그림 (결정마다).
@@ -22,6 +25,7 @@
 #include <deque>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,8 +34,12 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <nav2_msgs/action/navigate_to_pose.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <sensor_msgs/msg/range.hpp>
 #include <limo_fire_perception/shared_image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <png.h>
@@ -72,6 +80,7 @@ class ExplorerNode : public rclcpp::Node {
     map_frame_ = declare_parameter<std::string>("map_frame", "map");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
     tf_timeout_ = declare_parameter<double>("tf_timeout", 0.2);
+    scan_queue_max_ = (int)declare_parameter<int>("scan_queue_max", 3);   // TF 를 기다리는 장 줄 길이 상한 (넘으면 오래된 장을 버림)
     depth_timeout_ = declare_parameter<double>("depth_timeout", 0.5);
     input_timeout_ = declare_parameter<double>("input_timeout", 0.3);
     rc_timeout_ = declare_parameter<double>("rc_timeout", 0.5);
@@ -127,6 +136,15 @@ class ExplorerNode : public rclcpp::Node {
     dp.max_cands = (int)declare_parameter<int>("decider_max_cands", dp.max_cands);   // 요청에 넣는 후보 수 상한 (0 = 다)
     dp.log_k = (int)declare_parameter<int>("decider_log_k", dp.log_k);   // 결정 기록 최근 K 개 (글 + 지도 번호), 0 = 끔
     hc_ = sim::load_env_cfg(env_yaml_);
+    {   // 깊이 카메라 자리 덮어쓰기 (시뮬 Webots 처럼 실물과 장착이 다를 때만 — 비면 env.yaml body.camera_mount · camera_pitch 그대로)
+      const auto cm = declare_parameter<std::vector<double>>("camera_mount", std::vector<double>{});
+      const double cp = declare_parameter<double>("camera_pitch", std::numeric_limits<double>::quiet_NaN());
+      if (cm.size() == 3) { hc_.cfg.cam_x = (float)cm[0]; hc_.cfg.cam_y = (float)cm[1]; hc_.cfg.cam_z = (float)cm[2]; }
+      if (std::isfinite(cp)) { hc_.cfg.cam_cp = (float)std::cos(cp); hc_.cfg.cam_sp = (float)std::sin(cp); }
+      if (cm.size() == 3 || std::isfinite(cp))
+        RCLCPP_WARN(get_logger(), "깊이 카메라 자리를 파라미터로 덮음: (%.3f, %.3f, %.3f) · 숙임 %.3f rad", hc_.cfg.cam_x, hc_.cfg.cam_y, hc_.cfg.cam_z,
+                    std::atan2(hc_.cfg.cam_sp, hc_.cfg.cam_cp));
+    }
     if (!camera_layer) hc_.cfg.cam_on = 0;
     if (con_mask >= 0) hc_.cfg.con_mask = con_mask;
     if (con_stall >= 0) hc_.cfg.con_stall = con_stall;
@@ -255,6 +273,50 @@ class ExplorerNode : public rclcpp::Node {
       [this](vision_msgs::msg::Detection3DArray::ConstSharedPtr m) { objects_ = m; }, latched_sub);
     srv_enable_ = create_service<std_srvs::srv::SetBool>("enable", [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> q,
                                                                              std::shared_ptr<std_srvs::srv::SetBool::Response> r) { on_enable(q->data, r.get()); });
+    {   // 주행 목표 서버 (NavigateToPose) — 끝 판정은 scripts/task_sup.h Goto (물체로 가기와 같은 코드), 값은 Nav2 goal checker 꼴
+      tsk::Params np;
+      np.arrive_m = (float)declare_parameter<double>("nav_arrive_m", 0.25);          // 목표 xy 허용 (Nav2 xy_goal_tolerance 와 같게)
+      np.arrive_far_m = (float)declare_parameter<double>("nav_arrive_far_m", 0.5);   // 목표 칸이 막혀 경로가 그 앞에서 끝나면 이 안을 도착으로
+      np.face_tol = (float)declare_parameter<double>("nav_yaw_tol", 0.25);           // 도착 뒤 목표 방향 허용 (rad — Nav2 yaw_goal_tolerance)
+      np.face_timeout_s = (float)declare_parameter<double>("nav_face_timeout_s", 5.0);
+      // 진척: 목표까지 직선 거리가 아니라 움직인 거리로 (Nav2 SimpleProgressChecker 꼴) — 장애물을 돌아가느라 목표에서 멀어져도 못 감이 아님.
+      // task_sup Goto 의 "다가가지 못함" 판정은 끔 (stall_s 아주 큼)
+      np.stall_s = 1e9f;
+      nav_prog_m_ = declare_parameter<double>("nav_progress_m", 0.5);   // 이 거리만큼 움직이면 진척 (m — nav2_params progress_checker required_movement_radius)
+      nav_prog_s_ = declare_parameter<double>("nav_progress_s", 15.0);  // 이 동안 진척이 없으면 못 감 (s — Nav2 movement_time_allowance 10 s 보다 길게: 막힘 처리·물러나기 시간)
+      nav_timeout_s_ = declare_parameter<double>("nav_timeout_s", 0.0); // 목표 하나 시간 한도 (s, 0 = 없음 — 부르는 쪽(BT)이 정함)
+      np.nopath_s = (float)declare_parameter<double>("nav_nopath_s", 5.0);           // 경로 없음이 이만큼 이어지면 못 감
+      nav_ = tsk::Goto(np);
+      nav_face_ = declare_parameter<bool>("nav_face_goal", true);
+      nav_prime_ = declare_parameter<bool>("nav_prime_map", true);
+      const std::string map_topic = declare_parameter<std::string>("map_topic", "/map");
+      const std::string nav_name = declare_parameter<std::string>("nav_action", "navigate_to_pose");   // 이름공간 explore 아래 → /explore/navigate_to_pose. 비면 서버 안 띄움
+      if (nav_prime_) {
+        rclcpp::SubscriptionOptions mo;
+        mo.use_intra_process_comm = rclcpp::IntraProcessSetting::Disable;
+        sub_map_ = create_subscription<nav_msgs::msg::OccupancyGrid>(map_topic, rclcpp::QoS(1).transient_local().reliable(),
+                                                                     [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr m) { map_ = m; }, mo);
+      }
+      if (!nav_name.empty())
+        nav_srv_ = rclcpp_action::create_server<Nav>(
+            this, nav_name, [this](const rclcpp_action::GoalUUID&, std::shared_ptr<const Nav::Goal> g) { return on_nav_goal(*g); },
+            [](const std::shared_ptr<NavGH>) { return rclcpp_action::CancelResponse::ACCEPT; },
+            [this](const std::shared_ptr<NavGH> gh) { on_nav_accepted(gh); });
+    }
+    {   // 초음파 (sensor_msgs/Range — limo_fire_esp32_bridge · Webots): sonar_max_m 안 메아리를 지도 점으로 깊이 열 점에 덧붙임 (지역 계획기 · 충돌 감시)
+      const auto topics = declare_parameter<std::vector<std::string>>("sonar_topics", std::vector<std::string>{"/ultrasonic/front_left", "/ultrasonic/front_right"});
+      sonar_max_m_ = declare_parameter<double>("sonar_max_m", 1.0);
+      sonar_age_s_ = declare_parameter<double>("sonar_age_s", 0.3);
+      sonar_pts_ = (int)declare_parameter<int>("sonar_points", 3);   // 메아리 하나를 원뿔 호의 이만큼 점으로 (가운데 + 양쪽 원뿔 반각의 절반)
+      sonar_lidar_explain_ = declare_parameter<bool>("sonar_skip_lidar_seen", true);   // 라이다가 원뿔 안 메아리 거리 앞에 본 것이 있으면 그 메아리는 안 씀
+      sonar_explain_m_ = declare_parameter<double>("sonar_explain_m", 0.15);           // 그 거리 여유 (m)
+      sonar_.resize(topics.size());
+      for (size_t i = 0; i < topics.size(); ++i)
+        sub_sonar_.push_back(create_subscription<sensor_msgs::msg::Range>(topics[i], rclcpp::SensorDataQoS(), [this, i](sensor_msgs::msg::Range::ConstSharedPtr m) {
+          sonar_[i].msg = m;
+          sonar_[i].t = now();
+        }));
+    }
     watchdog_ = create_wall_timer(std::chrono::milliseconds(50), [this] { check_inputs(); });
     if (pitch_check_deg_ > 0.0) pitch_timer_ = create_wall_timer(std::chrono::seconds(1), [this] { check_pitch(); });
     tf_retry_ = create_wall_timer(std::chrono::milliseconds(5), [this] { try_scans(); });   // 장 시각 TF 를 기다리는 장 (막지 않고 5 ms 마다)
@@ -270,6 +332,181 @@ class ExplorerNode : public rclcpp::Node {
 
  private:
   double dt() const { return (double)env_->cfg().substeps * env_->cfg().dt; }
+
+  // 깊이 영상을 mm (16UC1) 로: 실물 Orbbec 은 16UC1 그대로, 시뮬 Webots 는 32FC1 (m) → mm 로 바꿔 depth_mm_ 에 (0 = 값 없음). step = 줄당 픽셀 수
+  const uint16_t* depth_mm(int* step) {
+    if (depth_->encoding == "16UC1") {
+      *step = (int)(depth_->step / 2);
+      return reinterpret_cast<const uint16_t*>(depth_->data.data());
+    }
+    if (depth_->encoding != "32FC1") return nullptr;
+    if (depth_mm_src_ != depth_.get()) {
+      const int w = (int)depth_->width, h = (int)depth_->height;
+      depth_mm_.assign((size_t)w * h, 0);
+      for (int v = 0; v < h; ++v) {
+        const float* row = reinterpret_cast<const float*>(depth_->data.data() + (size_t)v * depth_->step);
+        for (int u = 0; u < w; ++u) {
+          const float z = row[u];
+          depth_mm_[(size_t)v * w + u] = (std::isfinite(z) && z > 0.f && z < 65.f) ? (uint16_t)std::lround(z * 1000.f) : 0;
+        }
+      }
+      depth_mm_src_ = depth_.get();
+    }
+    *step = (int)depth_->width;
+    return depth_mm_.data();
+  }
+
+  // ---- 주행 목표 서버 (NavigateToPose)
+  using Nav = nav2_msgs::action::NavigateToPose;
+  using NavGH = rclcpp_action::ServerGoalHandle<Nav>;
+  rclcpp_action::GoalResponse on_nav_goal(const Nav::Goal& g) {
+    const std::string& f = g.pose.header.frame_id;
+    const char* why = nullptr;
+    if (!f.empty() && f != map_frame_) why = "목표 틀이 지도 틀이 아님";
+    else if (dry_run_) why = "dry run (/cmd_vel 안 냄)";
+    else if (require_rc_ && !rc_auto_now()) why = "리모컨이 오토(SWB 위)가 아님";
+    if (why) {
+      RCLCPP_WARN(get_logger(), "주행 목표 (%.2f, %.2f) 거절: %s", g.pose.pose.position.x, g.pose.pose.position.y, why);
+      return rclcpp_action::GoalResponse::REJECT;
+    }
+    return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+  }
+  void on_nav_accepted(const std::shared_ptr<NavGH>& gh) {
+    if (nav_gh_) nav_result(false, "새 주행 목표가 들어옴");
+    end_follow("");
+    end_goto();
+    instr_.stop();
+    nav_gh_ = gh;
+    nav_pending_ = true;   // 다음 장에서 (판이 없으면 그 장으로 판을 시작한 뒤) 지도 채우기 · 목표 칸
+    nav_t0_ = now();
+    finished_ = false;     // 탐사 판이 끝났어도 지도는 그대로 두고 감
+    enabled_ = true;
+    contact_t_ = -1.0;
+    const auto& q = gh->get_goal()->pose.pose;
+    char b[120];
+    std::snprintf(b, sizeof b, "주행 목표 (%.2f, %.2f)", q.position.x, q.position.y);
+    set_state("navigating", b);
+  }
+  void nav_begin() {
+    nav_pending_ = false;
+    if (!nav_gh_) return;
+    const auto& q = nav_gh_->get_goal()->pose.pose;
+    if (nav_prime_ && map_) {
+      const auto& mi = map_->info;
+      const int n = env_->prime_map(map_->data.data(), (int)mi.width, (int)mi.height, (float)mi.resolution, (float)mi.origin.position.x,
+                                    (float)mi.origin.position.y, 65, 25, (int16_t)(mdp::kOccL + env_->cfg().l_hit), (int16_t)(2 * env_->cfg().l_miss));
+      if (n > 0) RCLCPP_INFO(get_logger(), "저장 지도(/map)로 모르는 칸 %d 개를 채움", n);
+    } else if (nav_prime_) {
+      RCLCPP_WARN(get_logger(), "/map 이 아직 없음 — 본 곳만으로 경로를 짬 (안 본 곳 목표는 못 갈 수 있음)");
+    }
+    const float gx = (float)q.position.x, gy = (float)q.position.y;
+    if (xy_cell(gx, gy) < 0) {
+      nav_end(false, "목표가 탐사 지도 창 밖");
+      return;
+    }
+    const double yaw = yaw_of(q.orientation);
+    nav_.start("주행 목표", "", "", gx, gy, nav_face_, gx + (float)std::cos(yaw), gy + (float)std::sin(yaw), now().seconds());
+    nav_ax_ = env_->state().x;
+    nav_ay_ = env_->state().y;
+    nav_at_ = now().seconds();
+    env_->clear_gaveup();
+    nav_gave0_ = env_->state().p_gaveup;
+    nav_kick_ = 0;
+    apply_nav_cmd();
+  }
+  void apply_nav_cmd() {
+    const sim::LowCmd c = nav_.cmd([this](float x, float y) { return xy_cell(x, y); });
+    const sim::LowCmd& cur = env_->low_cmd();
+    if (c.target != cur.target || c.follow != cur.follow || c.face != cur.face) {
+      env_->set_cmd(c);
+      publish_goal(c.target);
+    }
+  }
+  // 목표 핸들만 끝냄 (취소 중이면 canceled)
+  void nav_result(bool ok, const std::string& why) {
+    if (!nav_gh_) return;
+    auto res = std::make_shared<Nav::Result>();
+    const char* how = "못 감";
+    if (nav_gh_->is_canceling()) {
+      nav_gh_->canceled(res);
+      how = "취소";
+    } else if (ok) {
+      nav_gh_->succeed(res);
+      how = "도착";
+    } else {
+      nav_gh_->abort(res);
+    }
+    RCLCPP_INFO(get_logger(), "주행 목표 %s (%.1f s) — %s", how, (now() - nav_t0_).seconds(), why.c_str());
+    nav_gh_.reset();
+    nav_pending_ = false;
+    nav_.cancel();
+    env_->set_cmd(sim::LowCmd{-1, 0});
+  }
+  void nav_end(bool ok, const std::string& why) {
+    nav_result(ok, why);
+    stop("idle", std::string("주행 목표 끝: ") + why, true);
+  }
+  // 초음파 메아리 → 지도 점 (이번 걸음 로봇 지도 자세 · URDF 장착 TF) → 깊이 열 점 뒤에 (RobotEnv::add_points)
+  void add_sonar() {
+    std::vector<float> xy;
+    const sim::EnvState& e = env_->state();
+    const float c = std::cos(e.th), s = std::sin(e.th);
+    for (auto& so : sonar_) {
+      if (!so.msg || (now() - so.t).seconds() > sonar_age_s_) continue;
+      const auto& r = *so.msg;
+      if (!(r.range > r.min_range) || !(r.range < r.max_range) || r.range > sonar_max_m_) continue;
+      if (!so.have_tf) {
+        try {
+          so.tf = tf_buf_->lookupTransform(base_frame_, r.header.frame_id, tf2::TimePointZero);
+          so.have_tf = true;
+        } catch (const std::exception& ex) {
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파 TF %s → %s 없음: %s", r.header.frame_id.c_str(), base_frame_.c_str(), ex.what());
+          continue;
+        }
+      }
+      const auto& T = so.tf.transform;
+      const tf2::Matrix3x3 R(tf2::Quaternion(T.rotation.x, T.rotation.y, T.rotation.z, T.rotation.w));
+      if (sonar_lidar_explain_ && lidar_explains(T, r.range, 0.5 * r.field_of_view)) { ++n_sonar_skip_; continue; }
+      ++n_sonar_use_;
+      const int n = std::max(1, sonar_pts_);
+      for (int k = 0; k < n; ++k) {
+        const double a = n == 1 ? 0.0 : (-0.25 + 0.5 * k / (n - 1)) * r.field_of_view;   // 원뿔 반각의 절반 안
+        const tf2::Vector3 pb = R * tf2::Vector3(r.range * std::cos(a), r.range * std::sin(a), 0.0) +
+                                tf2::Vector3(T.translation.x, T.translation.y, T.translation.z);
+        xy.push_back(e.x + (float)(c * pb.x() - s * pb.y()));
+        xy.push_back(e.y + (float)(s * pb.x() + c * pb.y()));
+      }
+    }
+    env_->add_points(xy.data(), (int)(xy.size() / 2));
+  }
+  // 지금 라이다 장에 초음파 원뿔(반각 half) 안 · 메아리 거리 + sonar_explain_m 안의 점이 있으면 true — 그 메아리는 라이다가 이미 본 것 (지도·지역 계획기에 있음).
+  // 원뿔이 넓어 메아리 자리를 축 방향에 찍으면 옆 틈(문)을 가짜로 막으므로, 라이다가 못 보는 것(라이다 높이 아래 · 유리)만 초음파 점으로 넣음
+  bool lidar_explains(const geometry_msgs::msg::Transform& T, double range, double half) {
+    if (!cur_scan_) return false;
+    if (!lidar_tf_ok_) {
+      try {
+        lidar_tf_ = tf_buf_->lookupTransform(base_frame_, cur_scan_->header.frame_id, tf2::TimePointZero).transform;
+        lidar_tf_ok_ = true;
+      } catch (const std::exception&) {
+        return false;
+      }
+    }
+    const tf2::Transform Ts(tf2::Quaternion(T.rotation.x, T.rotation.y, T.rotation.z, T.rotation.w), tf2::Vector3(T.translation.x, T.translation.y, T.translation.z));
+    const tf2::Transform Tl(tf2::Quaternion(lidar_tf_.rotation.x, lidar_tf_.rotation.y, lidar_tf_.rotation.z, lidar_tf_.rotation.w),
+                            tf2::Vector3(lidar_tf_.translation.x, lidar_tf_.translation.y, lidar_tf_.translation.z));
+    const tf2::Transform L2S = Ts.inverse() * Tl;   // 라이다 틀 → 초음파 틀
+    const auto& sc = *cur_scan_;
+    for (size_t j = 0; j < sc.ranges.size(); ++j) {
+      const float rl = sc.ranges[j];
+      if (!(rl > sc.range_min) || !(rl < sc.range_max)) continue;
+      const double a = sc.angle_min + (double)j * sc.angle_increment;
+      const tf2::Vector3 q = L2S * tf2::Vector3(rl * std::cos(a), rl * std::sin(a), 0.0);
+      const double d = std::hypot(q.x(), q.y());
+      if (q.x() <= 0.0 || d > range + sonar_explain_m_) continue;
+      if (std::fabs(std::atan2(q.y(), q.x())) <= half) return true;
+    }
+    return false;
+  }
 
   // ---- 상태 (RViz 탐사 패널: state running 이면 켜짐, done, status)
   void set_state(const std::string& st, const std::string& why) {
@@ -329,12 +566,14 @@ class ExplorerNode : public rclcpp::Node {
     (void)why;
   }
   void stop(const std::string& st, const std::string& why, bool disable) {
+    if (nav_gh_) nav_result(false, why);   // 주행 목표 중에 멈춤(닿음 · 리모컨 · 끔 · 입력) → 그 목표는 못 감
     if (disable) enabled_ = false;
     send_zero(why.c_str());
     set_state(st, why);
   }
 
   void on_enable(bool on, std_srvs::srv::SetBool::Response* r) {
+    if (on && nav_gh_) nav_result(false, "탐사를 켬");   // 탐사 버튼이 주행 목표보다 나중 — 목표는 못 감으로 끝냄
     if (on) {
       if (require_rc_ && !rc_auto_now()) {
         r->success = false;
@@ -391,6 +630,7 @@ class ExplorerNode : public rclcpp::Node {
   // 20 Hz: 입력 끊김 · 리모컨 끊김 · 닿음 뒤 저절로 켜기
   void check_inputs() {
     const rclcpp::Time t = now();
+    if (nav_gh_ && nav_gh_->is_canceling()) nav_end(false, "취소됨");
     if (!running()) poll_class();   // 꺼진 동안 받은 지시도 클래스 답을 받음 (도는 동안은 걸음마다 decide 가 — 시뮬과 같은 차례)
     if (sub_rc_ && rc_watch_.want_resub(std::chrono::steady_clock::now(), sub_rc_->get_publisher_count(), rc_resub_s_)) {
       RCLCPP_WARN(get_logger(), "/rc_state 발행자는 있는데 %.1f s 넘게 못 받음 — 구독을 새로 만듦 (%s)", rc_resub_s_, rc_info().c_str());
@@ -419,9 +659,11 @@ class ExplorerNode : public rclcpp::Node {
   // 깊이 카메라 숙임 점검 (1 s 마다, 켜짐·꺼짐 상관없이 — 켜기 전에 알 수 있게): 마지막 깊이 영상을 관측 깊이로 바꿔 바닥 점을 모으고 pitch_check_s 마다 맞춤.
   // 판단·명령은 안 바꿈 (설정 그대로 — 시뮬과 같은 값). 어긋나면 경고와 /explore/status 에 실측 값
   void check_pitch() {
-    if (!depth_ || !info_ || depth_->encoding != "16UC1" || (now() - rclcpp::Time(depth_->header.stamp)).seconds() > depth_timeout_) return;
+    int dstep = 0;
+    const uint16_t* dmm = depth_ ? depth_mm(&dstep) : nullptr;
+    if (!dmm || !info_ || (now() - rclcpp::Time(depth_->header.stamp)).seconds() > depth_timeout_) return;
     std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE, 0);
-    env_->depth_from_image(reinterpret_cast<const uint16_t*>(depth_->data.data()), (int)depth_->width, (int)depth_->height, (int)(depth_->step / 2),
+    env_->depth_from_image(dmm, (int)depth_->width, (int)depth_->height, dstep,
                            (float)info_->k[0], (float)info_->k[4], (float)info_->k[2], (float)info_->k[5], dep.data());
     floor_fit_.add(env_->cfg(), dep.data());
     if (++pitch_n_ < std::max(1, (int)std::lround(pitch_check_s_)) || floor_fit_.size() < kPitchPts) return;   // 반들한 바닥은 1 m 밖이 구멍이라 점이 모일 때까지
@@ -475,6 +717,12 @@ class ExplorerNode : public rclcpp::Node {
     }
     if (scans_.empty()) head_t_ = std::chrono::steady_clock::now();
     scans_.push_back(Pend{m, odom_, imu_, depth_, info_});
+    // TF 를 기다리는 장이 쌓이면(지도 틀이 아직 없을 때 · 부하) 오래된 것부터 버림 — 안 버리면 장마다 tf_timeout 을 기다리며 몇십 초 뒤처진 장을 처리함
+    // (2026-11-20 시뮬: map 틀이 늦게 생겨 16 s 뒤처진 장을 TF 캐시 밖이라 계속 건너뜀)
+    while ((int)scans_.size() > scan_queue_max_) {
+      scans_.pop_front();
+      head_t_ = std::chrono::steady_clock::now();
+    }
     try_scans();
   }
   void try_scans() {
@@ -517,22 +765,38 @@ class ExplorerNode : public rclcpp::Node {
     // 꺼짐·멈춤 동안은 판을 세움: 판 시계(진척 없음·시간·닫힘)는 켠 동안만 감. 판은 처음 켤 때 시작
     if (!running()) return;
     const Scan s = to_scan(*m, T);
+    cur_scan_ = m;
     const Proprio p = proprio();
     const auto t0 = clk::now();
     if (!started_) start_episode(s, p);
     else if (!sense(s, p)) return;   // 판이 끝남
+    if (nav_pending_) nav_begin();
     const double step_ms = ms_since(t0);
     read_depth();
     const double dec_ms = decide();
     const auto t2 = clk::now();
     // 규칙 추종기: 경로 계획 후보 (combine_run 의 act[0] — 다음 결정까지 그대로). 따라가기 · 물체로 가기는 목표 칸을 노드가 줌 — 행동 칸 0 (low_follow 의 그 칸)
-    env_->set_slot(follower_.active() || goto_.active() ? 0 : ctl_->slot());
+    env_->set_slot(follower_.active() || goto_.active() || nav_gh_ ? 0 : ctl_->slot());   // 주행 목표도 노드가 목표 칸을 쥠
     env_->low_prepare();
+    add_sonar();
     const double obs_ms = ms_since(t2);
     float v = 0.f, w = 0.f;
     if (running()) env_->low_act(&v, &w);
     else env_->hold();   // 멈춤: 명령 0
     publish_cmd(m->header.stamp, v, w);
+    if (nav_gh_ && nav_.active() && env_->steps() % 2 == 0) {
+      auto fb = std::make_shared<Nav::Feedback>();
+      const sim::EnvState& e = env_->state();
+      fb->current_pose.header.frame_id = map_frame_;
+      fb->current_pose.header.stamp = m->header.stamp;
+      fb->current_pose.pose.position.x = e.x;
+      fb->current_pose.pose.position.y = e.y;
+      fb->current_pose.pose.orientation.z = std::sin(0.5 * e.th);
+      fb->current_pose.pose.orientation.w = std::cos(0.5 * e.th);
+      fb->distance_remaining = std::hypot(nav_.gx() - e.x, nav_.gy() - e.y);
+      fb->navigation_time = rclcpp::Duration::from_seconds((now() - nav_t0_).seconds());
+      nav_gh_->publish_feedback(fb);
+    }
     publish_status(step_ms, obs_ms, dec_ms, v, w);
   }
 
@@ -568,6 +832,7 @@ class ExplorerNode : public rclcpp::Node {
     if (rec_) rec_->step(p, s);
     env_->step(p, s);
     const sim::EnvState& e = env_->state();
+    const bool nav_on = nav_gh_ != nullptr;   // 주행 목표 중: 탐사 판 끝(닫힘 · 진척 없음 · 대충 다 앎)은 안 봄
     // 닿음 (시뮬 contact.h sense_step — e.contact = 닿음 신호 & con_mask): 멈추고 끔
     if (e.contact && running()) {
       contact_t_ = now().seconds();
@@ -582,6 +847,23 @@ class ExplorerNode : public rclcpp::Node {
                                     tsk::path_end(e, world_.ox, world_.oy, env_->cfg().res, env_->cfg().goal_tol));
       if (ev == tsk::kArrived) finish_goto();
       else if (ev == tsk::kFailed) fail_goto();
+    }
+    if (nav_.active() && running()) {   // 주행 목표: 닿으면 목표 방향으로 돈 뒤 끝, 못 가면(막힘 · 경로 없음) 못 감
+      const tsk::Ev ev = nav_.step(now().seconds(), e.x + e.ex, e.y + e.ey, e.th + e.eth, e.goal_cell >= 0 && e.p_n <= 0,
+                                   tsk::path_end(e, world_.ox, world_.oy, env_->cfg().res, env_->cfg().goal_tol));
+      const double tn = now().seconds();
+      if (std::hypot(e.x - nav_ax_, e.y - nav_ay_) > nav_prog_m_) { nav_ax_ = e.x; nav_ay_ = e.y; nav_at_ = tn; }
+      if (ev == tsk::kArrived) nav_end(true, "도착");
+      else if (e.p_gaveup > nav_gave0_) nav_end(false, "아래층이 막힘 복구(다시 계획 · 물러나기)를 다 쓰고 포기");
+      else if (tn - nav_at_ > nav_prog_s_) nav_end(false, "진척 없음 (움직인 거리)");
+      else if (nav_timeout_s_ > 0.0 && tn - nav_t0_.seconds() > nav_timeout_s_) nav_end(false, "시간 한도");
+      else if (ev == tsk::kFailed) nav_end(false, nav_.why());
+    }
+    if (nav_on) {
+      // 아래층 결정이 끝나 쉬는데(경로 끝 · 막힘 신호) 목표에 못 닿았으면 다시 결정하게 함 — 탐사에서는 위층이 새 목표로 이 일을 함
+      if (nav_.active() && running() && nav_kick_ == 0 && (env_->low_ep().hold != 0 || env_->low_rl().stall)) nav_kick_ = 1;
+      ctl_->after_step(e, env_->low_rl(), env_->low_ep());
+      return true;
     }
     if (instr_.active() && running()) {   // 지시 감독: 실패가 잇따르거나 시간이 넘으면 멈추고 알림
       if (const char* g = instr_.give_up(now().seconds())) {
@@ -623,14 +905,16 @@ class ExplorerNode : public rclcpp::Node {
   // 깊이 (센서 입력): 장 시각에 가까운 깊이 영상 → 관측 깊이 · 깊이 카메라 층 격자 (없거나 오래되면 0 칸 = 구멍)
   void read_depth() {
     std::vector<uint8_t> dep((size_t)mdp::obs::DEPTH_SIZE, 0), ldep((size_t)env_->layer_n(), 0);
-    if (depth_ && info_ && (now() - rclcpp::Time(depth_->header.stamp)).seconds() < depth_timeout_ && depth_->encoding == "16UC1") {
-      env_->depth_from_image(reinterpret_cast<const uint16_t*>(depth_->data.data()), (int)depth_->width, (int)depth_->height, (int)(depth_->step / 2),
+    int dstep = 0;
+    const uint16_t* dmm = depth_ ? depth_mm(&dstep) : nullptr;
+    if (dmm && info_ && (now() - rclcpp::Time(depth_->header.stamp)).seconds() < depth_timeout_) {
+      env_->depth_from_image(dmm, (int)depth_->width, (int)depth_->height, dstep,
                              (float)info_->k[0], (float)info_->k[4], (float)info_->k[2], (float)info_->k[5], dep.data());
       if (!ldep.empty())
-        env_->layer_from_image(reinterpret_cast<const uint16_t*>(depth_->data.data()), (int)depth_->width, (int)depth_->height, (int)(depth_->step / 2),
+        env_->layer_from_image(dmm, (int)depth_->width, (int)depth_->height, dstep,
                                (float)info_->k[0], (float)info_->k[4], (float)info_->k[2], (float)info_->k[5], ldep.data());
     } else {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "깊이 영상 없음·오래됨·16UC1 아님 — 깊이 관측 0 (구멍)");
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "깊이 영상 없음·오래됨·16UC1·32FC1 아님 — 깊이 관측 0 (구멍)");
     }
     env_->set_depth(dep.data());
     if (rec_) rec_->depth(dep.data());
@@ -647,6 +931,16 @@ class ExplorerNode : public rclcpp::Node {
     if (!running()) {
       if (env_->low_cmd().follow != 0) env_->set_cmd(sim::LowCmd{-1, 0});
       return -1.0;
+    }
+    if (nav_gh_) {   // 주행 목표 중: 위층 쉼, 목표 칸만 (task_sup Goto — 닿으면 바라보기)
+      if (nav_kick_ == 1) {   // 한 걸음 목표를 비워 다음 걸음에 같은 목표로 새 결정(경로 계획 · 막힘 판정)
+        env_->set_cmd(sim::LowCmd{-1, 1});
+        nav_kick_ = 2;
+      } else if (nav_.active()) {
+        apply_nav_cmd();
+        nav_kick_ = 0;
+      }
+      return 0.0;
     }
     const auto t1 = clk::now();
     const lxc::View v{&env_->cfg(), &world_, env_->lmap(), env_->trail(), env_->cam_layer(), &env_->state(), env_->cand(), (uint32_t)env_->cand_cur(), env_->reach_keep()};
@@ -762,6 +1056,13 @@ class ExplorerNode : public rclcpp::Node {
     st.data = buf;
     st.data += " · " + rc_info();
     if (!pitch_msg_.empty()) st.data += " · " + pitch_msg_;
+    {   // 아래층 상태 (막힘·복구를 밖에서 보려고): 걸음 분류(low_task.h kLow*) · 쉼 · 막힘 판정 · 포기 · 물러나기 남은 걸음 · 초음파 씀/뺌
+      const sim::EnvState& e = env_->state();
+      char lb[200];
+      std::snprintf(lb, sizeof lb, " · 아래층 분류 %d 쉼 %d 막힘판정 %d 포기 %d 물러나기 %d · 초음파 씀 %ld 뺌 %ld", (int)env_->low_ep().kind, (int)env_->low_ep().hold, (int)e.p_blk,
+                    (int)e.p_gaveup, (int)e.p_rec, n_sonar_use_, n_sonar_skip_);
+      st.data += lb;
+    }
     if (!use_dec_) st.data += " · 위층 규칙 (판단 모델 끔)";
     else if (dec_up_) {
       char b2[300];
@@ -1219,6 +1520,37 @@ class ExplorerNode : public rclcpp::Node {
     sensor_msgs::msg::CameraInfo::ConstSharedPtr info;
   };
   std::deque<Pend> scans_;
+  int scan_queue_max_ = 3;
+  // 주행 목표 서버
+  rclcpp_action::Server<Nav>::SharedPtr nav_srv_;
+  std::shared_ptr<NavGH> nav_gh_;
+  tsk::Goto nav_;
+  bool nav_pending_ = false, nav_face_ = true, nav_prime_ = true;
+  int nav_gave0_ = 0, nav_kick_ = 0;
+  double nav_prog_m_ = 0.5, nav_prog_s_ = 15.0, nav_timeout_s_ = 0.0, nav_ax_ = 0, nav_ay_ = 0, nav_at_ = 0;
+  rclcpp::Time nav_t0_{0, 0, RCL_ROS_TIME};
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr sub_map_;
+  nav_msgs::msg::OccupancyGrid::ConstSharedPtr map_;
+  // 깊이 32FC1 → mm
+  std::vector<uint16_t> depth_mm_;
+  const void* depth_mm_src_ = nullptr;
+  // 초음파
+  struct Sonar {
+    sensor_msgs::msg::Range::ConstSharedPtr msg;
+    rclcpp::Time t{0, 0, RCL_ROS_TIME};
+    bool have_tf = false;
+    geometry_msgs::msg::TransformStamped tf;
+  };
+  std::vector<Sonar> sonar_;
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr> sub_sonar_;
+  double sonar_max_m_ = 1.0, sonar_age_s_ = 0.3;
+  int sonar_pts_ = 3;
+  bool sonar_lidar_explain_ = true;
+  double sonar_explain_m_ = 0.15;
+  long n_sonar_use_ = 0, n_sonar_skip_ = 0;
+  sensor_msgs::msg::LaserScan::ConstSharedPtr cur_scan_;
+  geometry_msgs::msg::Transform lidar_tf_;
+  bool lidar_tf_ok_ = false;
   std::chrono::steady_clock::time_point head_t_;
 };
 

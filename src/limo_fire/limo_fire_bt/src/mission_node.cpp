@@ -26,6 +26,7 @@ void declare_params(rclcpp::Node & n)
   n.declare_parameter<std::string>("tree_file", "");
   n.declare_parameter<std::string>("patrol_file", "");
   n.declare_parameter<std::string>("explorer", "/explore");
+  n.declare_parameter<std::string>("patrol_nav_action", "/navigate_to_pose");   // 순찰 주행 액션: Nav2 · 탐사 스택 서버 /explore/navigate_to_pose
   n.declare_parameter<double>("tick_hz", 10.0);
   n.declare_parameter<int>("groot_port", 1667);
   n.declare_parameter<std::string>("btlog_dir", "");
@@ -94,6 +95,7 @@ int main(int argc, char ** argv)
     auto bb = BT::Blackboard::create();
     bb->set("patrol_file", node->get_parameter("patrol_file").as_string());
     bb->set("explorer_ns", node->get_parameter("explorer").as_string());
+    bb->set("patrol_nav", node->get_parameter("patrol_nav_action").as_string());
     tree = factory.createTree("MainTree", bb);
   } catch (const std::exception & e) {
     RCLCPP_FATAL(log, "트리를 못 만듦: %s", e.what());
