@@ -41,6 +41,17 @@ constexpr uint32_t kThermalBaud = 115200;
 constexpr int kRadarRxPin = 17, kRadarTxPin = 18;
 constexpr uint32_t kRadarBaud = 256000;
 
+// 발사대 서보 신호 핀 (docs/wiring.md: 레버 DS3218 GPIO 4 · 각도 MG996R GPIO 5). 이 펌웨어는 아직 서보를 움직이지 않는다 —
+// 핀을 그냥 두면 떠 있어 잡음이 서보 펄스로 읽혀 서보가 제멋대로 돈다(2026-11-20 실물). 부팅하자마자 LOW 로 잡아 펄스 없음(서보 힘 뺌).
+// 발사대 시험 펌웨어(launcher_test)의 꺼짐 상태(disableAxis)와 같다. C3 는 GPIO 4 가 초음파 Echo 라 안 건드린다.
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+constexpr uint8_t kNumServoHold = 0;
+constexpr uint8_t kServoHoldPin[1] = {0};
+#else
+constexpr uint8_t kNumServoHold = 2;
+constexpr uint8_t kServoHoldPin[kNumServoHold] = {4, 5};
+#endif
+
 // USB 시리얼 속도. 열화상 줄(약 3 KB × 4 Hz)이 있어 115200 으로는 모자라다(약 11 KB/s) — 브리지 esp32_bridge.yaml baud 와 같아야 한다
 constexpr uint32_t kBaud = 921600;
 constexpr uint32_t kHeartbeatMs = 1000;   // 살아 있음 줄 (브리지가 끊김을 안다)

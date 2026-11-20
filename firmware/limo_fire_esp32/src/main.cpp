@@ -62,6 +62,10 @@ uint32_t measure(uint8_t i) {
 }  // namespace
 
 void setup() {
+  for (uint8_t i = 0; i < kNumServoHold; ++i) {   // 서보 신호선을 맨 먼저 LOW 로 (떠 있으면 서보가 돎 — config.h)
+    pinMode(kServoHoldPin[i], OUTPUT);
+    digitalWrite(kServoHoldPin[i], LOW);
+  }
   Serial.begin(kBaud);
   for (uint8_t i = 0; i < kNumSonar; ++i) {
     pinMode(kTrigPin[i], OUTPUT);
