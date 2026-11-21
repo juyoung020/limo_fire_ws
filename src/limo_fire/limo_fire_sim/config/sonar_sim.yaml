@@ -1,0 +1,22 @@
+# 시뮬 초음파 → 실물 ESP32 다리 꼴 (sonar_sim 노드, sim_robot.launch.xml sonar_profile 기본).
+# 기본 = 표기만 실물과 같게: 메아리 없음을 +inf 로(실물 펌웨어는 시간 초과·범위 밖이면 0 → 다리가 +inf), min/max_range·시야를 다리 설정(esp32_bridge.yaml)과 같게.
+# 놓침·잡음·지연은 끔 — 지금까지의 벤치마크(결과 1~9)와 같은 조건. 실물 흉내는 sonar_sim_real.yaml (sonar_profile:=…)
+# 바꾸지 않는 것(Webots DistanceSensor sonar 가 이미 함, Webots 참조 문서 distancesensor.md): 원뿔 안 가장 가까운 광선, 입사각 22.5° 넘으면 안 돌아옴, 값 비례 잡음 1 %(proto lookupTable)
+sonar_sim:
+  ros__parameters:
+    names: ["front_left", "front_right"]     # 다리 ultrasonic.names 와 같은 순서
+    input_prefix: /sim/ultrasonic/           # Webots 드라이버 (limo_webots.urdf)
+    output_prefix: /ultrasonic/              # 실물 다리와 같은 토픽
+    dead: [false, false]                     # 센서 고장 흉내 (늘 메아리 없음)
+    field_of_view: 0.2618                    # 15°, HC-SR04 데이터시트 — 다리와 같은 값
+    min_range: 0.02                          # 데이터시트 2 cm — 다리와 같은 값
+    max_range: 4.0                           # 데이터시트 400 cm — 다리와 같은 값
+    no_echo_ratio: 0.99                      # Webots 값 ≥ 0.99 × 메시지 max_range 면 메아리 없음 (Webots 는 메아리 없을 때 4.0 m, 그 값에는 잡음을 안 붙임 — LimoFire.proto)
+    drop_prob: 0.0
+    bias_m: 0.0
+    noise_sigma_m: 0.0
+    latency_s: 0.0
+    stamp_ahead_s: 0.0
+    stamp_jitter_s: 0.0
+    seed: 0                                  # 0 = 매번 다름, 양수 = 같은 난수 (판 비교용)
+    use_sim_time: true

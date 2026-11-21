@@ -1,0 +1,21 @@
+# 시뮬 초음파 실물 흉내 (sim_robot.launch.xml sonar_profile:=$(find-pkg-share limo_fire_sim)/config/sonar_sim_real.yaml).
+# 연기 모드·탐사를 실물에 올리기 전에 "실물에서만 터지는 것"을 시뮬에서 먼저 보려고. 항목 설명은 sonar_sim.yaml.
+# **값은 모두 잠정** — 실물 초음파 실측(train/explore/sim/analysis/data_plan.md 초음파 절, sonar_stats_bag) 전. 실측하면 여기를 그 값으로 바꾸고 근거를 적는다.
+sonar_sim:
+  ros__parameters:
+    names: ["front_left", "front_right"]
+    input_prefix: /sim/ultrasonic/
+    output_prefix: /ultrasonic/
+    dead: [false, false]                     # 오른쪽 고장(2026-11-20 실물 오른쪽이 늘 0, 8104da1)을 보려면 [false, true]
+    field_of_view: 0.2618
+    min_range: 0.02
+    max_range: 4.0
+    no_echo_ratio: 0.99
+    drop_prob: 0.05          # 잠정: 메아리 있어도 5 % 놓침 (실측 전). 시뮬 2 개 결과 5 에서 물체가 있어도 못 봄 45~50 % 는 Webots 기하(입사각) 몫이라 따로
+    bias_m: 0.0              # 잠정: 실측 전 0
+    noise_sigma_m: 0.01      # 잠정: Webots 1 % 위에 1 cm (지면·온도 음속 차이 몫)
+    latency_s: 0.03          # 잠정: 펌웨어 pulseIn 최대 25 ms(main.cpp kEchoTimeoutUs) + 시리얼 몇 ms — 값은 그만큼 옛것인데 다리는 받은 시각으로 찍음
+    stamp_ahead_s: 0.05      # 잠정: 2026-11-20 실물에서 메아리 시각이 EKF TF 보다 앞서 smoke_mode 가 "TF 없음"으로 전부 버림 — 크기는 안 쟀다
+    stamp_jitter_s: 0.02     # 잠정
+    seed: 0
+    use_sim_time: true

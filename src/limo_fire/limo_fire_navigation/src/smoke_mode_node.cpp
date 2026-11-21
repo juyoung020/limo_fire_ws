@@ -88,7 +88,12 @@ class SmokeModeNode : public rclcpp::Node {
         "slow.topics", {"/ultrasonic/front_left", "/ultrasonic/front_right"});
     slow_dist_ = declare_parameter<double>("slow.distance", 0.6);
     slow_speed_ = declare_parameter<double>("slow.speed", 0.05);
-    if (slow_dist_ <= 0.0 || slow_speed_ <= 0.0 || slow_topics_.empty())
+    // only_unmapped: 저장 지도로 보여야 할 거리와 비슷한 메아리(지도에 있는 벽)에는 감속하지 않는다 — 2026-11-20 실물 좁은 방에서 늘 감속에 걸림.
+    // 지도보다 map_gap 넘게 가깝거나 always_within 보다 가까우면 감속. 메아리 자세(TF)·지도를 못 구하면 감속(안전 쪽)
+    slow_only_unmapped_ = declare_parameter<bool>("slow.only_unmapped", true);
+    slow_map_gap_ = declare_parameter<double>("slow.map_gap", 0.25);
+    slow_always_within_ = declare_parameter<double>("slow.always_within", 0.3);
+    if (slow_dist_ <= 0.0 || slow_speed_ <= 0.0 || slow_topics_.empty() || slow_map_gap_ <= 0.0 || slow_always_within_ < 0.0)
       throw std::invalid_argument("smoke_mode: slow.* 파라미터 확인");
     // wall = 최근 window 초 초음파 메아리를 저장 지도 벽에 맞춰 map → odom 을 조금씩 고친다 (sonar_wall.hpp, AMCL 안 씀)
     wall_topics_ = declare_parameter<std::vector<std::string>>(
@@ -181,7 +186,7 @@ class SmokeModeNode : public rclcpp::Node {
     for (size_t k = 0; k < slow_topics_.size(); ++k) {
       slow_subs_.push_back(create_subscription<sensor_msgs::msg::Range>(
           slow_topics_[k], rclcpp::SensorDataQoS(), [this, k](sensor_msgs::msg::Range::SharedPtr m) {
-            close_[k] = std::isfinite(m->range) && m->range > m->min_range && m->range < slow_dist_;
+            close_[k] = std::isfinite(m->range) && m->range > m->min_range && m->range < slow_dist_ && unexpected_echo(*m);
             const bool any = std::any_of(close_.begin(), close_.end(), [](bool c) { return c; });
             if (any != front_close_) {
               front_close_ = any;
@@ -355,30 +360,62 @@ class SmokeModeNode : public rclcpp::Node {
     const double r = m->range;
     if (!std::isfinite(r) || r <= m->min_range || r >= wall_echo_ratio_ * m->max_range) return;
     const rclcpp::Time t(m->header.stamp, get_clock()->get_clock_type());
+    const auto sensor = odom_sensor(*m, "버림");
+    if (!sensor) return;
+    const tf2::Transform& os = *sensor;
+    if (want_obs) mark_obstacle(*map_odom_ * os, r, m->field_of_view);
+    if (want_wall) echoes_.push_back({t, os, r, m->field_of_view});
+  }
+
+  // 메아리 시각의 odom → 센서 자세. 실물: ESP32 다리가 받은 시각으로 찍어 TF(EKF)보다 조금 앞설 수 있다 → 그 시각 TF 가 아직 없으면
+  // 가장 최근 TF 를, 둘의 차가 echo_tf_tolerance 안일 때만 쓴다 (2026-11-20 실물에서 메아리를 전부 버려 벽을 못 봤다)
+  // on_fail: 못 구했을 때 부르는 쪽이 하는 일 (로그용 — 장애물 기억은 "버림", 감속은 "감속(안전 쪽)")
+  std::optional<tf2::Transform> odom_sensor(const sensor_msgs::msg::Range& m, const char* on_fail) {
+    const rclcpp::Time t(m.header.stamp, get_clock()->get_clock_type());
     geometry_msgs::msg::TransformStamped ts;
     try {
-      ts = tf_buffer_->lookupTransform(odom_frame_, m->header.frame_id, t, rclcpp::Duration::from_seconds(0.05));
+      ts = tf_buffer_->lookupTransform(odom_frame_, m.header.frame_id, t, rclcpp::Duration::from_seconds(0.05));
     } catch (const tf2::TransformException&) {
-      // 실물: ESP32 다리가 받은 시각으로 찍어 TF(EKF)보다 조금 앞설 수 있다 → 그 시각 TF 가 아직 없으면 가장 최근 TF 를,
-      // 둘의 차가 echo_tf_tolerance 안일 때만 쓴다 (2026-11-20 실물에서 메아리를 전부 버려 벽을 못 봤다)
       try {
-        ts = tf_buffer_->lookupTransform(odom_frame_, m->header.frame_id, tf2::TimePointZero);
+        ts = tf_buffer_->lookupTransform(odom_frame_, m.header.frame_id, tf2::TimePointZero);
         const double lag = std::fabs((t - rclcpp::Time(ts.header.stamp, get_clock()->get_clock_type())).seconds());
         if (lag > echo_tf_tolerance_) {
-          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파: odom → %s TF 가 메아리와 %.2f s 차, 버림",
-                               m->header.frame_id.c_str(), lag);
-          return;
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파: odom → %s TF 가 메아리와 %.2f s 차, %s",
+                               m.header.frame_id.c_str(), lag, on_fail);
+          return std::nullopt;
         }
       } catch (const tf2::TransformException& e) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파: odom → %s TF 없음, 버림: %s",
-                             m->header.frame_id.c_str(), e.what());
-        return;
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파: odom → %s TF 없음, %s: %s",
+                             m.header.frame_id.c_str(), on_fail, e.what());
+        return std::nullopt;
       }
     }
     tf2::Transform os;
     tf2::fromMsg(ts.transform, os);
-    if (want_obs) mark_obstacle(*map_odom_ * os, r, m->field_of_view);
-    if (want_wall) echoes_.push_back({t, os, r, m->field_of_view});
+    return os;
+  }
+
+  // 저장 지도로 보여야 할 거리: 원뿔(fov)에 편 광선 중 가장 가까운 벽, max_r 안에 없으면 +inf
+  double expected_range(double sx, double sy, double syaw, double fov, double max_r) const {
+    double r_exp = std::numeric_limits<double>::infinity();
+    for (int k = 0; k < wp_.rays; ++k) {
+      const double th = syaw + (wp_.rays == 1 ? 0.0 : -0.5 * fov + fov * k / (wp_.rays - 1));
+      r_exp = std::min(r_exp, cast(*grid_, sx, sy, th, 0.0, max_r, std::numeric_limits<double>::infinity()));
+    }
+    return r_exp;
+  }
+
+  // 감속할 메아리인가 (slow.only_unmapped): 지도에 있는 벽이면 아니다. 연기 모드 밖·지도/자세를 모르면 그렇다고 본다(안전 쪽)
+  bool unexpected_echo(const sensor_msgs::msg::Range& m) {
+    if (!slow_only_unmapped_ || !smoke_ || !grid_ || !map_odom_) return true;
+    const double r = m.range;
+    if (r < slow_always_within_) return true;
+    const auto os = odom_sensor(m, "감속(안전 쪽)");
+    if (!os) return true;
+    const tf2::Transform ms = *map_odom_ * *os;
+    const double r_exp = expected_range(ms.getOrigin().x(), ms.getOrigin().y(), tf2::getYaw(ms.getRotation()), m.field_of_view,
+                                        r + slow_map_gap_ + 0.1);
+    return r_exp - r > slow_map_gap_;
   }
 
   // 메아리 하나가 저장 지도로 보여야 할 거리(원뿔 광선 중 가장 가까운 벽)보다 min_gap 넘게 가까우면 지도에 없는 장애물:
@@ -387,11 +424,7 @@ class SmokeModeNode : public rclcpp::Node {
     const double sx = ms.getOrigin().x(), sy = ms.getOrigin().y(), syaw = tf2::getYaw(ms.getRotation());
     carve_free(sx, sy, syaw, r, fov);
     if (r > obs_max_range_) return;
-    double r_exp = std::numeric_limits<double>::infinity();
-    for (int k = 0; k < wp_.rays; ++k) {
-      const double th = syaw + (wp_.rays == 1 ? 0.0 : -0.5 * fov + fov * k / (wp_.rays - 1));
-      r_exp = std::min(r_exp, cast(*grid_, sx, sy, th, 0.0, r + obs_min_gap_ + 0.1, std::numeric_limits<double>::infinity()));
-    }
+    const double r_exp = expected_range(sx, sy, syaw, fov, r + obs_min_gap_ + 0.1);
     if (r_exp - r <= obs_min_gap_ && r > obs_always_within_) return;
     const double ux = std::cos(syaw), uy = std::sin(syaw), step = 0.5 * grid_->resolution;
     long last = -1;
@@ -690,7 +723,8 @@ class SmokeModeNode : public rclcpp::Node {
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_loc_pub_, scan_obs_pub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   std::string localization_;
-  double slow_dist_, slow_speed_;
+  double slow_dist_, slow_speed_, slow_map_gap_ = 0.25, slow_always_within_ = 0.3;
+  bool slow_only_unmapped_ = true;
   bool front_close_ = false;
   std::vector<std::string> slow_topics_;
   std::vector<bool> close_;

@@ -11,6 +11,7 @@ esp32_bridge:
       field_of_view: 0.2618      # 15°, HC-SR04 데이터시트 감지 각
       min_range: 0.02            # 데이터시트 2 cm
       max_range: 4.0             # 데이터시트 400 cm
+      no_echo_warn_s: 10.0       # 줄은 오는데 메아리가 이 시간(s) 넘게 없으면 /diagnostics WARN (2026-11-20 오른쪽이 늘 0 — 배선·센서 의심, 잠정)
     thermal:
       frame_id: thermal_link     # 장착 자리는 URDF (limo_fire_description). /thermal/image = 32FC1 (°C), /thermal/max = sensor_msgs/Temperature
     radar:

@@ -15,6 +15,8 @@
   <arg name="limo_share" default="$(find-pkg-share webots_ros2_limo)" description="교수님 Webots LIMO 패키지 (ros2_control 설정)"/>
   <arg name="driver_urdf" default="$(find-pkg-share limo_fire_sim)/resource/limo_webots.urdf"
        description="드라이버 설정: 교수님 limo.urdf 에 인식 벤치마크 정답 카메라(/gt/*)를 더한 우리 판"/>
+  <arg name="sonar_profile" default="$(find-pkg-share limo_fire_sim)/config/sonar_sim.yaml"
+       description="시뮬 초음파 → 실물 다리 꼴 설정. 실물 흉내: …/limo_fire_sim/config/sonar_sim_real.yaml"/>
 
   <!-- Webots. 창을 닫으면 launch 전체가 끝난다 -->
   <executable cmd="$(env WEBOTS_HOME)/webots --port=$(var port) --batch --mode=$(var mode) $(var webots_args) $(var world_file)"
@@ -39,6 +41,12 @@
   <!-- 컨트롤러 매니저가 뜰 때까지 기다렸다가 바퀴 제어·관절 상태를 켠다 -->
   <node pkg="controller_manager" exec="spawner" args="diffdrive_controller --controller-manager-timeout 120" output="screen"/>
   <node pkg="controller_manager" exec="spawner" args="joint_state_broadcaster --controller-manager-timeout 120" output="screen"/>
+
+  <!-- 초음파: Webots /sim/ultrasonic/* → 실물 ESP32 다리 꼴 /ultrasonic/* (메아리 없음 +inf 등). 월드에 초음파가 없으면 받을 것이 없어 조용히 있음.
+       실물 흉내(놓침·지연·시각 앞섬, 값 잠정): sonar_profile:=$(find-pkg-share limo_fire_sim)/config/sonar_sim_real.yaml -->
+  <node pkg="limo_fire_sim" exec="sonar_sim_node" name="sonar_sim" output="screen">
+    <param from="$(var sonar_profile)"/>
+  </node>
 
   <!-- 로봇 모델 TF (바퀴 관절 상태는 joint_state_broadcaster 가 낸다) -->
   <include file="$(find-pkg-share limo_fire_description)/launch/description.launch.xml">

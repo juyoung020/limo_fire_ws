@@ -59,8 +59,27 @@ target_compile_features(intensity_stats_bag PUBLIC cxx_std_17)
 target_include_directories(intensity_stats_bag PRIVATE include)
 ament_target_dependencies(intensity_stats_bag rclcpp rosbag2_cpp sensor_msgs nav_msgs)
 
-install(TARGETS scan_stats_bag bag_export motion_export depth_stats_bag intensity_stats_bag RUNTIME DESTINATION lib/${PROJECT_NAME})
+# 시뮬 초음파 → 실물 ESP32 다리 꼴 (메아리 없음 +inf · 놓침 · 고장 · 지연·시각 앞섬, sonar_sim.hpp). sim_robot.launch.xml 이 늘 띄움
+add_executable(sonar_sim_node src/sonar_sim_node.cpp)
+target_compile_features(sonar_sim_node PUBLIC cxx_std_17)
+target_include_directories(sonar_sim_node PRIVATE include)
+ament_target_dependencies(sonar_sim_node rclcpp sensor_msgs)
+
+# 초음파 오차 통계: 실물 녹화(벽 앞 정지 구간) → YAML. sonar_sim_real.yaml 값을 정한다 (data_plan.md 초음파 절)
+add_executable(sonar_stats_bag src/sonar_stats_bag.cpp)
+target_compile_features(sonar_stats_bag PUBLIC cxx_std_17)
+target_include_directories(sonar_stats_bag PRIVATE include)
+ament_target_dependencies(sonar_stats_bag rclcpp rosbag2_cpp sensor_msgs nav_msgs tf2_msgs)
+
+install(TARGETS scan_stats_bag bag_export motion_export depth_stats_bag intensity_stats_bag sonar_sim_node sonar_stats_bag RUNTIME DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY resource DESTINATION share/${PROJECT_NAME})
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_sonar_sim test/test_sonar_sim.cpp test/test_sonar_stats.cpp)
+  target_include_directories(test_sonar_sim PRIVATE include)
+endif()
 
 ament_package()

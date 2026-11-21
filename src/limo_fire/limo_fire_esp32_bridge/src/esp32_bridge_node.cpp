@@ -52,6 +52,7 @@ class Esp32Bridge : public rclcpp::Node {
     fov_ = declare_parameter<double>("ultrasonic.field_of_view", 0.2618);
     min_ = declare_parameter<double>("ultrasonic.min_range", 0.02);
     max_ = declare_parameter<double>("ultrasonic.max_range", 4.0);
+    no_echo_warn_ = declare_parameter<double>("ultrasonic.no_echo_warn_s", 10.0);
     thermal_frame_ = declare_parameter<std::string>("thermal.frame_id", "thermal_link");
     radar_frame_ = declare_parameter<std::string>("radar.frame_id", "radar_link");
     launcher_on_ = declare_parameter<bool>("launcher.enabled", true);
@@ -61,8 +62,8 @@ class Esp32Bridge : public rclcpp::Node {
     lc.action_timeout_s = declare_parameter<double>("launcher.action_timeout_s", 8.0);
     lc.query_period_s = declare_parameter<double>("launcher.query_period_s", 1.0);
     lever_joint_ = declare_parameter<std::string>("launcher.lever_joint", "launcher_lever_joint");
-    if (names_.empty() || fov_ <= 0.0 || min_ < 0.0 || max_ <= min_ || hb_timeout_ <= 0.0)
-      throw std::invalid_argument("esp32_bridge: ultrasonic.names·field_of_view·min/max_range·heartbeat_timeout 확인");
+    if (names_.empty() || fov_ <= 0.0 || min_ < 0.0 || max_ <= min_ || hb_timeout_ <= 0.0 || no_echo_warn_ <= 0.0)
+      throw std::invalid_argument("esp32_bridge: ultrasonic.names·field_of_view·min/max_range·no_echo_warn_s·heartbeat_timeout 확인");
     if (lc.ack_timeout_s <= 0.0 || lc.action_timeout_s <= 0.0 || lc.query_period_s <= 0.0 || lever_joint_.empty())
       throw std::invalid_argument("esp32_bridge: launcher.ack_timeout_s·action_timeout_s·query_period_s·lever_joint 확인");
     if (speed_of(baud_) == B0) throw std::invalid_argument("esp32_bridge: 지원하지 않는 baud " + std::to_string(baud_));
@@ -71,6 +72,8 @@ class Esp32Bridge : public rclcpp::Node {
       pubs_.push_back(create_publisher<sensor_msgs::msg::Range>("/ultrasonic/" + n, rclcpp::SensorDataQoS()));
       frames_.push_back("ultrasonic_" + n + "_link");
     }
+    sonar_seen_.assign(names_.size(), 0.0);
+    sonar_echo_.assign(names_.size(), 0.0);
     thermal_pub_ = create_publisher<sensor_msgs::msg::Image>("/thermal/image", rclcpp::SensorDataQoS());
     thermal_max_pub_ = create_publisher<sensor_msgs::msg::Temperature>("/thermal/max", rclcpp::SensorDataQoS());
     radar_pub_ = create_publisher<geometry_msgs::msg::PoseArray>("/radar/targets", rclcpp::SensorDataQoS());
@@ -110,6 +113,7 @@ class Esp32Bridge : public rclcpp::Node {
 
     diag_.setHardwareID("esp32 " + port_);
     diag_.add("link", this, &Esp32Bridge::diag_link);
+    diag_.add("ultrasonic", this, &Esp32Bridge::diag_ultrasonic);
     if (launcher_on_) diag_.add("launcher", this, &Esp32Bridge::diag_launcher);
 
     last_hb_ = now();
@@ -224,6 +228,10 @@ class Esp32Bridge : public rclcpp::Node {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "초음파 번호 %d 가 설정(%zu 개) 밖", s->index, pubs_.size());
       return;
     }
+    const double tm = mono();
+    if (sonar_seen_[s->index] == 0.0) sonar_echo_[s->index] = tm;   // 첫 줄부터 메아리 없음 시간을 센다
+    sonar_seen_[s->index] = tm;
+    if (s->mm != 0) sonar_echo_[s->index] = tm;
     sensor_msgs::msg::Range m;
     m.header.stamp = now();
     m.header.frame_id = frames_[s->index];
@@ -395,6 +403,25 @@ class Esp32Bridge : public rclcpp::Node {
     st.add("bad_lines_total", bad_);
     st.add("firmware_boots", launcher_on_ ? logic_->reboots() : 0);
   }
+  // 초음파마다 줄은 오는데 메아리가 no_echo_warn_s 넘게 없으면 WARN — 2026-11-20 실물 오른쪽이 늘 0(메아리 없음)이었는데 토픽만 봐서는 안 드러남.
+  // 실내에서 4 m 안에 아무것도 없는 일은 드물어 배선(Trig·Echo 핀, Echo 5 V 전압 분배)·센서 고장을 먼저 의심. 넓은 곳에서는 거짓 경고일 수 있다
+  void diag_ultrasonic(diagnostic_updater::DiagnosticStatusWrapper& st) {
+    const double tm = mono();
+    std::string silent, stale, none;
+    for (size_t i = 0; i < names_.size(); ++i) {
+      const bool seen = sonar_seen_[i] > 0.0;
+      const double line_age = seen ? tm - sonar_seen_[i] : -1.0, echo_age = seen ? tm - sonar_echo_[i] : -1.0;
+      st.add(names_[i] + "_line_age_s", line_age);
+      st.add(names_[i] + "_no_echo_s", echo_age);
+      if (!seen) none += (none.empty() ? "" : ", ") + names_[i];
+      else if (line_age > hb_timeout_) stale += (stale.empty() ? "" : ", ") + names_[i];
+      else if (echo_age > no_echo_warn_) silent += (silent.empty() ? "" : ", ") + names_[i];
+    }
+    if (!stale.empty()) st.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "줄이 끊김: " + stale);
+    else if (!none.empty()) st.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "아직 줄이 안 옴(켠 직후면 정상): " + none);
+    else if (!silent.empty()) st.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "메아리가 계속 없음(배선·센서 확인): " + silent);
+    else st.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "메아리 받음");
+  }
   void diag_launcher(diagnostic_updater::DiagnosticStatusWrapper& st) {
     const auto s = logic_->state();
     if (s == LauncherState::kFault) st.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "고장: " + logic_->fault());
@@ -410,7 +437,8 @@ class Esp32Bridge : public rclcpp::Node {
 
   std::string port_;
   int baud_;
-  double hb_timeout_, fov_, min_, max_;
+  double hb_timeout_, fov_, min_, max_, no_echo_warn_ = 10.0;
+  std::vector<double> sonar_seen_, sonar_echo_;   // 초음파마다 마지막 줄·마지막 메아리 시각 (mono, 0 = 아직 없음)
   std::vector<std::string> names_, frames_;
   std::string thermal_frame_, radar_frame_, lever_joint_;
   bool launcher_on_ = true;

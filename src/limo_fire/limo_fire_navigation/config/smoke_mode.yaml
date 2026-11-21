@@ -50,6 +50,12 @@ smoke_mode:
       topics: ["/ultrasonic/front_left", "/ultrasonic/front_right"]
       distance: 0.6
       speed: 0.08          # 0.05 → 0.08 (2026-11-18 사용자 요청)
+      # 지도에 있는 벽에는 감속하지 않음 (2026-11-21): 2026-11-20 실물 좁은 방에서 앞 초음파가 늘 벽을 0.6 m 안에 봐 계속 기어감.
+      # 메아리가 저장 지도로 보여야 할 거리보다 map_gap 넘게 가깝거나(지도에 없는 물체) always_within 보다 가까우면 감속.
+      # 메아리 자세(TF)·지도를 못 구하면 감속(안전 쪽). false 면 예전처럼 가까우면 늘 감속
+      only_unmapped: true
+      map_gap: 0.25        # m, sonar_obstacles.min_gap 과 같은 값 (지도 오차·잡음 여유, 잠정)
+      always_within: 0.3   # m, 이보다 가까우면 지도 벽이어도 감속 (연기 속 위치가 틀어져 지도 벽이 어긋날 때, 잠정)
     global_frame: map
     odom_frame: odom
     base_frame: base_link

@@ -166,6 +166,28 @@
 5. 평상시 주행(라이다)을 0.7 m/s 로 따로 확인(Nav2 최고 속도를 올렸다). 로봇은 Humble 이라 행동 트리·`costmap_update_timeout` 동작을 실물로 확인.
 6. ESP32 udev 이름(`/dev/esp32`) 규칙을 로봇에 넣기 — 지금은 `esp32_port:=` 로 직접 줌.
 
+### 실물 올리기 전 시뮬을 실물에 가깝게 (2026-11-21)
+
+11-20 실물 첫 시험에서만 드러난 것(메아리 시각이 TF 보다 앞섬·오른쪽 초음파 늘 0·좁은 방에서 늘 감속)을 시뮬에서 미리 보도록 했다. PC(Docker Humble)에서 빌드·단위 시험·짧은 Webots 확인만 했고 **연기 모드 주행 판 수는 아직 안 돌렸다**.
+
+- 시뮬 초음파 → 실물 다리 꼴 `sonar_sim` 노드(`limo_fire_sim`, `sim_robot.launch.xml` 이 늘 띄움): Webots 는 `/sim/ultrasonic/*` 로 내고 이 노드가 `/ultrasonic/*` 로.
+  - 기본(`config/sonar_sim.yaml`): 메아리 없음을 실물처럼 +inf 로(Webots 4.0 m → inf)·min/max·시야를 다리와 같게. 그 밖은 끔 — 지금까지 결과 1~9 와 같은 조건(받는 노드는 모두 inf 를 메아리 없음으로 처리함을 확인: smoke_mode·탐사·BT).
+  - 실물 흉내(`sonar_profile:=…/config/sonar_sim_real.yaml`, **값 잠정**): 놓침 5 %·잡음 1 cm·지연 30 ms·시각 앞섬 50 ms(+0~20 ms), 고장 흉내 `dead: [false, true]`.
+  - Webots 가 이미 하는 것(원뿔 안 가장 가까운 광선·입사각 22.5° 넘으면 안 돌아옴·값 비례 잡음)은 다시 안 함 — [Webots DistanceSensor 문서](https://github.com/cyberbotics/webots/blob/master/docs/reference/distancesensor.md).
+  - 확인: 단위 시험 6 개, 가짜 입력(1.0 m → 평균 1.0006 m, 4.0 m → inf, 고장 쪽 20/20 inf), Webots `limo_fire_obstacles` 에서 `/sim/ultrasonic` 4.0 → `/ultrasonic` inf.
+  - 실물 흉내 끝까지(가짜 입력 1.0 m·4.0 m 14 Hz → `sonar_sim_real.yaml`·seed 7 → 녹화 24 s → `sonar_stats_bag --static --truth 1.0`): 메아리 비율 0.950(놓침 5 %)·σ 0.0101 m·치우침 0.0000 m·시각 − 받은 시각 50~70 ms(앞섬 50 + 0~20 ms)·4.0 m 쪽 메아리 0·주기 14.2 Hz — 설정대로. 시각 − TF 는 `/tf` 없는 시험이라 못 봄.
+  - 시뮬 주기 약 8.7 Hz < 실물 약 14 Hz (URDF updateRate 10 이 Webots 걸음에 맞춰 내려감) — 아직 안 맞춤.
+- 감속 `slow.only_unmapped`(기본 true): 메아리가 저장 지도로 보여야 할 거리보다 `map_gap`(0.25 m) 넘게 가깝거나 `always_within`(0.3 m) 안일 때만 감속. 자세·지도를 모르면 감속(안전 쪽).
+  메아리 자세 구하기(TF 앞섬 허용)는 장애물 기억과 한 함수로 합침. PC 에서 컴파일만(경고 0) — **perception 이 CUDA 를 요구해 navigation 패키지 전체 빌드·시뮬 확인은 로봇에서**.
+- ESP32 다리 `/diagnostics` 에 `ultrasonic` 항목: 줄은 오는데 메아리가 `no_echo_warn_s`(10 s) 넘게 없으면 WARN "메아리가 계속 없음(배선·센서 확인)". 펌웨어 호스트 시뮬(pulseIn 이 늘 0)에서 두 센서 모두 WARN 확인.
+- 실측 도구 `sonar_stats_bag`(`limo_fire_sim`): 정지 구간마다 echo_ratio·거리 평균·σ·치우침(`--truth`)·주기, 녹화 전체에서 메시지 시각 − odom TF 시각. 측정 절차는 [data_plan.md](../train/explore/sim/analysis/data_plan.md) R4·초음파 줄.
+
+다음(로봇 옆에서):
+1. 오른쪽 초음파 배선 확인 → `/diagnostics` ultrasonic OK.
+2. R4 초음파 사다리 녹화 + 주행 녹화 하나 → `sonar_stats_bag` → `sonar_sim_real.yaml` 을 실측값으로(맞추기·확인 녹화 나눠서).
+3. 시뮬: 상자 시험·순찰 묶음을 `sonar_sim_real.yaml` 로 다시 — 결과 9(닿음 0)가 유지되는지, 메아리를 버리는 경고가 나오는지.
+4. 실물: 0.2 m/s 로 연기 모드, 좁은 방에서 감속이 지도에 없는 물체에만 걸리는지.
+
 ## 3. 시험 (1·3 단계 공통)
 
 - 맵: Webots 4 개 (`limo_fire_maze`·`office`·`warehouse`·`world`, 저장 지도 `limo_fire_navigation/maps/sim/`).
